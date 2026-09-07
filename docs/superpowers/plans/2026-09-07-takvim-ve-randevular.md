@@ -18,6 +18,7 @@ Plan 1'in tüm global kısıtları geçerlidir (dış ağ isteği yok, sunucu ya
 - **Randevu saatleri yerel duvar saatidir**, zaman dilimi taşımaz. Biçim: `YYYY-AA-GGTSS:DD` (örnek `2026-09-07T14:00`), saniye yok. Gerekçe: terapistin 14:00'ü, yaz saati uygulaması değişse de 14:00'tür. UTC'de saklamak, saat değişiminde tüm gelecek randevuları bir saat kaydırır.
 - **Kilitli oturumda hiçbir veri uç noktası yanıt vermez.** Danışan ve randevu uç noktaları, oturum kapalıysa `401` döner ve gövdede veri taşımaz.
 - **Her veri okuma ve yazma erişim loguna yazılır** (`audit::kaydet`). Liste sorguları tek bir `goruntuleme` kaydı üretir, dönen her satır için ayrı kayıt üretmez.
+- **Yazma işlemi ile log kaydı aynı transaction içinde olmalıdır.** Ayrı yapılırsa "kayıt güncellendi ama log yazılmadı" durumu doğar ve KVKK'nın loglama zorunluluğu anlamsızlaşır. Bir yazma fonksiyonu hem veriyi hem logu yazıyorsa, ikisini `conn.transaction()` içine alıp birlikte commit et.
 - **Randevu durumları tam olarak şunlardır:** `planlandi`, `geldi`, `gelmedi`, `iptal`. Danışan durumları: `aktif`, `arsiv`.
 - **Silme yerine iptal esastır.** Randevu kaydı fiziksel olarak yalnızca yanlışlıkla oluşturulmuşsa silinir; geçmiş randevular `iptal` durumuna alınır.
 

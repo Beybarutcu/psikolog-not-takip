@@ -17,6 +17,7 @@ Plan 1 ve Plan 2'nin tüm global kısıtları geçerlidir. Bu plana özgü ek k�
 - **Özel notlar hiçbir dışa aktarım sorgusuna, hiçbir rapora ve hiçbir liste uç noktasına dahil edilmez.** Bunu sağlayan tek mekanizma ayrı tablo olmasıdır; bir `WHERE gizli = 0` filtresine güvenilmez — unutulan tek bir sorgu koruma sözünü bozar.
 - **Not editörü otomatik kaydeder, 2 saniyede bir.** Kaydet butonu yoktur. İncelenen ürünlerin en sık şikayeti not kaybıydı.
 - **Not içerikleri hiçbir zaman erişim loguna yazılmaz.** Log yalnızca "hangi notu, ne zaman, hangi cihazdan" bilgisini tutar; içerik logda görünürse log dosyası ikinci bir sızıntı yüzeyi olur.
+- **Yazma işlemi ile log kaydı aynı transaction içinde olmalıdır.** Ayrı yapılırsa "not kaydedildi ama log yazılmadı" durumu doğar. Not editörü 2 saniyede bir yazdığı için bu katmanda özellikle önemlidir: kısmi başarısızlık sık karşılaşılacak bir durumdur, istisna değil.
 - **Ekli dosyalar veritabanı içinde BLOB olarak saklanır**, ayrı dosya olarak değil — yedek tek dosya kalsın diye. Dosya başına üst sınır **20 MB**, toplam uyarı eşiği 500 MB.
 - **Saklama süresi otomatik silme yapmaz.** Süresi dolan dosyalar yalnızca listelenir; silme kararını her zaman insan verir.
 - Şema sürümü bu planda **3**'e çıkar.

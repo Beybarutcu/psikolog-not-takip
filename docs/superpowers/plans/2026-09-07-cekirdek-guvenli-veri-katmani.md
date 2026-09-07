@@ -255,10 +255,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: 'npm', cache-dependency-path: web/package-lock.json }
-      - run: cargo test --workspace
+      # Strawberry Perl, Git'in gomulu minimal perl'unu golgelemeli.
+      # openssl-sys (SQLCipher icin) tam bir Perl kurulumu ister.
+      - name: Strawberry Perl'u PATH basina al
+        shell: pwsh
+        run: |
+          if (Test-Path 'C:\Strawberry\perl\bin') {
+            'C:\Strawberry\perl\bin' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+      # ONEMLI: npm adimlari Rust'tan ONCE gelir. cargo test --workspace,
+      # src-tauri'yi de derler; generate_context!() makrosu web/dist dizininin
+      # derleme aninda VAR OLMASINI ister ve o dizin .gitignore'dadir.
       - run: npm ci
       - run: npm --prefix web ci
       - run: npm --prefix web run build
+      - run: cargo test --workspace
 
   build-macos:
     runs-on: macos-14
@@ -2651,12 +2662,14 @@ Expected: 1 test PASS.
 
 - [ ] **Step 5: CI'a uçtan uca adımı ekle**
 
-`.github/workflows/ci.yml` içindeki `test` işine, `npm --prefix web run build` adımından sonra:
+`.github/workflows/ci.yml` içindeki `test` işine, **`cargo test --workspace` adımından sonra** (Playwright, derlenmiş `sunucu` ikilisini çalıştırır):
 
 ```yaml
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test
 ```
+
+Adım sırasını bozma: npm adımları → `cargo test` → Playwright. `web/dist`, Rust derlemesinden önce var olmak zorundadır.
 
 - [ ] **Step 6: Commit**
 

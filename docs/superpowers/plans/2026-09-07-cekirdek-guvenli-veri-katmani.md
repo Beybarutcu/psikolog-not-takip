@@ -423,7 +423,7 @@ pub type DataKey = Zeroizing<[u8; DATA_KEY_LEN]>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CryptoError {
-    #[error("parola veya kurtarma kodu hatali")]
+    #[error("parola veya kurtarma kodu hatalı")]
     WrongSecret,
     #[error("anahtar turetilemedi: {0}")]
     Kdf(String),
@@ -504,7 +504,7 @@ pub fn unwrap_key(secret: &str, wrapped: &WrappedKey) -> Result<DataKey, CryptoE
     let ciphertext =
         hex::decode(&wrapped.ciphertext_hex).map_err(|e| CryptoError::Format(e.to_string()))?;
     if nonce.len() != NONCE_LEN {
-        return Err(CryptoError::Format("nonce uzunlugu hatali".into()));
+        return Err(CryptoError::Format("nonce uzunluğu hatalı".into()));
     }
 
     let derived = derive(secret, &salt, wrapped.kdf)?;
@@ -521,7 +521,7 @@ pub fn unwrap_key(secret: &str, wrapped: &WrappedKey) -> Result<DataKey, CryptoE
     let bytes: [u8; DATA_KEY_LEN] = plain
         .as_slice()
         .try_into()
-        .map_err(|_| CryptoError::Format("anahtar uzunlugu hatali".into()))?;
+        .map_err(|_| CryptoError::Format("anahtar uzunluğu hatalı".into()))?;
     Ok(Zeroizing::new(bytes))
 }
 ```
@@ -1880,7 +1880,7 @@ async fn yanlis_parola_401_dondurur_ve_kilitli_kalir() {
 
     let (kod, json) = cagir(&s, "POST", "/api/kilit-ac", Some(serde_json::json!({"parola":"yanlis"}))).await;
     assert_eq!(kod, StatusCode::UNAUTHORIZED);
-    assert!(json["hata"].as_str().unwrap().contains("hatali"));
+    assert!(json["hata"].as_str().unwrap().contains("hatalı"));
 
     let (_, durum) = cagir(&s, "GET", "/api/durum", None).await;
     assert_eq!(durum["kilitli"], true);
@@ -1997,13 +1997,13 @@ pub async fn kilit_ac(
     Json(istek): Json<KilitAcIstegi>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let Ok(ks) = keystore::load(&s.keystore_yolu()) else {
-        return (StatusCode::CONFLICT, Json(json!({ "hata": "once kurulum yapilmali" })));
+        return (StatusCode::CONFLICT, Json(json!({ "hata": "Önce kurulum yapılmalı." })));
     };
 
     let sonuc = match (&istek.parola, &istek.kurtarma_kodu) {
         (Some(p), _) => keystore::unlock_with_password(&ks, p),
         (_, Some(k)) => keystore::unlock_with_recovery(&ks, k),
-        _ => return (StatusCode::BAD_REQUEST, Json(json!({ "hata": "parola girilmedi" }))),
+        _ => return (StatusCode::BAD_REQUEST, Json(json!({ "hata": "Parola girilmedi." }))),
     };
 
     match sonuc {
@@ -2021,7 +2021,7 @@ pub async fn kilit_ac(
         }
         Err(_) => (
             StatusCode::UNAUTHORIZED,
-            Json(json!({ "hata": "Parola veya kurtarma kodu hatali." })),
+            Json(json!({ "hata": "Parola veya kurtarma kodu hatalı." })),
         ),
     }
 }
@@ -2062,12 +2062,12 @@ pub async fn kurulum(
     Json(istek): Json<KurulumIstegi>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     if keystore::exists(&s.keystore_yolu()) {
-        return (StatusCode::CONFLICT, Json(json!({ "hata": "kurulum zaten yapilmis" })));
+        return (StatusCode::CONFLICT, Json(json!({ "hata": "Kurulum zaten yapılmış." })));
     }
     if istek.parola.chars().count() < 8 {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "hata": "Parola en az 8 karakter olmali." })),
+            Json(json!({ "hata": "Parola en az 8 karakter olmalı." })),
         );
     }
 
@@ -2536,7 +2536,7 @@ test('kurulum, kilitleme ve tekrar acma', async ({ page }) => {
 
   await page.getByLabel('Ana parola').fill('yanlisparola')
   await page.getByRole('button', { name: 'Aç' }).click()
-  await expect(page.getByText(/hatali/i)).toBeVisible()
+  await expect(page.getByText(/hatalı/i)).toBeVisible()
 
   await page.getByLabel('Ana parola').fill('gizliparola')
   await page.getByRole('button', { name: 'Aç' }).click()

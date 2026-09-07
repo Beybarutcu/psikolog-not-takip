@@ -72,10 +72,11 @@ Mevcut test bloğuna ekle:
     #[test]
     fn surum_iki_olarak_kaydedilir() {
         let (_d, c) = baglanti();
-        let v: i64 = c
+        // deger sutunu TEXT'tir; metin okuyup ayristir. Gerekce Plan 1 Gorev 6'da.
+        let ham: String = c
             .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 2);
+        assert_eq!(ham.parse::<i64>().unwrap(), 2);
     }
 
     #[test]
@@ -144,10 +145,10 @@ Mevcut test bloğuna ekle:
         let c = crate::store::db::open_encrypted(&yol, &key).unwrap();
         migrate(&c).unwrap();
 
-        let v: i64 = c
+        let ham: String = c
             .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 2);
+        assert_eq!(ham.parse::<i64>().unwrap(), 2);
 
         let log_sayisi: i64 = c.query_row("SELECT count(*) FROM audit_log", [], |r| r.get(0)).unwrap();
         assert_eq!(log_sayisi, 1, "yukseltme eski erisim logunu silmemeli");

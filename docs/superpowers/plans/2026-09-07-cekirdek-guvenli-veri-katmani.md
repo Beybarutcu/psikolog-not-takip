@@ -1037,10 +1037,14 @@ mod tests {
     #[test]
     fn migration_surumu_kaydeder() {
         let (_d, c) = baglanti();
-        let v: i64 = c
+        // DIKKAT: deger sutunu TEXT'tir. app_meta genel amacli bir anahtar/deger
+        // tablosudur ve ileride metin ayarlar da tutacaktir. Sutunu NUMERIC yapip
+        // burada i64 okumak, sayi gibi gorunen metinleri (bastaki sifirlar, "1.50")
+        // sessizce bozar. Dogru olan, degeri metin okuyup ayristirmaktir.
+        let ham: String = c
             .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(v, CURRENT_VERSION);
+        assert_eq!(ham.parse::<i64>().unwrap(), CURRENT_VERSION);
     }
 
     #[test]

@@ -1,17 +1,15 @@
 {
   "name": "psikolog-not-takip",
   "version": "1.0.0",
-  "description": "",
+  "description": "Psikologlar icin guvenli, yerel-oncelikli seans notu ve randevu takip uygulamasi.",
+  "private": true,
   "main": "index.js",
   "directories": {
     "doc": "docs"
   },
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
+  "scripts": {},
   "keywords": [],
   "author": "",
-  "license": "ISC",
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "@tauri-apps/cli": "^2.11.4"

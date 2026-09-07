@@ -6,14 +6,20 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Strawberry Perl'u PATH basina ekle (Git'in gomulu minimal Perl'unu golgeler)
+        shell: pwsh
+        run: |
+          if (Test-Path "C:\Strawberry\perl\bin") {
+            Add-Content -Path $env:GITHUB_PATH -Value "C:\Strawberry\perl\bin"
+          }
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: 'npm', cache-dependency-path: web/package-lock.json }
-      - run: cargo test --workspace
       - run: npm ci
       - run: npm --prefix web ci
       - run: npm --prefix web run build
+      - run: cargo test --workspace
 
   build-macos:
     runs-on: macos-14

@@ -12,9 +12,12 @@ Verinin tamamı sağlık verisi olduğu için (KVKK md. 6 — özel nitelikli ki
 bir ürün kullanmak istemiyor. Uygulama kullanıcının kendi makinesinde çalışacak, veri o makineden
 çıkmayacak.
 
-**Kullanıcı teknik değil.** Kurulum "indir, kur, ikona tıkla" olmalı; terminal, Docker, ayar
-dosyası düzenleme gibi hiçbir adım kabul edilebilir değil. Bu, tasarımın her kararında birinci
-kısıt.
+**Hedef platform: macOS.** Apple Silicon ve Intel için universal binary üretilir. Windows/Linux
+v1 kapsamında değildir (Tauri ileride izin verir, ama şimdi hedeflenmez).
+
+**Kullanıcı teknik değil.** Kurulum "indir, sürükle, ikona tıkla" olmalı; terminal, Homebrew,
+Docker, ayar dosyası düzenleme gibi hiçbir adım kabul edilebilir değil. Bu, tasarımın her
+kararında birinci kısıt.
 
 ### Başarı ölçütü
 
@@ -69,7 +72,7 @@ Tek bir uygulama, tek bir arayüz kodu, iki cihaz.
 
 | Katman | Seçim | Gerekçe |
 |---|---|---|
-| Masaüstü kabuk | Tauri 2 | Tek `.exe`, harici runtime yok, ~10 MB |
+| Masaüstü kabuk | Tauri 2 | Tek `.app` (imzalı `.dmg` ile dağıtım), harici runtime yok, ~10 MB, universal binary |
 | Veri | SQLite + SQLCipher (AES-256) | Diskte tamamen şifreli; yedek = tek dosya |
 | Sunucu | Gömülü Axum (Rust) | Ayrıca kurulan servis yok; uygulama kapanınca kapanır |
 | Arayüz | React + TypeScript + Tailwind | Tek kod tabanı, masaüstü ve telefonda responsive |
@@ -79,11 +82,39 @@ yoktur** ve cihazlar arasında senkronizasyon problemi oluşmaz (tek yazıcı, t
 
 ### Reddedilen alternatifler
 
-- **Electron + Node:** daha hızlı geliştirilir ama kurulum ~150 MB ve Windows'ta SQLCipher
-  entegrasyonu kırılgan.
+- **Electron + Node:** daha hızlı geliştirilir ama kurulum ~150 MB, native modül (SQLCipher)
+  derlemesi Apple Silicon/Intel için ayrı ayrı uğraştırır ve notarizasyon süreci daha ağırdır.
+- **Swift + SwiftUI (native macOS):** en iyi masaüstü hissi, ama telefon için ikinci bir arayüz
+  yazmak gerekirdi. Tek arayüz kararının karşılığı bu.
 - **Sadece masaüstü, telefon yok:** telefonda not girme ihtiyacı karşılanmıyor.
 - **VPN ile her yerden erişim:** ek kurulum adımı ve genişleyen risk yüzeyi; teknik olmayan
   kullanıcı için v1'de gereksiz.
+
+### macOS'a özgü kararlar
+
+- **Dağıtım ve Gatekeeper:** İmzalanmamış bir `.app`, macOS'ta "geliştirici doğrulanamadı"
+  uyarısıyla açılmaz ve kullanıcının sağ tık → Aç ya da Sistem Ayarları'ndan izin vermesi
+  gerekir. Teknik olmayan bir kullanıcı için bu kabul edilemez bir ilk deneyimdir. Çözüm:
+  Apple Developer Program (yıllık 99 USD) ile **imzalama + notarizasyon**. Bu bir maliyet kararı
+  olduğu için kullanıcıya sorulur; alınmazsa kurulum için resimli bir yönerge hazırlanır.
+- **Uygulama verisi:** `~/Library/Application Support/<uygulama>/` altında; yedek klasörünü
+  kullanıcı seçer.
+- **Time Machine uyumu:** Yedek dosyaları zaten şifreli olduğu için Time Machine'in bunları
+  alması ek bir gizlilik riski yaratmaz; aksine ikinci bir güvenlik ağıdır. Ana veritabanı
+  dosyası ise sürekli açık olduğundan Time Machine kopyası tutarsız olabilir — kullanıcıya
+  "gerçek yedek, uygulamanın kendi yedeğidir" denir.
+- **Yerel ağ izni:** macOS 15+ sürümlerinde yerel ağa erişen uygulamalar için sistem izni
+  istenir. Telefon erişimi ilk açıldığında bu izin tetiklenir; kullanıcıya neden istendiği
+  ekranda açıklanır.
+- **Bonjour/mDNS ile adres:** Telefona IP yazdırmak yerine uygulama kendini `psikolog.local`
+  olarak yayınlar. macOS'ta Bonjour hazır gelir; iPhone Safari bu adresi doğrudan açar. QR kod
+  yine de gösterilir (yedek yol).
+- **Touch ID ile açma (opsiyonel):** Veri anahtarının parola ile sarmalanmış kopyasının bir
+  eşi, Touch ID gerektiren bir erişim koşuluyla macOS Keychain'e yazılabilir. Böylece günlük
+  açılışta parola yazmak yerine parmak izi yeterli olur; ana parola her zaman geçerli kalır ve
+  Keychain kaydı tek tıkla silinebilir. **v1'de opsiyonel, kapalı gelir.**
+- **Girişte otomatik başlatma:** LaunchAgent ile, kullanıcı isterse. Uygulama başlar ama
+  **kilitli** başlar; parola girilene kadar veri açılmaz.
 
 ## 4. Güvenlik
 
@@ -205,7 +236,8 @@ alınamaz işlemin riski, sağladığı kolaylıktan büyüktür.
 | Parola yanlış | Artan gecikme; kalıcı kilit yok |
 | Veritabanı bozuk | Açılışta bütünlük kontrolü; bozuksa geri yükleme ekranına düşer |
 | Port dolu | Sıradaki boş porta geçer, telefon adresini günceller |
-| Telefon bağlanamıyor | Ağ kontrolü + QR kod; IP elle yazdırılmaz |
+| Telefon bağlanamıyor | Ağ kontrolü, `psikolog.local` adresi + QR kod; IP elle yazdırılmaz |
+| Yerel ağ izni verilmemiş | macOS izni reddedilmişse telefon sekmesinde nedeni ve Sistem Ayarları yolu gösterilir |
 | Aynı not iki cihazda açık | Not düzeyinde yumuşak kilit ve uyarı; sessiz üzerine yazma yok |
 | Uygulama çökerse | Taslak zaten yazılmıştır; açılışta "yarım kalmış not" en üstte |
 | Disk dolu | Yedek başarısız → ana ekranda kalıcı uyarı |

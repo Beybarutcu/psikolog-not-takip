@@ -1,0 +1,9 @@
+/target
+/web/dist
+/web/node_modules
+/node_modules
+/e2e/test-results
+*.dmg
+
+# Tauri build.rs tarafından her derlemede yeniden uretilir (Task 1 kesfi, brief'te yoktu)
+/src-tauri/gen/schemas

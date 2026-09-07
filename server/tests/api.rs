@@ -261,3 +261,38 @@ fn eszamanli_kurulum_yarisi_keystoreu_ezmez() {
         assert_eq!(basariliydi, 1, "sadece kazanan parola kilidi acabilmeli, digeri calismamali");
     });
 }
+
+// --- Inceleme Bulgu 2 (Gorev 12): CSP fiilen uygulanmiyor olabilir ---
+//
+// Pencere `WebviewUrl::External("http://127.0.0.1:<port>")` ile acildigi
+// icin Tauri'nin kendi CSP enjeksiyonu bu icerige uygulanmaz -- sunucunun
+// kendisi her yanita `content-security-policy` basligini eklemeli. Bu, hem
+// statik varlik (SPA) yanitlarinda hem de API yanitlarinda dogrulanir; deger
+// `src-tauri/tauri.conf.json` > `app.security.csp` ile birebir ayni olmali.
+#[tokio::test]
+async fn statik_yanit_csp_basligi_tasir() {
+    let (_d, s) = test_state();
+    let istek = Request::builder().method("GET").uri("/").body(Body::empty()).unwrap();
+    let yanit = router(s).oneshot(istek).await.unwrap();
+
+    assert_eq!(yanit.status(), StatusCode::OK);
+    let deger = yanit
+        .headers()
+        .get("content-security-policy")
+        .expect("statik yanitta content-security-policy basligi eksik");
+    assert_eq!(deger, "default-src 'self'; style-src 'self' 'unsafe-inline'");
+}
+
+#[tokio::test]
+async fn api_yaniti_csp_basligi_tasir() {
+    let (_d, s) = test_state();
+    let istek = Request::builder().method("GET").uri("/api/durum").body(Body::empty()).unwrap();
+    let yanit = router(s).oneshot(istek).await.unwrap();
+
+    assert_eq!(yanit.status(), StatusCode::OK);
+    let deger = yanit
+        .headers()
+        .get("content-security-policy")
+        .expect("API yanitinda content-security-policy basligi eksik");
+    assert_eq!(deger, "default-src 'self'; style-src 'self' 'unsafe-inline'");
+}

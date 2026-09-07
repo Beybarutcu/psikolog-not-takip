@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use psikolog_core::crypto::keyring::KdfParams;
-use psikolog_server::{router, AppState};
+use psikolog_server::{router, AppState, YEREL_ADRES};
 use std::path::PathBuf;
 
 fn veri_dizini() -> PathBuf {
@@ -10,7 +10,8 @@ fn veri_dizini() -> PathBuf {
 }
 
 fn sunucuyu_baslat(veri_dizini: PathBuf) -> u16 {
-    let dinleyici = std::net::TcpListener::bind("127.0.0.1:0").expect("port acilamadi");
+    let dinleyici =
+        std::net::TcpListener::bind(format!("{YEREL_ADRES}:0")).expect("port acilamadi");
     let port = dinleyici.local_addr().unwrap().port();
 
     std::thread::spawn(move || {
@@ -18,7 +19,15 @@ fn sunucuyu_baslat(veri_dizini: PathBuf) -> u16 {
         rt.block_on(async move {
             let state = AppState::yeni(veri_dizini, KdfParams::default());
             let dinleyici = tokio::net::TcpListener::from_std(dinleyici).unwrap();
-            axum::serve(dinleyici, router(state)).await.unwrap();
+            // Sunucu gorevi basarisiz olursa sessiz kalma: pencere acik ama
+            // arkasinda API yoksa kullanici bos/donuk bir ekranla bas basa
+            // kalir ve nedenini asla anlayamaz. Hatayi yazip sureci
+            // sonlandirarak en azindan "uygulama acilmadi" gibi anlasilir
+            // bir davranis elde edilir.
+            if let Err(hata) = axum::serve(dinleyici, router(state)).await {
+                eprintln!("Arka plan sunucusu basarisiz oldu, uygulama kapatiliyor: {hata}");
+                std::process::exit(1);
+            }
         });
     });
 
@@ -27,7 +36,7 @@ fn sunucuyu_baslat(veri_dizini: PathBuf) -> u16 {
 
 fn main() {
     let port = sunucuyu_baslat(veri_dizini());
-    let adres = format!("http://127.0.0.1:{port}");
+    let adres = format!("http://{YEREL_ADRES}:{port}");
 
     tauri::Builder::default()
         .setup(move |app| {

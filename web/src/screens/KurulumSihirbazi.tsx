@@ -32,7 +32,10 @@ export function KurulumSihirbazi({ kurulumYap, onTamam }: Props) {
           Parolanızı unutursanız verilerinize erişmenin <strong>tek yolu</strong> bu koddur.
           Yazdırıp güvenli bir yerde saklayın. Bu kod bir daha gösterilmeyecek.
         </p>
-        <p className="my-6 rounded-lg bg-slate-100 p-4 text-center font-mono text-lg tracking-wider">
+        <p
+          data-testid="kurtarma-kodu"
+          className="my-6 rounded-lg bg-slate-100 p-4 text-center font-mono text-lg tracking-wider"
+        >
           {kurtarmaKodu}
         </p>
         <label className="flex items-start gap-2 text-sm">

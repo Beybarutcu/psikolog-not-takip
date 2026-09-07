@@ -7,7 +7,7 @@ test('kurulum, kilitleme ve tekrar acma', async ({ page }) => {
   await page.getByLabel('Parola tekrar').fill('gizliparola')
   await page.getByRole('button', { name: 'Devam et' }).click()
 
-  const kod = await page.locator('.font-mono').textContent()
+  const kod = await page.getByTestId('kurtarma-kodu').textContent()
   expect(kod).toMatch(/^[0-9A-Z]{5}(-[0-9A-Z]{5}){4}$/)
 
   await page.getByLabel(/kurtarma kodunu kaydettim/i).check()

@@ -263,9 +263,10 @@ jobs:
           if (Test-Path 'C:\Strawberry\perl\bin') {
             'C:\Strawberry\perl\bin' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           }
-      # ONEMLI: npm adimlari Rust'tan ONCE gelir. cargo test --workspace,
-      # src-tauri'yi de derler; generate_context!() makrosu web/dist dizininin
-      # derleme aninda VAR OLMASINI ister ve o dizin .gitignore'dadir.
+      # npm adimlari Rust'tan once gelir. Duz `cargo test` icin sart degil
+      # (generate_context!() frontendDist'i yalnizca custom-protocol feature'i
+      # etkinken arar, onu da sadece `tauri build` ekler) — ama build-macos
+      # isinde sart, ve sirayi tek yerde tutmak ileride ayagimiza dolanmaz.
       - run: npm ci
       - run: npm --prefix web ci
       - run: npm --prefix web run build

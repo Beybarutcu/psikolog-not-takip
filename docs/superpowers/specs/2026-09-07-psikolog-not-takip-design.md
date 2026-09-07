@@ -92,11 +92,16 @@ yoktur** ve cihazlar arasında senkronizasyon problemi oluşmaz (tek yazıcı, t
 
 ### macOS'a özgü kararlar
 
-- **Dağıtım ve Gatekeeper:** İmzalanmamış bir `.app`, macOS'ta "geliştirici doğrulanamadı"
-  uyarısıyla açılmaz ve kullanıcının sağ tık → Aç ya da Sistem Ayarları'ndan izin vermesi
-  gerekir. Teknik olmayan bir kullanıcı için bu kabul edilemez bir ilk deneyimdir. Çözüm:
-  Apple Developer Program (yıllık 99 USD) ile **imzalama + notarizasyon**. Bu bir maliyet kararı
-  olduğu için kullanıcıya sorulur; alınmazsa kurulum için resimli bir yönerge hazırlanır.
+- **Dağıtım ve Gatekeeper — v1 kararı: imzasız.** İmzalanmamış bir `.app`, macOS'ta "geliştirici
+  doğrulanamadı" uyarısıyla açılmaz; kullanıcının bir kereye mahsus sağ tık → Aç yapması ya da
+  Sistem Ayarları → Gizlilik ve Güvenlik'ten izin vermesi gerekir. Apple Developer Program
+  (yıllık 99 USD) şimdilik alınmayacağı için:
+  - `.dmg` ile birlikte **ekran görüntülü, adım adım bir kurulum yönergesi** hazırlanır. Bu bir
+    teslimat kalemidir, sonradan akla gelecek bir ek değil.
+  - Kod imzalamayı sonradan eklemek yalnızca derleme adımını değiştirir; mimaride bir şey
+    değişmez. Karar ertelenebilir bırakılmıştır.
+  - İmzasız uygulamada **otomatik güncelleme yoktur**; yeni sürüm elle indirilip değiştirilir.
+    Uygulama içinde "yeni sürüm var" bildirimi de yoktur (internete çıkmamak esastır).
 - **Uygulama verisi:** `~/Library/Application Support/<uygulama>/` altında; yedek klasörünü
   kullanıcı seçer.
 - **Time Machine uyumu:** Yedek dosyaları zaten şifreli olduğu için Time Machine'in bunları
@@ -115,6 +120,21 @@ yoktur** ve cihazlar arasında senkronizasyon problemi oluşmaz (tek yazıcı, t
   Keychain kaydı tek tıkla silinebilir. **v1'de opsiyonel, kapalı gelir.**
 - **Girişte otomatik başlatma:** LaunchAgent ile, kullanıcı isterse. Uygulama başlar ama
   **kilitli** başlar; parola girilene kadar veri açılmaz.
+
+### Geliştirme ve derleme ortamı
+
+Geliştirme bir **Windows makinesinde** yapılır, hedef ise macOS'tur. Bu ayrımın üç sonucu var:
+
+- **Derleme GitHub Actions'ın macOS runner'ında yapılır.** Windows'tan macOS'a çapraz derleme
+  pratik değildir. CI, universal `.dmg` üretir ve artefakt olarak yayınlar. Bu yüzden CI
+  kurulumu projenin sonuna değil, **başına** alınır — ilk günden "derlenen bir .dmg" olmalı.
+- **İş mantığının tamamı platformdan bağımsız test edilebilir olmalıdır.** Kripto, veri katmanı,
+  API ve arayüz testleri Windows'ta çalışır. Rust tarafında macOS'a özgü çağrılar (Keychain,
+  Bonjour, yerel ağ izni) ince bir arayüzün arkasına alınır ve Windows'ta sahte (stub)
+  uygulamasıyla derlenir.
+- **Mac'e özgü davranışlar yalnızca hedef makinede doğrulanabilir.** Touch ID, Bonjour ile
+  `psikolog.local` çözümlemesi, yerel ağ izni ve Gatekeeper akışı için kullanıcının kendi
+  yapabileceği, yazılı bir kabul testi listesi hazırlanır.
 
 ## 4. Güvenlik
 

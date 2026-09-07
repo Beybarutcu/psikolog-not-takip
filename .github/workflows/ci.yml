@@ -20,6 +20,8 @@ jobs:
       - run: npm --prefix web ci
       - run: npm --prefix web run build
       - run: cargo test --workspace
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
 
   build-macos:
     runs-on: macos-14

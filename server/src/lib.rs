@@ -1,3 +1,4 @@
+pub mod assets;
 pub mod routes;
 pub mod state;
 
@@ -14,5 +15,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/kurulum", post(routes::setup::kurulum))
         .route("/api/kilit-ac", post(routes::session::kilit_ac))
         .route("/api/kilitle", post(routes::session::kilitle))
+        // API rotalari eslesmezse arayuz sunulur (SPA geri donusu).
+        .fallback(assets::statik)
         .with_state(state)
 }

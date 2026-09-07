@@ -5,7 +5,7 @@ pub const CURRENT_VERSION: i64 = 1;
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
     anahtar TEXT PRIMARY KEY,
-    deger   NUMERIC NOT NULL
+    deger   TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -60,10 +60,14 @@ mod tests {
     #[test]
     fn migration_surumu_kaydeder() {
         let (_d, c) = baglanti();
-        let v: i64 = c
+        // DIKKAT: deger sutunu TEXT'tir. app_meta genel amacli bir anahtar/deger
+        // tablosudur ve ileride metin ayarlar da tutacaktir. Sutunu NUMERIC yapip
+        // burada i64 okumak, sayi gibi gorunen metinleri (bastaki sifirlar, "1.50")
+        // sessizce bozar. Dogru olan, degeri metin okuyup ayristirmaktir.
+        let ham: String = c
             .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(v, CURRENT_VERSION);
+        assert_eq!(ham.parse::<i64>().unwrap(), CURRENT_VERSION);
     }
 
     #[test]
@@ -71,6 +75,20 @@ mod tests {
         let (_d, c) = baglanti();
         migrate(&c).unwrap();
         migrate(&c).unwrap();
+    }
+
+    #[test]
+    fn app_meta_sayi_gibi_gorunen_metni_bozmadan_saklar() {
+        let (_d, c) = baglanti();
+        c.execute(
+            "INSERT INTO app_meta (anahtar, deger) VALUES ('test_deger', '0501234567')",
+            [],
+        )
+        .unwrap();
+        let okunan: String = c
+            .query_row("SELECT deger FROM app_meta WHERE anahtar='test_deger'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(okunan, "0501234567", "bastaki sifir korunmalı");
     }
 
     #[test]

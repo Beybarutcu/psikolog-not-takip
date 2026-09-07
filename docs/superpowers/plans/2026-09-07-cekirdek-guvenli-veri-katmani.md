@@ -1764,7 +1764,10 @@ git commit -m "feat(oturum): bellekte anahtar tutma ve bosta kalma kilidi"
   - `pub struct AppState { pub veri_dizini: PathBuf, pub oturum: Arc<Mutex<Oturum>>, pub kdf: KdfParams }`
   - `pub fn router(state: AppState) -> axum::Router`
   - Uç noktalar:
-    - `GET  /api/durum` → `{ "kurulum_gerekli": bool, "kilitli": bool }`
+    - `GET  /api/durum` → `{ "kurulum_gerekli": bool, "kilitli": bool, "keystore_bozuk": bool }`
+      `keystore_bozuk`, anahtar dosyası var ama okunamıyorsa `true` olur; o durumda
+      `kurulum_gerekli` **false** kalır. Aksi hâlde arayüz kullanıcıyı kuruluma, yani
+      mevcut anahtarı ezmeye ve veriyi kalıcı olarak kaybetmeye iterdi.
     - `POST /api/kurulum` gövde `{ "parola": string }` → `201 { "kurtarma_kodu": string }`; kurulum zaten yapılmışsa `409`
     - `POST /api/kilit-ac` gövde `{ "parola": string }` veya `{ "kurtarma_kodu": string }` → `200 {}` / `401 { "hata": "..." }`
     - `POST /api/kilitle` → `200 {}`
@@ -2344,7 +2347,8 @@ async function istek<T>(yol: string, secenekler?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  durumAl: () => istek<{ kurulum_gerekli: boolean; kilitli: boolean }>('/api/durum'),
+  durumAl: () =>
+    istek<{ kurulum_gerekli: boolean; kilitli: boolean; keystore_bozuk: boolean }>('/api/durum'),
   kurulumYap: (parola: string) =>
     istek<{ kurtarma_kodu: string }>('/api/kurulum', {
       method: 'POST',
@@ -2448,7 +2452,7 @@ import { AnaEkran } from './screens/AnaEkran'
 import { KilitEkrani } from './screens/KilitEkrani'
 import { KurulumSihirbazi } from './screens/KurulumSihirbazi'
 
-type Durum = { kurulum_gerekli: boolean; kilitli: boolean } | null
+type Durum = { kurulum_gerekli: boolean; kilitli: boolean; keystore_bozuk: boolean } | null
 
 export default function App() {
   const [durum, setDurum] = useState<Durum>(null)

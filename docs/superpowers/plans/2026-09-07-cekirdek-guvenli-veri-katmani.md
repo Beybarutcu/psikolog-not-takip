@@ -378,7 +378,10 @@ mod tests {
     fn bozuk_sifreli_metin_wrong_secret_dondurur() {
         let key = generate_data_key();
         let mut wrapped = wrap_key("p", &key, KdfParams::test_fast()).unwrap();
-        wrapped.ciphertext_hex.replace_range(0..2, "ff");
+        // Ilk bayt zaten "ff" ise ustune "ff" yazmak hicbir seyi bozmaz ve test
+        // ~1/256 olasilikla panikler. Bozmayi deterministik yap.
+        let yeni = if wrapped.ciphertext_hex.starts_with("ff") { "00" } else { "ff" };
+        wrapped.ciphertext_hex.replace_range(0..2, yeni);
         assert!(matches!(unwrap_key("p", &wrapped).unwrap_err(), CryptoError::WrongSecret));
     }
 
@@ -481,7 +484,7 @@ pub fn wrap_key(secret: &str, key: &DataKey, kdf: KdfParams) -> Result<WrappedKe
     let derived = derive(secret, &salt, kdf)?;
     let cipher = XChaCha20Poly1305::new(derived.as_ref().into());
     let ciphertext = cipher
-        .encrypt(XNonce::from_slice(&nonce), key.as_ref().as_slice())
+        .encrypt(XNonce::from_slice(&nonce), key.as_slice())
         .map_err(|_| CryptoError::Kdf("sifreleme basarisiz".into()))?;
 
     Ok(WrappedKey {
@@ -503,9 +506,14 @@ pub fn unwrap_key(secret: &str, wrapped: &WrappedKey) -> Result<DataKey, CryptoE
 
     let derived = derive(secret, &salt, wrapped.kdf)?;
     let cipher = XChaCha20Poly1305::new(derived.as_ref().into());
-    let plain = cipher
-        .decrypt(XNonce::from_slice(&nonce), ciphertext.as_slice())
-        .map_err(|_| CryptoError::WrongSecret)?;
+    // Cozulen duz metin HAM VERI ANAHTARIDIR. Zeroizing ile sarilmazsa
+    // serbest birakilan heap'te temizlenmemis anahtar kalir ve swap/hibernation
+    // dosyasi uzerinden diske dusebilir.
+    let plain = Zeroizing::new(
+        cipher
+            .decrypt(XNonce::from_slice(&nonce), ciphertext.as_slice())
+            .map_err(|_| CryptoError::WrongSecret)?,
+    );
 
     let bytes: [u8; DATA_KEY_LEN] = plain
         .as_slice()

@@ -47,6 +47,10 @@ impl Oturum {
     /// asilmamissa `true` doner.
     pub fn acik_mi(&self, now: Instant) -> bool {
         match (&self.anahtar, self.son_islem) {
+            // `<=` kasitli: tam sinirda (now - son_islem == kilit_suresi)
+            // oturum hala ACIK sayilir. Bu secim
+            // `sinirda_acik_bir_ns_sonra_kapali` testiyle kilitlenmistir -
+            // karsilastirma `<`'ya degistirilirse o test kirilir.
             (Some(_), Some(son)) => now.duration_since(son) <= self.kilit_suresi,
             _ => false,
         }
@@ -134,6 +138,38 @@ mod tests {
         o.ac(generate_data_key(), t);
         assert!(o.acik_mi(t + Duration::from_secs(59)));
         assert!(!o.acik_mi(t + Duration::from_secs(61)));
+    }
+
+    #[test]
+    fn sinirda_acik_bir_ns_sonra_kapali() {
+        // `acik_mi` icindeki `<=` karsilastirmasinin sinirini kilitler:
+        // tam sinirda (son_islem + kilit_suresi) oturum ACIK, bir
+        // nanosaniye sonrasinda KAPALI olmali. Hem `acik_mi` hem
+        // `anahtar` uzerinden dogrulanir - biri dogru digeri yanlis olabilir.
+        let t = Instant::now();
+        let mut o = Oturum::kapali();
+        o.kilit_suresi_ayarla(60);
+        o.ac(generate_data_key(), t);
+
+        let tam_sinirda = t + Duration::from_secs(60);
+        assert!(
+            o.acik_mi(tam_sinirda),
+            "tam sinirda oturum hala acik sayilmali"
+        );
+        assert!(
+            o.anahtar(tam_sinirda).is_some(),
+            "tam sinirda anahtar hala verilmeli"
+        );
+
+        let sinirdan_bir_ns_sonra = tam_sinirda + Duration::from_nanos(1);
+        assert!(
+            !o.acik_mi(sinirdan_bir_ns_sonra),
+            "sinirdan bir ns sonra oturum kapali olmali"
+        );
+        assert!(
+            o.anahtar(sinirdan_bir_ns_sonra).is_none(),
+            "sinirdan bir ns sonra anahtar verilmemeli"
+        );
     }
 
     #[test]

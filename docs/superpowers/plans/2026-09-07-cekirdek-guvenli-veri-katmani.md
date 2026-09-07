@@ -332,7 +332,8 @@ Projenin en kritik kodu. Buradaki bir hata, kurtarılamayan veri demek.
   - `pub fn generate_data_key() -> DataKey`
   - `pub fn wrap_key(secret: &str, key: &DataKey, kdf: KdfParams) -> Result<WrappedKey, CryptoError>`
   - `pub fn unwrap_key(secret: &str, wrapped: &WrappedKey) -> Result<DataKey, CryptoError>`
-  - `pub enum CryptoError { WrongSecret, Kdf(String), Format(String) }`
+  - `pub enum CryptoError { WrongSecret, Kdf(String), Format(String), Encryption(String) }`
+  - `pub const MAX_M_COST: u32 = 1 << 21`, `MAX_T_COST: u32 = 16`, `MAX_P_COST: u32 = 8`
 
 - [ ] **Step 1: Başarısız testleri yaz**
 
@@ -426,8 +427,10 @@ pub enum CryptoError {
     WrongSecret,
     #[error("anahtar turetilemedi: {0}")]
     Kdf(String),
-    #[error("kayit bicimi bozuk: {0}")]
+    #[error("kayıt biçimi bozuk: {0}")]
     Format(String),
+    #[error("şifreleme başarısız: {0}")]
+    Encryption(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -523,10 +526,22 @@ pub fn unwrap_key(secret: &str, wrapped: &WrappedKey) -> Result<DataKey, CryptoE
 }
 ```
 
+**Uygulama sırasında eklenen üç koruma** (inceleme bulguları sonucu; gerçek kod bunları
+içerir, sonraki görevler bu davranışa güvenebilir):
+
+1. `unwrap_key`, AEAD çözmesinden **önce** `salt` ve `ciphertext` uzunluklarını doğrular
+   (`SALT_LEN`, `DATA_KEY_LEN + 16`). Uymazsa `Format` döner — bozuk bir kaydın "parola
+   yanlış" sanılıp kullanıcının veriyi imha etmesini önler.
+2. `unwrap_key`, türetmeden **önce** diskten okunan KDF parametrelerini sınırlar
+   (`MAX_M_COST`, `MAX_T_COST`, `MAX_P_COST`). Kurcalanmış bir `m_cost` süreci
+   `handle_alloc_error` ile öldürebilir, `t_cost` süresiz kilitleyebilir.
+3. `wrap_key`'deki şifreleme hatası `Kdf` değil `Encryption` varyantı döner.
+
 - [ ] **Step 4: Testlerin geçtiğini doğrula**
 
 Run: `cargo test -p psikolog-core keyring`
-Expected: 6 test PASS.
+Expected: 9 test PASS (brief'in 6 testi + uzunluk kontrolü, KDF sınırı ve gerçek
+parametreli round-trip testleri).
 
 - [ ] **Step 5: Commit**
 

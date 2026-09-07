@@ -757,12 +757,25 @@ pub fn open_encrypted(path: &Path, key: &DataKey) -> Result<Connection, DbError>
         std::fs::create_dir_all(dir)?;
     }
     let conn = Connection::open(path)?;
-    conn.pragma_update(None, "key", format!("x'{}'", hex::encode(key.as_ref())))?;
+    // Anahtarin hex temsili de anahtardir: ara String'ler Zeroizing ile sarilir.
+    let anahtar_ifadesi = Zeroizing::new(format!(
+        "x'{}'",
+        Zeroizing::new(hex::encode(key.as_ref())).as_str()
+    ));
+    conn.pragma_update(None, "key", anahtar_ifadesi.as_str())?;
 
-    // Anahtar yanlissa ilk gercek okuma "file is not a database" ile patlar.
+    // Anahtar yanlissa ilk gercek okuma SQLITE_NOTADB ile patlar.
+    // DIKKAT: yalnizca NotADatabase WrongKey'e eslenir. Her SqliteFailure'i
+    // WrongKey saymak, kilitli dosyayi (BUSY), disk hatasini (IOERR) ve gercek
+    // bozulmayi (CORRUPT) "parolaniz hatali" diye gosterir; kullanici dogru
+    // parolayi deneyip sonunda sifirlayarak kurtarilabilir veriyi imha edebilir.
     match conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0)) {
         Ok(_) => {}
-        Err(rusqlite::Error::SqliteFailure(_, _)) => return Err(DbError::WrongKey),
+        Err(rusqlite::Error::SqliteFailure(e, _))
+            if e.code == rusqlite::ffi::ErrorCode::NotADatabase =>
+        {
+            return Err(DbError::WrongKey)
+        }
         Err(e) => return Err(DbError::Sqlite(e)),
     }
 

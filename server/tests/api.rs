@@ -81,7 +81,7 @@ async fn yanlis_parola_401_dondurur_ve_kilitli_kalir() {
 
     let (kod, json) = cagir(&s, "POST", "/api/kilit-ac", Some(serde_json::json!({"parola":"yanlis"}))).await;
     assert_eq!(kod, StatusCode::UNAUTHORIZED);
-    assert!(json["hata"].as_str().unwrap().contains("hatali"));
+    assert!(json["hata"].as_str().unwrap().contains("hatalı"));
 
     let (_, durum) = cagir(&s, "GET", "/api/durum", None).await;
     assert_eq!(durum["kilitli"], true);
@@ -121,9 +121,12 @@ async fn kilitliyken_durum_yaniti_kurtarma_kodu_veya_anahtar_icermez() {
 
     let (kod, json) = cagir(&s, "GET", "/api/durum", None).await;
     assert_eq!(kod, StatusCode::OK);
-    // Yanit govdesi yalnizca iki bool alan icermeli, baska hicbir sey degil.
+    // Yanit govdesi yalnizca uc bool alan icermeli (kurulum_gerekli, kilitli,
+    // keystore_bozuk), baska hicbir sey degil. (keystore_bozuk alani
+    // Bulgu 1 duzeltmesiyle eklendi; dogruladigi sey -- hassas veri
+    // sizmamasi -- degismedi, yalnizca alan sayisi 2'den 3'e cikti.)
     let alanlar: Vec<&String> = json.as_object().unwrap().keys().collect();
-    assert_eq!(alanlar.len(), 2, "durum yaniti beklenenden fazla alan iceriyor: {json}");
+    assert_eq!(alanlar.len(), 3, "durum yaniti beklenenden fazla alan iceriyor: {json}");
     assert!(json.get("kurtarma_kodu").is_none());
     assert!(json.get("parola").is_none());
 }
@@ -151,4 +154,110 @@ async fn kilitliyken_yanlis_kilit_ac_denemesi_kurtarma_kodu_sizdirmaz() {
     assert_eq!(kod, StatusCode::UNAUTHORIZED);
     let govde_metni = json.to_string();
     assert!(!govde_metni.contains(&kurtarma), "hata yaniti kurtarma kodunu icermemeli");
+}
+
+// --- Inceleme Bulgu 1: bozuk keystore karsisinda celiskili teshis ---
+//
+// `keystore::exists()` yalnizca dosyanin var olup olmadigina bakar,
+// `keystore::load()` ise "dosya yok" ile "dosya bozuk"u ayni io hatasi
+// altinda birlestirir. Duzeltmeden once bu, /api/kilit-ac'in bozuk dosyada
+// "once kurulum yapilmali" demesine (kullaniciyi "keystore'u silip yeniden
+// kurayim" gibi veri kaybina goturen bir cozume) yol aciyordu. Bu test hem
+// eski (yanlis) davranisi hem de duzeltilmis sozlesmeyi dogrulamak icin var.
+#[tokio::test]
+async fn bozuk_keystore_hicbir_uc_nokta_kurulum_yapilmamis_demez() {
+    let (_d, s) = test_state();
+    cagir(&s, "POST", "/api/kurulum", Some(serde_json::json!({"parola":"gizli123"}))).await;
+
+    // Keystore dosyasinin icerigini gecersiz JSON ile ez (bozuk dosya simulasyonu).
+    std::fs::write(s.keystore_yolu(), b"{ bu gecerli json degil, bozuk dosya").unwrap();
+
+    // 1) GET /api/durum: kurulum_gerekli YANLIS kalmali (kurulum yapmak veriyi
+    //    yok eder), ama yeni keystore_bozuk alani DOGRU olmali.
+    let (kod_durum, durum) = cagir(&s, "GET", "/api/durum", None).await;
+    assert_eq!(kod_durum, StatusCode::OK);
+    assert_eq!(durum["kurulum_gerekli"], false, "bozuk dosyada kurulum_gerekli asla true olmamali");
+    assert_eq!(durum["keystore_bozuk"], true, "durum yaniti bozuk keystore'u bildirmeli");
+
+    // 2) POST /api/kilit-ac: "once kurulum yapilmali" DEMEMELI.
+    let (kod_ac, json_ac) = cagir(&s, "POST", "/api/kilit-ac", Some(serde_json::json!({"parola":"gizli123"}))).await;
+    let hata_ac = json_ac["hata"].as_str().unwrap_or("").to_lowercase();
+    assert!(
+        !hata_ac.contains("once kurulum") && !hata_ac.contains("önce kurulum"),
+        "bozuk keystore'da kilit-ac 'once kurulum yapilmali' dememeli: {hata_ac}"
+    );
+    assert_ne!(kod_ac, StatusCode::CONFLICT, "bozuk keystore artik 409 'kurulum yok' anlamina gelmemeli");
+    // Mesaj kullaniciyi dosyayi SILMEMESI konusunda uyarmali.
+    assert!(hata_ac.contains("silme"), "mesaj kullaniciyi dosyayi silmemesi konusunda uyarmali: {hata_ac}");
+
+    // 3) POST /api/kurulum: reddetmeye devam etmeli (ezme riskine karsi), ama
+    //    "kurulum yapilmamis" DEMEMELI -- tam tersi, zaten bir dosya var.
+    let (kod_kur, json_kur) = cagir(&s, "POST", "/api/kurulum", Some(serde_json::json!({"parola":"baskaparola"}))).await;
+    assert_eq!(kod_kur, StatusCode::CONFLICT);
+    let hata_kur = json_kur["hata"].as_str().unwrap_or("").to_lowercase();
+    assert!(
+        !hata_kur.contains("kurulum yapilmamis") && !hata_kur.contains("kurulum yapılmamış"),
+        "kurulum ucnoktasi bozuk dosyada 'kurulum yapilmamis' dememeli: {hata_kur}"
+    );
+}
+
+// --- Inceleme Bulgu 2: es zamanli kurulum yarisi keystore'u eziyor ---
+//
+// Iki es zamanli /api/kurulum istegi (cift tiklama yeter) `exists()` kontrolu
+// ile `save()` arasinda kilit olmadan calisirsa ikisi de "dosya yok" gorup
+// yazabilir; ikincisi birincinin keystore'unu (ve parolasini) sessizce ezer.
+// Bu test gercek OS thread'leriyle (her biri kendi tokio runtime'inda) ve bir
+// Barrier ile iki istegi mumkun oldugunca ayni anda baslatir; AppState'teki
+// `kurulum_kilidi` (Arc<Mutex<()>>) sayesinde tam olarak biri basarili (201),
+// digeri 409 almali -- hicbir zaman ikisi de basarili olmamali.
+#[test]
+fn eszamanli_kurulum_yarisi_keystoreu_ezmez() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = psikolog_server::AppState::yeni(
+        dir.path().to_path_buf(),
+        KdfParams { m_cost: 8, t_cost: 1, p_cost: 1 },
+    );
+
+    let engel = std::sync::Arc::new(std::sync::Barrier::new(2));
+
+    let s1 = state.clone();
+    let e1 = engel.clone();
+    let t1 = std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async move {
+            e1.wait();
+            cagir(&s1, "POST", "/api/kurulum", Some(serde_json::json!({"parola":"parolabirtane"}))).await
+        })
+    });
+
+    let s2 = state.clone();
+    let e2 = engel.clone();
+    let t2 = std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async move {
+            e2.wait();
+            cagir(&s2, "POST", "/api/kurulum", Some(serde_json::json!({"parola":"parolaikitane"}))).await
+        })
+    });
+
+    let (kod1, _) = t1.join().unwrap();
+    let (kod2, _) = t2.join().unwrap();
+    let kodlar = [kod1, kod2];
+
+    let basarili = kodlar.iter().filter(|k| **k == StatusCode::CREATED).count();
+    let cakisma = kodlar.iter().filter(|k| **k == StatusCode::CONFLICT).count();
+    assert_eq!(basarili, 1, "tam olarak bir kurulum istegi basarili olmali, ikisi degil: {kodlar:?}");
+    assert_eq!(cakisma, 1, "diger istek 409 (kurulum zaten yapilmis) almali: {kodlar:?}");
+
+    // Kazanan parola calismali, ezilen (kaybeden) parola calismamali -- yani
+    // keystore hic ezilmemis, sadece tek bir yazan kazanmis olmali.
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let s3 = state.clone();
+    rt.block_on(async move {
+        let (kod_bir, _) = cagir(&s3, "POST", "/api/kilit-ac", Some(serde_json::json!({"parola":"parolabirtane"}))).await;
+        cagir(&s3, "POST", "/api/kilitle", None).await;
+        let (kod_iki, _) = cagir(&s3, "POST", "/api/kilit-ac", Some(serde_json::json!({"parola":"parolaikitane"}))).await;
+        let basariliydi = [kod_bir, kod_iki].iter().filter(|k| **k == StatusCode::OK).count();
+        assert_eq!(basariliydi, 1, "sadece kazanan parola kilidi acabilmeli, digeri calismamali");
+    });
 }

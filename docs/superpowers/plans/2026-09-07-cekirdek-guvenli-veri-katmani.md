@@ -179,6 +179,16 @@ npm create vite@latest web -- --template react-ts --yes
 cd web && npm install && npm install -D tailwindcss @tailwindcss/vite && cd ..
 ```
 
+Tailwind eklentisini kurmak yetmez, stil dosyasindan **import da edilmelidir**.
+`web/src/index.css` icerigini sununla degistir:
+
+```css
+@import 'tailwindcss';
+```
+
+Bu satir olmadan tum siniflar (`rounded-lg`, `text-slate-600` ...) etkisiz kalir:
+testler gecer, uygulama acilir, ama ekran ciplak HTML olarak gorunur.
+
 `web/vite.config.ts` içeriğini şununla değiştir:
 
 ```ts
@@ -2202,7 +2212,7 @@ describe('KurulumSihirbazi', () => {
     await userEvent.type(screen.getByLabelText('Parola tekrar'), 'baskaparola')
     await userEvent.click(screen.getByRole('button', { name: 'Devam et' }))
 
-    expect(screen.getByText(/ayni degil/i)).toBeDefined()
+    expect(screen.getByText(/aynı değil/i)).toBeDefined()
     expect(kurulumYap).not.toHaveBeenCalled()
   })
 

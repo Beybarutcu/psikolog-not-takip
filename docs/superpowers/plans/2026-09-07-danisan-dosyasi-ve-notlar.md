@@ -20,7 +20,13 @@ Plan 1 ve Plan 2'nin tüm global kısıtları geçerlidir. Bu plana özgü ek k�
 - **Yazma işlemi ile log kaydı aynı transaction içinde olmalıdır.** Ayrı yapılırsa "not kaydedildi ama log yazılmadı" durumu doğar. Not editörü 2 saniyede bir yazdığı için bu katmanda özellikle önemlidir: kısmi başarısızlık sık karşılaşılacak bir durumdur, istisna değil.
 - **Ekli dosyalar veritabanı içinde BLOB olarak saklanır**, ayrı dosya olarak değil — yedek tek dosya kalsın diye. Dosya başına üst sınır **20 MB**, toplam uyarı eşiği 500 MB.
 - **Saklama süresi otomatik silme yapmaz.** Süresi dolan dosyalar yalnızca listelenir; silme kararını her zaman insan verir.
-- Şema sürümü bu planda **3**'e çıkar.
+- Şema sürümü bu planda **3**'e çıkar. `migrate`, Plan 2'de yeniden yazılmış olan
+  sürüm-okuyan/transaction'lı çerçeveyi kullanmalı; koşulsuz `execute_batch` zinciri **değil**.
+- **`Oturum::dokun()` her başarılı istekte çağrılmalıdır.** Çağrılmazsa boşta kalma kilidi
+  "kilit açıldıktan 5 dakika sonra" anlamına gelir ve not editörü seansın 5. dakikasında 401
+  almaya başlar — bu planın önlemeye çalıştığı not kaybının ta kendisi.
+- **`audit_log.ayrinti` kapalı bir enum'dur** (Plan 2'de dönüştürüldü). Serbest metin yazma;
+  log tetikleyicilerle silinemez olduğu için oraya düşen not içeriği kalıcıdır.
 
 ---
 

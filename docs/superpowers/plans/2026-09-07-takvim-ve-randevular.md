@@ -24,6 +24,103 @@ Plan 1'in tüm global kısıtları geçerlidir (dış ağ isteği yok, sunucu ya
 
 ---
 
+## Plan 1'in son incelemesinden devralınan zorunlu maddeler
+
+Plan 1 tamamlandıktan sonra dalın tamamına bakan bir inceleme yapıldı. Aşağıdaki maddeler
+Plan 1'i birleştirmeyi engellemiyordu ama **Plan 2 bunları içermeden yazılırsa hatalar
+kalıcılaşır.** Görev sıralamasına dahil edilmeleri gerekir.
+
+### Z1. `keystore.json` yedeğe dahil edilmeli — en kritik madde
+
+`yedek_al` yalnızca `veri.db`'yi kopyalıyor. Ama o dosya, `keystore.json` içindeki sarmalanmış
+veri anahtarı olmadan **açılamaz**; parola ve kurtarma kodu tek başına yetmez, ikisi de yalnızca
+o dosyadaki sarmalamayı çözer. Keystore ise uygulama veri dizininde kalıyor.
+
+**Sonuç: disk bozulursa veya Mac çalınırsa, USB'deki yedeğin tamamı sonsuza kadar okunamaz.**
+Tasarımın üçüncü başarı ölçütü ("bilgisayar bozulursa veri kaybolmasın") bugünkü mimariyle
+karşılanmıyor. Bu bir kod hatası değil, Görev 5 ile Görev 8 arasındaki mimari boşluk.
+
+Yapılacaklar:
+1. `yedek_al`, `keystore.json`'ı da hedef klasöre kopyalasın. Dosya zaten AEAD sarmalı olduğu
+   için bulut klasöründe durması güvenli — tasarımın "dosya zaten şifreli" gerekçesiyle tutarlı.
+2. `geri_yukle` her ikisini birlikte geri yüklesin; biri varken diğeri yoksa **hiçbirini**
+   yükleme, çünkü eşleşmeyen bir çift veriyi erişilemez bırakır.
+3. `KeystoreBozukEkrani` metni düzeltilsin: bugün "yedekten geri yükleyin" diyor, bu tavsiye
+   **yanlış** (veritabanı yedeği bozuk keystore'u onarmaz) ve "teknik desteğe başvurun" diyor,
+   oysa ürün tek kişilik bir muayenehane için.
+4. Kurulum sihirbazı kullanıcıya "yedek klasörünüz hem verinizi hem anahtarınızı içerir" bilgisini
+   versin.
+
+### Z2. `migrate` çerçevesi yeniden yazılmalı — Görev 1'e dahil
+
+Mevcut `migrate` sürümü **yazıyor ama hiç okumuyor**; tüm betikleri koşulsuz çalıştırıp
+`schema_version`'ı `CURRENT_VERSION` yapıyor. İki sonucu var:
+- **Sürüm düşürme sessizce veriyi bozar.** Uygulama imzasız olduğu için kullanıcı eski bir `.app`
+  geri koyabilir; v3 veritabanı v2 ikilisiyle açıldığında `migrate` hata vermeden sürümü 2'ye
+  geri yazar, v3 tabloları ortada kalır ve sonraki hiçbir teşhis doğru olmaz.
+- Plan 3 zaten "duplicate column hatasını yut" gibi bir kaçamak planlıyor — kalıp ikinci
+  genişletmede çatlıyor.
+
+Yeni `migrate`: mevcut sürümü **okusun**, yalnızca eksik adımları **sırayla** uygulasın, hepsini
+**tek transaction** içinde çalıştırsın ve `okunan_surum > CURRENT_VERSION` ise açmayı
+**reddetsin** (anlaşılır bir hata mesajıyla).
+
+### Z3. `dokun()` çağrılmalı
+
+`Oturum::dokun()` yazıldı ve test edildi ama **hiçbir yerden çağrılmıyor**. Yani boşta kalma
+kilidi bugün "son etkinlikten 5 dakika sonra" değil, **"kilit açıldıktan 5 dakika sonra"**
+çalışıyor. Plan 1'de görünmez (ekranda veri yok). Plan 3'te doğrudan ürün sözünü kırar:
+50 dakikalık seansta not yazan psikolog 5. dakikada kilitlenir ve 2 saniyede bir çalışan otomatik
+kayıt 401 almaya başlar.
+
+`guard::acik_baglanti` (veya eşdeğeri) her **başarılı** istekte oturuma dokunmalı. Ayrıca arayüz
+durumu periyodik yoklamalı — bugün `App.tsx` durumu yalnızca bir kez çekiyor, yani sunucu
+kilitlense bile ekranda danışan verisi görünmeye devam eder.
+
+### Z4. Kilit açmada `open_encrypted` kullanılmamalı
+
+`open_encrypted` "dosya yoksa oluştur" semantiğine sahip. Kurulumda doğru, **kilit açmada
+tehlikeli**: `keystore.json` yerinde ama `veri.db` yoksa (yanlışlıkla silindi, senkronizasyon
+klasörü yuttu, yarım geri yükleme), kilit açma **başarılı olur**, boş bir veritabanı yaratılır ve
+kullanıcı içeri girip her şeyin silinmiş olduğunu görür — hiçbir uyarı olmadan.
+
+`open_existing` ekle (SQLite `OPEN_READWRITE`, `OPEN_CREATE` yok) ve kilit açmada onu kullan.
+
+### Z5. `audit_log.ayrinti` kapalı bir enum'a dönüşmeli
+
+Alan şu an serbest metin; kural yalnızca belgelenmiş, derleyici zorlamıyor. `audit_log`
+tetikleyicilerle **silinemez** olduğu için oraya bir kez yazılan hassas veri hiçbir zaman geri
+alınamaz — KVKK açısından en kötü hata sınıfı.
+
+Şu anda **5** çağrı yeri var. Plan 2 sonrası ~15, Plan 3 sonrası ~30 olacak. `Option<&str>`
+yerine kapalı bir enum (`Ayrinti::Arsivlendi`, `Ayrinti::Durum(...)` gibi) **şimdi** yapılmalı.
+
+### Z6. Diğer devralınan maddeler
+
+- **`Keystore.version` kontrol edilmeli:** sabit var, yazılıyor, taşınıyor ama `load` hiç bakmıyor.
+  İleride yeni bir keystore formatı eski bir ikiliyle açılırsa "dosya bozuk" denir — oysa dosya
+  sağlamdır, sadece daha yenidir. `load` içinde tek bir sürüm kontrolü yeterli.
+- **Parola değiştirme akışı hiç uçtan uca test edilmedi:** mevcut bir keystore dosyasının
+  **üzerine** ikinci kez `save` çağırmak hiç denenmedi. Plan 2 parola değiştirmeyi eklerse,
+  test edilmemiş bir `rename` yolu üretim akışı hâline gelir.
+- **Kurtarma kodu yenilenemiyor:** kod bir kez gösteriliyor, hiçbir yerde saklanmıyor (doğru), ama
+  kâğıt kaybolursa yeni kod üretmenin yolu yok. `change_password` de kurtarma sarmalamasını
+  kasten koruyor. Açık oturumda parola ile doğrulayıp yeni kod üreten bir uç nokta gerekli (~30 satır).
+- **"Artan gecikme" sözünün sahibi yok:** tasarım iki yerde söz veriyor (1s, 2s, 4s...), hiçbir
+  planda geçmiyor. `/api/kilit-ac` sınırsız deneme kabul ediyor. Plan 2 veya Plan 4 sahiplenmeli.
+- **`/api` altında 404 yok:** `fallback(assets::statik)` tüm router'a uygulandığı için
+  `/api/yanlisyol` isteği `200` + HTML dönüyor ve arayüz bunu sessizce boş nesne olarak alıyor.
+  Plan 2 ve 3 birlikte 15'ten fazla uç nokta ekliyor; yolu bir harf yanlış yazılan bir `fetch`
+  sessizce "başarılı boş yanıt" verecek. `/api` altını kendi 404'ü olan bir alt router'a taşı.
+- **`-wal`/`-shm` yan dosyalarının şifreli olduğu test edilmeli:** SQLCipher varsayılan olarak
+  şifreler ama bu doğrulanmadı. Not yazımı başlayınca WAL sürekli dolu olacak ve o dosya diskte
+  duracak.
+- **`geri_yukle` açık bağlantı varken çalışmaz:** dosyayı `rename` ile değiştiriyor. Bugün sunucu
+  her istekte yeni bağlantı açıp kapattığı için sorun yok. Performans için uzun ömürlü bir
+  bağlantı havuzuna geçilirse geri yükleme **sessizce** bozulur.
+
+---
+
 ## Dosya Yapısı
 
 Plan 1'in yapısına eklenenler:

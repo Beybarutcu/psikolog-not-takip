@@ -25,7 +25,7 @@ pub async fn kurulum(
     // Bkz. `AppState::kurulum_kilidi` dokümantasyonu; bu kilit `oturum`
     // kilidinden ayrıdır ve fonksiyonun sonunda `oturum` kilidi de alındığı
     // için sıralamaya dikkat edilir (kurulum_kilidi -> oturum, asla tersi).
-    let _kurulum_kilidi = s.kurulum_kilidi.lock().unwrap();
+    let _kurulum_kilidi = s.kurulum_kilidi.lock().unwrap_or_else(|e| e.into_inner());
 
     match s.keystore_durumu() {
         KeystoreDurumu::Yok => {}
@@ -103,6 +103,6 @@ pub async fn kurulum(
         );
     }
 
-    s.oturum.lock().unwrap().ac(kurulum.data_key, Instant::now());
+    s.oturum.lock().unwrap_or_else(|e| e.into_inner()).ac(kurulum.data_key, Instant::now());
     (StatusCode::CREATED, Json(json!({ "kurtarma_kodu": kurulum.recovery_code })))
 }

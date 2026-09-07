@@ -1,4 +1,4 @@
-use psikolog_core::crypto::keyring::{DataKey, KdfParams};
+use psikolog_core::crypto::keyring::{wrapped_key_yapisal_gecerli_mi, DataKey, KdfParams};
 use psikolog_core::session::Oturum;
 use psikolog_core::store::audit::AuditKaydi;
 use psikolog_core::store::keystore::{self, Keystore};
@@ -6,6 +6,15 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+/// Bu dosyadaki her `.lock()` çağrısı `.unwrap_or_else(|e| e.into_inner())`
+/// kullanır, `.unwrap()` değil. Bir handler kilidi tutarken panikleseydi
+/// (`.unwrap()` ile) mutex "zehirlenir" ve sonraki HER istek de panikler --
+/// kullanıcı donuk bir pencere görür, kurtarma yolu olmaz. `Oturum` ve
+/// kurulum kilidinin değişmezleri kilit altındaki bir panik yarısında bile
+/// bozulmaya dayanıklıdır (ör. `Oturum::ac`/`kilitle` iki alanı sırayla
+/// atar; yarıda kesilse en kötü ihtimalle oturum kilitli kalır), bu yüzden
+/// zehirlenmiş kilidi kurtarıp devam etmek burada doğru semantiktir (bkz.
+/// Bulgu 5).
 #[derive(Clone)]
 pub struct AppState {
     pub veri_dizini: PathBuf,
@@ -55,13 +64,29 @@ impl AppState {
     }
 
     /// Keystore dosyasının `KeystoreDurumu`'ndan hangisinde olduğunu bildirir.
+    ///
+    /// `keystore::load` yalnızca dosyanın geçerli JSON olup olmadığına bakar;
+    /// içindeki `WrappedKey`'lerin (parola/kurtarma) yapısal olarak bozuk
+    /// olması (ör. yarım disk yazımından kalma kısalmış `ciphertext_hex`)
+    /// `load`'dan sorunsuz geçer. Bu yüzden `Var` durumunda ayrıca parolayı
+    /// bilmeden yapılabilecek yapısal doğrulamayı (`wrapped_key_yapisal_gecerli_mi`)
+    /// çalıştırıyoruz -- aksi hâlde `keystore_bozuk` yanlış negatif verir ve
+    /// kullanıcı doğru parolasını girdiğinde "parola hatalı" görür (bkz. Bulgu 1).
     pub fn keystore_durumu(&self) -> KeystoreDurumu {
         let yol = self.keystore_yolu();
         if !keystore::exists(&yol) {
             return KeystoreDurumu::Yok;
         }
         match keystore::load(&yol) {
-            Ok(ks) => KeystoreDurumu::Var(ks),
+            Ok(ks) => {
+                if wrapped_key_yapisal_gecerli_mi(&ks.password)
+                    && wrapped_key_yapisal_gecerli_mi(&ks.recovery)
+                {
+                    KeystoreDurumu::Var(ks)
+                } else {
+                    KeystoreDurumu::Bozuk
+                }
+            }
             Err(_) => KeystoreDurumu::Bozuk,
         }
     }
@@ -72,7 +97,7 @@ impl AppState {
     /// zaten dagitilmis klonlar etkilenmez, bu yuzden her istekte tekrar
     /// buradan alinmalidir.
     pub fn acik_anahtar(&self) -> Option<DataKey> {
-        self.oturum.lock().unwrap().anahtar(Instant::now())
+        self.oturum.lock().unwrap_or_else(|e| e.into_inner()).anahtar(Instant::now())
     }
 
     pub fn audit_dokumu(&self) -> anyhow::Result<Vec<AuditKaydi>> {

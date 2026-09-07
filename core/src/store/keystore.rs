@@ -66,6 +66,16 @@ pub fn save(ks: &Keystore, path: &Path) -> std::io::Result<()> {
     }
     let gecici = path.with_extension("json.tmp");
     std::fs::write(&gecici, serde_json::to_vec_pretty(ks)?)?;
+    // Bu dosya, verinin tamamına erişimi belirleyen tek dosyadır. Sarmalanmış
+    // anahtar zaten şifreli olduğu için bu katı bir gereklilik değil, derinlemesine
+    // savunma amaçlıdır: aynı makinedeki diğer kullanıcıların dosyayı okumasını/
+    // üzerine yazmasını önler. Hedef platform macOS; Windows'ta Unix izin modeli
+    // yok, bu yüzden bu adım atlanır (bkz. Bulgu 6).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gecici, std::fs::Permissions::from_mode(0o600))?;
+    }
     std::fs::rename(&gecici, path)
 }
 
@@ -188,5 +198,18 @@ mod tests {
         let metin = String::from_utf8_lossy(&icerik);
         assert!(!metin.contains(&anahtar_hex), "veri anahtari diske duz yazilmis");
         assert!(!icerik.windows(32).any(|w| w == s.data_key.as_ref()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn keystore_dosyasi_izinleri_sikilastirilir() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let yol = dir.path().join("keystore.json");
+        let s = kur();
+        save(&s.keystore, &yol).unwrap();
+
+        let mod_biti = std::fs::metadata(&yol).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mod_biti, 0o600, "keystore.json izinleri 0600 olmali, gelen: {mod_biti:o}");
     }
 }

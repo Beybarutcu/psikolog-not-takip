@@ -21,7 +21,41 @@ const MAX_M_COST: u32 = 1 << 21; // 2 GiB
 const MAX_T_COST: u32 = 16;
 const MAX_P_COST: u32 = 8;
 
-pub type DataKey = Zeroizing<[u8; DATA_KEY_LEN]>;
+/// Bellekte tutulan 32 baytlik ham veri anahtari.
+///
+/// `Zeroizing<[u8; 32]>` etrafinda kasitli bir newtype: eskiden bu bir tip
+/// takma adiydi (`type DataKey = Zeroizing<[u8; 32]>`) ve `Zeroizing`'in
+/// turetilmis `Debug`'i ham anahtari basardi. Bugun hicbir hata tipi
+/// `DataKey` tasimiyor olsa da, sonraki planlar yeni hata tipleri ekleyecek
+/// ve onlar genellikle `#[derive(Debug)]` alacak - o zaman anahtari tasiyan
+/// bir alan sessizce loglara/hata mesajlarina sizabilirdi. Newtype, `Debug`'i
+/// elle uygulayarak bunu kokten engeller ve ayrica `Serialize`/`Deserialize`
+/// turetilmesini (ya da `zeroize`'in `serde` ozelligi acilirsa sessizce
+/// kazanilmasini) imkansiz kilar (bkz. Bulgu 4).
+#[derive(Clone)]
+pub struct DataKey(Zeroizing<[u8; DATA_KEY_LEN]>);
+
+impl DataKey {
+    /// Ham baytlara salt-okunur erisim. Donen dilim, `DataKey` dusurulunce
+    /// gecersiz olur; hicbir kalici yapida saklanmamali.
+    pub fn as_slice(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
+
+impl AsRef<[u8]> for DataKey {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
+
+/// Ham anahtari ASLA basmaz. Turetilmis `Debug` yerine elle yazilmistir -
+/// bu tipin var olma sebebi budur (bkz. yukaridaki tip dokumantasyonu).
+impl std::fmt::Debug for DataKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("DataKey").field(&"gizli").finish()
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum CryptoError {
@@ -66,7 +100,7 @@ pub struct WrappedKey {
 pub fn generate_data_key() -> DataKey {
     let mut key = [0u8; DATA_KEY_LEN];
     rand::thread_rng().fill_bytes(&mut key);
-    Zeroizing::new(key)
+    DataKey(Zeroizing::new(key))
 }
 
 fn derive(secret: &str, salt: &[u8], kdf: KdfParams) -> Result<Zeroizing<[u8; 32]>, CryptoError> {
@@ -100,11 +134,16 @@ pub fn wrap_key(secret: &str, key: &DataKey, kdf: KdfParams) -> Result<WrappedKe
     })
 }
 
-pub fn unwrap_key(secret: &str, wrapped: &WrappedKey) -> Result<DataKey, CryptoError> {
-    let salt = hex::decode(&wrapped.salt_hex).map_err(|e| CryptoError::Format(e.to_string()))?;
-    let nonce = hex::decode(&wrapped.nonce_hex).map_err(|e| CryptoError::Format(e.to_string()))?;
-    let ciphertext =
-        hex::decode(&wrapped.ciphertext_hex).map_err(|e| CryptoError::Format(e.to_string()))?;
+/// `unwrap_key` ve `wrapped_key_yapisal_gecerli_mi` arasinda paylasilan bicimsel
+/// dogrulama: hex'ten cozulmus salt/nonce/ciphertext uzunluklari ve KDF
+/// parametrelerinin ust sinirlar icinde olup olmadigi. Sifreyi bilmeden de
+/// yapilabilir - AEAD cozme veya kimlik dogrulamayla ilgisi yoktur.
+fn dogrula_bicim(
+    salt: &[u8],
+    nonce: &[u8],
+    ciphertext: &[u8],
+    kdf: KdfParams,
+) -> Result<(), CryptoError> {
     if nonce.len() != NONCE_LEN {
         return Err(CryptoError::Format("nonce uzunluğu hatalı".into()));
     }
@@ -120,14 +159,39 @@ pub fn unwrap_key(secret: &str, wrapped: &WrappedKey) -> Result<DataKey, CryptoE
     // Diskten okunan KDF parametreleri kurcalanmis olabilir. Turetmeden once ust sinir
     // kontrolu yapmazsak asiri buyuk m_cost surecin bellek ayirirken cokmesine (abort),
     // asiri buyuk t_cost ise suresiz kilitlenmeye yol acabilir.
-    if wrapped.kdf.m_cost > MAX_M_COST
-        || wrapped.kdf.t_cost > MAX_T_COST
-        || wrapped.kdf.p_cost > MAX_P_COST
-    {
+    if kdf.m_cost > MAX_M_COST || kdf.t_cost > MAX_T_COST || kdf.p_cost > MAX_P_COST {
         return Err(CryptoError::Format(
             "kdf parametreleri geçersiz: izin verilen üst sınırı aşıyor".into(),
         ));
     }
+    Ok(())
+}
+
+/// Bir `WrappedKey`'in **parolayi/kurtarma kodunu bilmeden** yapisal olarak
+/// gecerli olup olmadigini bildirir: salt/nonce/ciphertext hex olarak
+/// cozulebiliyor mu, uzunluklari dogru mu, KDF parametreleri izin verilen
+/// ust siniri asiyor mu. AEAD cozme (kimlik dogrulama) yapmaz, dolayisiyla
+/// "yanlis parola" ile "bozuk kayit" durumlarini asla karistirmaz - yalnizca
+/// ikincisini tespit eder. `AppState::keystore_durumu()` bunu, dosya
+/// `serde_json` olarak ayristirilabilse bile icerigin bozuk olabilecegi
+/// durumlar icin kullanir (bkz. Bulgu 1).
+pub fn wrapped_key_yapisal_gecerli_mi(wrapped: &WrappedKey) -> bool {
+    let (Ok(salt), Ok(nonce), Ok(ciphertext)) = (
+        hex::decode(&wrapped.salt_hex),
+        hex::decode(&wrapped.nonce_hex),
+        hex::decode(&wrapped.ciphertext_hex),
+    ) else {
+        return false;
+    };
+    dogrula_bicim(&salt, &nonce, &ciphertext, wrapped.kdf).is_ok()
+}
+
+pub fn unwrap_key(secret: &str, wrapped: &WrappedKey) -> Result<DataKey, CryptoError> {
+    let salt = hex::decode(&wrapped.salt_hex).map_err(|e| CryptoError::Format(e.to_string()))?;
+    let nonce = hex::decode(&wrapped.nonce_hex).map_err(|e| CryptoError::Format(e.to_string()))?;
+    let ciphertext =
+        hex::decode(&wrapped.ciphertext_hex).map_err(|e| CryptoError::Format(e.to_string()))?;
+    dogrula_bicim(&salt, &nonce, &ciphertext, wrapped.kdf)?;
 
     let derived = derive(secret, &salt, wrapped.kdf)?;
     let cipher = XChaCha20Poly1305::new(derived.as_ref().into());
@@ -141,7 +205,7 @@ pub fn unwrap_key(secret: &str, wrapped: &WrappedKey) -> Result<DataKey, CryptoE
         .as_slice()
         .try_into()
         .map_err(|_| CryptoError::Format("anahtar uzunluğu hatalı".into()))?;
-    Ok(Zeroizing::new(bytes))
+    Ok(DataKey(Zeroizing::new(bytes)))
 }
 
 #[cfg(test)]
@@ -204,6 +268,62 @@ mod tests {
         // kurtarilamayan veriyi sifirlamaya) itmemek icin ayri bir hata donmeli.
         wrapped.ciphertext_hex.clear();
         assert!(matches!(unwrap_key("p", &wrapped).unwrap_err(), CryptoError::Format(_)));
+    }
+
+    #[test]
+    fn saglam_kayit_yapisal_olarak_gecerli_sayilir() {
+        let key = generate_data_key();
+        let wrapped = wrap_key("p", &key, KdfParams::test_fast()).unwrap();
+        assert!(wrapped_key_yapisal_gecerli_mi(&wrapped));
+    }
+
+    #[test]
+    fn kisaltilmis_ciphertext_hex_yapisal_olarak_gecersiz_sayilir() {
+        // Bulgu 1: `keystore.json` gecerli JSON kalsa bile `ciphertext_hex` yarim
+        // disk yazimi/geri yukleme yuzunden kisalmis olabilir. `unwrap_key`
+        // parolayi bilmeden bu durumu asla cagrilamaz (secret gerekir); ama
+        // `wrapped_key_yapisal_gecerli_mi` parolasiz calisip bunu tespit
+        // etmeli - AppState::keystore_durumu()'nun `keystore_bozuk` alanini
+        // dogru raporlayabilmesi bu fonksiyona dayanir.
+        let key = generate_data_key();
+        let mut wrapped = wrap_key("p", &key, KdfParams::test_fast()).unwrap();
+        wrapped.ciphertext_hex.truncate(wrapped.ciphertext_hex.len() - 10);
+        assert!(!wrapped_key_yapisal_gecerli_mi(&wrapped));
+    }
+
+    #[test]
+    fn asiri_buyuk_kdf_parametreleri_yapisal_olarak_gecersiz_sayilir() {
+        let key = generate_data_key();
+        let mut wrapped = wrap_key("p", &key, KdfParams::test_fast()).unwrap();
+        wrapped.kdf.m_cost = u32::MAX;
+        assert!(!wrapped_key_yapisal_gecerli_mi(&wrapped));
+    }
+
+    #[test]
+    fn gecersiz_hex_yapisal_olarak_gecersiz_sayilir() {
+        let key = generate_data_key();
+        let mut wrapped = wrap_key("p", &key, KdfParams::test_fast()).unwrap();
+        wrapped.salt_hex = "bu-hex-degil".into();
+        assert!(!wrapped_key_yapisal_gecerli_mi(&wrapped));
+    }
+
+    #[test]
+    fn datakey_debug_ciktisi_ham_anahtari_icermez() {
+        // Bulgu 4: `DataKey` eskiden `Zeroizing<[u8; 32]>` icin bir tip takma
+        // adiydi ve turetilmis `Debug`, ham anahtar baytlarini basardi. Bu test
+        // yeni newtype'in Debug ciktisinin ne ham baytlari ne de onlarin hex
+        // temsilini icermedigini dogrular.
+        let key = generate_data_key();
+        let hex_gorunumu = hex::encode(key.as_slice());
+        let debug_metni = format!("{key:?}");
+        assert!(
+            !debug_metni.contains(&hex_gorunumu),
+            "Debug ciktisi ham anahtarin hex temsilini icermemeli: {debug_metni}"
+        );
+        assert!(
+            !debug_metni.is_empty() && debug_metni.contains("DataKey"),
+            "Debug ciktisi hala taniyici olmali: {debug_metni}"
+        );
     }
 
     #[test]

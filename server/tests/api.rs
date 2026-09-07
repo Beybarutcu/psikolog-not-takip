@@ -201,6 +201,63 @@ async fn bozuk_keystore_hicbir_uc_nokta_kurulum_yapilmamis_demez() {
     );
 }
 
+// --- Son inceleme Bulgu 1: gecerli JSON ama yapisal olarak bozuk keystore ---
+//
+// Yukaridaki test gecersiz JSON ile bozulmayi simule ediyordu (`keystore::load`
+// bunu zaten `Err` olarak yakalar). Daha sinsi senaryo: dosya GECERLI JSON
+// kalir ama icindeki `ciphertext_hex` yarim disk yazimi/geri yukleme yuzunden
+// kisalmis olabilir. Duzeltmeden once `keystore::load` bu durumda basariyla
+// donerdi, `keystore_bozuk` yanlis negatif verirdi, bozuk-keystore ekrani
+// ACILMAZDI ve kullanici DOGRU parolasini girdiginde 401 "parola hatali"
+// gorurdu -- teknik olmayan kullanicinin "ikisini de kaybettim" sanacagi tam
+// senaryo bu. Bu test hem `/api/durum`'u hem `/api/kilit-ac`'i dogrular.
+#[tokio::test]
+async fn gecerli_json_ama_yapisal_bozuk_keystore_dogru_parolada_401_vermez() {
+    let (_d, s) = test_state();
+    cagir(&s, "POST", "/api/kurulum", Some(serde_json::json!({"parola":"gizli123"}))).await;
+    cagir(&s, "POST", "/api/kilitle", None).await;
+
+    // Keystore hala tamamen gecerli JSON'dur; yalnizca password.ciphertext_hex
+    // alani kisaltilmistir (yarim yazim/geri yukleme simulasyonu).
+    let icerik = std::fs::read_to_string(s.keystore_yolu()).unwrap();
+    let mut deger: serde_json::Value = serde_json::from_str(&icerik).unwrap();
+    let ciphertext = deger["password"]["ciphertext_hex"].as_str().unwrap().to_string();
+    assert!(ciphertext.len() > 10, "test onkosulu: ciphertext_hex kisaltmaya yetecek kadar uzun olmali");
+    deger["password"]["ciphertext_hex"] = serde_json::json!(ciphertext[..ciphertext.len() - 10]);
+    std::fs::write(s.keystore_yolu(), serde_json::to_vec(&deger).unwrap()).unwrap();
+    // Onkosul: dosya hala gecerli JSON olarak ayristirilabiliyor (aksi halde
+    // bu, yukaridaki "gecersiz JSON" senaryosuyla ayni sey olurdu).
+    assert!(serde_json::from_str::<serde_json::Value>(&std::fs::read_to_string(s.keystore_yolu()).unwrap()).is_ok());
+
+    // 1) GET /api/durum: keystore_bozuk DOGRU olmali.
+    let (kod_durum, durum) = cagir(&s, "GET", "/api/durum", None).await;
+    assert_eq!(kod_durum, StatusCode::OK);
+    assert_eq!(
+        durum["keystore_bozuk"], true,
+        "gecerli JSON ama yapisal olarak bozuk kayit keystore_bozuk=true bildirmeli"
+    );
+
+    // 2) POST /api/kilit-ac DOGRU parolayla: 401 "hatali" DEMEMELI, bozuk
+    //    kayit mesajini vermeli.
+    let (kod_ac, json_ac) =
+        cagir(&s, "POST", "/api/kilit-ac", Some(serde_json::json!({"parola":"gizli123"}))).await;
+    assert_ne!(
+        kod_ac,
+        StatusCode::UNAUTHORIZED,
+        "yapisal olarak bozuk kayitta DOGRU parola 401 almamali: {json_ac}"
+    );
+    assert_eq!(kod_ac, StatusCode::INTERNAL_SERVER_ERROR);
+    let hata_ac = json_ac["hata"].as_str().unwrap_or("").to_lowercase();
+    assert!(
+        !hata_ac.contains("parola veya kurtarma kodu hatalı"),
+        "bozuk kayit 'parola hatali' mesaji vermemeli: {hata_ac}"
+    );
+    assert!(
+        hata_ac.contains("silme"),
+        "mesaj kullaniciyi dosyayi silmemesi konusunda uyarmali: {hata_ac}"
+    );
+}
+
 // --- Inceleme Bulgu 2: es zamanli kurulum yarisi keystore'u eziyor ---
 //
 // Iki es zamanli /api/kurulum istegi (cift tiklama yeter) `exists()` kontrolu

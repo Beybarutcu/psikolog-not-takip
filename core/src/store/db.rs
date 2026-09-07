@@ -12,6 +12,14 @@ pub enum DbError {
     Sqlite(#[from] rusqlite::Error),
     #[error("dosya hatası: {0}")]
     Io(#[from] std::io::Error),
+    /// `rusqlite::Error::SqlInputError`'in `Display`/`Debug` çıktısı,
+    /// başarısız olan SQL metninin **tamamını** basar. `PRAGMA key='...'`
+    /// tam da bu SQL'dir ve ham veri anahtarının hex temsilini içerir --
+    /// bu yüzden bu hata `DbError::Sqlite`'a (kaynak hatayı taşıyarak)
+    /// SARILMAZ; hiçbir alan taşımayan bu ayrı varyanta dönüştürülür (bkz.
+    /// `siniflandir_anahtar_hatasi`, Bulgu 3).
+    #[error("anahtar ayarlanamadı (girdi hatası)")]
+    AnahtarGirdiHatasi,
 }
 
 pub fn open_encrypted(path: &Path, key: &DataKey) -> Result<Connection, DbError> {
@@ -60,6 +68,14 @@ fn siniflandir_anahtar_hatasi(err: rusqlite::Error) -> DbError {
         {
             DbError::WrongKey
         }
+        // `pragma_update(None, "key", ...)` anahtarı SQL metnine gömerek
+        // çalıştırır. `prepare` bu SQL'i reddederse rusqlite bunu
+        // `SqlInputError { sql: <TAM SQL METNİ>, .. }` olarak bildirir; bu
+        // hatanın Display'i "PRAGMA key='x<64 hex karakter>'" biçiminde ham
+        // anahtarı basar. Kaynak hatayı taşımadan genel bir varyanta
+        // dönüştürerek anahtarın stderr'e (bkz. `eprintln!` çağrıları) veya
+        // herhangi bir loga düşmesini kökten engelliyoruz (bkz. Bulgu 3).
+        rusqlite::Error::SqlInputError { .. } => DbError::AnahtarGirdiHatasi,
         other => DbError::Sqlite(other),
     }
 }
@@ -172,6 +188,50 @@ mod tests {
         assert!(
             matches!(hata, DbError::Sqlite(_)),
             "beklenen Sqlite, gelen: {hata:?}"
+        );
+    }
+
+    #[test]
+    fn sql_input_error_ham_anahtari_disari_tasimaz() {
+        // Bulgu 3: `PRAGMA key='x<hex>'` calisirken `prepare` basarisiz olursa
+        // rusqlite bunu `SqlInputError { sql: <TAM SQL METNI>, .. }` olarak
+        // bildirir; bu hatanin hem Display'i hem Debug'i basarisiz SQL'in
+        // TAMAMINI (dolayisiyla ham anahtarin hex temsilini) icerir. Yukaridaki
+        // `notadb_disindaki_sqlite_hatasi_wrongkey_e_donusturulmez` testinin
+        // desenini izleyerek gercek bir hata durumunu tetiklemek yerine
+        // sahte bir SqlInputError insa ediyoruz.
+        let sahte_hex_anahtar = "a".repeat(64);
+        let hayali_sql = format!("PRAGMA key='x'{sahte_hex_anahtar}''");
+        let sahte_ffi_hata = rusqlite::ffi::Error { code: ErrorCode::Unknown, extended_code: 1 };
+        let sahte_hata = rusqlite::Error::SqlInputError {
+            error: sahte_ffi_hata,
+            msg: "near \"'\": syntax error".into(),
+            sql: hayali_sql.clone(),
+            offset: 0,
+        };
+
+        // On kosul: rusqlite'in kendi Display/Debug'i gercekten SQL metnini
+        // (dolayisiyla sahte anahtari) basiyor mu? Bu testin anlamli olmasi
+        // icin dogru olmali.
+        assert!(format!("{sahte_hata}").contains(&sahte_hex_anahtar));
+        assert!(format!("{sahte_hata:?}").contains(&sahte_hex_anahtar));
+
+        let hata = siniflandir_anahtar_hatasi(sahte_hata);
+        assert!(
+            matches!(hata, DbError::AnahtarGirdiHatasi),
+            "beklenen AnahtarGirdiHatasi, gelen: {hata:?}"
+        );
+        assert!(
+            !format!("{hata}").contains(&sahte_hex_anahtar),
+            "siniflandirilmis hatanin Display'i ham anahtari icermemeli"
+        );
+        assert!(
+            !format!("{hata:?}").contains(&sahte_hex_anahtar),
+            "siniflandirilmis hatanin Debug'i ham anahtari icermemeli"
+        );
+        assert!(
+            !format!("{hata:?}").contains(&hayali_sql),
+            "siniflandirilmis hatanin Debug'i kaynak SQL metnini icermemeli"
         );
     }
 }

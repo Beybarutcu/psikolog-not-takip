@@ -1,5 +1,6 @@
 use crate::state::{AppState, KeystoreDurumu};
 use axum::{extract::State, http::StatusCode, Json};
+use psikolog_core::crypto::keyring::CryptoError;
 use psikolog_core::store::{
     audit::{kaydet, Cihaz, Eylem},
     db::open_encrypted,
@@ -15,6 +16,14 @@ pub struct KilitAcIstegi {
     pub parola: Option<String>,
     pub kurtarma_kodu: Option<String>,
 }
+
+/// Anahtar kaydı (`keystore.json` içindeki sarmalanmış anahtarlardan biri
+/// veya her ikisi) yapısal olarak bozuk bulunduğunda gösterilen mesaj. Hem
+/// `KeystoreDurumu::Bozuk` koluna (dosya ayrıştırılamıyor) hem de
+/// `CryptoError::Format`/`Kdf`/`Encryption` koluna (dosya ayrıştırılabiliyor
+/// ama içerik bozuk) uygulanır -- ikisi de kullanıcı hatası değildir ve
+/// kullanıcıyı yanlışlıkla dosyayı silmeye itmemelidir (bkz. Bulgu 1).
+const BOZUK_KAYIT_MESAJI: &str = "Anahtar dosyası okunamıyor. Yedekten geri yükleme gerekebilir. Bu dosyayı silmeyin, silerseniz verilerinize bir daha erişilemez.";
 
 pub async fn durum(State(s): State<AppState>) -> Json<serde_json::Value> {
     let (kurulum_gerekli, keystore_bozuk) = match s.keystore_durumu() {
@@ -50,9 +59,7 @@ pub async fn kilit_ac(
             // Mesaj kullanıcıyı açıkça dosyayı SİLMEMESİ konusunda uyarır.
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "hata": "Anahtar dosyası okunamıyor. Yedekten geri yükleme gerekebilir. Bu dosyayı silmeyin, silerseniz verilerinize bir daha erişilemez."
-                })),
+                Json(json!({ "hata": BOZUK_KAYIT_MESAJI })),
             );
         }
         KeystoreDurumu::Var(ks) => ks,
@@ -76,7 +83,19 @@ pub async fn kilit_ac(
                     );
                 }
             };
-            let _ = migrate(&conn);
+            // Kurulumdaki (`routes::setup::kurulum`) ile aynı kalıp: göç
+            // hatası sessizce yutulup oturum açılmamalı. Bugün zararsız (V1
+            // idempotent) ama sonraki planlar `migrate`'i genişletecek --
+            // yarıda kalan bir şema göçünü sessizce yutup eksik şemayla
+            // oturum açmak, kullanıcıya hiçbir belirti vermeden bozuk bir
+            // uygulama durumu bırakır (bkz. Bulgu 2).
+            if let Err(e) = migrate(&conn) {
+                eprintln!("kilit-ac: göç başarısız: {e}");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "hata": "Veritabanı hazırlanamadı." })),
+                );
+            }
             // Erişim VEREN bir işlem: audit yazımı başarısız olursa erişim de
             // verilmez (fail-closed) -- bkz. routes::setup::kurulum'daki aynı
             // gerekçe. Kaydedemediğimiz bir erişimi vermeyiz.
@@ -87,12 +106,22 @@ pub async fn kilit_ac(
                     Json(json!({ "hata": "Kilit açılamadı: erişim kaydı oluşturulamadı." })),
                 );
             }
-            s.oturum.lock().unwrap().ac(key, Instant::now());
+            s.oturum.lock().unwrap_or_else(|e| e.into_inner()).ac(key, Instant::now());
             (StatusCode::OK, Json(json!({})))
         }
-        Err(_) => (
+        // "Her hata parola hatasidir" tuzagi: `CryptoError`'in dort varyanti
+        // kasitli olarak farkli anlamlar tasir. Yalnizca `WrongSecret`
+        // gercekten yanlis parola/kurtarma kodudur. `Format` (bozuk kayit),
+        // `Kdf` ve `Encryption` kullanici hatasi degildir -- bunlari da 401
+        // "parola hatali" olarak gostermek, dogru parolasini giren bir
+        // kullaniciyi "ikisini de kaybettim" sonucuna goturur (bkz. Bulgu 1).
+        Err(CryptoError::WrongSecret) => (
             StatusCode::UNAUTHORIZED,
             Json(json!({ "hata": "Parola veya kurtarma kodu hatalı." })),
+        ),
+        Err(CryptoError::Format(_) | CryptoError::Kdf(_) | CryptoError::Encryption(_)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "hata": BOZUK_KAYIT_MESAJI })),
         ),
     }
 }
@@ -108,6 +137,6 @@ pub async fn kilitle(State(s): State<AppState>) -> (StatusCode, Json<serde_json:
             let _ = kaydet(&conn, Eylem::Cikis, "session", "-", Cihaz::Masaustu, None);
         }
     }
-    s.oturum.lock().unwrap().kilitle();
+    s.oturum.lock().unwrap_or_else(|e| e.into_inner()).kilitle();
     (StatusCode::OK, Json(json!({})))
 }

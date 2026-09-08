@@ -19,6 +19,13 @@ jobs:
       - run: npm ci
       - run: npm --prefix web ci
       - run: npm --prefix web run build
+      # Web birim testleri CI'da hic kosmuyordu: bosta kalma kilidinin
+      # (App.test.tsx, bostaKalma.test.tsx) ve randevu guncellemesinin cagri
+      # noktasinin (AnaEkran.test.tsx) TEK kaniti bu testler. Onlar
+      # kosmadan CI, "useBostaKalmaKontrolu cagrisi silindi" ya da
+      # "kaydet() yeniden POST'a dondu" gibi regresyonlarda yesil kaliyordu.
+      # cargo test'ten ONCE: hizli testler once koşsun, geri bildirim erken gelsin.
+      - run: npm --prefix web run test
       - run: cargo test --workspace
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test

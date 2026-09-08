@@ -86,7 +86,23 @@ test('mevcut randevunun ucreti guncellenir, kopya olusmaz', async ({ page }) => 
   await page.getByLabel('Ücret (TL)').fill('500')
   await page.getByRole('button', { name: 'Güncelle' }).click()
 
-  // (a) KOPYA OLUSMADI: hala tek blok.
+  // SENKRONIZASYON BARIYERI. `toHaveCount` kosul saglanana kadar BEKLER;
+  // tiklama aninda sayi zaten 1 oldugu icin, dogrudan yazilan bir
+  // `toHaveCount(1)` islem daha bitmeden -- yani ONCEKI durumu olcerek --
+  // aninda tatmin oluyordu. Boyle bir satir hicbir seyi korumaz: mutasyonla
+  // dogrulandi, `AnaEkran.kaydet()` POST'a dondurulunce bile geciyordu.
+  //
+  // Bu yuzden once "guncelleme EKRANA YANSIDI" olayini bekliyoruz: yeni
+  // ucreti (500 TL = 50000 kurus) tasiyan bir blok belirene kadar. Bu kosul
+  // hem dogru (PUT) hem hatali (POST) dunyada saglanir -- yani bariyer
+  // kendisi ayrim yapmaz, yalnizca izgaranin yeniden yuklenmis veriyle
+  // cizildigini garantiler. Ayrimi bir ALTTAKI sayim yapar.
+  await expect(
+    page.locator('button[data-ucret="50000"]', { hasText: 'Elif Şahin' }),
+  ).toHaveCount(1)
+
+  // (a) KOPYA OLUSMADI: izgara yeniden yuklendikten SONRA hala tek blok.
+  // POST regresyonunda burada 2 gorunur ve test kirilir.
   await expect(bloklar).toHaveCount(1)
 
   // (b) UCRET GERCEKTEN DEGISTI: paneli yeniden ac ve alani oku.

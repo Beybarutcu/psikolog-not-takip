@@ -25,6 +25,15 @@ export function RandevuBloku({ randevu, onSec }: { randevu: Randevu; onSec: () =
       // sinif adina/renge degil, semantik duruma bagli kalabilmesi icin.
       // Renk ya da sinif adi degisirse bu oznitelik degismez.
       data-durum={randevu.durum}
+      // data-ucret (kuruş): bir randevu GÜNCELLENDİĞİNDE ızgarada hiçbir şey
+      // değişmiyordu — blok yalnızca danışan adını gösteriyor, React de aynı
+      // `key` ile aynı DOM'u üretiyor. Yani "güncelleme ekrana yansıdı"
+      // diyebilecek gözlemlenebilir bir işaret yoktu ve e2e'deki
+      // "kopya oluşmadı" sayımı, işlem BİTMEDEN, önceki durumu ölçüp geçiyordu
+      // (bkz. e2e/takvim.spec.ts). Bu öznitelik o senkronizasyon bariyerini
+      // sağlar. `data-durum` ile aynı gerekçe: görsele değil, semantik veriye
+      // bağlı kalınsın. Ücret yoksa öznitelik hiç basılmaz.
+      data-ucret={randevu.ucret ?? undefined}
       className={`w-full truncate rounded px-1 py-0.5 text-left text-xs ${stil}`}
     >
       {randevu.danisan_adi}

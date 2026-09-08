@@ -63,6 +63,23 @@ describe('HaftalikTakvim', () => {
     expect(screen.getByText('Ayşe Yılmaz').closest('button')?.className).toContain('line-through')
   })
 
+  // e2e/takvim.spec.ts'teki "kopya olusmaz" testinin senkronizasyon
+  // bariyeri bu özniteliğe dayanıyor: güncelleme ızgarada başka hiçbir
+  // gözlemlenebilir iz bırakmıyor (blok yalnızca adı gösteriyor, React aynı
+  // key ile aynı DOM'u üretiyor). Öznitelik kaldırılırsa o e2e testi tekrar
+  // körleşir — bu yüzden burada birim testiyle sabitleniyor.
+  it('randevu bloğu ücreti data-ucret olarak (kuruş) yayar', () => {
+    kur()
+    expect(screen.getByText('Ayşe Yılmaz').closest('button')?.getAttribute('data-ucret'))
+      .toBe('45000')
+  })
+
+  it('ücretsiz randevuda data-ucret özniteliği hiç basılmaz', () => {
+    kur({ randevular: [{ ...randevu, ucret: null }] })
+    expect(screen.getByText('Ayşe Yılmaz').closest('button')?.hasAttribute('data-ucret'))
+      .toBe(false)
+  })
+
   it('randevusuz hafta boş ızgara gösterir, hata vermez', () => {
     kur({ randevular: [] })
     expect(screen.getByText('7 – 13 Eylül 2026')).toBeDefined()

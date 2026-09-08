@@ -153,13 +153,25 @@ export function RandevuPaneli({
       setHata('Ücret sayısal bir değer olmalı (ör. 450 veya 450.50).')
       return
     }
+    // Kaydetme yolu, çakışma sorgusuyla AYNI süzgeci kullanır
+    // (`sorulacakTekrar`, yani `gecerliTekrar`). Önceden burada ham
+    // `Number(haftaSayisi)` vardı: "Her hafta tekrarla" işaretliyken alan
+    // boşsa `Number('') = 0` gidiyor, sunucu `Some(n) if n > 1` ile
+    // eşleşmediği için sessizce TEK randevu oluşturuyordu — kullanıcı seri
+    // istemiş, tek kayıt almış, hiçbir hata görmemiş oluyordu. İki yol
+    // ayrışmıştı; artık tek kaynak var ve geçersiz değer sessizce başka bir
+    // şey yapmak yerine kullanıcıya söyleniyor.
+    if (tekrar && sorulacakTekrar === undefined) {
+      setHata(`Tekrar sayısı 2 ile ${AZAMI_TEKRAR} arasında bir tam sayı olmalı.`)
+      return
+    }
     await islemCalistir(() =>
       onKaydet({
         client_id: Number(clientId),
         baslangic,
         bitis,
         ucret: tldenKurusa(ucretTl),
-        ...(tekrar ? { tekrar_sayisi: Number(haftaSayisi) } : {}),
+        ...(sorulacakTekrar !== undefined ? { tekrar_sayisi: sorulacakTekrar } : {}),
       }),
     )
   }

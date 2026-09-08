@@ -304,18 +304,63 @@ describe('RandevuPaneli', () => {
     expect(cakismaKontrol.mock.calls[0][3]).toBeUndefined()
   })
 
-  it('I2: geçersiz hafta sayısı (boş/0/53) tekrar sayısı olarak gönderilmez', async () => {
-    const cakismaKontrol = vi.fn().mockResolvedValue(temizCakisma)
-    kur({ cakismaKontrol })
+  // Üç geçersiz biçim: boş alan (`Number('') === 0`), açıkça sıfır ve üst
+  // sınırın bir üstü. Önceden yalnızca '53' deneniyordu; boş alan hem burada
+  // hem kaydetme yolunda en olası kullanıcı hatası.
+  for (const ham of ['', '0', '53']) {
+    it(`I2: geçersiz hafta sayısı (${ham === '' ? 'boş' : ham}) tekrar sayısı olarak gönderilmez`, async () => {
+      const cakismaKontrol = vi.fn().mockResolvedValue(temizCakisma)
+      kur({ cakismaKontrol })
 
+      await userEvent.click(screen.getByLabelText('Her hafta tekrarla'))
+      await userEvent.clear(screen.getByLabelText('Kaç hafta'))
+      if (ham !== '') await userEvent.type(screen.getByLabelText('Kaç hafta'), ham)
+
+      await waitFor(() => expect(cakismaKontrol).toHaveBeenCalled())
+      for (const cagri of cakismaKontrol.mock.calls) {
+        expect(cagri[3]).toBeUndefined()
+      }
+    })
+  }
+
+  // --- Dal incelemesi son tur, madde 4: sessiz TEK randevu --------------
+  //
+  // "Her hafta tekrarla" açıkken alan boşsa `Number('') = 0` sunucuya
+  // gidiyor, sunucu `Some(n) if n > 1` ile eşleşmediği için `tekil_olustur`a
+  // düşüyordu: kullanıcı seri istiyor, tek kayıt alıyor, HİÇBİR hata
+  // görmüyordu. Artık kaydetme yolu çakışma sorgusuyla aynı süzgeci
+  // kullanıyor ve geçersiz değerde durup söylüyor.
+
+  for (const ham of ['', '0', '53']) {
+    it(`madde 4: tekrar açıkken geçersiz hafta sayısı (${ham === '' ? 'boş' : ham}) sessizce tek randevu oluşturmaz`, async () => {
+      const props = kur()
+      await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+      await userEvent.click(screen.getByLabelText('Her hafta tekrarla'))
+      await userEvent.clear(screen.getByLabelText('Kaç hafta'))
+      if (ham !== '') await userEvent.type(screen.getByLabelText('Kaç hafta'), ham)
+
+      await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+
+      // Ne sessizce tek randevu oluşur...
+      expect(props.onKaydet).not.toHaveBeenCalled()
+      // ...ne de kullanıcı ne olduğunu bilmeden kalır.
+      expect(screen.getByText(/tekrar sayısı 2 ile 52 arasında/i)).toBeDefined()
+    })
+  }
+
+  it('madde 4: tekrar kapalıyken hafta alanının geçersiz kalıntı değeri kaydetmeyi engellemez', async () => {
+    // Kullanıcı kutuyu işaretleyip alanı boşaltmış, sonra kutuyu geri
+    // kaldırmış olabilir: bu durumda seri istemiyor, tek randevu istiyor.
+    const props = kur()
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
     await userEvent.click(screen.getByLabelText('Her hafta tekrarla'))
     await userEvent.clear(screen.getByLabelText('Kaç hafta'))
-    await userEvent.type(screen.getByLabelText('Kaç hafta'), '53')
+    await userEvent.click(screen.getByLabelText('Her hafta tekrarla'))
 
-    await waitFor(() => expect(cakismaKontrol).toHaveBeenCalled())
-    for (const cagri of cakismaKontrol.mock.calls) {
-      expect(cagri[3]).toBeUndefined()
-    }
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+
+    expect(props.onKaydet).toHaveBeenCalledTimes(1)
+    expect(props.onKaydet.mock.calls[0][0].tekrar_sayisi).toBeUndefined()
   })
 
   it('I2: seri uyarısı kaç haftada çakışma olduğunu söyler ama kaydetmeyi engellemez', async () => {

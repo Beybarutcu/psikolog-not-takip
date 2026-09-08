@@ -16,12 +16,26 @@
 //! sonra `audit::kaydet` çağırır. Bu iki adım `conn.unchecked_transaction()`
 //! ile TEK transaction'a alınır -- log yazımı başarısız olursa veri
 //! değişikliği de geri alınır, "kayıt eklendi ama loglanmadı" durumu
-//! oluşmaz. `Connection::transaction()` (`&mut self`) değil
-//! `unchecked_transaction()` (`&self`) kullanılıyor çünkü bu depo
+//! oluşmaz (bkz. `tests` modülündeki `..._atomik_...` testleri: bu garanti
+//! `audit_log` tablosunu bilerek bozup hem pozitif hem negatif yönde test
+//! edilir). `Connection::transaction()` (`&mut self`)
+//! değil `unchecked_transaction()` (`&self`) kullanılıyor çünkü bu depo
 //! fonksiyonlarının imzası (brief'te sabit) `&Connection` alıyor; bu güvenli
 //! çünkü bu fonksiyonlar `schema::migrate`'i çağırmıyor, dolayısıyla iç içe
 //! transaction riski yok. `getir`/`listele` salt okunur olduğundan (veri
 //! durumu değişmiyor) ayrı transaction gerektirmiyor.
+//!
+//! # UYARI — iç içe transaction açılamaz
+//! `ekle` ve `arsivle` kendi `unchecked_transaction()`'ını içeride açar.
+//! SQLite iç içe transaction'ı desteklemez ("cannot start a transaction
+//! within a transaction"): bu iki fonksiyonu **başka bir transaction'ın
+//! içinden** (ör. çağıran taraf zaten `conn.unchecked_transaction()` açmışken,
+//! veya `schema::migrate` gibi kendi transaction'ını açan başka bir
+//! fonksiyonun içinden) çağırmayın. Bu sessiz bir veri bozulması değil,
+//! `rusqlite::Error` olarak dönen gürültülü bir hatadır -- ama derleyici
+//! yakalamaz. Plan 3'te "danışan oluştur + ilk not ekle" gibi çok adımlı bir
+//! akış tek transaction altında toplanmak istenirse, bu fonksiyonlar yerine
+//! ham SQL ifadeleri doğrudan o dış transaction üzerinde çalıştırılmalı.
 
 use crate::store::audit::{kaydet, Ayrinti, Cihaz, Eylem};
 use rusqlite::{Connection, OptionalExtension};
@@ -86,6 +100,10 @@ fn satirdan(r: &rusqlite::Row) -> Result<Danisan, rusqlite::Error> {
 }
 
 /// Yeni bir danışan ekler. Ekleme ve erişim logu tek transaction'da yazılır.
+///
+/// UYARI: Kendi `unchecked_transaction()`'ını içeride açar -- bunu zaten
+/// açık bir transaction'ın içinden çağırmayın (SQLite iç içe transaction
+/// desteklemez, bkz. modül başlığındaki uyarı).
 pub fn ekle(conn: &Connection, yeni: &YeniDanisan, cihaz: Cihaz) -> Result<Danisan, DepoHatasi> {
     let ad = yeni.ad_soyad.trim();
     if ad.is_empty() {
@@ -147,6 +165,10 @@ pub fn listele(
 
 /// Danışanı arşivler (yumuşak silme). Güncelleme ve erişim logu tek
 /// transaction'da yazılır.
+///
+/// UYARI: Kendi `unchecked_transaction()`'ını içeride açar -- bunu zaten
+/// açık bir transaction'ın içinden çağırmayın (SQLite iç içe transaction
+/// desteklemez, bkz. modül başlığındaki uyarı).
 pub fn arsivle(conn: &Connection, id: i64, cihaz: Cihaz) -> Result<(), DepoHatasi> {
     let tx = conn.unchecked_transaction()?;
 
@@ -248,5 +270,52 @@ mod tests {
         listele(&c, false, Cihaz::Masaustu).unwrap();
         let sonra = son_kayitlar(&c, 100).unwrap().len();
         assert_eq!(sonra - once, 1, "liste, satir basina log uretmemeli");
+    }
+
+    fn clients_satir_sayisi(c: &rusqlite::Connection) -> i64 {
+        c.query_row("SELECT COUNT(*) FROM clients", [], |r| r.get(0)).unwrap()
+    }
+
+    // Bu iki test, `ekle`/`arsivle`'nin veri yazma + audit log yazma
+    // adimlarini tek transaction'a aldigini KANITLAR: `audit_log` tablosunu
+    // kasten dusurup `kaydet`'i basarisiz kilariz. Transaction yoksa (ya da
+    // `tx.commit()` cagrilmasa) veri degisikligi kalici olur, log yazimi
+    // basarisiz olsa bile -- tam da onlemek istedigimiz "eklendi ama
+    // loglanmadi" durumu. Bu testlerin transaction OLMADAN gercekten
+    // basarisiz oldugunu dogrulamak icin `tx.commit()`/`tx.execute` gecici
+    // olarak `conn` kullanacak sekilde degistirilip calistirildi; cikti
+    // asagida (bkz. task-3-report.md eki), sonra kod geri alindi.
+
+    #[test]
+    fn ekle_audit_basarisiz_olursa_yazma_geri_alinir() {
+        let (_d, c) = baglanti();
+        c.execute("DROP TABLE audit_log", []).unwrap();
+
+        let sonuc = ekle(&c, &yeni("Ayse Yilmaz"), Cihaz::Masaustu);
+        assert!(sonuc.is_err(), "audit_log yokken ekle Err donmeli");
+        assert!(matches!(sonuc.unwrap_err(), DepoHatasi::Sqlite(_)));
+
+        assert_eq!(
+            clients_satir_sayisi(&c),
+            0,
+            "audit log basarisiz oldugunda clients tablosuna hicbir satir kalici yazilmamali"
+        );
+    }
+
+    #[test]
+    fn arsivle_audit_basarisiz_olursa_durum_degismez() {
+        let (_d, c) = baglanti();
+        let danisan = ekle(&c, &yeni("Ayse Yilmaz"), Cihaz::Masaustu).unwrap();
+
+        c.execute("DROP TABLE audit_log", []).unwrap();
+
+        let sonuc = arsivle(&c, danisan.id, Cihaz::Masaustu);
+        assert!(sonuc.is_err(), "audit_log yokken arsivle Err donmeli");
+        assert!(matches!(sonuc.unwrap_err(), DepoHatasi::Sqlite(_)));
+
+        let durum: String = c
+            .query_row("SELECT durum FROM clients WHERE id = ?1", [danisan.id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(durum, "aktif", "audit log basarisiz oldugunda durum degisikligi geri alinmali");
     }
 }

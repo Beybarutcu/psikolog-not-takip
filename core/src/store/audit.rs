@@ -12,13 +12,78 @@
 //! Seans notu içeriği, danışan adı/soyadı, arama sorgusu metni, dosya
 //! içeriği veya benzeri herhangi bir hassas/özel nitelikli veri bu tabloya
 //! **kesinlikle** yazılmamalıdır — aksi hâlde audit log kendisi ikinci bir
-//! sızıntı yüzeyi hâline gelir. `ayrinti` alanı yalnızca kısa, hassas
-//! olmayan bağlam içindir (ör. "arsivlendi", "veri raporu"); bu alana asla
-//! danışan/seans içeriği veya kişisel veri konulmamalıdır. Bu kuralı çağıran
-//! her depo katmanı (danışan, randevu, not vb.) korumalıdır.
+//! sızıntı yüzeyi hâline gelir.
+//!
+//! `ayrinti` alanı artık serbest metin değil, kapalı bir enum'dur (`Ayrinti`):
+//! kural artık derleyici tarafından **yapısal olarak** uygulanır — çağıran
+//! kod rastgele bir `&str` geçiremez. `Durum` yalnızca `&'static str` kabul
+//! eder (randevu durumları sabit bir kümedir, kullanıcı verisi değildir).
+//! `AralikBaslangici` ve `SeriSilme` bir tarih damgası (`String`) taşır;
+//! bu, kapalı enum'un kapattığı kapıyı arka taraftan yeniden açabilecek tek
+//! nokta olduğundan `metin()` içinde **biçim doğrulaması yapılır** — biçime
+//! uymayan bir dizgi asla ham hâliyle loga yazılmaz, yerine `"gecersiz"`
+//! sabit işareti konur. **Yeni bir `Ayrinti` varyantı eklerken**: varyant
+//! doğrulanmamış serbest metin (seans notu, danışan adı, arama sorgusu vb.)
+//! taşımamalı; bir `String`/`&str` alanı gerekiyorsa mutlaka dar bir biçim
+//! doğrulaması eklenmeli.
 
 use rusqlite::Connection;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+
+/// Beklenen bicim: YYYY-AA-GGTSS:DD (yerel duvar saati, zaman dilimi yok).
+///
+/// Plan 1'deki `zaman_gecerli_mi` deseniyle aynıdır; burada ayrıca
+/// kopyalanmıştır çünkü `Ayrinti::metin()` hassas olmayan yalnızca kısa,
+/// biçimi doğrulanmış dizgileri loga yazmalıdır.
+fn zaman_gecerli_mi(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 16
+        && b[4] == b'-'
+        && b[7] == b'-'
+        && b[10] == b'T'
+        && b[13] == b':'
+        && b.iter().enumerate().all(|(i, c)| matches!(i, 4 | 7 | 10 | 13) || c.is_ascii_digit())
+}
+
+/// `audit_log.ayrinti` alanına yazılabilecek kapalı değer kümesi.
+///
+/// Bkz. modül başlığı: hassas veri kuralı burada derleyici tarafından
+/// zorlanır. Yeni varyant eklerken doğrulanmamış serbest metin taşımamaya
+/// dikkat edin.
+#[derive(Debug, Clone)]
+pub enum Ayrinti {
+    IlkKurulum,
+    Arsivlendi,
+    Durum(&'static str),
+    AralikBaslangici(String),
+    SeriSilme { adet: usize, tarihten: String },
+}
+
+impl Ayrinti {
+    /// Veritabanına yazılan dizgiyi üretir. Doğrulanmayan tarih dizgileri
+    /// ham hâliyle **asla** döndürülmez; yerine `"gecersiz"` yazılır.
+    pub fn metin(&self) -> String {
+        match self {
+            Ayrinti::IlkKurulum => "ilk kurulum".to_string(),
+            Ayrinti::Arsivlendi => "arsivlendi".to_string(),
+            Ayrinti::Durum(s) => format!("durum: {s}"),
+            Ayrinti::AralikBaslangici(t) => {
+                if zaman_gecerli_mi(t) {
+                    format!("aralik: {t}")
+                } else {
+                    "aralik: gecersiz".to_string()
+                }
+            }
+            Ayrinti::SeriSilme { adet, tarihten } => {
+                if zaman_gecerli_mi(tarihten) {
+                    format!("seri silme: {adet} kayit, {tarihten} sonrasi")
+                } else {
+                    "seri silme: gecersiz".to_string()
+                }
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub enum Eylem {
@@ -82,18 +147,19 @@ fn simdi_utc() -> String {
 ///
 /// # Hassas veri kuralı
 /// `varlik`, `varlik_id` yalnızca kayıt tipini ve kimliğini taşımalı (ör.
-/// "client", "42"); `ayrinti` yalnızca kısa, hassas olmayan bağlam metni
-/// olmalı (ör. "arsivlendi"). Seans notu içeriği, danışan adı, arama sorgusu
-/// gibi hassas/özel nitelikli veriler bu fonksiyona **asla** parametre
-/// olarak geçirilmemelidir.
+/// "client", "42"); `ayrinti` kapalı `Ayrinti` enum'udur — serbest metin
+/// kabul edilmez. Seans notu içeriği, danışan adı, arama sorgusu gibi
+/// hassas/özel nitelikli veriler bu fonksiyona **asla** parametre olarak
+/// geçirilmemelidir.
 pub fn kaydet(
     conn: &Connection,
     eylem: Eylem,
     varlik: &str,
     varlik_id: &str,
     cihaz: Cihaz,
-    ayrinti: Option<&str>,
+    ayrinti: Option<Ayrinti>,
 ) -> Result<(), rusqlite::Error> {
+    let ayrinti = ayrinti.map(|a| a.metin());
     conn.execute(
         "INSERT INTO audit_log (olay_zamani, eylem, varlik, varlik_id, cihaz, ayrinti)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -171,9 +237,45 @@ mod tests {
     }
 
     #[test]
-    fn ayrinti_alani_saklanir() {
+    fn her_varyant_beklenen_metni_uretir() {
+        assert_eq!(Ayrinti::IlkKurulum.metin(), "ilk kurulum");
+        assert_eq!(Ayrinti::Arsivlendi.metin(), "arsivlendi");
+        assert_eq!(Ayrinti::Durum("geldi").metin(), "durum: geldi");
+        assert_eq!(
+            Ayrinti::AralikBaslangici("2026-09-07T00:00".into()).metin(),
+            "aralik: 2026-09-07T00:00"
+        );
+        assert_eq!(
+            Ayrinti::SeriSilme { adet: 3, tarihten: "2026-09-21T00:00".into() }.metin(),
+            "seri silme: 3 kayit, 2026-09-21T00:00 sonrasi"
+        );
+    }
+
+    #[test]
+    fn aralik_baslangici_bozuk_tarihi_reddeder() {
+        // Dogrulanmayan bir String, kapali enum'un kapattigi kapiyi yeniden acar.
+        let bozuk = Ayrinti::AralikBaslangici("COK_GIZLI_SEANS_NOTU".into());
+        assert_eq!(bozuk.metin(), "aralik: gecersiz", "dogrulanmayan metin loga gecmemeli");
+    }
+
+    #[test]
+    fn seri_silme_tarihi_de_dogrulanir() {
+        let bozuk = Ayrinti::SeriSilme { adet: 1, tarihten: "COK_GIZLI".into() };
+        assert!(!bozuk.metin().contains("COK_GIZLI"));
+    }
+
+    #[test]
+    fn ayrintili_kayit_geri_okunur() {
         let (_d, c) = baglanti();
-        kaydet(&c, Eylem::DisaAktarma, "client", "7", Cihaz::Masaustu, Some("veri raporu")).unwrap();
-        assert_eq!(son_kayitlar(&c, 1).unwrap()[0].ayrinti.as_deref(), Some("veri raporu"));
+        kaydet(&c, Eylem::Duzenleme, "client", "7", Cihaz::Masaustu, Some(Ayrinti::Arsivlendi))
+            .unwrap();
+        assert_eq!(son_kayitlar(&c, 1).unwrap()[0].ayrinti.as_deref(), Some("arsivlendi"));
+    }
+
+    #[test]
+    fn ayrintisiz_kayit_null_saklar() {
+        let (_d, c) = baglanti();
+        kaydet(&c, Eylem::Giris, "session", "-", Cihaz::Masaustu, None).unwrap();
+        assert_eq!(son_kayitlar(&c, 1).unwrap()[0].ayrinti, None);
     }
 }

@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
-import { takvimApi, YetkisizHata } from '../api'
+import { takvimApi, YetkisizHata, type Danisan } from '../api'
 import { HaftalikTakvim, type Randevu } from '../takvim/HaftalikTakvim'
 import { haftaGunleri, haftaninBasi, yerelZaman } from '../takvim/hafta'
+import { RandevuPaneli } from '../takvim/RandevuPaneli'
 
 export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   const [haftaBasi, setHaftaBasi] = useState(() => haftaninBasi(new Date()))
   const [randevular, setRandevular] = useState<Randevu[]>([])
+  const [danisanlar, setDanisanlar] = useState<Danisan[]>([])
   const [hata, setHata] = useState<string | null>(null)
-  // Panel Görev 10'da bağlanacak; şimdilik seçim yalnızca duruma yazılır.
-  const [, setSeciliRandevu] = useState<Randevu | null>(null)
-  const [, setSeciliBosSaat] = useState<string | null>(null)
+  const [seciliRandevu, setSeciliRandevu] = useState<Randevu | null>(null)
+  const [seciliBosSaat, setSeciliBosSaat] = useState<string | null>(null)
 
   const yukle = useCallback(async () => {
     const gunler = haftaGunleri(haftaBasi)
@@ -36,6 +37,14 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
 
   useEffect(() => { void yukle() }, [yukle])
 
+  useEffect(() => {
+    void takvimApi.danisanlariGetir().then(setDanisanlar).catch(() => {
+      // Danışan listesi yüklenemezse panel yine açılabilir; danışan seçme
+      // adımı boş listeyle gelir ve kullanıcı "danışan seçin" hatasını
+      // görür — sayfanın tamamını kilitlemeye gerek yok.
+    })
+  }, [])
+
   function haftaDegis(yon: number) {
     setHaftaBasi((onceki) => {
       const yeni = new Date(onceki)
@@ -54,6 +63,51 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
     setSeciliBosSaat(zaman)
   }
 
+  function panelKapat() {
+    setSeciliRandevu(null)
+    setSeciliBosSaat(null)
+  }
+
+  async function kaydet(kayit: {
+    client_id: number
+    baslangic: string
+    bitis: string
+    ucret: number | null
+    tekrar_sayisi?: number
+  }) {
+    try {
+      await takvimApi.randevuOlustur(kayit)
+      setHata(null)
+      panelKapat()
+      await yukle()
+    } catch (e) {
+      setHata(e instanceof Error ? e.message : 'Randevu kaydedilemedi.')
+    }
+  }
+
+  async function durumDegis(id: number, durum: string) {
+    try {
+      await takvimApi.randevuDurumu(id, durum)
+      setHata(null)
+      await yukle()
+    } catch (e) {
+      setHata(e instanceof Error ? e.message : 'Randevu güncellenemedi.')
+    }
+  }
+
+  async function sil(id: number) {
+    try {
+      await takvimApi.randevuSil(id)
+      setHata(null)
+      panelKapat()
+      await yukle()
+    } catch (e) {
+      setHata(e instanceof Error ? e.message : 'Randevu silinemedi.')
+    }
+  }
+
+  const panelAcik = seciliRandevu !== null || seciliBosSaat !== null
+
   return (
     <div className="p-8">
       <div className="mb-4 flex items-center justify-between">
@@ -65,13 +119,30 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
 
       {hata && <p className="mb-4 text-sm text-red-600">{hata}</p>}
 
-      <HaftalikTakvim
-        randevular={randevular}
-        haftaBasi={haftaBasi}
-        onHaftaDegis={haftaDegis}
-        onRandevuSec={randevuSec}
-        onBosSaatSec={bosSaatSec}
-      />
+      <div className="flex items-start gap-4">
+        <div className="flex-1">
+          <HaftalikTakvim
+            randevular={randevular}
+            haftaBasi={haftaBasi}
+            onHaftaDegis={haftaDegis}
+            onRandevuSec={randevuSec}
+            onBosSaatSec={bosSaatSec}
+          />
+        </div>
+
+        {panelAcik && (
+          <RandevuPaneli
+            zaman={seciliBosSaat ?? seciliRandevu?.baslangic ?? ''}
+            randevu={seciliRandevu}
+            danisanlar={danisanlar}
+            onKaydet={kaydet}
+            onDurumDegis={durumDegis}
+            onSil={sil}
+            onKapat={panelKapat}
+            cakismaKontrol={takvimApi.cakismaKontrol}
+          />
+        )}
+      </div>
     </div>
   )
 }

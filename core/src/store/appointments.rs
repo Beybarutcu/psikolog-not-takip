@@ -589,6 +589,44 @@ mod tests {
     }
 
     #[test]
+    fn bastan_kismi_cakisan_randevu_bulunur() {
+        // Yeni randevu, mevcut olandan ONCE baslayip onun icinde bitiyor:
+        // mevcut 14:00-15:00, yeni 13:30-14:30. Cakisma araliginin sol
+        // kenarini test eder.
+        let (_d, c, cid) = kurulum();
+        olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+
+        let cakisanlar =
+            cakisanlari_bul(&c, "2026-09-07T13:30", "2026-09-07T14:30", None).unwrap();
+        assert_eq!(cakisanlar.len(), 1, "13:30-14:30 ile 14:00-15:00 kismi cakismali");
+    }
+
+    #[test]
+    fn yeni_randevu_mevcudun_icinde_tamamen_kaliyorsa_cakisir() {
+        // Yeni randevu, mevcut olanin İCİNDE tamamen kaliyor: mevcut
+        // 14:00-16:00, yeni 14:30-15:00. `tamamen_kapsayan_randevu_cakisir`
+        // testinin TERSİ -- burada kapsayan degil kapsanan taraf yeni.
+        let (_d, c, cid) = kurulum();
+        olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T16:00"), Cihaz::Masaustu).unwrap();
+
+        let cakisanlar =
+            cakisanlari_bul(&c, "2026-09-07T14:30", "2026-09-07T15:00", None).unwrap();
+        assert_eq!(cakisanlar.len(), 1, "14:30-15:00 mevcut 14:00-16:00'nin icinde kaldigi icin cakismali");
+    }
+
+    #[test]
+    fn birebir_ayni_aralikli_randevu_cakisir() {
+        // Mevcut ve yeni randevu tam olarak ayni araliga sahip (14:00-15:00),
+        // haric_id yok. Aralik mantiginin en sinirdaki hali.
+        let (_d, c, cid) = kurulum();
+        olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+
+        let cakisanlar =
+            cakisanlari_bul(&c, "2026-09-07T14:00", "2026-09-07T15:00", None).unwrap();
+        assert_eq!(cakisanlar.len(), 1, "birebir ayni aralik cakismali");
+    }
+
+    #[test]
     fn iptal_edilmis_randevu_cakisma_saymaz() {
         let (_d, c, cid) = kurulum();
         let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)

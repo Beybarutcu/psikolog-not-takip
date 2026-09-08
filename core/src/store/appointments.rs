@@ -46,10 +46,16 @@ pub const GECERLI_DURUMLAR: [&str; 4] = ["planlandi", "geldi", "gelmedi", "iptal
 
 /// Randevu (= seans) kaydı — asgari alanlar.
 ///
-/// `Debug` türetilmiyor: `danisan_adi` KVKK kapsamında özel nitelikli/kişisel
-/// veridir; türetilmiş `Debug` bunu `{:?}` ile bir hata mesajına veya loga
-/// sızdırabilirdi (bkz. `store::clients::Danisan` ile aynı bulgu sınıfı).
-/// `Serialize` ise arayüz için `danisan_adi`'nı İÇERİR -- gizleme yalnızca
+/// `Debug` türetilmiyor. `clients::Danisan`'daki desenden farklı olarak
+/// yalnızca `danisan_adi` gizlenmiyor: `client_id` + `baslangic` + `bitis` +
+/// `durum` bir arada ("42 numaralı danışan, 2026-09-07T14:00, gelmedi")
+/// isim olmadan da kimliklenebilir bir kişinin bir seansa katılıp
+/// katılmadığını söyler -- bu KVKK kapsamında özel nitelikli sağlık
+/// verisidir. Bu yüzden `client_id`, `danisan_adi`, `baslangic`, `bitis` ve
+/// `durum` `Debug` çıktısında gizlenir; yalnızca `id` (ve doğrudan
+/// hassas olmayan `ucret`/`odendi`/`seri_id`) görünür kalır -- hata
+/// ayıklarken kayda bakmak isteyen zaten `id` ile veritabanından okuyabilir.
+/// `Serialize` ise arayüz için TÜM alanları İÇERİR -- gizleme yalnızca
 /// `Debug` çıktısı içindir.
 #[derive(Clone, Serialize)]
 pub struct Randevu {
@@ -68,11 +74,11 @@ impl std::fmt::Debug for Randevu {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Randevu")
             .field("id", &self.id)
-            .field("client_id", &self.client_id)
+            .field("client_id", &"<gizli>")
             .field("danisan_adi", &"<gizli>")
-            .field("baslangic", &self.baslangic)
-            .field("bitis", &self.bitis)
-            .field("durum", &self.durum)
+            .field("baslangic", &"<gizli>")
+            .field("bitis", &"<gizli>")
+            .field("durum", &"<gizli>")
             .field("ucret", &self.ucret)
             .field("odendi", &self.odendi)
             .field("seri_id", &self.seri_id)
@@ -167,6 +173,12 @@ pub fn aralik_getir(
     bitis: &str,
     cihaz: Cihaz,
 ) -> Result<Vec<Randevu>, DepoHatasi> {
+    if !zaman_gecerli_mi(baslangic) || !zaman_gecerli_mi(bitis) {
+        return Err(DepoHatasi::GecersizVeri(
+            "Tarih biçimi YYYY-AA-GGTSS:DD olmalı.".into(),
+        ));
+    }
+
     let mut stmt = conn.prepare(&format!(
         "{SECIM} WHERE a.baslangic >= ?1 AND a.baslangic < ?2 ORDER BY a.baslangic"
     ))?;
@@ -293,10 +305,47 @@ mod tests {
     }
 
     #[test]
+    fn debug_ciktisi_danisan_adini_tarihi_ve_durumu_icermez() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        durum_guncelle(&c, r.id, "gelmedi", Cihaz::Masaustu).unwrap();
+        let r = aralik_getir(&c, "2026-09-07T00:00", "2026-09-08T00:00", Cihaz::Masaustu)
+            .unwrap()
+            .remove(0);
+
+        let cikti = format!("{:?}", r);
+        assert!(!cikti.contains("Ayse"), "danisan adi Debug ciktisinda gorunmemeli: {cikti}");
+        assert!(!cikti.contains("2026-09-07"), "tarih Debug ciktisinda gorunmemeli: {cikti}");
+        assert!(!cikti.contains("gelmedi"), "durum Debug ciktisinda gorunmemeli: {cikti}");
+        assert!(
+            cikti.contains("client_id: \"<gizli>\""),
+            "client_id Debug ciktisinda gizli olmali: {cikti}"
+        );
+        assert!(
+            cikti.contains(&format!("id: {}", r.id)),
+            "id Debug ciktisinda gercek degeriyle gorunmeli: {cikti}"
+        );
+    }
+
+    #[test]
     fn bitis_baslangictan_once_olamaz() {
         let (_d, c, cid) = kurulum();
         let hata = olustur(&c, &yeni(cid, "2026-09-07T15:00", "2026-09-07T14:00"), Cihaz::Masaustu)
             .unwrap_err();
+        assert!(matches!(hata, DepoHatasi::GecersizVeri(_)));
+    }
+
+    #[test]
+    fn negatif_ucret_reddedilir() {
+        let (_d, c, cid) = kurulum();
+        let yeni_negatif = YeniRandevu {
+            client_id: cid,
+            baslangic: "2026-09-07T14:00".into(),
+            bitis: "2026-09-07T15:00".into(),
+            ucret: Some(-1),
+        };
+        let hata = olustur(&c, &yeni_negatif, Cihaz::Masaustu).unwrap_err();
         assert!(matches!(hata, DepoHatasi::GecersizVeri(_)));
     }
 
@@ -321,6 +370,21 @@ mod tests {
     }
 
     #[test]
+    fn aralik_sorgusu_sinir_degerleri_dogru_davranir() {
+        // Bulgu 2 duzeltmesi: `baslangic`'a TAM ESIT bir randevu (dahil
+        // olmali) ile sorgu `bitis`'ine TAM ESIT bir randevu (haric olmali)
+        // ayni testte denenir; boylece `>= baslangic AND < bitis` sinirlari
+        // sadece dogru degil, testle de kanitlanmis olur.
+        let (_d, c, cid) = kurulum();
+        olustur(&c, &yeni(cid, "2026-09-07T00:00", "2026-09-07T01:00"), Cihaz::Masaustu).unwrap();
+        olustur(&c, &yeni(cid, "2026-09-08T00:00", "2026-09-08T01:00"), Cihaz::Masaustu).unwrap();
+
+        let liste = aralik_getir(&c, "2026-09-07T00:00", "2026-09-08T00:00", Cihaz::Masaustu).unwrap();
+        assert_eq!(liste.len(), 1, "sorgu bitisine tam esit randevu haric tutulmali");
+        assert_eq!(liste[0].baslangic, "2026-09-07T00:00", "sorgu baslangicina tam esit randevu dahil olmali");
+    }
+
+    #[test]
     fn aralik_sonuclari_zamana_gore_siralanir() {
         let (_d, c, cid) = kurulum();
         olustur(&c, &yeni(cid, "2026-09-07T16:00", "2026-09-07T17:00"), Cihaz::Masaustu).unwrap();
@@ -328,6 +392,18 @@ mod tests {
 
         let liste = aralik_getir(&c, "2026-09-07T00:00", "2026-09-08T00:00", Cihaz::Masaustu).unwrap();
         assert_eq!(liste[0].baslangic, "2026-09-07T09:00");
+    }
+
+    #[test]
+    fn aralik_getir_bozuk_tarih_bicimini_reddeder() {
+        let (_d, c, _cid) = kurulum();
+        let hata = aralik_getir(&c, "07.09.2026 00:00", "2026-09-08T00:00", Cihaz::Masaustu)
+            .unwrap_err();
+        assert!(matches!(hata, DepoHatasi::GecersizVeri(_)));
+
+        let hata = aralik_getir(&c, "2026-09-07T00:00", "08.09.2026 00:00", Cihaz::Masaustu)
+            .unwrap_err();
+        assert!(matches!(hata, DepoHatasi::GecersizVeri(_)));
     }
 
     #[test]

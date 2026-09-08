@@ -81,7 +81,15 @@ export const takvimApi = {
 
 export const api = {
   durumAl: () =>
-    istek<{ kurulum_gerekli: boolean; kilitli: boolean; keystore_bozuk: boolean }>('/api/durum'),
+    istek<{
+      kurulum_gerekli: boolean
+      kilitli: boolean
+      keystore_bozuk: boolean
+      // Uygulamanın veri klasörünün gerçek yolu. Bozuk keystore ekranı bunu
+      // kullanıcıya gösterir: macOS'ta bu klasör Finder'da gizlidir, yol
+      // yazılmadan kurtarma adımları uygulanamaz.
+      veri_dizini: string
+    }>('/api/durum'),
   kurulumYap: (parola: string) =>
     istek<{ kurtarma_kodu: string }>('/api/kurulum', {
       method: 'POST',

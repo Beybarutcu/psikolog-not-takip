@@ -39,6 +39,16 @@ pub async fn durum(State(s): State<AppState>) -> Json<serde_json::Value> {
         "kurulum_gerekli": kurulum_gerekli,
         "kilitli": kilitli,
         "keystore_bozuk": keystore_bozuk,
+        // Veri dizininin gercek yolu. Bozuk keystore ekrani kullaniciya
+        // "su klasoru acin" diyebilmek icin buna muhtac: macOS'ta uygulama
+        // veri dizini `~/Library/Application Support/...` altindadir ve
+        // Finder onu varsayilan olarak GIZLER -- yolu yazmadan kullanici
+        // kurtarma adimlarini fiilen uygulayamaz.
+        //
+        // Bu bir sir degil: sunucu yalnizca 127.0.0.1'de dinliyor, ayni
+        // makinede zaten dosya sisteminden okunabilen bir yol. Hassas olan
+        // sey dizinin ADI degil, ICINDEKI anahtar -- o hicbir yanitta yok.
+        "veri_dizini": s.veri_dizini.display().to_string(),
     }))
 }
 

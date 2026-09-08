@@ -5,7 +5,12 @@ import { KeystoreBozukEkrani } from './screens/KeystoreBozukEkrani'
 import { KilitEkrani } from './screens/KilitEkrani'
 import { KurulumSihirbazi } from './screens/KurulumSihirbazi'
 
-type Durum = { kurulum_gerekli: boolean; kilitli: boolean; keystore_bozuk: boolean } | null
+type Durum = {
+  kurulum_gerekli: boolean
+  kilitli: boolean
+  keystore_bozuk: boolean
+  veri_dizini: string
+} | null
 
 export default function App() {
   const [durum, setDurum] = useState<Durum>(null)
@@ -24,7 +29,7 @@ export default function App() {
   // keystore_bozuk her zaman önce kontrol edilir: anahtar dosyası okunamıyorsa
   // kurulum sihirbazı asla gösterilmemeli, çünkü kurulum mevcut anahtarı ezer
   // ve şifreli veriyi kalıcı olarak erişilemez kılar.
-  if (durum.keystore_bozuk) return <KeystoreBozukEkrani />
+  if (durum.keystore_bozuk) return <KeystoreBozukEkrani veriDizini={durum.veri_dizini} />
   if (durum.kurulum_gerekli) {
     return <KurulumSihirbazi kurulumYap={api.kurulumYap} onTamam={yenile} />
   }

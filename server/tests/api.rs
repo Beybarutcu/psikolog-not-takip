@@ -121,14 +121,48 @@ async fn kilitliyken_durum_yaniti_kurtarma_kodu_veya_anahtar_icermez() {
 
     let (kod, json) = cagir(&s, "GET", "/api/durum", None).await;
     assert_eq!(kod, StatusCode::OK);
-    // Yanit govdesi yalnizca uc bool alan icermeli (kurulum_gerekli, kilitli,
-    // keystore_bozuk), baska hicbir sey degil. (keystore_bozuk alani
-    // Bulgu 1 duzeltmesiyle eklendi; dogruladigi sey -- hassas veri
-    // sizmamasi -- degismedi, yalnizca alan sayisi 2'den 3'e cikti.)
+    // Yanit govdesi yalnizca su dort alani icermeli: uc bool (kurulum_gerekli,
+    // kilitli, keystore_bozuk) ve veri dizininin yolu. Baska hicbir sey degil.
+    // (keystore_bozuk Bulgu 1 duzeltmesiyle, veri_dizini ise Gorev 12 inceleme
+    // maddesi 2 ile eklendi -- bozuk keystore ekrani kullaniciya hangi klasoru
+    // acacagini soyleyebilsin diye. Dogruladigi sey -- hassas veri sizmamasi --
+    // degismedi, yalnizca alan sayisi 2'den 4'e cikti.)
     let alanlar: Vec<&String> = json.as_object().unwrap().keys().collect();
-    assert_eq!(alanlar.len(), 3, "durum yaniti beklenenden fazla alan iceriyor: {json}");
+    assert_eq!(alanlar.len(), 4, "durum yaniti beklenenden fazla alan iceriyor: {json}");
     assert!(json.get("kurtarma_kodu").is_none());
     assert!(json.get("parola").is_none());
+    // Yol bir dizin adidir, anahtar materyali degil: yanitta keystore'un
+    // ICERIGINDEN hicbir sey bulunmamali.
+    let ks_icerigi = std::fs::read_to_string(s.keystore_yolu()).unwrap();
+    let govde = json.to_string();
+    for parca in ks_icerigi.split(['"', ',', '{', '}', ':']).filter(|p| p.len() >= 16) {
+        assert!(!govde.contains(parca), "durum yaniti keystore icerigi sizdiriyor: {parca}");
+    }
+}
+
+// --- Gorev 12 inceleme maddesi 2: veri dizini yolu istemciye bildirilir ---
+//
+// Bozuk keystore ekrani kullaniciya "su iki dosyayi su klasore kopyalayin"
+// diyor. macOS'ta o klasor `~/Library/Application Support/...` altindadir ve
+// Finder onu varsayilan olarak gizler; yol yazilmadan talimat uygulanamaz.
+#[tokio::test]
+async fn durum_yaniti_veri_dizininin_gercek_yolunu_bildirir() {
+    let (d, s) = test_state();
+    let (kod, json) = cagir(&s, "GET", "/api/durum", None).await;
+    assert_eq!(kod, StatusCode::OK);
+    let yol = json["veri_dizini"].as_str().expect("veri_dizini alani string olmali");
+    assert_eq!(std::path::Path::new(yol), d.path(), "bildirilen yol gercek veri dizini olmali");
+
+    // Keystore bozukken de -- yani ekranin gercekten gosterildigi durumda -- gelmeli.
+    cagir(&s, "POST", "/api/kurulum", Some(serde_json::json!({"parola":"gizli123"}))).await;
+    std::fs::write(s.keystore_yolu(), b"{ bozuk").unwrap();
+    let (_, bozuk_durum) = cagir(&s, "GET", "/api/durum", None).await;
+    assert_eq!(bozuk_durum["keystore_bozuk"], true);
+    assert_eq!(
+        std::path::Path::new(bozuk_durum["veri_dizini"].as_str().unwrap()),
+        d.path(),
+        "keystore bozukken de veri dizini yolu bildirilmeli -- ekran tam da o an gosteriliyor"
+    );
 }
 
 #[tokio::test]

@@ -417,6 +417,11 @@ pub fn geri_yukle(
         // kullanicida yedegin db'si + eski keystore kalirdi.
         let _ = std::fs::remove_file(db_yolu);
         geri_al(db_vardi, &db_onceki, db_yolu, keystore_vardi, &keystore_onceki, keystore_yolu);
+        // Diger bes hata yolu gibi bu yol da gecici dosya birakmaz: rename
+        // basarisiz oldugu icin `keystore.json.restore` hala yerinde durur ve
+        // temizlenmezse modulun "hata sonrasi kalinti yok" degismezini bozar
+        // (bkz. `keystore_eksikse_geri_yukleme_reddedilir_ve_mevcut_veri_korunur`).
+        let _ = std::fs::remove_file(&keystore_gecici);
         return Err(e.into());
     }
 

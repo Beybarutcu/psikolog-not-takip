@@ -4,7 +4,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use psikolog_core::crypto::keyring::CryptoError;
 use psikolog_core::store::{
     audit::{kaydet, Cihaz, Eylem},
-    db::{open_encrypted, open_existing},
+    db::open_existing,
     keystore,
     schema::migrate,
 };
@@ -140,12 +140,26 @@ pub async fn kilit_ac(
 
 pub async fn kilitle(State(s): State<AppState>) -> (StatusCode, Json<serde_json::Value>) {
     if let Some(key) = s.acik_anahtar() {
-        if let Ok(conn) = open_encrypted(&s.db_yolu(), &key) {
+        // `open_encrypted` DEĞİL, `open_existing`: yukarıdaki `kilit_ac`
+        // düzeltmesiyle aynı bulgu burada da geçerliydi. `kilitle` çıkış
+        // kaydı yazmak için veritabanını `open_encrypted` ile açıyordu; bu
+        // fonksiyon dosya yoksa onu YARATIR. Senaryo: kullanıcı `veri.db`'yi
+        // yanlışlıkla siler, "Kilitle"ye basar -- çıkış kaydı için açılan
+        // bağlantı sessizce BOŞ bir `veri.db` yaratır. Kullanıcı sonra doğru
+        // parolasıyla kilidi açar, `kilit_ac`'ın `open_existing` kontrolü bu
+        // TAZE (ve boş) dosyayı bulur ve sorunsuz açılır -- kullanıcı hiçbir
+        // uyarı almadan tüm verisinin kaybolduğunu fark eder. `open_existing`
+        // dosya yoksa `DbError::DosyaYok` döner, hiçbir şey yaratmaz.
+        if let Ok(conn) = open_existing(&s.db_yolu(), &key) {
             // Kilitleme erişimi KALDIRAN bir işlemdir: audit yazımı
             // başarısız olsa bile kilitleme HER ZAMAN başarılı olur
             // (fail-open) -- güvenlik lehine bir eylemi engellemek zarar
-            // verir. (Karşıt karar -- fail-closed -- için bkz. yukarıdaki
-            // `kilit_ac` ve `routes::setup::kurulum`.)
+            // verir. Bu artık veritabanı bağlantısının kendisini de kapsar:
+            // `open_existing` başarısız olursa (dosya yok, bozuk, kilitli)
+            // çıkış kaydı yazılamaz -- kabul edilebilir -- ama oturum yine de
+            // aşağıda koşulsuz kilitlenir ve uç nokta `200` döner. (Karşıt
+            // karar -- fail-closed -- için bkz. yukarıdaki `kilit_ac` ve
+            // `routes::setup::kurulum`.)
             let _ = kaydet(&conn, Eylem::Cikis, "session", "-", Cihaz::Masaustu, None);
         }
     }

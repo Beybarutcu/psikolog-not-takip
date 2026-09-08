@@ -423,6 +423,37 @@ async fn veri_db_silinmisken_kilit_ac_oturum_acmaz_ve_dosya_yaratmaz() {
     assert_eq!(kod2, StatusCode::UNAUTHORIZED, "basarisiz kilit-ac oturumu ACMAMALI");
 }
 
+// Duzeltme turu, Bulgu (Important): `kilit_ac` yukarida `open_existing`
+// kullanacak sekilde duzeltildi ama `kilitle` hala `open_encrypted`
+// kullaniyordu (cikis kaydi icin). Zincir: kullanici veri.db'yi siler,
+// "Kilitle"ye basar -> `kilitle` bos bir veri.db YARATIR -> kullanici dogru
+// parolayla kilidi acar -> `kilit_ac`'in `open_existing` kontrolu artik
+// dosyayi BULUR (cunku az once yaratildi) -> sorunsuz acilir -> kullanici
+// bos bir veritabaniyla karsilasir, hicbir uyari almadan. Bu test `kilitle`
+// cagrisinin veri.db yokken (a) 200 dondugunu, (b) oturumu gercekten
+// kilitledigini ve (c) dosyayi YARATMADIGINI dogrular.
+#[tokio::test]
+async fn veri_db_silinmisken_kilitle_dosya_yaratmaz_ve_basarili_doner() {
+    let (_d, s) = kurulu_state().await;
+    assert!(s.db_yolu().exists(), "test onkosulu: kurulumdan sonra veri.db var olmali");
+    std::fs::remove_file(s.db_yolu()).unwrap();
+
+    let (kod, _json) = cagir(&s, "POST", "/api/kilitle", None).await;
+
+    assert_eq!(
+        kod,
+        StatusCode::OK,
+        "kilitle fail-open olmali: audit yazilamasa bile 200 donmeli"
+    );
+    assert!(
+        !s.db_yolu().exists(),
+        "kilitle cikis kaydi icin veri.db'yi sessizce yeniden olusturmamali (open_existing kullanilmali)"
+    );
+
+    let (_, durum) = cagir(&s, "GET", "/api/durum", None).await;
+    assert_eq!(durum["kilitli"], true, "kilitle sonrasi oturum kilitli olmali");
+}
+
 // Kural 3: `/api` altinda bilinmeyen bir yol 404 donmeli, SPA fallback'ine
 // (200 + HTML) dusmemeli -- aksi halde bir `fetch` yazim hatasi sessizce
 // "basarili bos yanit" gibi gorunur.

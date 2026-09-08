@@ -21,6 +21,10 @@ export function RandevuBloku({ randevu, onSec }: { randevu: Randevu; onSec: () =
   return (
     <button
       onClick={onSec}
+      // data-durum: testlerin (ve olasi baska tuketicilerin) gorsel
+      // sinif adina/renge degil, semantik duruma bagli kalabilmesi icin.
+      // Renk ya da sinif adi degisirse bu oznitelik degismez.
+      data-durum={randevu.durum}
       className={`w-full truncate rounded px-1 py-0.5 text-left text-xs ${stil}`}
     >
       {randevu.danisan_adi}

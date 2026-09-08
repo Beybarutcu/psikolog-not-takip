@@ -65,6 +65,18 @@ export const takvimApi = {
     ucret?: number | null
     tekrar_sayisi?: number
   }) => istek<Randevu[]>('/api/randevular', { method: 'POST', body: JSON.stringify(govde) }),
+  // Mevcut bir randevunun alanlarını değiştirir. `randevuOlustur` (POST) her
+  // çağrıda YENİ kayıt üretir — düzenleme için onu çağırmak randevunun
+  // kopyasını oluşturur (bkz. dal incelemesi C1). Sunucuda ayrı bir metot
+  // (PUT) kullanılıyor; PATCH'in `{durum}` sözleşmesi dokunulmadan kaldı.
+  randevuGuncelle: (
+    id: number,
+    govde: { client_id: number; baslangic: string; bitis: string; ucret?: number | null },
+  ) =>
+    istek<Randevu>(`/api/randevular/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(govde),
+    }),
   randevuDurumu: (id: number, durum: string) =>
     istek<Record<string, never>>(`/api/randevular/${id}`, {
       method: 'PATCH',

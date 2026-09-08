@@ -201,6 +201,49 @@ describe('RandevuPaneli', () => {
     expect(props.onKaydet).toHaveBeenCalledWith(expect.objectContaining({ ucret: null }))
   })
 
+  // --- Dal incelemesi C1: iki kipin KESİŞTİĞİ düğme -------------------
+  //
+  // Bu dosyadaki sekiz testin hepsi ya `randevu: null` ile kaydediyor ya
+  // `randevu: mevcut` ile durum/silme deniyordu. Kaydet düğmesi her iki
+  // kipte de görünüyor ama hiçbir test onu düzenleme kipinde denemiyordu —
+  // C1 bu boşlukta yaşadı. Aşağıdaki testler tam o kesişimi kapsıyor.
+
+  it('C1: mevcut randevuda düğme "Güncelle" yazar, yeni randevuda "Kaydet"', () => {
+    kur({ randevu: mevcut })
+    expect(screen.getByRole('button', { name: 'Güncelle' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Kaydet' })).toBeNull()
+  })
+
+  it('C1: mevcut randevuda alanlar kayıttan dolar ve güncelleme onKaydet ile bildirilir', async () => {
+    const props = kur({ randevu: mevcut })
+
+    // Düzenleme kipi: alanlar mevcut kayıttan doluyor.
+    expect((screen.getByLabelText('Danışan') as HTMLSelectElement).value).toBe('1')
+    expect((screen.getByLabelText('Ücret (TL)') as HTMLInputElement).value).toBe('450')
+
+    await userEvent.clear(screen.getByLabelText('Ücret (TL)'))
+    await userEvent.type(screen.getByLabelText('Ücret (TL)'), '500')
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+
+    expect(props.onKaydet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        client_id: 1,
+        baslangic: '2026-09-07T14:00',
+        bitis: '2026-09-07T15:00',
+        ucret: 50000,
+      }),
+    )
+    // Düzenleme kipinde seri alanı yok, dolayısıyla tekrar_sayisi da yok:
+    // mevcut bir randevuyu "8 hafta tekrarla" ile kaydetmek anlamsız.
+    expect(props.onKaydet.mock.calls[0][0].tekrar_sayisi).toBeUndefined()
+  })
+
+  it('C1: mevcut randevuda tekrar (seri) alanı görünmez', () => {
+    kur({ randevu: mevcut })
+    expect(screen.queryByLabelText('Her hafta tekrarla')).toBeNull()
+    expect(screen.queryByLabelText('Kaç hafta')).toBeNull()
+  })
+
   it('Bulgu 4: sunucu hatası panelin içinde de gösterilir', async () => {
     const onKaydet = vi.fn().mockRejectedValue(new Error('Ücret negatif olamaz.'))
     kur({ onKaydet })

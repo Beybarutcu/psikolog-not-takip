@@ -59,6 +59,41 @@ test('kilitliyken randevu ucu veri sizdirmaz', async ({ page, request }) => {
   expect(JSON.stringify(govde)).not.toContain('Zeynep Kaya')
 })
 
+// Dal incelemesi C1'in birebir kaniti: mevcut bir randevunun ucreti
+// degistirilince TEK randevu kalmali (kopya uretilmemeli) ve ucret gercekten
+// degismis olmali. Bu senaryo daha once ikinci bir randevu yaratiyordu.
+test('mevcut randevunun ucreti guncellenir, kopya olusmaz', async ({ page }) => {
+  await kurulumYap(page)
+
+  await page.getByRole('button', { name: 'Danışan ekle' }).click()
+  await page.getByLabel('Ad soyad').fill('Elif Şahin')
+  await page.getByRole('button', { name: 'Ekle', exact: true }).click()
+  await expect(page.getByText('Elif Şahin')).toBeVisible()
+
+  // Diger testlerin kullandigi 10:00 satirindan farkli bir saat secilir ki
+  // paylasilan sunucu durumundaki kayitlar birbirine karismasin.
+  await page.locator('button[aria-label$="11:00 boş"]').first().click()
+  await page.getByLabel('Danışan').selectOption({ label: 'Elif Şahin' })
+  await page.getByLabel('Ücret (TL)').fill('450')
+  await page.getByRole('button', { name: 'Kaydet' }).click()
+
+  const bloklar = page.getByRole('button', { name: 'Elif Şahin' })
+  await expect(bloklar).toHaveCount(1)
+
+  // Randevuyu ac, ucreti degistir, Guncelle'ye bas.
+  await bloklar.first().click()
+  await expect(page.getByLabel('Ücret (TL)')).toHaveValue('450')
+  await page.getByLabel('Ücret (TL)').fill('500')
+  await page.getByRole('button', { name: 'Güncelle' }).click()
+
+  // (a) KOPYA OLUSMADI: hala tek blok.
+  await expect(bloklar).toHaveCount(1)
+
+  // (b) UCRET GERCEKTEN DEGISTI: paneli yeniden ac ve alani oku.
+  await bloklar.first().click()
+  await expect(page.getByLabel('Ücret (TL)')).toHaveValue('500')
+})
+
 test('haftalar arasi gezinme calisir', async ({ page }) => {
   await kurulumYap(page)
   const baslik = page.locator('h2').first()

@@ -195,6 +195,42 @@ async fn kilitliyken_randevu_silme_401_doner_ve_silmez() {
     );
 }
 
+// Dal incelemesi C1: alan guncelleme ucu (`PUT /api/randevular/{id}`) da
+// diger dokuz rota gibi `acik_baglanti` kapisindan gecmeli. Yalnizca 401
+// degil, guncellemenin UYGULANMAMIS oldugu da dogrulanir (Bulgu 4 dersi:
+// govde sekline degil gercek veri durumuna bak).
+#[tokio::test]
+async fn kilitliyken_randevu_guncelleme_401_doner_ve_degistirmez() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let cid = d["id"].as_i64().unwrap();
+    let (_, olusan) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": cid, "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00",
+        "ucret": 45000
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+    cagir(&s, "POST", "/api/kilitle", None).await;
+
+    let (kod, json) = cagir(&s, "PUT", &format!("/api/randevular/{id}"), Some(json!({
+        "client_id": cid, "baslangic": "2026-09-07T16:00", "bitis": "2026-09-07T17:00",
+        "ucret": 50000
+    }))).await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED);
+    assert!(json.get("id").is_none(), "kilitliyken guncelleme kaydi dondurmemeli");
+
+    cagir(&s, "POST", "/api/kilit-ac", Some(json!({"parola":"gizliparola"}))).await;
+    let (_, hafta) = cagir(
+        &s, "GET",
+        "/api/randevular?baslangic=2026-09-07T00:00&bitis=2026-09-14T00:00", None,
+    ).await;
+    assert_eq!(hafta.as_array().unwrap().len(), 1);
+    assert_eq!(
+        hafta[0]["baslangic"], "2026-09-07T14:00",
+        "kilitliyken yapilan guncelleme uygulanmamis olmali"
+    );
+    assert_eq!(hafta[0]["ucret"], 45000, "kilitliyken ucret degismemis olmali");
+}
+
 #[tokio::test]
 async fn kilitliyken_cakisma_401_doner() {
     let (_d, s) = kurulu_state().await;
@@ -291,6 +327,93 @@ async fn durum_guncellenir() {
         "/api/randevular?baslangic=2026-09-07T00:00&bitis=2026-09-14T00:00", None,
     ).await;
     assert_eq!(hafta[0]["durum"], "geldi");
+}
+
+// Dal incelemesi C1: mevcut bir randevunun ucretini degistirmek KOPYA
+// uretmemeli. En onemli assertion "ucret 50000 oldu" degil, "hafta hala
+// TEK randevu iceriyor".
+#[tokio::test]
+async fn randevu_guncellenir_ve_kopya_uretmez() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let cid = d["id"].as_i64().unwrap();
+    let (_, olusan) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": cid, "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00",
+        "ucret": 45000
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+
+    let (kod, guncel) = cagir(&s, "PUT", &format!("/api/randevular/{id}"), Some(json!({
+        "client_id": cid, "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00",
+        "ucret": 50000
+    }))).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(guncel["id"].as_i64().unwrap(), id, "ayni kayit donmeli");
+
+    let (_, hafta) = cagir(
+        &s, "GET",
+        "/api/randevular?baslangic=2026-09-07T00:00&bitis=2026-09-14T00:00", None,
+    ).await;
+    assert_eq!(
+        hafta.as_array().unwrap().len(),
+        1,
+        "guncelleme KOPYA uretmemeli (dal incelemesi C1)"
+    );
+    assert_eq!(hafta[0]["ucret"], 50000);
+}
+
+// PATCH sozlesmesi PUT eklendikten sonra da AYNEN calisiyor: govdesi
+// `{durum}` olan bir PATCH hala yalnizca durumu degistirir ve diger
+// alanlara dokunmaz.
+#[tokio::test]
+async fn put_eklendikten_sonra_patch_durum_sozlesmesi_degismez() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let (_, olusan) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": d["id"], "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00",
+        "ucret": 45000
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+
+    let (kod, _) =
+        cagir(&s, "PATCH", &format!("/api/randevular/{id}"), Some(json!({"durum":"geldi"}))).await;
+    assert_eq!(kod, StatusCode::OK);
+
+    let (_, hafta) = cagir(
+        &s, "GET",
+        "/api/randevular?baslangic=2026-09-07T00:00&bitis=2026-09-14T00:00", None,
+    ).await;
+    assert_eq!(hafta[0]["durum"], "geldi");
+    assert_eq!(hafta[0]["ucret"], 45000, "PATCH yalnizca durumu degistirmeli");
+    assert_eq!(hafta[0]["baslangic"], "2026-09-07T14:00");
+}
+
+#[tokio::test]
+async fn guncellemede_gecersiz_veri_400_doner() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let cid = d["id"].as_i64().unwrap();
+    let (_, olusan) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": cid, "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00"
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+
+    let (kod, json) = cagir(&s, "PUT", &format!("/api/randevular/{id}"), Some(json!({
+        "client_id": cid, "baslangic": "07.09.2026 14:00", "bitis": "07.09.2026 15:00"
+    }))).await;
+    assert_eq!(kod, StatusCode::BAD_REQUEST);
+    assert!(json["hata"].as_str().unwrap().contains("Tarih"));
+}
+
+#[tokio::test]
+async fn olmayan_randevunun_guncellenmesi_404_doner() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+
+    let (kod, _) = cagir(&s, "PUT", "/api/randevular/9999", Some(json!({
+        "client_id": d["id"], "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00"
+    }))).await;
+    assert_eq!(kod, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]

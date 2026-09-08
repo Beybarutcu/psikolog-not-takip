@@ -215,12 +215,16 @@ export function RandevuPaneli({
 
       {hata && <p className="mt-3 text-sm text-red-600">{hata}</p>}
 
+      {/* Düğme metni kipe göre değişiyor: düzenleme kipinde "Kaydet"
+          demek, kullanıcıya yeni bir kayıt oluşturulacağını ima ediyordu
+          (ve gerçekten öyle oluyordu, bkz. dal incelemesi C1). "Güncelle"
+          ne olacağını doğru söyler. */}
       <button
         className="mt-4 w-full rounded bg-slate-900 py-2 text-white disabled:opacity-50"
         onClick={() => void kaydet()}
         disabled={islemSuruyor}
       >
-        Kaydet
+        {randevu ? 'Güncelle' : 'Kaydet'}
       </button>
 
       {randevu && (

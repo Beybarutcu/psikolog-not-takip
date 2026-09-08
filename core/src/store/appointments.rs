@@ -2,7 +2,8 @@
 //!
 //! Tasarım kararı gereği randevu ve seans aynı kayıttır (ileride not bu
 //! kayıtlara bağlanacak); bu modül `appointments` tablosu üzerinde
-//! oluşturma, aralık sorgusu, durum güncelleme ve silme işlemlerini sağlar.
+//! oluşturma, aralık sorgusu, alan/durum güncelleme ve silme işlemlerini
+//! sağlar.
 //! Desen `store::clients` (Plan 2 Görev 3) ile birebir aynıdır: `DepoHatasi`
 //! oradan içe aktarılır, `Debug` elle yazılır, yazma + audit log tek
 //! transaction'da yapılır.
@@ -14,8 +15,9 @@
 //! isim asla yazılmaz.
 //!
 //! # Yazma + log aynı transaction'da
-//! `olustur`, `durum_guncelle` ve `sil` veriyi değiştirir; üçü de tabloya
-//! yazdıktan hemen sonra `audit::kaydet` çağırır. Bu adımlar
+//! `olustur`, `guncelle`, `durum_guncelle`, `sil`, `seri_olustur` ve
+//! `seriyi_sil` veriyi değiştirir; hepsi tabloya yazdıktan hemen sonra
+//! `audit::kaydet` çağırır. Bu adımlar
 //! `conn.unchecked_transaction()` ile TEK transaction'a alınır -- log yazımı
 //! başarısız olursa veri değişikliği de geri alınır, "randevu değişti ama
 //! loglanmadı" durumu oluşmaz (bkz. `tests` modülündeki `..._atomik_...`
@@ -28,17 +30,17 @@
 //! durumu değişmiyor) ayrı transaction gerektirmiyor.
 //!
 //! # UYARI — iç içe transaction açılamaz
-//! `olustur`, `durum_guncelle` ve `sil` kendi `unchecked_transaction()`'ını
-//! içeride açar. SQLite iç içe transaction'ı desteklemez ("cannot start a
-//! transaction within a transaction"): bu üç fonksiyonu **başka bir
-//! transaction'ın içinden** çağırmayın. Bu sessiz bir veri bozulması değil,
-//! `rusqlite::Error` olarak dönen gürültülü bir hatadır -- ama derleyici
-//! yakalamaz.
+//! Yukarıdaki mutasyon fonksiyonlarının hepsi kendi
+//! `unchecked_transaction()`'ını içeride açar. SQLite iç içe transaction'ı
+//! desteklemez ("cannot start a transaction within a transaction"): bu
+//! fonksiyonları **başka bir transaction'ın içinden** çağırmayın. Bu sessiz
+//! bir veri bozulması değil, `rusqlite::Error` olarak dönen gürültülü bir
+//! hatadır -- ama derleyici yakalamaz.
 
 use crate::store::audit::{kaydet, Ayrinti, Cihaz, Eylem};
 use crate::store::clients::DepoHatasi;
 use crate::store::zaman::zaman_gecerli_mi;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, Date, Month, OffsetDateTime};
 
@@ -93,6 +95,25 @@ impl std::fmt::Debug for Randevu {
 
 #[derive(Clone, Deserialize)]
 pub struct YeniRandevu {
+    pub client_id: i64,
+    pub baslangic: String,
+    pub bitis: String,
+    pub ucret: Option<i64>,
+}
+
+/// Mevcut bir randevunun DEĞİŞTİRİLEBİLİR alanları (bkz. `guncelle`).
+///
+/// Kasıtlı olarak `YeniRandevu` ile aynı alanları taşır ama ayrı bir tiptir:
+/// ikisi aynı yapı olsaydı, ileride `YeniRandevu`'ya eklenen bir alan
+/// (örn. `seri_id`) sessizce güncellenebilir hale gelirdi.
+///
+/// `durum` BURADA YOK: kendi uç noktası (`durum_guncelle`) var ve o,
+/// `Ayrinti::Durum` ile ayrı bir log satırı yazıyor -- durumu buradan da
+/// güncellenebilir kılmak aynı değişiklik için iki farklı log izi üretirdi.
+/// `seri_id` ve `id` de yok: seri üyeliği ve kimlik oluşturmada belirlenir,
+/// düzenlemeyle değişmez.
+#[derive(Clone, Deserialize)]
+pub struct RandevuGuncelleme {
     pub client_id: i64,
     pub baslangic: String,
     pub bitis: String,
@@ -246,6 +267,94 @@ pub fn durum_guncelle(
 
     tx.commit()?;
     Ok(())
+}
+
+/// Mevcut bir randevunun alanlarını (danışan, başlangıç, bitiş, ücret)
+/// günceller ve güncellenmiş kaydı döndürür. Güncelleme ve erişim logu tek
+/// transaction'da yazılır.
+///
+/// # Neden ayrı bir fonksiyon -- `olustur` düzenleme için kullanılamaz
+/// Düzenleme akışı `olustur` ile taklit edilemez: `olustur` her çağrıda YENİ
+/// bir satır ekler. Bu fonksiyon yokken arayüzün "Kaydet" düğmesi mevcut bir
+/// randevuda basıldığında kaydın KOPYASINI üretiyordu (bkz. dal incelemesi
+/// C1) -- ücreti değiştirilen randevu değişmemiş hâlde kalıyor, yanına
+/// ikincisi ekleniyordu. `cakisanlari_bul`'un `haric_id` parametresi zaten
+/// bu akış için (bkz. o fonksiyonun dokümantasyonu) yazılmıştı.
+///
+/// # Seri davranışı -- YALNIZCA bu tekil randevu değişir
+/// Randevu bir serinin üyesiyse (`seri_id` dolu) bile bu fonksiyon SADECE
+/// verilen `id`'li satırı günceller; serinin diğer üyelerine dokunmaz ve
+/// `seri_id`'yi değiştirmez. Bu bilinçli: "bu haftaki seansı bir saat
+/// kaydıralım" tamamen olağan bir istektir ve seri, kural olarak değil tek
+/// tek satırlar olarak materialize edildiği için (bkz. `seri_olustur`)
+/// tekil düzenleme zaten modelin desteklediği akıştır. Testle korunur:
+/// `guncelleme_seri_uyesini_tekil_gunceller_digerlerine_dokunmaz`.
+///
+/// # Loga ne yazılır
+/// `Eylem::Duzenleme` + `varlik_id` = randevu kimliği, `ayrinti` YOK
+/// (`None`). Eski/yeni değerler (danışan kimliği, saat, ücret) loga
+/// YAZILMAZ: `audit_log` hassas veri taşımaz (bkz. `store::audit`) ve
+/// `Ayrinti` kapalı bir enum olduğu için zaten serbest metin kabul etmez.
+/// Neyin değiştiğini bilmek gerekiyorsa kaydın kendisi `id` ile okunabilir.
+///
+/// UYARI: Kendi `unchecked_transaction()`'ını içeride açar -- bunu zaten
+/// açık bir transaction'ın içinden çağırmayın (SQLite iç içe transaction
+/// desteklemez, bkz. modül başlığındaki uyarı).
+pub fn guncelle(
+    conn: &Connection,
+    id: i64,
+    yeni: &RandevuGuncelleme,
+    cihaz: Cihaz,
+) -> Result<Randevu, DepoHatasi> {
+    if !zaman_gecerli_mi(&yeni.baslangic) || !zaman_gecerli_mi(&yeni.bitis) {
+        return Err(DepoHatasi::GecersizVeri(
+            "Tarih biçimi YYYY-AA-GGTSS:DD olmalı.".into(),
+        ));
+    }
+    if yeni.bitis <= yeni.baslangic {
+        return Err(DepoHatasi::GecersizVeri(
+            "Randevu bitişi başlangıcından sonra olmalı.".into(),
+        ));
+    }
+    if yeni.ucret.is_some_and(|u| u < 0) {
+        return Err(DepoHatasi::GecersizVeri("Ücret negatif olamaz.".into()));
+    }
+
+    let tx = conn.unchecked_transaction()?;
+
+    // Danisan var mi? Yabanci anahtar kisiti (PRAGMA foreign_keys=ON) bunu
+    // zaten yakalar ama ham bir SQLite hatasi olarak -- ki `depo_hatasi`
+    // onu 500'e esler. Acik kontrol, kullaniciya anlasilir bir 400 dondurur.
+    let danisan_var: bool =
+        tx.query_row("SELECT 1 FROM clients WHERE id = ?1", [yeni.client_id], |_| Ok(true))
+            .optional()?
+            .unwrap_or(false);
+    if !danisan_var {
+        return Err(DepoHatasi::GecersizVeri("Danışan bulunamadı.".into()));
+    }
+
+    let etkilenen = tx.execute(
+        "UPDATE appointments
+            SET client_id = ?1, baslangic = ?2, bitis = ?3, ucret = ?4, guncelleme_zamani = ?5
+          WHERE id = ?6",
+        rusqlite::params![
+            yeni.client_id,
+            yeni.baslangic,
+            yeni.bitis,
+            yeni.ucret,
+            simdi(),
+            id
+        ],
+    )?;
+    if etkilenen == 0 {
+        return Err(DepoHatasi::Bulunamadi);
+    }
+    kaydet(&tx, Eylem::Duzenleme, "appointment", &id.to_string(), cihaz, None)?;
+
+    let randevu = tx.query_row(&format!("{SECIM} WHERE a.id = ?1"), [id], satirdan)?;
+
+    tx.commit()?;
+    Ok(randevu)
 }
 
 /// Bir randevuyu siler. Silme ve erişim logu tek transaction'da yazılır.
@@ -1006,5 +1115,209 @@ mod tests {
             3,
             "audit log basarisiz oldugunda seri silme geri alinmali, kayitlar kalmali"
         );
+    }
+
+    // --- Dal incelemesi C1: alan guncelleme ------------------------------
+    //
+    // C1'in ozu: "Kaydet" mevcut bir randevuda KOPYA uretiyordu. Bu yuzden
+    // asagidaki testlerin en onemli iddiasi "alan degisti" degil, SATIR
+    // SAYISI DEGISMEDI -- kopya uretmeyi yakalayan tek assertion budur.
+
+    fn guncelleme(client_id: i64, baslangic: &str, bitis: &str, ucret: Option<i64>) -> RandevuGuncelleme {
+        RandevuGuncelleme {
+            client_id,
+            baslangic: baslangic.into(),
+            bitis: bitis.into(),
+            ucret,
+        }
+    }
+
+    #[test]
+    fn guncelleme_yeni_satir_yaratmaz_ve_alanlari_degistirir() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        let once = appointments_satir_sayisi(&c);
+
+        let guncel = guncelle(
+            &c,
+            r.id,
+            &guncelleme(cid, "2026-09-07T16:00", "2026-09-07T17:30", Some(50000)),
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+
+        assert_eq!(
+            appointments_satir_sayisi(&c),
+            once,
+            "guncelleme KOPYA uretmemeli: satir sayisi degismemeli (dal incelemesi C1)"
+        );
+        assert_eq!(guncel.id, r.id, "ayni kayit donmeli, yenisi degil");
+        assert_eq!(guncel.baslangic, "2026-09-07T16:00");
+        assert_eq!(guncel.bitis, "2026-09-07T17:30");
+        assert_eq!(guncel.ucret, Some(50000));
+        assert_eq!(guncel.durum, "planlandi", "durum bu yoldan degismemeli");
+    }
+
+    #[test]
+    fn guncelleme_danisani_degistirebilir() {
+        let (_d, c, cid) = kurulum();
+        let ikinci = danisan_ekle(
+            &c,
+            &YeniDanisan { ad_soyad: "Mehmet Demir".into(), telefon: None },
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+
+        let guncel = guncelle(
+            &c,
+            r.id,
+            &guncelleme(ikinci.id, "2026-09-07T14:00", "2026-09-07T15:00", Some(45000)),
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+        assert_eq!(guncel.client_id, ikinci.id);
+        assert_eq!(guncel.danisan_adi, "Mehmet Demir");
+    }
+
+    #[test]
+    fn guncelleme_seri_uyesini_tekil_gunceller_digerlerine_dokunmaz() {
+        let (_d, c, cid) = kurulum();
+        let seri = seri_olustur(
+            &c,
+            &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"),
+            3,
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+        let once = appointments_satir_sayisi(&c);
+
+        // Serinin ikinci haftasini bir saat kaydir -- kullanicinin tam
+        // olarak yapmak isteyebilecegi sey (bkz. `guncelle` dokumantasyonu).
+        let guncel = guncelle(
+            &c,
+            seri[1].id,
+            &guncelleme(cid, "2026-09-14T15:00", "2026-09-14T16:00", Some(45000)),
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+
+        assert_eq!(appointments_satir_sayisi(&c), once, "seri uyesi guncellemesi satir eklememeli");
+        assert_eq!(guncel.baslangic, "2026-09-14T15:00");
+        assert_eq!(
+            guncel.seri_id, seri[1].seri_id,
+            "seri uyeligi guncellemeyle kopmamali"
+        );
+
+        let hepsi =
+            aralik_getir(&c, "2026-09-01T00:00", "2026-10-01T00:00", Cihaz::Masaustu).unwrap();
+        assert_eq!(hepsi.len(), 3);
+        assert_eq!(hepsi[0].baslangic, "2026-09-07T14:00", "1. hafta dokunulmamis olmali");
+        assert_eq!(hepsi[2].baslangic, "2026-09-21T14:00", "3. hafta dokunulmamis olmali");
+    }
+
+    #[test]
+    fn olmayan_randevu_guncellenince_bulunamadi_doner() {
+        let (_d, c, cid) = kurulum();
+        let hata = guncelle(
+            &c,
+            999,
+            &guncelleme(cid, "2026-09-07T14:00", "2026-09-07T15:00", None),
+            Cihaz::Masaustu,
+        )
+        .unwrap_err();
+        assert!(matches!(hata, DepoHatasi::Bulunamadi));
+    }
+
+    #[test]
+    fn guncellemede_olmayan_danisan_gecersiz_veri_doner() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        let hata = guncelle(
+            &c,
+            r.id,
+            &guncelleme(9999, "2026-09-07T14:00", "2026-09-07T15:00", None),
+            Cihaz::Masaustu,
+        )
+        .unwrap_err();
+        assert!(matches!(hata, DepoHatasi::GecersizVeri(_)));
+    }
+
+    #[test]
+    fn guncellemede_gecersiz_zaman_ve_negatif_ucret_reddedilir() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+
+        assert!(matches!(
+            guncelle(&c, r.id, &guncelleme(cid, "07.09.2026 14:00", "07.09.2026 15:00", None), Cihaz::Masaustu)
+                .unwrap_err(),
+            DepoHatasi::GecersizVeri(_)
+        ));
+        assert!(matches!(
+            guncelle(&c, r.id, &guncelleme(cid, "2026-09-07T15:00", "2026-09-07T14:00", None), Cihaz::Masaustu)
+                .unwrap_err(),
+            DepoHatasi::GecersizVeri(_)
+        ));
+        assert!(matches!(
+            guncelle(&c, r.id, &guncelleme(cid, "2026-09-07T14:00", "2026-09-07T15:00", Some(-1)), Cihaz::Masaustu)
+                .unwrap_err(),
+            DepoHatasi::GecersizVeri(_)
+        ));
+    }
+
+    #[test]
+    fn guncelleme_audit_basarisiz_olursa_geri_alinir() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+
+        c.execute("DROP TABLE audit_log", []).unwrap();
+
+        let sonuc = guncelle(
+            &c,
+            r.id,
+            &guncelleme(cid, "2026-09-07T16:00", "2026-09-07T17:00", Some(99900)),
+            Cihaz::Masaustu,
+        );
+        assert!(sonuc.is_err(), "audit_log yokken guncelle Err donmeli");
+        assert!(matches!(sonuc.unwrap_err(), DepoHatasi::Sqlite(_)));
+
+        let (baslangic, ucret): (String, Option<i64>) = c
+            .query_row("SELECT baslangic, ucret FROM appointments WHERE id = ?1", [r.id], |x| {
+                Ok((x.get(0)?, x.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(baslangic, "2026-09-07T14:00", "audit basarisizsa guncelleme geri alinmali");
+        assert_eq!(ucret, Some(45000), "audit basarisizsa ucret degisikligi geri alinmali");
+    }
+
+    #[test]
+    fn guncelleme_duzenleme_logu_yazar_ve_hassas_veri_icermez() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        guncelle(
+            &c,
+            r.id,
+            &guncelleme(cid, "2026-09-07T16:00", "2026-09-07T17:00", Some(50000)),
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+
+        let kayitlar = crate::store::audit::son_kayitlar(&c, 20).unwrap();
+        let duzenleme = kayitlar
+            .iter()
+            .find(|k| k.eylem == "duzenleme" && k.varlik == "appointment")
+            .expect("guncelleme bir duzenleme kaydi yazmali");
+        assert_eq!(duzenleme.varlik_id, r.id.to_string());
+
+        let hepsi = format!("{kayitlar:?}");
+        assert!(!hepsi.contains("Ayse Yilmaz"), "danisan adi loga yazilmamali: {hepsi}");
+        assert!(!hepsi.contains("50000"), "ucret loga yazilmamali: {hepsi}");
+        assert!(!hepsi.contains("16:00"), "saat loga yazilmamali: {hepsi}");
     }
 }

@@ -97,7 +97,24 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
     tekrar_sayisi?: number
   }) {
     try {
-      await takvimApi.randevuOlustur(kayit)
+      // İki kip: panel mevcut bir randevuyla açıldıysa DÜZENLEME (PUT),
+      // yalnızca boş bir saatle açıldıysa YENİ KAYIT (POST). Bu ayrım
+      // yokken düzenleme kipinde de POST atılıyordu ve sunucu randevunun
+      // KOPYASINI yaratıyordu — orijinal kayıt değişmemiş hâlde kalıyor,
+      // aynı saatte ikinci bir blok beliriyordu (bkz. dal incelemesi C1).
+      if (seciliRandevu) {
+        // `tekrar_sayisi` bilerek geçirilmiyor: düzenleme kipinde panel o
+        // alanı zaten göstermiyor ve mevcut bir randevuyu "8 hafta
+        // tekrarla" ile kaydetmek anlamsız olurdu.
+        await takvimApi.randevuGuncelle(seciliRandevu.id, {
+          client_id: kayit.client_id,
+          baslangic: kayit.baslangic,
+          bitis: kayit.bitis,
+          ucret: kayit.ucret,
+        })
+      } else {
+        await takvimApi.randevuOlustur(kayit)
+      }
       setHata(null)
       panelKapat()
       await yukle()

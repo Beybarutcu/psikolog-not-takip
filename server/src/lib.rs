@@ -66,7 +66,11 @@ fn api_router() -> Router<AppState> {
         )
         .route(
             "/randevular/{id}",
+            // PATCH: yalnizca `{durum}` (Gorev 11'den beri degismeyen
+            // sozlesme). PUT: alan guncelleme (danisan/saat/ucret) --
+            // gerekce icin bkz. `routes::appointments::guncelle`.
             axum::routing::patch(routes::appointments::durum)
+                .put(routes::appointments::guncelle)
                 .delete(routes::appointments::kaldir),
         )
         .route("/cakisma", get(routes::appointments::cakisma))

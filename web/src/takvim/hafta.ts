@@ -3,6 +3,8 @@ const AYLAR = [
   'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık',
 ]
 
+// Görev 9'daki takvim ızgarası gün başlıkları için dışa aktarılır; bu
+// modülde henüz kullanılmıyor.
 export const GUN_ADLARI = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz']
 
 function ikiHane(n: number): string {
@@ -38,8 +40,15 @@ export function zamandanDate(zaman: string): Date {
   const [ss, dd] = saat.split(':').map(Number)
   // new Date(yil, ay-1, gun, saat, dakika) daima YEREL saat olarak kurulur (Date.UTC
   // ya da ISO-string kurucusundan farklı olarak). Bu yüzden dizgiyi elle ayrıştırıp
-  // bileşenleri bu kurucuya veriyoruz; new Date(zaman) kullansaydık motoru/ortamı
-  // ISO dizgisini UTC olarak yorumlayabilir ve randevu saatleri kayardı.
+  // bileşenleri bu kurucuya veriyoruz. Not: güncel V8/Node, saat bileşeni olan ve
+  // ofset içermeyen ISO dizgilerini (ör. "2026-06-15T09:00") ECMA-262 gereği zaten
+  // YEREL olarak yorumluyor — new Date(zaman) bu belirli biçim için pratikte eşdeğer
+  // sonuç verir (ölçüldü, bkz. Görev 8 raporu). Ama tek argümanlı new Date(...) hâlâ
+  // KULLANILMAMALI: davranışı motora/spesifikasyon inceliğine bağlıdır (tarih-yalnız
+  // dizgiler UTC sayılır, ofsetli dizgiler farklı yorumlanır, farklı motorlar arasında
+  // garanti tutarlılık yoktur) — elle ayrıştırma, kurucunun her zaman yerel saat
+  // ürettiğini spesifikasyon düzeyinde garanti eder ve gelecekte dizgi biçimi
+  // değişirse (saniye/ofset eklenirse) sessizce kaymayı önler.
   return new Date(yil, ay - 1, gun, ss, dd)
 }
 
@@ -51,8 +60,18 @@ export function haftaBasligi(haftaBasi: Date): string {
   const gunler = haftaGunleri(haftaBasi)
   const ilk = gunler[0]
   const son = gunler[6]
-  const yil = son.getFullYear()
 
+  if (ilk.getFullYear() !== son.getFullYear()) {
+    // Hafta yıl sınırını aşıyor (örn. 29 Aralık – 4 Ocak): her iki tarafın
+    // yılını ayrı ayrı yaz, aksi hâlde ilk günün yılı gizlenir ve kullanıcı
+    // yanlış yıla baktığını sanabilir.
+    return (
+      `${ilk.getDate()} ${AYLAR[ilk.getMonth()]} ${ilk.getFullYear()} – ` +
+      `${son.getDate()} ${AYLAR[son.getMonth()]} ${son.getFullYear()}`
+    )
+  }
+
+  const yil = son.getFullYear()
   if (ilk.getMonth() === son.getMonth()) {
     return `${ilk.getDate()} – ${son.getDate()} ${AYLAR[son.getMonth()]} ${yil}`
   }

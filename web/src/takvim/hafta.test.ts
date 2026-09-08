@@ -58,8 +58,20 @@ describe('hafta aritmetiği', () => {
     expect(dakikaFarki('2026-09-07T14:00', '2026-09-07T15:30')).toBe(90)
   })
 
+  it('dakika farkı gün sınırını aşan aralıkta doğru hesaplanır', () => {
+    // 23:30 → ertesi gün 00:30: 60 dakika. Gün sınırını geçmeyen bir çıkarım
+    // yapılırsa (örn. yalnızca saat/dakika bileşenleri karşılaştırılırsa)
+    // negatif ya da yanlış bir sonuç çıkar.
+    expect(dakikaFarki('2026-09-07T23:30', '2026-09-08T00:30')).toBe(60)
+  })
+
   it('hafta başlığı ay sınırını doğru yazar', () => {
     expect(haftaBasligi(new Date(2026, 8, 7))).toBe('7 – 13 Eylül 2026')
     expect(haftaBasligi(new Date(2026, 8, 28))).toBe('28 Eylül – 4 Ekim 2026')
+  })
+
+  it('hafta başlığı yıl sınırını aşan haftada her iki yılı da yazar', () => {
+    // 2026-12-28 pazartesi → hafta 2027-01-03 pazar ile biter.
+    expect(haftaBasligi(new Date(2026, 11, 28))).toBe('28 Aralık 2026 – 3 Ocak 2027')
   })
 })

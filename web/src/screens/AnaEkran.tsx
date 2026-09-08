@@ -11,6 +11,10 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   const [hata, setHata] = useState<string | null>(null)
   const [seciliRandevu, setSeciliRandevu] = useState<Randevu | null>(null)
   const [seciliBosSaat, setSeciliBosSaat] = useState<string | null>(null)
+  const [danisanFormAcik, setDanisanFormAcik] = useState(false)
+  const [yeniAdSoyad, setYeniAdSoyad] = useState('')
+  const [yeniTelefon, setYeniTelefon] = useState('')
+  const [danisanHata, setDanisanHata] = useState<string | null>(null)
 
   const yukle = useCallback(async () => {
     const gunler = haftaGunleri(haftaBasi)
@@ -66,6 +70,23 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   function panelKapat() {
     setSeciliRandevu(null)
     setSeciliBosSaat(null)
+  }
+
+  async function danisanEkle() {
+    if (yeniAdSoyad.trim() === '') {
+      setDanisanHata('Lütfen ad soyad girin.')
+      return
+    }
+    try {
+      await takvimApi.danisanEkle(yeniAdSoyad.trim(), yeniTelefon.trim() || undefined)
+      setYeniAdSoyad('')
+      setYeniTelefon('')
+      setDanisanFormAcik(false)
+      setDanisanHata(null)
+      setDanisanlar(await takvimApi.danisanlariGetir())
+    } catch (e) {
+      setDanisanHata(e instanceof Error ? e.message : 'Danışan eklenemedi.')
+    }
   }
 
   async function kaydet(kayit: {
@@ -125,6 +146,63 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
         <button className="rounded-lg border px-4 py-2" onClick={kilitle}>
           Kilitle
         </button>
+      </div>
+
+      <div className="mb-4">
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-medium text-slate-600">Danışanlar</span>
+          <button
+            className="rounded border px-3 py-1 text-sm"
+            onClick={() => setDanisanFormAcik((acik) => !acik)}
+          >
+            Danışan ekle
+          </button>
+        </div>
+
+        {danisanFormAcik && (
+          <div className="mt-2 flex items-end gap-2">
+            <div>
+              <label className="block text-sm" htmlFor="yeni-danisan-ad-soyad">
+                Ad soyad
+              </label>
+              <input
+                id="yeni-danisan-ad-soyad"
+                className="mt-1 rounded border p-2"
+                value={yeniAdSoyad}
+                onChange={(e) => setYeniAdSoyad(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm" htmlFor="yeni-danisan-telefon">
+                Telefon
+              </label>
+              <input
+                id="yeni-danisan-telefon"
+                className="mt-1 rounded border p-2"
+                value={yeniTelefon}
+                onChange={(e) => setYeniTelefon(e.target.value)}
+              />
+            </div>
+            <button
+              className="rounded bg-slate-900 px-3 py-2 text-sm text-white"
+              onClick={() => void danisanEkle()}
+            >
+              Ekle
+            </button>
+          </div>
+        )}
+
+        {danisanHata && <p className="mt-1 text-sm text-red-600">{danisanHata}</p>}
+
+        {danisanlar.length > 0 && (
+          <ul className="mt-2 flex flex-wrap gap-2 text-sm text-slate-700">
+            {danisanlar.map((d) => (
+              <li key={d.id} className="rounded-full bg-slate-100 px-3 py-1">
+                {d.ad_soyad}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
 
       {hata && <p className="mb-4 text-sm text-red-600">{hata}</p>}

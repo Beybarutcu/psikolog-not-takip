@@ -27,23 +27,9 @@
 //! taşımamalı; bir `String`/`&str` alanı gerekiyorsa mutlaka dar bir biçim
 //! doğrulaması eklenmeli.
 
+use crate::store::zaman::zaman_gecerli_mi;
 use rusqlite::Connection;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
-
-/// Beklenen bicim: YYYY-AA-GGTSS:DD (yerel duvar saati, zaman dilimi yok).
-///
-/// Plan 1'deki `zaman_gecerli_mi` deseniyle aynıdır; burada ayrıca
-/// kopyalanmıştır çünkü `Ayrinti::metin()` hassas olmayan yalnızca kısa,
-/// biçimi doğrulanmış dizgileri loga yazmalıdır.
-fn zaman_gecerli_mi(s: &str) -> bool {
-    let b = s.as_bytes();
-    b.len() == 16
-        && b[4] == b'-'
-        && b[7] == b'-'
-        && b[10] == b'T'
-        && b[13] == b':'
-        && b.iter().enumerate().all(|(i, c)| matches!(i, 4 | 7 | 10 | 13) || c.is_ascii_digit())
-}
 
 /// `audit_log.ayrinti` alanına yazılabilecek kapalı değer kümesi.
 ///

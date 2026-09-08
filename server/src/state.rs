@@ -1,4 +1,4 @@
-use psikolog_core::crypto::keyring::{wrapped_key_yapisal_gecerli_mi, DataKey, KdfParams};
+use psikolog_core::crypto::keyring::{DataKey, KdfParams};
 use psikolog_core::session::Oturum;
 use psikolog_core::store::audit::AuditKaydi;
 use psikolog_core::store::keystore::{self, Keystore};
@@ -69,24 +69,21 @@ impl AppState {
     /// içindeki `WrappedKey`'lerin (parola/kurtarma) yapısal olarak bozuk
     /// olması (ör. yarım disk yazımından kalma kısalmış `ciphertext_hex`)
     /// `load`'dan sorunsuz geçer. Bu yüzden `Var` durumunda ayrıca parolayı
-    /// bilmeden yapılabilecek yapısal doğrulamayı (`wrapped_key_yapisal_gecerli_mi`)
+    /// bilmeden yapılabilecek yapısal doğrulamayı (`keystore::yapisal_gecerli_mi`)
     /// çalıştırıyoruz -- aksi hâlde `keystore_bozuk` yanlış negatif verir ve
     /// kullanıcı doğru parolasını girdiğinde "parola hatalı" görür (bkz. Bulgu 1).
+    ///
+    /// Aynı kuralı `backup::geri_yukle` de uyguluyor; iki kopya tutulmasın diye
+    /// kural `psikolog_core::store::keystore::yapisal_gecerli_mi` içinde tek
+    /// yerde duruyor.
     pub fn keystore_durumu(&self) -> KeystoreDurumu {
         let yol = self.keystore_yolu();
         if !keystore::exists(&yol) {
             return KeystoreDurumu::Yok;
         }
         match keystore::load(&yol) {
-            Ok(ks) => {
-                if wrapped_key_yapisal_gecerli_mi(&ks.password)
-                    && wrapped_key_yapisal_gecerli_mi(&ks.recovery)
-                {
-                    KeystoreDurumu::Var(ks)
-                } else {
-                    KeystoreDurumu::Bozuk
-                }
-            }
+            Ok(ks) if keystore::yapisal_gecerli_mi(&ks) => KeystoreDurumu::Var(ks),
+            Ok(_) => KeystoreDurumu::Bozuk,
             Err(_) => KeystoreDurumu::Bozuk,
         }
     }

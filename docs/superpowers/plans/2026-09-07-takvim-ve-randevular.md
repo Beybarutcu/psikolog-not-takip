@@ -152,19 +152,97 @@ e2e/
 
 ---
 
-### Task 1: Şema sürüm 2 — danışan ve randevu tabloları
+### Task 1: `migrate` çerçevesi ve şema sürüm 2
 
 **Files:**
 - Modify: `core/src/store/schema.rs`
 - Test: aynı dosyanın test bloğu
 
+**Bu görev iki iş yapıyor.** Şema sürüm 2'yi eklemeden önce `migrate`'in kendisi yeniden
+yazılmalı — Plan 1'in son incelemesinden gelen zorunlu madde. Mevcut `migrate` sürümü **yazıyor
+ama hiç okumuyor**: tüm betikleri koşulsuz çalıştırıp `schema_version`'ı `CURRENT_VERSION` yapıyor.
+
+- **Sürüm düşürme sessizce veriyi bozar.** Uygulama imzasız olduğu için kullanıcı eski bir `.app`
+  geri koyabilir. v3 veritabanı v2 ikilisiyle açıldığında `migrate` hata vermeden sürümü 2'ye
+  geri yazar, v3 tabloları ortada kalır ve sonraki hiçbir teşhis doğru olmaz.
+- Plan 3 zaten "duplicate column hatasını yut" gibi bir kaçamak planlıyor — kalıp ikinci
+  genişletmede çatlıyor.
+
 **Interfaces:**
 - Consumes: `store::db::open_encrypted`
-- Produces: `pub const CURRENT_VERSION: i64 = 2` (1'den yükseltilir), `migrate` artık V1 ve V2'yi sırayla uygular
+- Produces:
+  - `pub const CURRENT_VERSION: i64 = 2`
+  - `pub fn okunan_surum(conn: &Connection) -> Result<i64, MigrateHatasi>` — `app_meta` yoksa `0`
+  - `pub fn migrate(conn: &Connection) -> Result<(), MigrateHatasi>` — mevcut sürümü **okur**,
+    yalnızca eksik adımları **sırayla** uygular, hepsini **tek transaction** içinde çalıştırır
+  - `pub enum MigrateHatasi { SurumDusuk { veritabani: i64, uygulama: i64 }, BozukSurum(String), Sqlite(rusqlite::Error) }`
+    — `veritabani > uygulama` ise açmayı **reddeder** ve sürümü **geri yazmaz**
+
+`migrate`'in dönüş tipi değişiyor; çağıranlar (`server/src/routes/setup.rs` ve
+`server/src/routes/session.rs`) buna göre güncellenmeli. İkisi de hatayı zaten kontrol ediyor,
+yalnızca hata tipi değişecek.
 
 - [ ] **Step 1: Başarısız testleri yaz**
 
-Mevcut test bloğuna ekle:
+Önce `migrate` çerçevesinin testleri:
+
+```rust
+    #[test]
+    fn bos_veritabaninda_okunan_surum_sifir() {
+        let dir = tempfile::tempdir().unwrap();
+        let c = crate::store::db::open_encrypted(
+            &dir.path().join("v.db"),
+            &crate::crypto::keyring::generate_data_key(),
+        )
+        .unwrap();
+        assert_eq!(okunan_surum(&c).unwrap(), 0, "app_meta yokken 0 donmeli");
+    }
+
+    #[test]
+    fn ileri_surumlu_veritabani_reddedilir_ve_surum_geri_yazilmaz() {
+        let (_d, c) = baglanti();
+        // Kullanici eski bir .app geri koymus: veritabani uygulamadan yeni.
+        c.execute(
+            "INSERT INTO app_meta (anahtar, deger) VALUES ('schema_version','99')
+             ON CONFLICT(anahtar) DO UPDATE SET deger=excluded.deger",
+            [],
+        )
+        .unwrap();
+
+        let hata = migrate(&c).unwrap_err();
+        assert!(
+            matches!(hata, MigrateHatasi::SurumDusuk { veritabani: 99, uygulama: 2 }),
+            "ileri surumlu veritabani acilmamali: {hata:?}"
+        );
+
+        let ham: String = c
+            .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ham, "99", "reddedilen migrate surumu ASLA geri yazmamali");
+    }
+
+    #[test]
+    fn sayiya_cevrilemeyen_surum_panik_degil_hata_uretir() {
+        let (_d, c) = baglanti();
+        c.execute(
+            "INSERT INTO app_meta (anahtar, deger) VALUES ('schema_version','abc')
+             ON CONFLICT(anahtar) DO UPDATE SET deger=excluded.deger",
+            [],
+        )
+        .unwrap();
+        assert!(matches!(migrate(&c).unwrap_err(), MigrateHatasi::BozukSurum(_)));
+    }
+
+    #[test]
+    fn migrate_ucuncu_kez_calistirilabilir() {
+        // baglanti() zaten bir kez calistiriyor; iki kez daha.
+        let (_d, c) = baglanti();
+        migrate(&c).unwrap();
+        migrate(&c).unwrap();
+    }
+```
+
+Sonra şema sürüm 2 testlerini mevcut test bloğuna ekle:
 
 ```rust
     #[test]
@@ -327,7 +405,115 @@ git commit -m "feat(veri): sema surum 2 - danisan ve randevu tablolari"
 
 ---
 
-### Task 2: Danışan deposu
+### Task 2: `audit_log.ayrinti` kapalı bir enum'a dönüşsün
+
+Plan 1'in son incelemesinden gelen zorunlu madde. **Depolardan önce yapılmalı** — Task 3 ve 4
+bu alana değer yazacak; `&str` olarak yazılırsa dönüştürme bir daha yapılmaz.
+
+`ayrinti` şu an serbest metin. Kural ("hassas içerik loga girmez") yalnızca doküman yorumunda
+yazılı; derleyici zorlamıyor. `audit_log` tetikleyicilerle **silinemez** olduğu için oraya bir kez
+yazılan hassas veri hiçbir zaman geri alınamaz — KVKK açısından en kötü hata sınıfı: özel
+nitelikli verinin, tasarımı gereği değiştirilemez bir tabloya sızması.
+
+Şu anda **5** çağrı yeri var. Bu plan sonrası ~15, Plan 3 sonrası ~30 olacak.
+
+**Files:**
+- Modify: `core/src/store/audit.rs`
+- Modify: `server/src/routes/setup.rs`, `server/src/routes/session.rs` (çağrı yerleri)
+- Test: `core/src/store/audit.rs` test bloğu
+
+**Interfaces:**
+- Produces:
+  - `pub enum Ayrinti { IlkKurulum, Arsivlendi, Durum(&'static str), AralikBaslangici(String), SeriSilme { adet: usize, tarihten: String } }`
+  - `impl Ayrinti { pub fn metin(&self) -> String }` — veritabanına yazılan dizgi
+  - `kaydet` imzası değişir: `ayrinti: Option<Ayrinti>` (eski: `Option<&str>`)
+- `Durum` yalnızca `&'static str` kabul eder; çalışma zamanı dizgisi geçirilemez. Bu kasıtlı:
+  randevu durumları sabit bir kümedir, kullanıcı verisi değildir.
+- `AralikBaslangici` bir tarih damgası taşır, kullanıcı metni değil. **Biçimi doğrulanmalı**;
+  doğrulanmayan bir `String` kapali enum'un kapattığı kapıyı yeniden açar.
+
+- [ ] **Step 1: Başarısız testleri yaz**
+
+```rust
+    #[test]
+    fn her_varyant_beklenen_metni_uretir() {
+        assert_eq!(Ayrinti::IlkKurulum.metin(), "ilk kurulum");
+        assert_eq!(Ayrinti::Arsivlendi.metin(), "arsivlendi");
+        assert_eq!(Ayrinti::Durum("geldi").metin(), "durum: geldi");
+        assert_eq!(
+            Ayrinti::AralikBaslangici("2026-09-07T00:00".into()).metin(),
+            "aralik: 2026-09-07T00:00"
+        );
+        assert_eq!(
+            Ayrinti::SeriSilme { adet: 3, tarihten: "2026-09-21T00:00".into() }.metin(),
+            "seri silme: 3 kayit, 2026-09-21T00:00 sonrasi"
+        );
+    }
+
+    #[test]
+    fn aralik_baslangici_bozuk_tarihi_reddeder() {
+        // Dogrulanmayan bir String, kapali enum'un kapattigi kapiyi yeniden acar.
+        let bozuk = Ayrinti::AralikBaslangici("COK_GIZLI_SEANS_NOTU".into());
+        assert_eq!(bozuk.metin(), "aralik: gecersiz", "dogrulanmayan metin loga gecmemeli");
+    }
+
+    #[test]
+    fn seri_silme_tarihi_de_dogrulanir() {
+        let bozuk = Ayrinti::SeriSilme { adet: 1, tarihten: "COK_GIZLI".into() };
+        assert!(!bozuk.metin().contains("COK_GIZLI"));
+    }
+
+    #[test]
+    fn ayrintili_kayit_geri_okunur() {
+        let (_d, c) = baglanti();
+        kaydet(&c, Eylem::Duzenleme, "client", "7", Cihaz::Masaustu, Some(Ayrinti::Arsivlendi))
+            .unwrap();
+        assert_eq!(son_kayitlar(&c, 1).unwrap()[0].ayrinti.as_deref(), Some("arsivlendi"));
+    }
+
+    #[test]
+    fn ayrintisiz_kayit_null_saklar() {
+        let (_d, c) = baglanti();
+        kaydet(&c, Eylem::Giris, "session", "-", Cihaz::Masaustu, None).unwrap();
+        assert_eq!(son_kayitlar(&c, 1).unwrap()[0].ayrinti, None);
+    }
+```
+
+İkinci ve üçüncü testler bu görevin can damarı: enum'un varlığı tek başına yetmez, `String`
+taşıyan varyantlar doğrulanmazsa serbest metin arka kapıdan geri gelir.
+
+- [ ] **Step 2: Testlerin başarısız olduğunu doğrula**
+
+Run: `cargo test -p psikolog-core audit`
+Expected: derleme hatası — `Ayrinti` tanımlı değil.
+
+- [ ] **Step 3: Minimum uygulamayı yaz**
+
+`Ayrinti` enum'unu ve `metin()`'i yaz. `String` taşıyan varyantlardaki dizgileri
+`YYYY-AA-GGTSS:DD` biçimine karşı doğrula (Plan 1'deki `zaman_gecerli_mi` deseni); uymuyorsa
+`gecersiz` yaz, ham metni **asla** loga geçirme. `kaydet` imzasını `Option<Ayrinti>` yap.
+
+Modül başlığındaki "hassas içerik loga yazılmaz" uyarısını güncelle: kural artık **yapısal olarak**
+uygulanıyor; yeni bir varyant eklerken doğrulanmamış serbest metin taşımamasına dikkat edilmeli.
+
+Plan 1'den gelen çağrı yerlerini güncelle: `setup.rs` içindeki `Some("ilk kurulum")` →
+`Some(Ayrinti::IlkKurulum)`, diğerleri `None` olarak kalır.
+
+- [ ] **Step 4: Testlerin geçtiğini doğrula**
+
+Run: `cargo test --workspace`
+Expected: tüm testler PASS (Plan 1'in 83 testi + yeni 5 test).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add core/src/store/audit.rs server/src/routes
+git commit -m "feat(veri): erisim logu ayrinti alani kapali enum'a donustu"
+```
+
+---
+
+### Task 3: Danışan deposu
 
 Bu planda danışan kaydı **asgari** tutulur: ad soyad, telefon, durum. Rıza takibi, ekli dosyalar, saklama süresi ve seans geçmişi Plan 3'te aynı tabloya sütun eklenerek gelir. Takvim, danışan olmadan çalışamayacağı için asgari hâli buraya alındı.
 
@@ -565,7 +751,7 @@ git commit -m "feat(veri): asgari danisan deposu"
 
 ---
 
-### Task 3: Randevu deposu — oluşturma, aralık sorgusu, durum güncelleme
+### Task 4: Randevu deposu — oluşturma, aralık sorgusu, durum güncelleme
 
 **Files:**
 - Create: `core/src/store/appointments.rs`
@@ -876,7 +1062,7 @@ git commit -m "feat(veri): randevu deposu - olusturma, aralik sorgusu, durum"
 
 ---
 
-### Task 4: Çakışma kontrolü
+### Task 5: Çakışma kontrolü
 
 Aynı saate iki danışan yazmak, bu tür uygulamalarda en sık yapılan hatadır. Çakışma **engellenmez, uyarılır** — terapist bilerek üst üste randevu koyabilir (örneğin çift seansı) ve yazılımın onu durdurması hakaret olur.
 
@@ -1003,7 +1189,7 @@ git commit -m "feat(veri): randevu cakisma kontrolu"
 
 ---
 
-### Task 5: Tekrarlayan randevu serisi
+### Task 6: Tekrarlayan randevu serisi
 
 Terapide randevular tipik olarak "her hafta aynı saat" gider. Seri, **oluşturulurken tek tek kayıtlara açılır** (materialize edilir), kural olarak saklanmaz. Gerekçe: tek bir haftayı iptal etmek, saatini kaydırmak veya ücretini değiştirmek kural tabanlı bir modelde istisna yönetimi gerektirir; ayrı kayıtlarda bu işlemler zaten çalışır. Bedeli, sonsuz seri kurulamamasıdır — ki bir terapi süreci zaten sonsuz değildir.
 
@@ -1229,7 +1415,7 @@ git commit -m "feat(veri): haftalik tekrarlayan randevu serisi"
 
 ---
 
-### Task 6: HTTP API ve kilit koruması
+### Task 7: HTTP API ve kilit koruması
 
 **Files:**
 - Create: `server/src/guard.rs`, `server/src/routes/clients.rs`, `server/src/routes/appointments.rs`
@@ -1580,7 +1766,7 @@ git commit -m "feat(api): danisan ve randevu uc noktalari, kilit korumasi"
 
 ---
 
-### Task 7: Hafta aritmetiği (saf fonksiyonlar)
+### Task 8: Hafta aritmetiği (saf fonksiyonlar)
 
 **Files:**
 - Create: `web/src/takvim/hafta.ts`
@@ -1736,7 +1922,7 @@ git commit -m "feat(takvim): hafta aritmetigi saf fonksiyonlari"
 
 ---
 
-### Task 8: Haftalık takvim ızgarası
+### Task 9: Haftalık takvim ızgarası
 
 **Files:**
 - Create: `web/src/takvim/HaftalikTakvim.tsx`, `web/src/takvim/RandevuBloku.tsx`
@@ -2040,7 +2226,7 @@ git commit -m "feat(takvim): haftalik izgara ve randevu bloklari"
 
 ---
 
-### Task 9: Randevu paneli — oluşturma, çakışma uyarısı, durum
+### Task 10: Randevu paneli — oluşturma, çakışma uyarısı, durum
 
 **Files:**
 - Create: `web/src/takvim/RandevuPaneli.tsx`
@@ -2376,7 +2562,7 @@ git commit -m "feat(takvim): randevu paneli, cakisma uyarisi ve durum islemleri"
 
 ---
 
-### Task 10: Uçtan uca test
+### Task 11: Uçtan uca test
 
 **Files:**
 - Create: `e2e/takvim.spec.ts`
@@ -2465,6 +2651,110 @@ Expected: Plan 1'in kurulum testi + 3 takvim testi PASS.
 ```bash
 git add -A
 git commit -m "test(e2e): takvim akisi ve kilit korumasi dogrulamasi"
+```
+
+---
+
+### Task 12: `keystore.json` yedeğe dahil edilsin
+
+Plan 1'in son incelemesinden gelen **en kritik** madde. Bugün `yedek_al` yalnızca `veri.db`'yi
+kopyalıyor. Ama o dosya, `keystore.json` içindeki sarmalanmış veri anahtarı olmadan **açılamaz**;
+parola ve kurtarma kodu tek başına yetmez, ikisi de yalnızca o dosyadaki sarmalamayı çözer.
+Keystore ise uygulama veri dizininde kalıyor.
+
+**Sonuç: disk bozulursa veya Mac çalınırsa, yedek klasöründeki her şey sonsuza kadar okunamaz.**
+Tasarımın üçüncü başarı ölçütü — "bilgisayar bozulursa veri kaybolmasın" — bugünkü mimariyle
+karşılanmıyor. Bu bir kod hatası değil, iki ayrı ayrı doğru yapılmış görevin arasındaki mimari
+boşluk.
+
+**Files:**
+- Modify: `core/src/backup.rs`
+- Modify: `web/src/screens/KeystoreBozukEkrani.tsx`, `web/src/screens/KurulumSihirbazi.tsx`
+- Test: `core/src/backup.rs` test bloğu
+
+**Interfaces:**
+- `yedek_al(db_yolu, keystore_yolu, hedef_dizin, damga, key)` — keystore yolu eklenir
+- `geri_yukle(yedek_yolu, db_yolu, keystore_yolu, key)` — ikisini birlikte geri yükler
+- `YedekBilgisi`'ye `keystore_var: bool` eklenir
+- Yedek dosya adları: `yedek-<damga>.db` ve `yedek-<damga>.keystore.json`
+
+- [ ] **Step 1: Başarısız testleri yaz**
+
+```rust
+    #[test]
+    fn yedek_hem_veritabanini_hem_keystore_u_icerir() {
+        // yedek_al sonrasi hedef dizinde iki dosya da olmali.
+    }
+
+    #[test]
+    fn keystore_eksikse_geri_yukleme_reddedilir_ve_mevcut_veri_korunur() {
+        // Yedek klasorunden keystore dosyasini sil, geri_yukle cagir.
+        // Hata donmeli VE mevcut veri.db ile keystore.json degismemis olmali.
+        // Eslesmeyen bir cifti geri yuklemek veriyi erisilemez birakir.
+    }
+
+    #[test]
+    fn veritabani_eksikse_geri_yukleme_reddedilir() {
+        // Simetrik durum: keystore var, .db yok.
+    }
+
+    #[test]
+    fn eksik_ciftli_yedekler_listede_gorunmez() {
+        // yedekleri_listele yalnizca IKI dosyasi da olan yedekleri dondurmeli;
+        // aksi halde kullaniciya geri yuklenemeyecek bir yedek gosterilir.
+    }
+
+    #[test]
+    fn geri_yukleme_ikisini_birlikte_yerine_koyar() {
+        // Yedek al, sonra parolayi degistir (keystore degisir), sonra yedegi geri yukle
+        // ve ESKI parolanin calistigini dogrula. Bu, keystore'un gercekten geri
+        // yuklendiginin tek kanitidir.
+    }
+
+    #[test]
+    fn yedek_keystore_dosyasinda_ham_anahtar_bulunmaz() {
+        // Plan 1'deki duz metin testinin keystore karsiligi.
+    }
+```
+
+Beşinci test bu görevin varlık sebebidir: yalnızca dosyanın kopyalandığını değil, **geri yüklenen
+çiftin gerçekten birlikte çalıştığını** doğrular.
+
+- [ ] **Step 2: Testlerin başarısız olduğunu doğrula**
+
+Run: `cargo test -p psikolog-core backup`
+Expected: derleme hatası — imzalar değişti.
+
+- [ ] **Step 3: Minimum uygulamayı yaz**
+
+`yedek_al` keystore'u da kopyalasın (dosya zaten AEAD sarmalı; bulut klasöründe durması güvenli —
+tasarımın "dosya zaten şifreli" gerekçesiyle tutarlı). `geri_yukle` **önce ikisinin de varlığını ve
+açılabilirliğini doğrulasın**, ancak ondan sonra yerlerine koysun — Plan 1'deki "doğrulamadan önce
+mevcut veriye dokunma" kuralı burada iki dosya için geçerli. `yedekleri_listele` eksik çiftleri
+atlasın.
+
+- [ ] **Step 4: Arayüz metinlerini düzelt**
+
+`KeystoreBozukEkrani` bugün iki yanlış şey söylüyor:
+- *"bir yedekten geri yükleme yapmanız gerekebilir"* — bu tavsiye **yanlıştı**, çünkü veritabanı
+  yedeği bozuk bir keystore'u onarmıyordu. Bu görevden sonra doğru hâle geliyor; metni, yedek
+  klasöründeki çiftin geri yüklenebileceğini söyleyecek şekilde güncelle.
+- *"teknik desteğe başvurun"* — ürün tek kişilik bir muayenehane için; teknik destek diye bir şey
+  yok. Kullanıcının **fiilen yapabileceği** bir eylem yaz.
+
+`KurulumSihirbazi`'nin kurtarma kodu ekranına bir cümle ekle: yedek klasörü hem veriyi hem
+anahtarı içerir, ikisi birlikte saklanmalıdır.
+
+- [ ] **Step 5: Testlerin geçtiğini doğrula**
+
+Run: `cargo test --workspace` ve `npm --prefix web run test`
+Expected: hepsi PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add core/src/backup.rs web/src/screens
+git commit -m "feat(yedek): keystore yedege dahil, eksik cift geri yuklenmiyor"
 ```
 
 ---

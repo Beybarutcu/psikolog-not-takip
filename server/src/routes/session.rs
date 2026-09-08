@@ -1,9 +1,10 @@
+use crate::guard::veritabani_hatasi;
 use crate::state::{AppState, KeystoreDurumu};
 use axum::{extract::State, http::StatusCode, Json};
 use psikolog_core::crypto::keyring::CryptoError;
 use psikolog_core::store::{
     audit::{kaydet, Cihaz, Eylem},
-    db::open_encrypted,
+    db::open_existing,
     keystore,
     schema::migrate,
 };
@@ -38,6 +39,16 @@ pub async fn durum(State(s): State<AppState>) -> Json<serde_json::Value> {
         "kurulum_gerekli": kurulum_gerekli,
         "kilitli": kilitli,
         "keystore_bozuk": keystore_bozuk,
+        // Veri dizininin gercek yolu. Bozuk keystore ekrani kullaniciya
+        // "su klasoru acin" diyebilmek icin buna muhtac: macOS'ta uygulama
+        // veri dizini `~/Library/Application Support/...` altindadir ve
+        // Finder onu varsayilan olarak GIZLER -- yolu yazmadan kullanici
+        // kurtarma adimlarini fiilen uygulayamaz.
+        //
+        // Bu bir sir degil: sunucu yalnizca 127.0.0.1'de dinliyor, ayni
+        // makinede zaten dosya sisteminden okunabilen bir yol. Hassas olan
+        // sey dizinin ADI degil, ICINDEKI anahtar -- o hicbir yanitta yok.
+        "veri_dizini": s.veri_dizini.display().to_string(),
     }))
 }
 
@@ -73,14 +84,25 @@ pub async fn kilit_ac(
 
     match sonuc {
         Ok(key) => {
-            let conn = match open_encrypted(&s.db_yolu(), &key) {
+            // `open_encrypted` DEĞİL, `open_existing`: dosya yoksa (kullanıcı
+            // `veri.db`'yi yanlışlıkla sildi, senkronizasyon klasörü yuttu,
+            // yarım kalmış bir geri yükleme) kilit açma isteği sessizce BOŞ
+            // bir veritabanı YARATMAMALI. `open_encrypted` bunu yapardı --
+            // doğru parolayla gelen kullanıcı "kilit açıldı" görür, sonra
+            // tüm danışanlarının kaybolduğunu fark eder. Tam olarak
+            // `guard::acik_baglanti`'nin veri uç noktaları için önlediği
+            // durum; giriş kapısı da aynı kuralı izlemeli (bkz. Bulgu 1).
+            // Kurulum akışı (`routes::setup::kurulum`) `open_encrypted`
+            // kullanmaya DEVAM EDER -- orada dosyayı yaratmak doğrudur.
+            let conn = match open_existing(&s.db_yolu(), &key) {
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!("kilit-ac: veritabanı açılamadı: {e}");
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({ "hata": "Veritabanı açılamadı." })),
-                    );
+                    // `veritabani_hatasi` her `DbError` varyantını -- `DosyaYok`
+                    // dahil -- kendi `Display` metniyle gövdeye taşır.
+                    // `DosyaYok`'un mesajı kullanıcıyı yedekten geri yüklemeye
+                    // yönlendirir, "parolanız hatalı" DEMEZ (bkz. Bulgu 1).
+                    return veritabani_hatasi(e);
                 }
             };
             // Kurulumdaki (`routes::setup::kurulum`) ile aynı kalıp: göç
@@ -128,12 +150,26 @@ pub async fn kilit_ac(
 
 pub async fn kilitle(State(s): State<AppState>) -> (StatusCode, Json<serde_json::Value>) {
     if let Some(key) = s.acik_anahtar() {
-        if let Ok(conn) = open_encrypted(&s.db_yolu(), &key) {
+        // `open_encrypted` DEĞİL, `open_existing`: yukarıdaki `kilit_ac`
+        // düzeltmesiyle aynı bulgu burada da geçerliydi. `kilitle` çıkış
+        // kaydı yazmak için veritabanını `open_encrypted` ile açıyordu; bu
+        // fonksiyon dosya yoksa onu YARATIR. Senaryo: kullanıcı `veri.db`'yi
+        // yanlışlıkla siler, "Kilitle"ye basar -- çıkış kaydı için açılan
+        // bağlantı sessizce BOŞ bir `veri.db` yaratır. Kullanıcı sonra doğru
+        // parolasıyla kilidi açar, `kilit_ac`'ın `open_existing` kontrolü bu
+        // TAZE (ve boş) dosyayı bulur ve sorunsuz açılır -- kullanıcı hiçbir
+        // uyarı almadan tüm verisinin kaybolduğunu fark eder. `open_existing`
+        // dosya yoksa `DbError::DosyaYok` döner, hiçbir şey yaratmaz.
+        if let Ok(conn) = open_existing(&s.db_yolu(), &key) {
             // Kilitleme erişimi KALDIRAN bir işlemdir: audit yazımı
             // başarısız olsa bile kilitleme HER ZAMAN başarılı olur
             // (fail-open) -- güvenlik lehine bir eylemi engellemek zarar
-            // verir. (Karşıt karar -- fail-closed -- için bkz. yukarıdaki
-            // `kilit_ac` ve `routes::setup::kurulum`.)
+            // verir. Bu artık veritabanı bağlantısının kendisini de kapsar:
+            // `open_existing` başarısız olursa (dosya yok, bozuk, kilitli)
+            // çıkış kaydı yazılamaz -- kabul edilebilir -- ama oturum yine de
+            // aşağıda koşulsuz kilitlenir ve uç nokta `200` döner. (Karşıt
+            // karar -- fail-closed -- için bkz. yukarıdaki `kilit_ac` ve
+            // `routes::setup::kurulum`.)
             let _ = kaydet(&conn, Eylem::Cikis, "session", "-", Cihaz::Masaustu, None);
         }
     }

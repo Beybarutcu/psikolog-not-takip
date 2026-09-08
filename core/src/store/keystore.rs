@@ -6,7 +6,8 @@
 //! (parola/kurtarma koduyla şifrelenmiş hâli) kalıcı hale gelir.
 
 use crate::crypto::keyring::{
-    generate_data_key, unwrap_key, wrap_key, CryptoError, DataKey, KdfParams, WrappedKey,
+    generate_data_key, unwrap_key, wrap_key, wrapped_key_yapisal_gecerli_mi, CryptoError, DataKey,
+    KdfParams, WrappedKey,
 };
 use crate::crypto::recovery::{generate_recovery_code, normalize_recovery_code};
 use serde::{Deserialize, Serialize};
@@ -83,6 +84,24 @@ pub fn save(ks: &Keystore, path: &Path) -> std::io::Result<()> {
 pub fn load(path: &Path) -> std::io::Result<Keystore> {
     let bytes = std::fs::read(path)?;
     Ok(serde_json::from_slice(&bytes)?)
+}
+
+/// Bir `Keystore`'un **parolayı bilmeden** yapısal olarak sağlam olup
+/// olmadığını bildirir: her iki sarmalamanın da hex'i çözülebiliyor mu,
+/// uzunlukları doğru mu, KDF parametreleri sınır içinde mi.
+///
+/// `load` yalnızca dosyanın geçerli JSON olduğuna bakar; yarım disk yazımından
+/// kalma kısalmış bir `ciphertext_hex` `load`'dan sorunsuz geçer. Bu kontrol,
+/// "dosya bozuk" ile "parola yanlış" durumlarının karıştırılmasını engelleyen
+/// tek yerdir — bu ayrım bu projede dört ayrı katmanda hata olarak bulundu,
+/// bu yüzden kural tek bir fonksiyonda toplandı: hem `AppState::keystore_durumu`
+/// hem de `backup::geri_yukle`/`backup::yedek_al` bunu çağırır, kendi
+/// kopyalarını taşımaz.
+///
+/// AEAD çözme (kimlik doğrulama) YAPMAZ; dolayısıyla asla "yanlış parola"yı
+/// "bozuk dosya" diye raporlayamaz.
+pub fn yapisal_gecerli_mi(ks: &Keystore) -> bool {
+    wrapped_key_yapisal_gecerli_mi(&ks.password) && wrapped_key_yapisal_gecerli_mi(&ks.recovery)
 }
 
 /// Parolayla veri anahtarının kilidini açar. Parola yanlışsa `CryptoError::WrongSecret`

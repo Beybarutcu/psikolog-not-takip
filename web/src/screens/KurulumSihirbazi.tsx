@@ -38,6 +38,12 @@ export function KurulumSihirbazi({ kurulumYap, onTamam }: Props) {
         >
           {kurtarmaKodu}
         </p>
+        <p className="mt-3 rounded-lg bg-amber-50 p-4 text-sm text-amber-900">
+          Yedek klasörünüzde her yedek <strong>iki dosyadan</strong> oluşur: kayıtlarınızın kopyası
+          ve o kopyayı açan anahtar dosyası. Bu ikisi birbirinden ayrılmamalı — biri olmadan diğeri
+          işe yaramaz, hiçbir parola ya da kurtarma kodu tek başına yeterli olmaz. Yedeklerinizi
+          taşırken veya kopyalarken ikisini <strong>birlikte</strong> saklayın.
+        </p>
         <label className="flex items-start gap-2 text-sm">
           <input
             type="checkbox"

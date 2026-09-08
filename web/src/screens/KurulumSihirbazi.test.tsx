@@ -48,4 +48,20 @@ describe('KurulumSihirbazi', () => {
     await userEvent.click(devam)
     expect(onTamam).toHaveBeenCalled()
   })
+
+  it('kurtarma kodu ekraninda yedegin iki dosyadan olustugunu soyler', async () => {
+    // Kullanici yedek klasorunu elle tasiyabilir/kopyalayabilir. Yalnizca .db
+    // dosyasini tasirsa yedegi geri yuklenemez hale gelir; bunu ogrenecegi tek
+    // an, ogrenmenin fayda etmeyecegi an olur.
+    const kurulumYap = vi.fn().mockResolvedValue({ kurtarma_kodu: 'ABCDE-FGHJK-MNPQR-STVWX-YZ234' })
+    const { container } = render(<KurulumSihirbazi kurulumYap={kurulumYap} onTamam={() => {}} />)
+
+    await userEvent.type(screen.getByLabelText('Ana parola'), 'gizliparola')
+    await userEvent.type(screen.getByLabelText('Parola tekrar'), 'gizliparola')
+    await userEvent.click(screen.getByRole('button', { name: 'Devam et' }))
+    await screen.findByText('ABCDE-FGHJK-MNPQR-STVWX-YZ234')
+
+    expect(container.textContent).toMatch(/iki dosyadan/i)
+    expect(container.textContent).toMatch(/birlikte/i)
+  })
 })

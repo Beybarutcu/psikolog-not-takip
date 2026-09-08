@@ -1,6 +1,6 @@
 use crate::crypto::keyring::DataKey;
 use rusqlite::ffi::ErrorCode;
-use rusqlite::Connection;
+use rusqlite::{Connection, OpenFlags};
 use std::path::Path;
 use zeroize::Zeroizing;
 
@@ -20,14 +20,24 @@ pub enum DbError {
     /// `siniflandir_anahtar_hatasi`, Bulgu 3).
     #[error("anahtar ayarlanamadı (girdi hatası)")]
     AnahtarGirdiHatasi,
+    /// `open_existing` icin: dosya yok. `open_encrypted`'in aksine burada
+    /// dosya YARATILMAZ -- cagiran taraf (bkz. `server::guard::acik_baglanti`)
+    /// bunu ayirt edip kullaniciya net bir mesaj gostermeli, sessizce bos bir
+    /// veritabani yaratmamali (bkz. Plan 1'in son incelemesi, Kural 2).
+    #[error(
+        "Veritabanı dosyası bulunamadı. Dosya silinmiş veya taşınmış olabilir; \
+         lütfen en son yedekten geri yükleyin. Bu ekranda hiçbir veri değiştirilmedi."
+    )]
+    DosyaYok,
 }
 
-pub fn open_encrypted(path: &Path, key: &DataKey) -> Result<Connection, DbError> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let conn = Connection::open(path)?;
-
+/// Zaten açılmış (yeni oluşturulmuş veya var olan) bir `Connection` üzerinde
+/// SQLCipher anahtarını ayarlar ve ortak PRAGMA'ları uygular. `open_encrypted`
+/// ve `open_existing` arasında paylaşılan tek kod yolu -- anahtar ayarlama ve
+/// hata sınıflandırma mantığının iki kopyası olursa biri güncellenip diğeri
+/// unutulabilir (bkz. `store::zaman::zaman_gecerli_mi` dokümantasyonundaki
+/// aynı gerekçe).
+fn anahtar_ayarla_ve_hazirla(conn: Connection, key: &DataKey) -> Result<Connection, DbError> {
     // Anahtarın hex temsili ve onu saran PRAGMA değeri, ara String'ler olarak
     // bellekte kalabileceğinden Zeroizing ile sarılıyor (bkz. Görev 2'deki
     // aynı sınıftan bulgu: anahtar tutan her ara buffer sıfırlanmalı).
@@ -49,6 +59,31 @@ pub fn open_encrypted(path: &Path, key: &DataKey) -> Result<Connection, DbError>
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     Ok(conn)
+}
+
+/// Dosya yoksa YARATIR (kurulum akışı için -- bkz. `routes::setup::kurulum`).
+pub fn open_encrypted(path: &Path, key: &DataKey) -> Result<Connection, DbError> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let conn = Connection::open(path)?;
+    anahtar_ayarla_ve_hazirla(conn, key)
+}
+
+/// Dosya yoksa YARATMAZ, `DbError::DosyaYok` döner (veri uç noktaları için --
+/// bkz. `server::guard::acik_baglanti`). `open_encrypted`'in aksine burada
+/// `SQLITE_OPEN_CREATE` bayrağı VERİLMEZ: `veri.db` bir kullanıcı hatasıyla
+/// (yanlışlıkla silme) veya senkronizasyon aracının onu yutmasıyla ortadan
+/// kalkarsa, veri uç noktaları bunu sessizce "boş bir veritabanı" olarak
+/// görüp kullanıcıya "tüm danışanlarınız/randevularınız silindi" izlenimi
+/// vermemeli -- bunun yerine net bir hata dönüp yedekten geri yüklemeye
+/// yönlendirmeli.
+pub fn open_existing(path: &Path, key: &DataKey) -> Result<Connection, DbError> {
+    if !path.is_file() {
+        return Err(DbError::DosyaYok);
+    }
+    let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+    anahtar_ayarla_ve_hazirla(conn, key)
 }
 
 /// SQLite/SQLCipher hatasını sınıflandırır.
@@ -189,6 +224,66 @@ mod tests {
             matches!(hata, DbError::Sqlite(_)),
             "beklenen Sqlite, gelen: {hata:?}"
         );
+    }
+
+    // --- `open_existing`: "yoksa oluşturma" davranışı (bkz. Plan 1'in son
+    // incelemesinden Kural 2) ---
+
+    #[test]
+    fn open_existing_olmayan_dosyada_dosyayok_doner_ve_dosya_yaratilmaz() {
+        let dir = tempfile::tempdir().unwrap();
+        let yol = dir.path().join("veri.db");
+        assert!(!yol.exists(), "test onkosulu: dosya hic olusturulmamis olmali");
+
+        let hata = open_existing(&yol, &generate_data_key()).unwrap_err();
+        assert!(matches!(hata, DbError::DosyaYok), "beklenen DosyaYok, gelen: {hata:?}");
+        assert!(
+            !yol.exists(),
+            "open_existing dosya yoksa YARATMAMALI -- open_encrypted'den farki bu"
+        );
+    }
+
+    #[test]
+    fn open_existing_dosyayok_mesaji_yedege_yonlendirir() {
+        let dir = tempfile::tempdir().unwrap();
+        let yol = dir.path().join("veri.db");
+        let hata = open_existing(&yol, &generate_data_key()).unwrap_err();
+        let metin = hata.to_string().to_lowercase();
+        assert!(
+            metin.contains("yedek"),
+            "kullaniciya gorunecek mesaj yedekten geri yuklemeye yonlendirmeli: {metin}"
+        );
+    }
+
+    #[test]
+    fn open_existing_var_olan_dosyayi_ayni_anahtarla_acar_ve_veri_geri_okunur() {
+        let dir = tempfile::tempdir().unwrap();
+        let yol = dir.path().join("veri.db");
+        let key = generate_data_key();
+
+        {
+            // Onceden open_encrypted ile olusturulmus (kurulum akisinin
+            // yaptigi gibi) bir veritabani.
+            let c = open_encrypted(&yol, &key).unwrap();
+            c.execute_batch("CREATE TABLE t(ad TEXT); INSERT INTO t VALUES ('Ayse Yilmaz');")
+                .unwrap();
+        }
+
+        let c = open_existing(&yol, &key).unwrap();
+        let ad: String = c.query_row("SELECT ad FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(ad, "Ayse Yilmaz");
+    }
+
+    #[test]
+    fn open_existing_yanlis_anahtarla_wrong_key_dondurur() {
+        let dir = tempfile::tempdir().unwrap();
+        let yol = dir.path().join("veri.db");
+        {
+            let c = open_encrypted(&yol, &generate_data_key()).unwrap();
+            c.execute_batch("CREATE TABLE t(ad TEXT);").unwrap();
+        }
+        let hata = open_existing(&yol, &generate_data_key()).unwrap_err();
+        assert!(matches!(hata, DbError::WrongKey), "beklenen WrongKey, gelen: {hata:?}");
     }
 
     #[test]

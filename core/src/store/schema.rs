@@ -365,4 +365,80 @@ mod tests {
         let log_sayisi: i64 = c.query_row("SELECT count(*) FROM audit_log", [], |r| r.get(0)).unwrap();
         assert_eq!(log_sayisi, 1, "yukseltme eski erisim logunu silmemeli");
     }
+
+    #[test]
+    fn basarisiz_migrate_semayi_geri_alir() {
+        // V2 ortasinda gercek bir hata tetikleyip transaction'in tamamini geri
+        // aldigini kanitlar. Enjeksiyon yolu: V2 "ix_clients_durum" adinda bir
+        // INDEX olusturuyor (CREATE INDEX IF NOT EXISTS). "IF NOT EXISTS" yalnizca
+        // AYNI TURDE bir nesne varsa atlar; ayni isimde farkli turde bir nesne
+        // (bir TABLO) varsa SQLite "there is already an object named
+        // ix_clients_durum" hatasi verir. clients tablosu V2'de bu index'ten
+        // ONCE olusturuluyor, dolayisiyla hata clients olusturulduktan SONRA
+        // ama V2'nin geri kalani (appointments dahil) olusturulmadan ONCE
+        // tetiklenir -- transaction'in ortasinda gercek bir kismi geri alma
+        // senaryosu.
+        let dir = tempfile::tempdir().unwrap();
+        let yol = dir.path().join("veri.db");
+        let key = crate::crypto::keyring::generate_data_key();
+
+        // V1 durumunu taklit et: yalnizca V1 tablolari ve surum 1.
+        {
+            let c = crate::store::db::open_encrypted(&yol, &key).unwrap();
+            c.execute_batch(V1).unwrap();
+            c.execute(
+                "INSERT INTO app_meta (anahtar, deger) VALUES ('schema_version','1')
+                 ON CONFLICT(anahtar) DO UPDATE SET deger=excluded.deger",
+                [],
+            )
+            .unwrap();
+            // V2'nin olusturacagi index ile AYNI ISIMDE, FARKLI TURDE (tablo)
+            // bir nesne yerlestir -- "CREATE INDEX IF NOT EXISTS
+            // ix_clients_durum" bunu atlamaz, hata verir.
+            c.execute("CREATE TABLE ix_clients_durum (x)", []).unwrap();
+        }
+
+        let c = crate::store::db::open_encrypted(&yol, &key).unwrap();
+        let hata = migrate(&c).unwrap_err();
+        assert!(
+            matches!(hata, MigrateHatasi::Sqlite(_)),
+            "ismi catisan nesne sqlite hatasi uretmeli: {hata:?}"
+        );
+
+        // V2'nin hatadan ONCE olusturdugu clients tablosu GERI ALINMIS olmali.
+        let clients_var: i64 = c
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='clients'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(clients_var, 0, "basarisiz migrate clients tablosunu geride birakmamali (rollback calismali)");
+
+        // appointments hic olusturulmamis olmali (V2'de clients'tan sonra geliyor).
+        let appointments_var: i64 = c
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='appointments'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(appointments_var, 0, "basarisiz migrate appointments tablosunu olusturmamali");
+
+        // schema_version hala 1 olmali, 2'ye yukseltilmemis.
+        let ham: String = c
+            .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ham, "1", "basarisiz migrate surum damgasini yukseltmemeli");
+
+        // ix_clients_durum HALA bir tablo olmali (bizim yerlestirdigimiz), index degil.
+        let tur: String = c
+            .query_row(
+                "SELECT type FROM sqlite_master WHERE name='ix_clients_durum'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tur, "table", "catisan nesne degismeden kalmali");
+    }
 }

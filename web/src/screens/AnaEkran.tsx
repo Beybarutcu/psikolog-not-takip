@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { takvimApi } from '../api'
+import { takvimApi, YetkisizHata } from '../api'
 import { HaftalikTakvim, type Randevu } from '../takvim/HaftalikTakvim'
 import { haftaGunleri, haftaninBasi, yerelZaman } from '../takvim/hafta'
 
@@ -22,6 +22,14 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
       setRandevular(await takvimApi.randevulariGetir(baslangic, bitis))
       setHata(null)
     } catch (e) {
+      if (e instanceof YetkisizHata) {
+        // Oturum kilitlendi. Kilit ekranına geçiş App.tsx'teki merkezi 401
+        // dinleyicisi tarafından (durum yeniden çekilerek) tetiklenecek —
+        // ama bu, sunucuya bir gidiş-dönüş sürer. O kısa süre boyunca bile
+        // ekranda danışan adları kalmasın diye randevu listesi burada
+        // hemen temizleniyor.
+        setRandevular([])
+      }
       setHata(e instanceof Error ? e.message : 'Randevular yüklenemedi.')
     }
   }, [haftaBasi])

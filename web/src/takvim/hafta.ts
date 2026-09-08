@@ -1,4 +1,7 @@
-const AYLAR = [
+// Görev 9'daki takvim ızgarasının erişilebilirlik etiketlerinde de kullanılır
+// (bkz. HaftalikTakvim.tsx) — aynı 12 ay adının iki yerde ayrı ayrı
+// tanımlanıp birbirinden kopması riskini önlemek için buradan dışa aktarılır.
+export const AYLAR = [
   'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
   'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık',
 ]

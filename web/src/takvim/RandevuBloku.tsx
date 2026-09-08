@@ -7,13 +7,21 @@ const DURUM_BICIMI: Record<string, string> = {
   iptal: 'bg-slate-200 text-slate-500 line-through',
 }
 
+// Sunucu, bu bileşenin bilmediği yeni bir durum değeri gönderirse (örn.
+// ileride eklenen bir durum burada güncellenmeyi unutulursa) sessizce
+// "planlandi" stiline düşmek yanlış bilgilendirmeye yol açar — kullanıcı
+// iptal edilmiş bir randevuyu planlanmış sanabilir. Bunun yerine, normal
+// durumların hiçbirine benzemeyen, dikkat çekici/uyarı hissi veren ayrı bir
+// stil kullanılır.
+const BILINMEYEN_DURUM_BICIMI =
+  'bg-white text-slate-900 border-2 border-dashed border-red-400'
+
 export function RandevuBloku({ randevu, onSec }: { randevu: Randevu; onSec: () => void }) {
+  const stil = DURUM_BICIMI[randevu.durum] ?? BILINMEYEN_DURUM_BICIMI
   return (
     <button
       onClick={onSec}
-      className={`w-full truncate rounded px-1 py-0.5 text-left text-xs ${
-        DURUM_BICIMI[randevu.durum] ?? DURUM_BICIMI.planlandi
-      }`}
+      className={`w-full truncate rounded px-1 py-0.5 text-left text-xs ${stil}`}
     >
       {randevu.danisan_adi}
     </button>

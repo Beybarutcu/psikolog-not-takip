@@ -1,4 +1,4 @@
-import { GUN_ADLARI, haftaBasligi, haftaGunleri, yerelZaman, zamandanDate } from './hafta'
+import { AYLAR, GUN_ADLARI, haftaBasligi, haftaGunleri, yerelZaman, zamandanDate } from './hafta'
 import { RandevuBloku } from './RandevuBloku'
 
 export type Randevu = {
@@ -15,10 +15,6 @@ export type Randevu = {
 
 const CALISMA_BASLANGIC = 8
 const CALISMA_BITIS = 21
-const AYLAR_UZUN = [
-  'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
-  'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık',
-]
 
 type Props = {
   randevular: Randevu[]
@@ -99,7 +95,7 @@ export function HaftalikTakvim({
                         ))
                       ) : (
                         <button
-                          aria-label={`${gun.getDate()} ${AYLAR_UZUN[gun.getMonth()]} ${saat
+                          aria-label={`${gun.getDate()} ${AYLAR[gun.getMonth()]} ${saat
                             .toString()
                             .padStart(2, '0')}:00 boş`}
                           className="h-full w-full"

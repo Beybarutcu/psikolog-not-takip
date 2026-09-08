@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api } from './api'
+import { api, yetkisizOlunca } from './api'
 import { AnaEkran } from './screens/AnaEkran'
 import { KeystoreBozukEkrani } from './screens/KeystoreBozukEkrani'
 import { KilitEkrani } from './screens/KilitEkrani'
@@ -12,6 +12,12 @@ export default function App() {
 
   const yenile = useCallback(async () => setDurum(await api.durumAl()), [])
   useEffect(() => { void yenile() }, [yenile])
+
+  // Herhangi bir API çağrısı 401 (oturum kilitli) döndürdüğünde merkezi
+  // olarak haberdar olunur: durum yeniden çekilir (kilitli: true dönecektir)
+  // ve aşağıdaki render mantığı otomatik olarak kilit ekranına döner —
+  // hangi ekranın hangi isteği yaptığını App'in bilmesine gerek kalmaz.
+  useEffect(() => yetkisizOlunca(() => { void yenile() }), [yenile])
 
   if (!durum) return <p className="p-8 text-slate-500">Yükleniyor…</p>
 

@@ -261,6 +261,51 @@ pub fn sil(conn: &Connection, id: i64, cihaz: Cihaz) -> Result<(), DepoHatasi> {
     Ok(())
 }
 
+/// Verilen aralıkla çakışan (iptal olmayan) randevuları bulur. **Engellemez,
+/// yalnızca döndürür** -- ürün kararı gereği terapist bilerek üst üste
+/// randevu koyabilir (çift seans, sıkıştırma, telefon görüşmesi), yazılımın
+/// bunu durdurması yersizdir; çağıran taraf sonucu kullanıcıya uyarı olarak
+/// gösterir.
+///
+/// İki aralık çakışır ancak ve ancak `a.baslangic < bitis` VE
+/// `a.bitis > baslangic`. Bitişik aralıklar (14:00-15:00 ile 15:00-16:00) bu
+/// kurala göre çakışmaz -- peş peşe seanslar normaldir.
+///
+/// `haric_id` verilirse o kayıt kendisiyle karşılaştırılmaz (düzenleme
+/// akışı: bir randevuyu güncellerken onu kendi çakışması saymamak için).
+///
+/// Erişim logu YAZMAZ: bu, kullanıcının görmediği, form doğrulaması
+/// sırasında (örn. her tuş vuruşunda) çalışan bir kontroldür. Her çağrıda
+/// log üretmesi logu kullanılamaz hâle getirir -- ve log kayıtları
+/// silinemediğinden bu kirlilik kalıcı olurdu. Kullanıcı çakışan randevuyu
+/// ekranda gördüğünde zaten `aralik_getir` bir görüntüleme kaydı düşürmüş
+/// olur, dolayısıyla erişim tamamen sessiz kalmaz.
+pub fn cakisanlari_bul(
+    conn: &Connection,
+    baslangic: &str,
+    bitis: &str,
+    haric_id: Option<i64>,
+) -> Result<Vec<Randevu>, DepoHatasi> {
+    if !zaman_gecerli_mi(baslangic) || !zaman_gecerli_mi(bitis) {
+        return Err(DepoHatasi::GecersizVeri(
+            "Tarih biçimi YYYY-AA-GGTSS:DD olmalı.".into(),
+        ));
+    }
+
+    let mut stmt = conn.prepare(&format!(
+        "{SECIM}
+         WHERE a.durum != 'iptal'
+           AND a.baslangic < ?1
+           AND a.bitis > ?2
+           AND (?3 IS NULL OR a.id != ?3)
+         ORDER BY a.baslangic"
+    ))?;
+    let liste = stmt
+        .query_map(rusqlite::params![bitis, baslangic, haric_id], satirdan)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(liste)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -511,5 +556,98 @@ mod tests {
             1,
             "audit log basarisiz oldugunda silme geri alinmali, kayit kalmali"
         );
+    }
+
+    #[test]
+    fn ust_uste_binen_randevu_bulunur() {
+        let (_d, c, cid) = kurulum();
+        olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+
+        let cakisanlar =
+            cakisanlari_bul(&c, "2026-09-07T14:30", "2026-09-07T15:30", None).unwrap();
+        assert_eq!(cakisanlar.len(), 1);
+    }
+
+    #[test]
+    fn bitisik_randevular_cakismaz() {
+        let (_d, c, cid) = kurulum();
+        olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+
+        let cakisanlar =
+            cakisanlari_bul(&c, "2026-09-07T15:00", "2026-09-07T16:00", None).unwrap();
+        assert!(cakisanlar.is_empty(), "14-15 ile 15-16 cakismaz");
+    }
+
+    #[test]
+    fn tamamen_kapsayan_randevu_cakisir() {
+        let (_d, c, cid) = kurulum();
+        olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+
+        let cakisanlar =
+            cakisanlari_bul(&c, "2026-09-07T13:00", "2026-09-07T17:00", None).unwrap();
+        assert_eq!(cakisanlar.len(), 1);
+    }
+
+    #[test]
+    fn iptal_edilmis_randevu_cakisma_saymaz() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        durum_guncelle(&c, r.id, "iptal", Cihaz::Masaustu).unwrap();
+
+        let cakisanlar =
+            cakisanlari_bul(&c, "2026-09-07T14:00", "2026-09-07T15:00", None).unwrap();
+        assert!(cakisanlar.is_empty());
+    }
+
+    #[test]
+    fn randevu_kendisiyle_cakismaz() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+
+        let cakisanlar =
+            cakisanlari_bul(&c, "2026-09-07T14:00", "2026-09-07T15:00", Some(r.id)).unwrap();
+        assert!(cakisanlar.is_empty(), "duzenlenen randevu kendini cakisma saymamalı");
+    }
+
+    #[test]
+    fn baska_gunun_randevusu_cakismaz() {
+        let (_d, c, cid) = kurulum();
+        olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+
+        let cakisanlar =
+            cakisanlari_bul(&c, "2026-09-08T14:00", "2026-09-08T15:00", None).unwrap();
+        assert!(cakisanlar.is_empty());
+    }
+
+    #[test]
+    fn cakisma_bozuk_tarih_bicimini_reddeder() {
+        let (_d, c, _cid) = kurulum();
+        let hata = cakisanlari_bul(&c, "07.09.2026 14:00", "2026-09-07T15:00", None).unwrap_err();
+        assert!(matches!(hata, DepoHatasi::GecersizVeri(_)));
+
+        let hata = cakisanlari_bul(&c, "2026-09-07T14:00", "07.09.2026 15:00", None).unwrap_err();
+        assert!(matches!(hata, DepoHatasi::GecersizVeri(_)));
+    }
+
+    #[test]
+    fn cakisma_kontrolu_log_yazmaz() {
+        // Bu fonksiyon form dogrulamasi sirasinda her tus vurusunda
+        // calisabilir; erisim logu yazsaydi log kullanilamaz hale gelirdi
+        // (bkz. modul basligindaki gerekce). Cagridan once/sonra audit_log
+        // satir sayisinin degismedigini dogrulayarak bunu kanitla.
+        let (_d, c, cid) = kurulum();
+        olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+
+        let once: i64 = c
+            .query_row("SELECT COUNT(*) FROM audit_log", [], |r| r.get(0))
+            .unwrap();
+        cakisanlari_bul(&c, "2026-09-07T14:30", "2026-09-07T15:30", None).unwrap();
+        let sonra: i64 = c
+            .query_row("SELECT COUNT(*) FROM audit_log", [], |r| r.get(0))
+            .unwrap();
+
+        assert_eq!(once, sonra, "cakisanlari_bul audit_log'a kayit yazmamali");
     }
 }

@@ -40,9 +40,14 @@ use crate::store::clients::DepoHatasi;
 use crate::store::zaman::zaman_gecerli_mi;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+use time::{format_description::well_known::Rfc3339, Date, Month, OffsetDateTime};
 
 pub const GECERLI_DURUMLAR: [&str; 4] = ["planlandi", "geldi", "gelmedi", "iptal"];
+
+/// Bir seride üretilebilecek azami randevu sayısı (ilk randevu dahil).
+/// Bkz. `seri_olustur` -- terapi süreci sonsuz olmadığı için sonsuz seri
+/// kurulamaması kabul edilebilir bir bedel.
+pub const AZAMI_TEKRAR: u32 = 52;
 
 /// Randevu (= seans) kaydı — asgari alanlar.
 ///
@@ -304,6 +309,168 @@ pub fn cakisanlari_bul(
         .query_map(rusqlite::params![bitis, baslangic, haric_id], satirdan)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(liste)
+}
+
+/// `zaman` duvar saatine 7 gün ekler; yalnızca TARİH kısmı ilerletilir, saat
+/// kısmı (`Tss:dd`) dizgi olarak dokunulmadan taşınır.
+///
+/// # Neden zaman damgasına çevirip 604800 saniye eklenmiyor
+/// Randevular yerel duvar saati olarak saklanır (zaman dilimi yok, bkz.
+/// `store::zaman`), çünkü terapistin 14:00'ü yaz saati uygulaması değişse
+/// de 14:00'tür. Eğer bu dizgi bir `OffsetDateTime`'a/UNIX zaman damgasına
+/// çevrilip üzerine 604800 saniye eklenseydi, yaz saati değişiminin olduğu
+/// haftada (örn. Ekim sonu) o haftadan sonraki TÜM seri üyeleri bir saat
+/// kayardı -- ve bunu kimse fark etmez, ta ki bir danışan yanlış saatte
+/// gelene kadar. Bunun yerine yalnızca takvim tarihi (`time::Date`) 7 gün
+/// ileri alınır, saat dizgisi (`saat_kismi`) hiç ayrıştırılmadan aynen
+/// eklenir -- böylece saat kayması yapısal olarak imkânsızdır.
+pub fn bir_hafta_sonra(zaman: &str) -> Result<String, DepoHatasi> {
+    if !zaman_gecerli_mi(zaman) {
+        return Err(DepoHatasi::GecersizVeri("Tarih biçimi hatalı.".into()));
+    }
+    let hata = || DepoHatasi::GecersizVeri("Tarih çözümlenemedi.".into());
+
+    let yil: i32 = zaman[0..4].parse().map_err(|_| hata())?;
+    let ay: u8 = zaman[5..7].parse().map_err(|_| hata())?;
+    let gun: u8 = zaman[8..10].parse().map_err(|_| hata())?;
+    let saat_kismi = &zaman[10..]; // "T14:00" -- hic dokunulmadan tasinir.
+
+    let ay = Month::try_from(ay).map_err(|_| hata())?;
+    let tarih = Date::from_calendar_date(yil, ay, gun).map_err(|_| hata())?;
+    let sonraki = tarih.saturating_add(time::Duration::days(7));
+
+    Ok(format!(
+        "{:04}-{:02}-{:02}{}",
+        sonraki.year(),
+        sonraki.month() as u8,
+        sonraki.day(),
+        saat_kismi
+    ))
+}
+
+/// Haftalık tekrarlayan randevu serisi oluşturur: ilk randevu dahil
+/// `tekrar_sayisi` adet kayıt üretir, hepsi ortak bir `seri_id` paylaşır.
+///
+/// # Tasarım kararı — seri materialize edilir, saklanmaz
+/// Seri bir "kural" olarak veritabanında tutulmaz; oluşturma anında tek tek
+/// `appointments` satırlarına açılır (bkz. modül başlığı ve brief). Böylece
+/// tek bir haftayı iptal etmek (`sil`), saatini kaydırmak veya ücretini
+/// değiştirmek zaten var olan tekil-kayıt akışlarıyla çalışır -- kural
+/// tabanlı bir modelde bunlar istisna yönetimi gerektirirdi. Bedeli sonsuz
+/// seri kurulamamasıdır (`AZAMI_TEKRAR`), ki bir terapi süreci zaten sonsuz
+/// değildir.
+///
+/// # Atomiklik — TÜM kayıtlar + audit log TEK transaction'da
+/// Bu fonksiyon `olustur`'u ÇAĞIRMAZ: `olustur` kendi
+/// `unchecked_transaction()`'ını açar ve onu burada döngü içinde çağırmak
+/// iç içe transaction hatası verirdi (bkz. modül başlığındaki uyarı). Bunun
+/// yerine ekleme mantığı burada tek bir transaction altında tekrarlanır --
+/// serinin `tekrar_sayisi` kaydından biri (ya da audit log yazımı)
+/// başarısız olursa TÜMÜ geri alınır, "yarım kalmış seri" durumu oluşmaz
+/// (bkz. testler, `..._atomik_...` / `audit_basarisiz_...`).
+///
+/// UYARI: Kendi `unchecked_transaction()`'ını içeride açar -- bunu zaten
+/// açık bir transaction'ın içinden çağırmayın.
+pub fn seri_olustur(
+    conn: &Connection,
+    yeni: &YeniRandevu,
+    tekrar_sayisi: u32,
+    cihaz: Cihaz,
+) -> Result<Vec<Randevu>, DepoHatasi> {
+    if tekrar_sayisi == 0 || tekrar_sayisi > AZAMI_TEKRAR {
+        return Err(DepoHatasi::GecersizVeri(format!(
+            "Tekrar sayısı 1 ile {AZAMI_TEKRAR} arasında olmalı."
+        )));
+    }
+    if !zaman_gecerli_mi(&yeni.baslangic) || !zaman_gecerli_mi(&yeni.bitis) {
+        return Err(DepoHatasi::GecersizVeri(
+            "Tarih biçimi YYYY-AA-GGTSS:DD olmalı.".into(),
+        ));
+    }
+    if yeni.bitis <= yeni.baslangic {
+        return Err(DepoHatasi::GecersizVeri(
+            "Randevu bitişi başlangıcından sonra olmalı.".into(),
+        ));
+    }
+    if yeni.ucret.is_some_and(|u| u < 0) {
+        return Err(DepoHatasi::GecersizVeri("Ücret negatif olamaz.".into()));
+    }
+
+    let seri_id = uuid::Uuid::new_v4().to_string();
+    let tx = conn.unchecked_transaction()?;
+
+    let mut baslangic = yeni.baslangic.clone();
+    let mut bitis = yeni.bitis.clone();
+    let mut uretilenler = Vec::with_capacity(tekrar_sayisi as usize);
+
+    for _ in 0..tekrar_sayisi {
+        let z = simdi();
+        tx.execute(
+            "INSERT INTO appointments
+               (client_id, baslangic, bitis, durum, ucret, odendi, seri_id, olusturma_zamani, guncelleme_zamani)
+             VALUES (?1, ?2, ?3, 'planlandi', ?4, 0, ?5, ?6, ?6)",
+            rusqlite::params![yeni.client_id, baslangic, bitis, yeni.ucret, seri_id, z],
+        )?;
+        let id = tx.last_insert_rowid();
+        kaydet(&tx, Eylem::Ekleme, "appointment", &id.to_string(), cihaz, None)?;
+
+        let randevu = tx.query_row(&format!("{SECIM} WHERE a.id = ?1"), [id], satirdan)?;
+        uretilenler.push(randevu);
+
+        // Sonraki uyenin baslangic/bitis'i, oncekinden 7 gun sonrasidir --
+        // saat bileseni `bir_hafta_sonra` tarafindan korunur (yukaridaki
+        // fonksiyon dokumantasyonuna bkz.). Hata durumunda `?` ile erken
+        // donus yapilir; `tx` commit edilmeden dusup geri alinir (rollback),
+        // dolayisiyla o ana kadar eklenen kayitlar da kalici olmaz.
+        baslangic = bir_hafta_sonra(&baslangic)?;
+        bitis = bir_hafta_sonra(&bitis)?;
+    }
+
+    tx.commit()?;
+    Ok(uretilenler)
+}
+
+/// Bir randevu serisini, verilen tarihten (dahil) itibaren siler; öncesi
+/// KORUNUR. Silme ve audit log yazımı tek transaction'da yapılır.
+///
+/// # Neden yalnızca ileri tarih silinir
+/// "Bu seriyi iptal et" dendiğinde geçmiş seansların kaydının silinmesi
+/// kabul edilemez -- bu, yapılmış işin (ve varsa ödeme/katılım bilgisinin)
+/// kaydını yok eder. Bu yüzden sorgu `baslangic >= bu_tarihten_itibaren`
+/// ile sınırlıdır; geçmişteki üyeler asla silinmez (bkz.
+/// `seri_silme_yalnizca_verilen_tarihten_sonrasini_siler` testi).
+///
+/// UYARI: Kendi `unchecked_transaction()`'ını içeride açar -- bunu zaten
+/// açık bir transaction'ın içinden çağırmayın.
+pub fn seriyi_sil(
+    conn: &Connection,
+    seri_id: &str,
+    bu_tarihten_itibaren: &str,
+    cihaz: Cihaz,
+) -> Result<usize, DepoHatasi> {
+    if !zaman_gecerli_mi(bu_tarihten_itibaren) {
+        return Err(DepoHatasi::GecersizVeri(
+            "Tarih biçimi YYYY-AA-GGTSS:DD olmalı.".into(),
+        ));
+    }
+
+    let tx = conn.unchecked_transaction()?;
+
+    let silinen = tx.execute(
+        "DELETE FROM appointments WHERE seri_id = ?1 AND baslangic >= ?2",
+        rusqlite::params![seri_id, bu_tarihten_itibaren],
+    )?;
+    kaydet(
+        &tx,
+        Eylem::Silme,
+        "appointment_seri",
+        seri_id,
+        cihaz,
+        Some(Ayrinti::SeriSilme { adet: silinen, tarihten: bu_tarihten_itibaren.to_string() }),
+    )?;
+
+    tx.commit()?;
+    Ok(silinen)
 }
 
 #[cfg(test)]
@@ -687,5 +854,157 @@ mod tests {
             .unwrap();
 
         assert_eq!(once, sonra, "cakisanlari_bul audit_log'a kayit yazmamali");
+    }
+
+    // --- Gorev 6: haftalik tekrarlayan randevu serisi ---
+
+    #[test]
+    fn bir_hafta_sonra_ayni_saati_korur() {
+        assert_eq!(bir_hafta_sonra("2026-09-07T14:00").unwrap(), "2026-09-14T14:00");
+    }
+
+    #[test]
+    fn bir_hafta_sonra_ay_sinirini_gecer() {
+        assert_eq!(bir_hafta_sonra("2026-09-28T14:00").unwrap(), "2026-10-05T14:00");
+    }
+
+    #[test]
+    fn bir_hafta_sonra_yil_sinirini_gecer() {
+        assert_eq!(bir_hafta_sonra("2026-12-29T09:30").unwrap(), "2027-01-05T09:30");
+    }
+
+    #[test]
+    fn bir_hafta_sonra_yaz_saati_gecisinde_saati_korur() {
+        // Ekim sonu, Avrupa'da (ve eskiden Turkiye'de) yaz saati uygulamasinin
+        // bittigi hafta: saat bileşeni dizgi olarak taşındığı için hiçbir
+        // saat kaymasi olmamali.
+        assert_eq!(bir_hafta_sonra("2026-10-25T14:00").unwrap(), "2026-11-01T14:00");
+    }
+
+    #[test]
+    fn seri_haftalik_kayitlar_uretir() {
+        let (_d, c, cid) = kurulum();
+        let seri = seri_olustur(
+            &c,
+            &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"),
+            4,
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+
+        assert_eq!(seri.len(), 4);
+        assert_eq!(seri[0].baslangic, "2026-09-07T14:00");
+        assert_eq!(seri[3].baslangic, "2026-09-28T14:00");
+        assert_eq!(seri[3].bitis, "2026-09-28T15:00");
+    }
+
+    #[test]
+    fn seri_uyeleri_ayni_seri_idyi_paylasir() {
+        let (_d, c, cid) = kurulum();
+        let seri = seri_olustur(
+            &c,
+            &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"),
+            3,
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+
+        let id = seri[0].seri_id.clone().expect("seri_id atanmali");
+        assert!(seri.iter().all(|r| r.seri_id.as_deref() == Some(id.as_str())));
+    }
+
+    #[test]
+    fn azami_tekrar_asilamaz() {
+        let (_d, c, cid) = kurulum();
+        let hata = seri_olustur(
+            &c,
+            &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"),
+            AZAMI_TEKRAR + 1,
+            Cihaz::Masaustu,
+        )
+        .unwrap_err();
+        assert!(matches!(hata, DepoHatasi::GecersizVeri(_)));
+    }
+
+    #[test]
+    fn sifir_tekrar_reddedilir() {
+        let (_d, c, cid) = kurulum();
+        assert!(seri_olustur(
+            &c,
+            &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"),
+            0,
+            Cihaz::Masaustu
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn seri_silme_yalnizca_verilen_tarihten_sonrasini_siler() {
+        let (_d, c, cid) = kurulum();
+        let seri = seri_olustur(
+            &c,
+            &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"),
+            4,
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+        let sid = seri[0].seri_id.clone().unwrap();
+
+        let silinen = seriyi_sil(&c, &sid, "2026-09-21T00:00", Cihaz::Masaustu).unwrap();
+        assert_eq!(silinen, 2, "21 ve 28 Eylul silinmeli");
+
+        let kalan =
+            aralik_getir(&c, "2026-09-01T00:00", "2026-10-01T00:00", Cihaz::Masaustu).unwrap();
+        assert_eq!(kalan.len(), 2, "gecmis randevular korunmalı");
+    }
+
+    fn appointments_satir_sayisi_gorev6(c: &rusqlite::Connection) -> i64 {
+        c.query_row("SELECT COUNT(*) FROM appointments", [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn seri_olustur_audit_basarisiz_olursa_hicbir_kayit_kalmaz() {
+        let (_d, c, cid) = kurulum();
+        c.execute("DROP TABLE audit_log", []).unwrap();
+
+        let sonuc = seri_olustur(
+            &c,
+            &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"),
+            4,
+            Cihaz::Masaustu,
+        );
+        assert!(sonuc.is_err(), "audit_log yokken seri_olustur Err donmeli");
+        assert!(matches!(sonuc.unwrap_err(), DepoHatasi::Sqlite(_)));
+
+        assert_eq!(
+            appointments_satir_sayisi_gorev6(&c),
+            0,
+            "audit log basarisiz oldugunda serinin hicbir kaydi kalici yazilmamali"
+        );
+    }
+
+    #[test]
+    fn seriyi_sil_audit_basarisiz_olursa_silme_geri_alinir() {
+        let (_d, c, cid) = kurulum();
+        let seri = seri_olustur(
+            &c,
+            &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"),
+            3,
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+        let sid = seri[0].seri_id.clone().unwrap();
+
+        c.execute("DROP TABLE audit_log", []).unwrap();
+
+        let sonuc = seriyi_sil(&c, &sid, "2026-09-07T00:00", Cihaz::Masaustu);
+        assert!(sonuc.is_err(), "audit_log yokken seriyi_sil Err donmeli");
+        assert!(matches!(sonuc.unwrap_err(), DepoHatasi::Sqlite(_)));
+
+        assert_eq!(
+            appointments_satir_sayisi_gorev6(&c),
+            3,
+            "audit log basarisiz oldugunda seri silme geri alinmali, kayitlar kalmali"
+        );
     }
 }

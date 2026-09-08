@@ -179,6 +179,16 @@ npm create vite@latest web -- --template react-ts --yes
 cd web && npm install && npm install -D tailwindcss @tailwindcss/vite && cd ..
 ```
 
+Tailwind eklentisini kurmak yetmez, stil dosyasindan **import da edilmelidir**.
+`web/src/index.css` icerigini sununla degistir:
+
+```css
+@import 'tailwindcss';
+```
+
+Bu satir olmadan tum siniflar (`rounded-lg`, `text-slate-600` ...) etkisiz kalir:
+testler gecer, uygulama acilir, ama ekran ciplak HTML olarak gorunur.
+
 `web/vite.config.ts` içeriğini şununla değiştir:
 
 ```ts
@@ -255,10 +265,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: 'npm', cache-dependency-path: web/package-lock.json }
-      - run: cargo test --workspace
+      # Strawberry Perl, Git'in gomulu minimal perl'unu golgelemeli.
+      # openssl-sys (SQLCipher icin) tam bir Perl kurulumu ister.
+      - name: Strawberry Perl'u PATH basina al
+        shell: pwsh
+        run: |
+          if (Test-Path 'C:\Strawberry\perl\bin') {
+            'C:\Strawberry\perl\bin' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+      # npm adimlari Rust'tan once gelir. Duz `cargo test` icin sart degil
+      # (generate_context!() frontendDist'i yalnizca custom-protocol feature'i
+      # etkinken arar, onu da sadece `tauri build` ekler) — ama build-macos
+      # isinde sart, ve sirayi tek yerde tutmak ileride ayagimiza dolanmaz.
       - run: npm ci
       - run: npm --prefix web ci
       - run: npm --prefix web run build
+      - run: cargo test --workspace
 
   build-macos:
     runs-on: macos-14
@@ -320,7 +342,8 @@ Projenin en kritik kodu. Buradaki bir hata, kurtarılamayan veri demek.
   - `pub fn generate_data_key() -> DataKey`
   - `pub fn wrap_key(secret: &str, key: &DataKey, kdf: KdfParams) -> Result<WrappedKey, CryptoError>`
   - `pub fn unwrap_key(secret: &str, wrapped: &WrappedKey) -> Result<DataKey, CryptoError>`
-  - `pub enum CryptoError { WrongSecret, Kdf(String), Format(String) }`
+  - `pub enum CryptoError { WrongSecret, Kdf(String), Format(String), Encryption(String) }`
+  - `pub const MAX_M_COST: u32 = 1 << 21`, `MAX_T_COST: u32 = 16`, `MAX_P_COST: u32 = 8`
 
 - [ ] **Step 1: Başarısız testleri yaz**
 
@@ -366,7 +389,10 @@ mod tests {
     fn bozuk_sifreli_metin_wrong_secret_dondurur() {
         let key = generate_data_key();
         let mut wrapped = wrap_key("p", &key, KdfParams::test_fast()).unwrap();
-        wrapped.ciphertext_hex.replace_range(0..2, "ff");
+        // Ilk bayt zaten "ff" ise ustune "ff" yazmak hicbir seyi bozmaz ve test
+        // ~1/256 olasilikla panikler. Bozmayi deterministik yap.
+        let yeni = if wrapped.ciphertext_hex.starts_with("ff") { "00" } else { "ff" };
+        wrapped.ciphertext_hex.replace_range(0..2, yeni);
         assert!(matches!(unwrap_key("p", &wrapped).unwrap_err(), CryptoError::WrongSecret));
     }
 
@@ -407,12 +433,14 @@ pub type DataKey = Zeroizing<[u8; DATA_KEY_LEN]>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CryptoError {
-    #[error("parola veya kurtarma kodu hatali")]
+    #[error("parola veya kurtarma kodu hatalı")]
     WrongSecret,
     #[error("anahtar turetilemedi: {0}")]
     Kdf(String),
-    #[error("kayit bicimi bozuk: {0}")]
+    #[error("kayıt biçimi bozuk: {0}")]
     Format(String),
+    #[error("şifreleme başarısız: {0}")]
+    Encryption(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -469,7 +497,7 @@ pub fn wrap_key(secret: &str, key: &DataKey, kdf: KdfParams) -> Result<WrappedKe
     let derived = derive(secret, &salt, kdf)?;
     let cipher = XChaCha20Poly1305::new(derived.as_ref().into());
     let ciphertext = cipher
-        .encrypt(XNonce::from_slice(&nonce), key.as_ref().as_slice())
+        .encrypt(XNonce::from_slice(&nonce), key.as_slice())
         .map_err(|_| CryptoError::Kdf("sifreleme basarisiz".into()))?;
 
     Ok(WrappedKey {
@@ -486,27 +514,44 @@ pub fn unwrap_key(secret: &str, wrapped: &WrappedKey) -> Result<DataKey, CryptoE
     let ciphertext =
         hex::decode(&wrapped.ciphertext_hex).map_err(|e| CryptoError::Format(e.to_string()))?;
     if nonce.len() != NONCE_LEN {
-        return Err(CryptoError::Format("nonce uzunlugu hatali".into()));
+        return Err(CryptoError::Format("nonce uzunluğu hatalı".into()));
     }
 
     let derived = derive(secret, &salt, wrapped.kdf)?;
     let cipher = XChaCha20Poly1305::new(derived.as_ref().into());
-    let plain = cipher
-        .decrypt(XNonce::from_slice(&nonce), ciphertext.as_slice())
-        .map_err(|_| CryptoError::WrongSecret)?;
+    // Cozulen duz metin HAM VERI ANAHTARIDIR. Zeroizing ile sarilmazsa
+    // serbest birakilan heap'te temizlenmemis anahtar kalir ve swap/hibernation
+    // dosyasi uzerinden diske dusebilir.
+    let plain = Zeroizing::new(
+        cipher
+            .decrypt(XNonce::from_slice(&nonce), ciphertext.as_slice())
+            .map_err(|_| CryptoError::WrongSecret)?,
+    );
 
     let bytes: [u8; DATA_KEY_LEN] = plain
         .as_slice()
         .try_into()
-        .map_err(|_| CryptoError::Format("anahtar uzunlugu hatali".into()))?;
+        .map_err(|_| CryptoError::Format("anahtar uzunluğu hatalı".into()))?;
     Ok(Zeroizing::new(bytes))
 }
 ```
 
+**Uygulama sırasında eklenen üç koruma** (inceleme bulguları sonucu; gerçek kod bunları
+içerir, sonraki görevler bu davranışa güvenebilir):
+
+1. `unwrap_key`, AEAD çözmesinden **önce** `salt` ve `ciphertext` uzunluklarını doğrular
+   (`SALT_LEN`, `DATA_KEY_LEN + 16`). Uymazsa `Format` döner — bozuk bir kaydın "parola
+   yanlış" sanılıp kullanıcının veriyi imha etmesini önler.
+2. `unwrap_key`, türetmeden **önce** diskten okunan KDF parametrelerini sınırlar
+   (`MAX_M_COST`, `MAX_T_COST`, `MAX_P_COST`). Kurcalanmış bir `m_cost` süreci
+   `handle_alloc_error` ile öldürebilir, `t_cost` süresiz kilitleyebilir.
+3. `wrap_key`'deki şifreleme hatası `Kdf` değil `Encryption` varyantı döner.
+
 - [ ] **Step 4: Testlerin geçtiğini doğrula**
 
 Run: `cargo test -p psikolog-core keyring`
-Expected: 6 test PASS.
+Expected: 9 test PASS (brief'in 6 testi + uzunluk kontrolü, KDF sınırı ve gerçek
+parametreli round-trip testleri).
 
 - [ ] **Step 5: Commit**
 
@@ -722,12 +767,25 @@ pub fn open_encrypted(path: &Path, key: &DataKey) -> Result<Connection, DbError>
         std::fs::create_dir_all(dir)?;
     }
     let conn = Connection::open(path)?;
-    conn.pragma_update(None, "key", format!("x'{}'", hex::encode(key.as_ref())))?;
+    // Anahtarin hex temsili de anahtardir: ara String'ler Zeroizing ile sarilir.
+    let anahtar_ifadesi = Zeroizing::new(format!(
+        "x'{}'",
+        Zeroizing::new(hex::encode(key.as_ref())).as_str()
+    ));
+    conn.pragma_update(None, "key", anahtar_ifadesi.as_str())?;
 
-    // Anahtar yanlissa ilk gercek okuma "file is not a database" ile patlar.
+    // Anahtar yanlissa ilk gercek okuma SQLITE_NOTADB ile patlar.
+    // DIKKAT: yalnizca NotADatabase WrongKey'e eslenir. Her SqliteFailure'i
+    // WrongKey saymak, kilitli dosyayi (BUSY), disk hatasini (IOERR) ve gercek
+    // bozulmayi (CORRUPT) "parolaniz hatali" diye gosterir; kullanici dogru
+    // parolayi deneyip sonunda sifirlayarak kurtarilabilir veriyi imha edebilir.
     match conn.query_row("SELECT count(*) FROM sqlite_master", [], |r| r.get::<_, i64>(0)) {
         Ok(_) => {}
-        Err(rusqlite::Error::SqliteFailure(_, _)) => return Err(DbError::WrongKey),
+        Err(rusqlite::Error::SqliteFailure(e, _))
+            if e.code == rusqlite::ffi::ErrorCode::NotADatabase =>
+        {
+            return Err(DbError::WrongKey)
+        }
         Err(e) => return Err(DbError::Sqlite(e)),
     }
 
@@ -989,10 +1047,14 @@ mod tests {
     #[test]
     fn migration_surumu_kaydeder() {
         let (_d, c) = baglanti();
-        let v: i64 = c
+        // DIKKAT: deger sutunu TEXT'tir. app_meta genel amacli bir anahtar/deger
+        // tablosudur ve ileride metin ayarlar da tutacaktir. Sutunu NUMERIC yapip
+        // burada i64 okumak, sayi gibi gorunen metinleri (bastaki sifirlar, "1.50")
+        // sessizce bozar. Dogru olan, degeri metin okuyup ayristirmaktir.
+        let ham: String = c
             .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(v, CURRENT_VERSION);
+        assert_eq!(ham.parse::<i64>().unwrap(), CURRENT_VERSION);
     }
 
     #[test]
@@ -1712,7 +1774,10 @@ git commit -m "feat(oturum): bellekte anahtar tutma ve bosta kalma kilidi"
   - `pub struct AppState { pub veri_dizini: PathBuf, pub oturum: Arc<Mutex<Oturum>>, pub kdf: KdfParams }`
   - `pub fn router(state: AppState) -> axum::Router`
   - Uç noktalar:
-    - `GET  /api/durum` → `{ "kurulum_gerekli": bool, "kilitli": bool }`
+    - `GET  /api/durum` → `{ "kurulum_gerekli": bool, "kilitli": bool, "keystore_bozuk": bool }`
+      `keystore_bozuk`, anahtar dosyası var ama okunamıyorsa `true` olur; o durumda
+      `kurulum_gerekli` **false** kalır. Aksi hâlde arayüz kullanıcıyı kuruluma, yani
+      mevcut anahtarı ezmeye ve veriyi kalıcı olarak kaybetmeye iterdi.
     - `POST /api/kurulum` gövde `{ "parola": string }` → `201 { "kurtarma_kodu": string }`; kurulum zaten yapılmışsa `409`
     - `POST /api/kilit-ac` gövde `{ "parola": string }` veya `{ "kurtarma_kodu": string }` → `200 {}` / `401 { "hata": "..." }`
     - `POST /api/kilitle` → `200 {}`
@@ -1828,7 +1893,7 @@ async fn yanlis_parola_401_dondurur_ve_kilitli_kalir() {
 
     let (kod, json) = cagir(&s, "POST", "/api/kilit-ac", Some(serde_json::json!({"parola":"yanlis"}))).await;
     assert_eq!(kod, StatusCode::UNAUTHORIZED);
-    assert!(json["hata"].as_str().unwrap().contains("hatali"));
+    assert!(json["hata"].as_str().unwrap().contains("hatalı"));
 
     let (_, durum) = cagir(&s, "GET", "/api/durum", None).await;
     assert_eq!(durum["kilitli"], true);
@@ -1945,13 +2010,13 @@ pub async fn kilit_ac(
     Json(istek): Json<KilitAcIstegi>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     let Ok(ks) = keystore::load(&s.keystore_yolu()) else {
-        return (StatusCode::CONFLICT, Json(json!({ "hata": "once kurulum yapilmali" })));
+        return (StatusCode::CONFLICT, Json(json!({ "hata": "Önce kurulum yapılmalı." })));
     };
 
     let sonuc = match (&istek.parola, &istek.kurtarma_kodu) {
         (Some(p), _) => keystore::unlock_with_password(&ks, p),
         (_, Some(k)) => keystore::unlock_with_recovery(&ks, k),
-        _ => return (StatusCode::BAD_REQUEST, Json(json!({ "hata": "parola girilmedi" }))),
+        _ => return (StatusCode::BAD_REQUEST, Json(json!({ "hata": "Parola girilmedi." }))),
     };
 
     match sonuc {
@@ -1969,7 +2034,7 @@ pub async fn kilit_ac(
         }
         Err(_) => (
             StatusCode::UNAUTHORIZED,
-            Json(json!({ "hata": "Parola veya kurtarma kodu hatali." })),
+            Json(json!({ "hata": "Parola veya kurtarma kodu hatalı." })),
         ),
     }
 }
@@ -2010,12 +2075,12 @@ pub async fn kurulum(
     Json(istek): Json<KurulumIstegi>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     if keystore::exists(&s.keystore_yolu()) {
-        return (StatusCode::CONFLICT, Json(json!({ "hata": "kurulum zaten yapilmis" })));
+        return (StatusCode::CONFLICT, Json(json!({ "hata": "Kurulum zaten yapılmış." })));
     }
     if istek.parola.chars().count() < 8 {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "hata": "Parola en az 8 karakter olmali." })),
+            Json(json!({ "hata": "Parola en az 8 karakter olmalı." })),
         );
     }
 
@@ -2147,7 +2212,7 @@ describe('KurulumSihirbazi', () => {
     await userEvent.type(screen.getByLabelText('Parola tekrar'), 'baskaparola')
     await userEvent.click(screen.getByRole('button', { name: 'Devam et' }))
 
-    expect(screen.getByText(/ayni degil/i)).toBeDefined()
+    expect(screen.getByText(/aynı değil/i)).toBeDefined()
     expect(kurulumYap).not.toHaveBeenCalled()
   })
 
@@ -2292,7 +2357,8 @@ async function istek<T>(yol: string, secenekler?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  durumAl: () => istek<{ kurulum_gerekli: boolean; kilitli: boolean }>('/api/durum'),
+  durumAl: () =>
+    istek<{ kurulum_gerekli: boolean; kilitli: boolean; keystore_bozuk: boolean }>('/api/durum'),
   kurulumYap: (parola: string) =>
     istek<{ kurtarma_kodu: string }>('/api/kurulum', {
       method: 'POST',
@@ -2396,7 +2462,7 @@ import { AnaEkran } from './screens/AnaEkran'
 import { KilitEkrani } from './screens/KilitEkrani'
 import { KurulumSihirbazi } from './screens/KurulumSihirbazi'
 
-type Durum = { kurulum_gerekli: boolean; kilitli: boolean } | null
+type Durum = { kurulum_gerekli: boolean; kilitli: boolean; keystore_bozuk: boolean } | null
 
 export default function App() {
   const [durum, setDurum] = useState<Durum>(null)
@@ -2484,7 +2550,7 @@ test('kurulum, kilitleme ve tekrar acma', async ({ page }) => {
 
   await page.getByLabel('Ana parola').fill('yanlisparola')
   await page.getByRole('button', { name: 'Aç' }).click()
-  await expect(page.getByText(/hatali/i)).toBeVisible()
+  await expect(page.getByText(/hatalı/i)).toBeVisible()
 
   await page.getByLabel('Ana parola').fill('gizliparola')
   await page.getByRole('button', { name: 'Aç' }).click()
@@ -2651,12 +2717,14 @@ Expected: 1 test PASS.
 
 - [ ] **Step 5: CI'a uçtan uca adımı ekle**
 
-`.github/workflows/ci.yml` içindeki `test` işine, `npm --prefix web run build` adımından sonra:
+`.github/workflows/ci.yml` içindeki `test` işine, **`cargo test --workspace` adımından sonra** (Playwright, derlenmiş `sunucu` ikilisini çalıştırır):
 
 ```yaml
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test
 ```
+
+Adım sırasını bozma: npm adımları → `cargo test` → Playwright. `web/dist`, Rust derlemesinden önce var olmak zorundadır.
 
 - [ ] **Step 6: Commit**
 

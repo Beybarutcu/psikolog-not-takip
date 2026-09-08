@@ -1,0 +1,22 @@
+[package]
+name = "psikolog-tauri"
+version.workspace = true
+edition.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde.workspace = true
+serde_json.workspace = true
+psikolog-core = { path = "../core" }
+psikolog-server = { path = "../server" }
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+dirs = "5"
+
+[features]
+# tauri kendi "custom-protocol" ozelligini ekliyor; bu resmi create-tauri-app
+# sablonunun standart karsiligi. Release derlemesinde bu ozellik etkinlestirilir.
+custom-protocol = ["tauri/custom-protocol"]

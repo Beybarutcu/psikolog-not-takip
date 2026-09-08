@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Danisan } from '../api'
+import type { Danisan, SeriCakismasi } from '../api'
 import type { Randevu } from './HaftalikTakvim'
 import { dakikaFarki, yerelZaman, zamandanDate } from './hafta'
 
@@ -27,7 +27,24 @@ type Props = {
   onDurumDegis: (id: number, durum: string) => Promise<void>
   onSil: (id: number) => Promise<void>
   onKapat: () => void
-  cakismaKontrol: (baslangic: string, bitis: string, haricId?: number) => Promise<Randevu[]>
+  cakismaKontrol: (
+    baslangic: string,
+    bitis: string,
+    haricId?: number,
+    tekrarSayisi?: number,
+  ) => Promise<SeriCakismasi>
+}
+
+// Tekrar sayısı kullanıcı tarafından serbest metin olarak giriliyor
+// ("", "abc", "0", "99"). Geçerli bir seri uzunluğu değilse çakışma
+// kontrolüne tekrar sayısı GÖNDERİLMEZ (sunucu 400 dönerdi) — tek hafta
+// kontrolüne düşülür. Üst sınır sunucudaki AZAMI_TEKRAR ile aynı.
+const AZAMI_TEKRAR = 52
+
+function gecerliTekrar(ham: string): number | undefined {
+  const n = Number(ham)
+  if (!Number.isInteger(n) || n < 2 || n > AZAMI_TEKRAR) return undefined
+  return n
 }
 
 function bitisHesapla(baslangic: string, sureDk: number): string {
@@ -56,7 +73,7 @@ export function RandevuPaneli({
   const [ucretTl, setUcretTl] = useState(randevu?.ucret != null ? String(randevu.ucret / 100) : '')
   const [tekrar, setTekrar] = useState(false)
   const [haftaSayisi, setHaftaSayisi] = useState('8')
-  const [cakisanlar, setCakisanlar] = useState<Randevu[]>([])
+  const [cakisma, setCakisma] = useState<SeriCakismasi | null>(null)
   const [hata, setHata] = useState<string | null>(null)
   const [silOnayi, setSilOnayi] = useState(false)
   const [islemSuruyor, setIslemSuruyor] = useState(false)
@@ -73,18 +90,32 @@ export function RandevuPaneli({
 
   const bitis = bitisHesapla(baslangic, sureDk)
 
+  // Seri kuruluyorsa çakışma TÜM haftalar için sorulur. Bu yokken panel
+  // yalnızca 1. haftayı kontrol ediyordu: "Salı 14:00, 12 hafta" serisi, o
+  // saatte zaten 8 haftalık başka bir seri varken TEMİZ görünüyor ve 8
+  // çifte randevu sessizce oluşuyordu (bkz. dal incelemesi I2).
+  const sorulacakTekrar = tekrar ? gecerliTekrar(haftaSayisi) : undefined
+
   useEffect(() => {
     let iptal = false
     const zamanlayici = setTimeout(() => {
-      void cakismaKontrol(baslangic, bitis, randevu?.id).then((liste) => {
-        if (!iptal) setCakisanlar(liste)
-      })
+      cakismaKontrol(baslangic, bitis, randevu?.id, sorulacakTekrar)
+        .then((sonuc) => {
+          if (!iptal) setCakisma(sonuc)
+        })
+        .catch(() => {
+          // Çakışma kontrolü bir UYARI mekanizması; başarısız olması
+          // kaydetmeyi engellememeli ve panelin hata alanını da
+          // doldurmamalı (kullanıcının yaptığı bir işlem değil). 401
+          // durumunda merkezi dinleyici (api.ts) zaten devreye giriyor.
+          if (!iptal) setCakisma(null)
+        })
     }, CAKISMA_GECIKME_MS)
     return () => {
       iptal = true
       clearTimeout(zamanlayici)
     }
-  }, [baslangic, bitis, randevu?.id, cakismaKontrol])
+  }, [baslangic, bitis, randevu?.id, sorulacakTekrar, cakismaKontrol])
 
   // Kaydet/durum/sil işlemleri sürerken düğmeleri devre dışı bırakmak ve
   // sunucudan dönen hatayı panelin içinde de göstermek için ortak sarmalayıcı.
@@ -207,9 +238,15 @@ export function RandevuPaneli({
         </div>
       )}
 
-      {cakisanlar.length > 0 && (
+      {/* Karar değişmedi: çakışma ENGELLEMEZ, UYARIR (üç katmanda tutarlı).
+          Seri kuruluyorsa uyarı kaç haftada çakışma olduğunu da söyler. */}
+      {cakisma && cakisma.cakisanlar.length > 0 && (
         <p className="mt-3 rounded bg-amber-50 p-2 text-sm text-amber-800">
-          Bu saatte başka randevu var: {cakisanlar.map((r) => r.danisan_adi).join(', ')}
+          {cakisma.kontrol_edilen_hafta > 1
+            ? `${cakisma.kontrol_edilen_hafta} haftalık serinin ` +
+              `${cakisma.cakisan_hafta_sayisi} haftasında başka randevu var: `
+            : 'Bu saatte başka randevu var: '}
+          {cakisma.cakisanlar.map((r) => r.danisan_adi).join(', ')}
         </p>
       )}
 

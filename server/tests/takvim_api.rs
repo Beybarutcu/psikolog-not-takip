@@ -245,7 +245,13 @@ async fn kilitliyken_cakisma_401_doner() {
         "/api/cakisma?baslangic=2026-09-07T14:30&bitis=2026-09-07T15:30", None,
     ).await;
     assert_eq!(kod, StatusCode::UNAUTHORIZED);
-    assert!(!json.is_array(), "basarili yanit govdesi dizidir, kilitliyken olmamali");
+    // I2 ile bu ucun basarili yaniti da bir NESNE oldugu icin `!is_array()`
+    // artik totolojik olurdu (Bulgu 4'un ayni sinifi): basarili yanitin
+    // AYIRT EDICI alanina bakiliyor.
+    assert!(
+        json.get("cakisanlar").is_none(),
+        "kilitliyken basarili yanitin alanlari donmemeli: {json}"
+    );
     assert!(
         !json.to_string().contains("Gizli Danisan"),
         "kilitliyken bilinen bir danisan adi govdede olmamali: {json}"
@@ -424,12 +430,63 @@ async fn cakisma_ucu_cakisanlari_dondurur() {
         "client_id": d["id"], "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00"
     }))).await;
 
-    let (kod, cakisanlar) = cagir(
+    let (kod, sonuc) = cagir(
         &s, "GET",
         "/api/cakisma?baslangic=2026-09-07T14:30&bitis=2026-09-07T15:30", None,
     ).await;
     assert_eq!(kod, StatusCode::OK);
-    assert_eq!(cakisanlar.as_array().unwrap().len(), 1);
+    // Dal incelemesi I2: yanit artik ciplak dizi degil, hafta sayisini da
+    // tasiyan bir nesne (gerekce icin bkz. routes::appointments::cakisma).
+    assert_eq!(sonuc["cakisanlar"].as_array().unwrap().len(), 1);
+    assert_eq!(sonuc["cakisan_hafta_sayisi"], 1);
+    assert_eq!(sonuc["kontrol_edilen_hafta"], 1);
+}
+
+// Dal incelemesi I2: seri kurarken cakisma kontrolu TUM haftalari
+// kapsamali. Once tekrar_sayisi'siz cagri ILK HAFTAYI TEMIZ gorur (eski
+// davranis), sonra tekrar_sayisi ile cagri cakismalari yakalar.
+#[tokio::test]
+async fn cakisma_ucu_tekrar_sayisiyla_tum_haftalari_kontrol_eder() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    // Yalnizca 3. ve 4. haftaya denk gelen iki randevu.
+    for gun in ["2026-09-21", "2026-09-28"] {
+        cagir(&s, "POST", "/api/randevular", Some(json!({
+            "client_id": d["id"],
+            "baslangic": format!("{gun}T14:00"),
+            "bitis": format!("{gun}T15:00")
+        }))).await;
+    }
+
+    let (_, tekil) = cagir(
+        &s, "GET",
+        "/api/cakisma?baslangic=2026-09-07T14:00&bitis=2026-09-07T15:00", None,
+    ).await;
+    assert_eq!(
+        tekil["cakisanlar"].as_array().unwrap().len(),
+        0,
+        "ilk hafta gercekten temiz -- tekil kontrol uyarmaz"
+    );
+
+    let (kod, seri) = cagir(
+        &s, "GET",
+        "/api/cakisma?baslangic=2026-09-07T14:00&bitis=2026-09-07T15:00&tekrar_sayisi=6", None,
+    ).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(seri["cakisan_hafta_sayisi"], 2, "3. ve 4. hafta cakismali");
+    assert_eq!(seri["kontrol_edilen_hafta"], 6);
+    assert_eq!(seri["cakisanlar"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn cakisma_ucu_gecersiz_tekrar_sayisini_400_ile_reddeder() {
+    let (_d, s) = kurulu_state().await;
+    let (kod, json) = cagir(
+        &s, "GET",
+        "/api/cakisma?baslangic=2026-09-07T14:00&bitis=2026-09-07T15:00&tekrar_sayisi=53", None,
+    ).await;
+    assert_eq!(kod, StatusCode::BAD_REQUEST);
+    assert!(json["hata"].as_str().unwrap().contains("Tekrar"));
 }
 
 // --- Uc baglayici kural (Plan 1'in son incelemesinden, brief disi) ---

@@ -45,7 +45,12 @@ describe('AnaEkran — panel kimliği (Görev 10 inceleme Bulgu 1)', () => {
         return { ok: true, json: async () => [randevuA, randevuB] } as unknown as Response
       }
       if (yol.startsWith('/api/cakisma')) {
-        return { ok: true, json: async () => [] } as unknown as Response
+        return {
+          ok: true,
+          json: async () => ({
+            cakisanlar: [], cakisan_hafta_sayisi: 0, kontrol_edilen_hafta: 1,
+          }),
+        } as unknown as Response
       }
       throw new Error(`beklenmeyen istek: ${yol}`)
     }) as unknown as typeof fetch
@@ -122,7 +127,12 @@ describe('AnaEkran — düzenleme kipi POST değil PUT üretir (C1)', () => {
         return { ok: true, json: async () => danisanlar } as unknown as Response
       }
       if (yol.startsWith('/api/cakisma')) {
-        return { ok: true, json: async () => [] } as unknown as Response
+        return {
+          ok: true,
+          json: async () => ({
+            cakisanlar: [], cakisan_hafta_sayisi: 0, kontrol_edilen_hafta: 1,
+          }),
+        } as unknown as Response
       }
       if (yol.startsWith('/api/randevular')) {
         if (method === 'GET') {

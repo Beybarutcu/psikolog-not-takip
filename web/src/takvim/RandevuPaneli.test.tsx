@@ -14,6 +14,18 @@ const mevcut = {
   durum: 'planlandi', ucret: 45000, odendi: false, seri_id: null,
 }
 
+// Çakışma yanıtı I2 ile çıplak dizi olmaktan çıkıp nesne oldu (hafta
+// sayısını taşıyor); testlerin kısa yazılabilmesi için iki yardımcı.
+const temizCakisma = { cakisanlar: [], cakisan_hafta_sayisi: 0, kontrol_edilen_hafta: 1 }
+
+function cakismaYaniti(
+  cakisanlar: (typeof mevcut)[],
+  cakisan_hafta_sayisi = cakisanlar.length,
+  kontrol_edilen_hafta = 1,
+) {
+  return { cakisanlar, cakisan_hafta_sayisi, kontrol_edilen_hafta }
+}
+
 function kur(ozel = {}) {
   const props = {
     zaman: '2026-09-07T14:00',
@@ -23,7 +35,7 @@ function kur(ozel = {}) {
     onDurumDegis: vi.fn().mockResolvedValue(undefined),
     onSil: vi.fn().mockResolvedValue(undefined),
     onKapat: vi.fn(),
-    cakismaKontrol: vi.fn().mockResolvedValue([]),
+    cakismaKontrol: vi.fn().mockResolvedValue(temizCakisma),
     ...ozel,
   }
   render(<RandevuPaneli {...props} />)
@@ -63,7 +75,7 @@ describe('RandevuPaneli', () => {
   })
 
   it('çakışma varsa uyarır ama kaydetmeyi engellemez', async () => {
-    const props = kur({ cakismaKontrol: vi.fn().mockResolvedValue([mevcut]) })
+    const props = kur({ cakismaKontrol: vi.fn().mockResolvedValue(cakismaYaniti([mevcut])) })
     await userEvent.selectOptions(screen.getByLabelText('Danışan'), '2')
 
     await waitFor(() => expect(screen.getByText(/bu saatte başka randevu var/i)).toBeDefined())
@@ -155,7 +167,7 @@ describe('RandevuPaneli', () => {
   it('Bulgu 3: çakışma kontrolü süre değişince gecikmeli (debounce) çağrılır', async () => {
     vi.useFakeTimers()
     try {
-      const cakismaKontrol = vi.fn().mockResolvedValue([])
+      const cakismaKontrol = vi.fn().mockResolvedValue(temizCakisma)
       kur({ cakismaKontrol })
 
       // Mount anında bir zamanlayıcı kurulur ama 300ms dolmadan istek gitmez.
@@ -199,6 +211,73 @@ describe('RandevuPaneli', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
 
     expect(props.onKaydet).toHaveBeenCalledWith(expect.objectContaining({ ucret: null }))
+  })
+
+  // --- Dal incelemesi I2: seri çapında çakışma ------------------------
+
+  it('I2: tekrar açıkken çakışma kontrolü tekrar sayısıyla birlikte sorulur', async () => {
+    const cakismaKontrol = vi.fn().mockResolvedValue(temizCakisma)
+    kur({ cakismaKontrol })
+
+    await userEvent.click(screen.getByLabelText('Her hafta tekrarla'))
+    await userEvent.clear(screen.getByLabelText('Kaç hafta'))
+    await userEvent.type(screen.getByLabelText('Kaç hafta'), '12')
+
+    await waitFor(() =>
+      expect(cakismaKontrol).toHaveBeenCalledWith(
+        '2026-09-07T14:00',
+        '2026-09-07T15:00',
+        undefined,
+        12,
+      ),
+    )
+  })
+
+  it('I2: tekrar kapalıyken tekrar sayısı gönderilmez', async () => {
+    const cakismaKontrol = vi.fn().mockResolvedValue(temizCakisma)
+    kur({ cakismaKontrol })
+
+    await waitFor(() => expect(cakismaKontrol).toHaveBeenCalled())
+    expect(cakismaKontrol.mock.calls[0][3]).toBeUndefined()
+  })
+
+  it('I2: geçersiz hafta sayısı (boş/0/53) tekrar sayısı olarak gönderilmez', async () => {
+    const cakismaKontrol = vi.fn().mockResolvedValue(temizCakisma)
+    kur({ cakismaKontrol })
+
+    await userEvent.click(screen.getByLabelText('Her hafta tekrarla'))
+    await userEvent.clear(screen.getByLabelText('Kaç hafta'))
+    await userEvent.type(screen.getByLabelText('Kaç hafta'), '53')
+
+    await waitFor(() => expect(cakismaKontrol).toHaveBeenCalled())
+    for (const cagri of cakismaKontrol.mock.calls) {
+      expect(cagri[3]).toBeUndefined()
+    }
+  })
+
+  it('I2: seri uyarısı kaç haftada çakışma olduğunu söyler ama kaydetmeyi engellemez', async () => {
+    const props = kur({
+      cakismaKontrol: vi.fn().mockResolvedValue(cakismaYaniti([mevcut], 8, 12)),
+    })
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '2')
+    await userEvent.click(screen.getByLabelText('Her hafta tekrarla'))
+
+    await waitFor(() =>
+      expect(screen.getByText(/12 haftalık serinin 8 haftasında başka randevu var/i)).toBeDefined(),
+    )
+
+    // Karar değişmedi: uyarır, engellemez.
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    expect(props.onKaydet).toHaveBeenCalled()
+  })
+
+  it('I2: çakışma kontrolü başarısız olursa panel çökmez ve kaydetme engellenmez', async () => {
+    const props = kur({ cakismaKontrol: vi.fn().mockRejectedValue(new Error('ağ hatası')) })
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    expect(props.onKaydet).toHaveBeenCalled()
+    expect(screen.queryByText(/ağ hatası/i)).toBeNull()
   })
 
   // --- Dal incelemesi C1: iki kipin KESİŞTİĞİ düğme -------------------

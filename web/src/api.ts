@@ -84,11 +84,30 @@ export const takvimApi = {
     }),
   randevuSil: (id: number) =>
     istek<Record<string, never>>(`/api/randevular/${id}`, { method: 'DELETE' }),
-  cakismaKontrol: (baslangic: string, bitis: string, haricId?: number) => {
+  // `tekrarSayisi` verilirse sunucu serinin TÜM haftalarını tek istekte
+  // kontrol eder. Haftaları burada hesaplayıp tek tek sormuyoruz: hafta
+  // ilerletme duvar saati aritmetiğidir ve `Date` ile yapılırsa yaz saati
+  // değişiminde saat kayabilir (bkz. dal incelemesi I2 ve sunucudaki
+  // `bir_hafta_sonra`).
+  cakismaKontrol: (
+    baslangic: string,
+    bitis: string,
+    haricId?: number,
+    tekrarSayisi?: number,
+  ) => {
     const p = new URLSearchParams({ baslangic, bitis })
     if (haricId !== undefined) p.set('haric_id', String(haricId))
-    return istek<Randevu[]>(`/api/cakisma?${p}`)
+    if (tekrarSayisi !== undefined) p.set('tekrar_sayisi', String(tekrarSayisi))
+    return istek<SeriCakismasi>(`/api/cakisma?${p}`)
   },
+}
+
+// Çakışma kontrolünün yanıtı. Çıplak dizi değil: uyarı metninin "kaç
+// haftada çakışma var" diyebilmesi için hafta sayısı gerekiyor.
+export type SeriCakismasi = {
+  cakisanlar: Randevu[]
+  cakisan_hafta_sayisi: number
+  kontrol_edilen_hafta: number
 }
 
 export const api = {

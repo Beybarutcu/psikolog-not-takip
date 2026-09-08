@@ -420,6 +420,83 @@ pub fn cakisanlari_bul(
     Ok(liste)
 }
 
+/// `seri_cakisanlari_bul`'un sonucu.
+///
+/// `Debug` türetilebilir: içindeki `Randevu` kendi elle yazılmış (hassas
+/// alanları gizleyen) `Debug`'ını kullanır, bu tip yeni bir alan eklemez.
+#[derive(Debug, Clone, Serialize)]
+pub struct SeriCakismasi {
+    /// Tüm haftaların çakışanlarının birleşimi, tekrarsız, zamana göre
+    /// sıralı. Arayüz bunlardan danışan adlarını gösterir.
+    pub cakisanlar: Vec<Randevu>,
+    /// Kaç HAFTADA en az bir çakışma olduğu. Uyarı metni bunu söyler:
+    /// "12 haftalık seri kuruyorsunuz, 8 haftada çakışma var".
+    pub cakisan_hafta_sayisi: usize,
+    /// Kaç haftanın kontrol edildiği (istemcinin gönderdiği tekrar sayısı).
+    pub kontrol_edilen_hafta: u32,
+}
+
+/// Haftalık bir serinin TÜM üyeleri için çakışma arar (tek çağrıda).
+///
+/// # Neden bu, istemcide hafta hafta sormak yerine
+/// Panel yalnızca İLK haftanın çakışmasını soruyordu; `tekrar_sayisi` ise
+/// 52'ye kadar kayıt üretiyordu. "Salı 14:00, 12 hafta" serisi, o saatte
+/// zaten 8 haftalık başka bir seri varken TEMİZ görünüyor, sessizce 8 çifte
+/// randevu oluşuyordu (bkz. dal incelemesi I2).
+///
+/// Kontrolün sunucuda yapılmasının iki nedeni var. (1) 52 ayrı HTTP isteği
+/// atmamak. (2) Hafta ilerletme `bir_hafta_sonra` ile yapılmalı: duvar saati
+/// sözleşmesi gereği yalnızca TARİH kısmı ilerletilir, saat dizgisi hiç
+/// ayrıştırılmaz. İstemcide `Date` nesnesiyle 7 gün eklemek yaz saati
+/// değişiminde saati kaydırma riskini geri getirirdi (bkz.
+/// `bir_hafta_sonra` dokümantasyonu).
+///
+/// `cakisanlari_bul` gibi **log YAZMAZ** ve **engellemez, yalnızca
+/// döndürür** (Görev 5 kararı, testle korunuyor).
+pub fn seri_cakisanlari_bul(
+    conn: &Connection,
+    baslangic: &str,
+    bitis: &str,
+    tekrar_sayisi: u32,
+    haric_id: Option<i64>,
+) -> Result<SeriCakismasi, DepoHatasi> {
+    if tekrar_sayisi == 0 || tekrar_sayisi > AZAMI_TEKRAR {
+        return Err(DepoHatasi::GecersizVeri(format!(
+            "Tekrar sayısı 1 ile {AZAMI_TEKRAR} arasında olmalı."
+        )));
+    }
+    if !zaman_gecerli_mi(baslangic) || !zaman_gecerli_mi(bitis) {
+        return Err(DepoHatasi::GecersizVeri(
+            "Tarih biçimi YYYY-AA-GGTSS:DD olmalı.".into(),
+        ));
+    }
+
+    let mut hafta_baslangic = baslangic.to_string();
+    let mut hafta_bitis = bitis.to_string();
+    let mut cakisanlar: Vec<Randevu> = Vec::new();
+    let mut cakisan_hafta_sayisi = 0usize;
+
+    for _ in 0..tekrar_sayisi {
+        let hafta = cakisanlari_bul(conn, &hafta_baslangic, &hafta_bitis, haric_id)?;
+        if !hafta.is_empty() {
+            cakisan_hafta_sayisi += 1;
+        }
+        for r in hafta {
+            // Ayni randevu birden fazla haftayla cakisabilir (cok uzun bir
+            // randevu, ya da bitisik hafta sinirlari): listede bir kez yer
+            // alsin, arayuz ayni ismi iki kez yazmasin.
+            if !cakisanlar.iter().any(|v| v.id == r.id) {
+                cakisanlar.push(r);
+            }
+        }
+        hafta_baslangic = bir_hafta_sonra(&hafta_baslangic)?;
+        hafta_bitis = bir_hafta_sonra(&hafta_bitis)?;
+    }
+
+    cakisanlar.sort_by(|a, b| a.baslangic.cmp(&b.baslangic));
+    Ok(SeriCakismasi { cakisanlar, cakisan_hafta_sayisi, kontrol_edilen_hafta: tekrar_sayisi })
+}
+
 /// `zaman` duvar saatine 7 gün ekler; yalnızca TARİH kısmı ilerletilir, saat
 /// kısmı (`Tss:dd`) dizgi olarak dokunulmadan taşınır.
 ///
@@ -1115,6 +1192,95 @@ mod tests {
             3,
             "audit log basarisiz oldugunda seri silme geri alinmali, kayitlar kalmali"
         );
+    }
+
+    // --- Dal incelemesi I2: seri capinda cakisma -------------------------
+
+    #[test]
+    fn seri_cakismasi_ilk_haftanin_otesini_de_gorur() {
+        let (_d, c, cid) = kurulum();
+        // Mevcut seri: 4 hafta, Pazartesi 14:00.
+        seri_olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), 4, Cihaz::Masaustu)
+            .unwrap();
+
+        // Yeni seri BIR HAFTA SONRA baslar: 1. haftasi bos degil ama tekil
+        // kontrol (yalnizca ilk hafta) de cakisma gorurdu. Asil kanit
+        // asagida: cakisan hafta sayisi 3 -- yani 2., 3. haftalar da
+        // goruluyor.
+        let sonuc =
+            seri_cakisanlari_bul(&c, "2026-09-14T14:00", "2026-09-14T15:00", 5, None).unwrap();
+        assert_eq!(sonuc.cakisan_hafta_sayisi, 3, "14, 21, 28 Eylul cakismali");
+        assert_eq!(sonuc.kontrol_edilen_hafta, 5);
+        assert_eq!(sonuc.cakisanlar.len(), 3);
+    }
+
+    #[test]
+    fn seri_cakismasi_ilk_hafta_temizken_sonraki_haftalari_yakalar() {
+        let (_d, c, cid) = kurulum();
+        // Yalnizca 3. haftaya denk gelen tek bir randevu var.
+        olustur(&c, &yeni(cid, "2026-09-21T14:00", "2026-09-21T15:00"), Cihaz::Masaustu).unwrap();
+
+        // Tekil kontrol (eski davranis) TEMIZ gorurdu:
+        let tekil = cakisanlari_bul(&c, "2026-09-07T14:00", "2026-09-07T15:00", None).unwrap();
+        assert!(tekil.is_empty(), "ilk hafta gercekten temiz -- eski kontrol uyarmazdi");
+
+        let sonuc =
+            seri_cakisanlari_bul(&c, "2026-09-07T14:00", "2026-09-07T15:00", 4, None).unwrap();
+        assert_eq!(sonuc.cakisan_hafta_sayisi, 1);
+        assert_eq!(sonuc.cakisanlar.len(), 1);
+        assert_eq!(sonuc.cakisanlar[0].baslangic, "2026-09-21T14:00");
+    }
+
+    #[test]
+    fn seri_cakismasi_haric_id_ile_kendini_saymaz() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        let sonuc =
+            seri_cakisanlari_bul(&c, "2026-09-07T14:00", "2026-09-07T15:00", 3, Some(r.id))
+                .unwrap();
+        assert_eq!(sonuc.cakisan_hafta_sayisi, 0);
+        assert!(sonuc.cakisanlar.is_empty());
+    }
+
+    #[test]
+    fn seri_cakismasi_log_yazmaz() {
+        let (_d, c, cid) = kurulum();
+        seri_olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), 4, Cihaz::Masaustu)
+            .unwrap();
+        let once = crate::store::audit::son_kayitlar(&c, 200).unwrap().len();
+
+        seri_cakisanlari_bul(&c, "2026-09-07T14:00", "2026-09-07T15:00", 12, None).unwrap();
+
+        let sonra = crate::store::audit::son_kayitlar(&c, 200).unwrap().len();
+        assert_eq!(sonra, once, "cakisma kontrolu log yazmamali (Gorev 5 karari)");
+    }
+
+    #[test]
+    fn seri_cakismasi_gecersiz_tekrar_sayisini_reddeder() {
+        let (_d, c, _cid) = kurulum();
+        assert!(matches!(
+            seri_cakisanlari_bul(&c, "2026-09-07T14:00", "2026-09-07T15:00", 0, None).unwrap_err(),
+            DepoHatasi::GecersizVeri(_)
+        ));
+        assert!(matches!(
+            seri_cakisanlari_bul(&c, "2026-09-07T14:00", "2026-09-07T15:00", AZAMI_TEKRAR + 1, None)
+                .unwrap_err(),
+            DepoHatasi::GecersizVeri(_)
+        ));
+    }
+
+    #[test]
+    fn seri_cakismasi_ayni_randevuyu_iki_kez_listelemez() {
+        let (_d, c, cid) = kurulum();
+        // Bir haftadan uzun suren (patolojik ama gecerli) bir randevu iki
+        // ardisik haftayla da cakisir; listede bir kez gorunmeli.
+        olustur(&c, &yeni(cid, "2026-09-07T13:00", "2026-09-21T16:00"), Cihaz::Masaustu).unwrap();
+
+        let sonuc =
+            seri_cakisanlari_bul(&c, "2026-09-07T14:00", "2026-09-07T15:00", 3, None).unwrap();
+        assert_eq!(sonuc.cakisan_hafta_sayisi, 3, "uc haftanin ucu de cakisiyor");
+        assert_eq!(sonuc.cakisanlar.len(), 1, "ayni kayit listede bir kez olmali");
     }
 
     // --- Dal incelemesi C1: alan guncelleme ------------------------------

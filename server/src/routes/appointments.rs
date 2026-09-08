@@ -7,7 +7,8 @@ use axum::{
 };
 use psikolog_core::store::appointments::{
     aralik_getir, cakisanlari_bul, durum_guncelle, guncelle as depo_guncelle,
-    olustur as tekil_olustur, seri_olustur, sil, Randevu, RandevuGuncelleme, YeniRandevu,
+    olustur as tekil_olustur, seri_cakisanlari_bul, seri_olustur, sil, Randevu,
+    RandevuGuncelleme, SeriCakismasi, YeniRandevu,
 };
 use psikolog_core::store::audit::Cihaz;
 use serde::Deserialize;
@@ -24,6 +25,9 @@ pub struct CakismaSorgusu {
     pub baslangic: String,
     pub bitis: String,
     pub haric_id: Option<i64>,
+    /// Verilirse çakışma TÜM haftalar için aranır (bkz. `cakisma`
+    /// handler'ındaki gerekçe). Yoksa tek aralık kontrol edilir.
+    pub tekrar_sayisi: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -132,11 +136,46 @@ pub async fn kaldir(
     Ok(Json(json!({})))
 }
 
+/// Çakışma kontrolü. `tekrar_sayisi` verilirse serinin TÜM haftaları tek
+/// istekte kontrol edilir.
+///
+/// # Neden `/cakisma` genişletildi, istemcide haftalara bölünmedi
+/// Panel yalnızca ilk haftayı soruyordu; seri kurarken sessizce çifte
+/// randevu oluşabiliyordu (bkz. dal incelemesi I2). İki seçenekten
+/// "istemcide 52 ayrı istek" reddedildi (yük) ve "istemcide haftalara
+/// bölüp tek aralık sormak" da reddedildi: haftayı ilerletmek duvar saati
+/// aritmetiği gerektirir ve bunu JavaScript `Date` ile yapmak yaz saati
+/// kayması riskini geri getirirdi. Sunucu bunu zaten kaymaya karşı yapısal
+/// olarak bağışık `bir_hafta_sonra` ile yapıyor.
+///
+/// # Yanıt biçimi
+/// Yanıt artık çıplak dizi değil, bir nesne: uyarı metninin "kaç haftada
+/// çakışma var" diyebilmesi için hafta sayısı gerekiyor ve bu bilgi
+/// düzleştirilmiş bir diziden güvenilir şekilde türetilemez (bir randevu
+/// birden çok haftayla çakışabilir, bir haftada birden çok çakışma
+/// olabilir).
+///
+/// `cakisanlari_bul`/`seri_cakisanlari_bul` bilinçli olarak LOG YAZMAZ
+/// (Görev 5 kararı) -- bu uç nokta form doğrulaması sırasında sık çağrılır.
 pub async fn cakisma(
     State(s): State<AppState>,
     Query(q): Query<CakismaSorgusu>,
-) -> Result<Json<Vec<Randevu>>, ApiHata> {
+) -> Result<Json<SeriCakismasi>, ApiHata> {
     let conn = acik_baglanti(&s)?;
-    let liste = cakisanlari_bul(&conn, &q.baslangic, &q.bitis, q.haric_id).map_err(depo_hatasi)?;
-    Ok(Json(liste))
+    let sonuc = match q.tekrar_sayisi {
+        Some(n) if n > 1 => {
+            seri_cakisanlari_bul(&conn, &q.baslangic, &q.bitis, n, q.haric_id)
+                .map_err(depo_hatasi)?
+        }
+        _ => {
+            let liste =
+                cakisanlari_bul(&conn, &q.baslangic, &q.bitis, q.haric_id).map_err(depo_hatasi)?;
+            SeriCakismasi {
+                cakisan_hafta_sayisi: usize::from(!liste.is_empty()),
+                cakisanlar: liste,
+                kontrol_edilen_hafta: 1,
+            }
+        }
+    };
+    Ok(Json(sonuc))
 }

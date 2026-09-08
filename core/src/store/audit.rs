@@ -50,13 +50,34 @@ fn zaman_gecerli_mi(s: &str) -> bool {
 /// Bkz. modül başlığı: hassas veri kuralı burada derleyici tarafından
 /// zorlanır. Yeni varyant eklerken doğrulanmamış serbest metin taşımamaya
 /// dikkat edin.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Ayrinti {
     IlkKurulum,
     Arsivlendi,
     Durum(&'static str),
     AralikBaslangici(String),
     SeriSilme { adet: usize, tarihten: String },
+}
+
+/// Ham `String` alanlarini ASLA basmaz. Turetilmis `Debug` yerine elle
+/// yazilmistir: `metin()` tek dogrulanmis yazma yolu olsa da, turetilmis
+/// `Debug` doğrulamadan gecip ham dizgiyi basardi (bkz. modul basligi ve
+/// `crypto::keyring::DataKey` icin ayni sinif bulgu). Varyant adi (ve
+/// hassas olmayan sayisal alanlar) yeterlidir.
+impl std::fmt::Debug for Ayrinti {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Ayrinti::IlkKurulum => write!(f, "Ayrinti::IlkKurulum"),
+            Ayrinti::Arsivlendi => write!(f, "Ayrinti::Arsivlendi"),
+            Ayrinti::Durum(_) => write!(f, "Ayrinti::Durum(<gizli>)"),
+            Ayrinti::AralikBaslangici(_) => write!(f, "Ayrinti::AralikBaslangici(<gizli>)"),
+            Ayrinti::SeriSilme { adet, .. } => f
+                .debug_struct("Ayrinti::SeriSilme")
+                .field("adet", adet)
+                .field("tarihten", &"<gizli>")
+                .finish(),
+        }
+    }
 }
 
 impl Ayrinti {
@@ -262,6 +283,27 @@ mod tests {
     fn seri_silme_tarihi_de_dogrulanir() {
         let bozuk = Ayrinti::SeriSilme { adet: 1, tarihten: "COK_GIZLI".into() };
         assert!(!bozuk.metin().contains("COK_GIZLI"));
+    }
+
+    #[test]
+    fn ayrinti_debug_ciktisi_ham_dizgiyi_icermez() {
+        // Bulgu: turetilmis `Debug`, `metin()`'in yaptigi bicim
+        // dogrulamasini atlayip ham dizgiyi basardi. Elle yazilan `Debug`
+        // artik ham `String` alanlarini hic yazdirmiyor; bu test hem
+        // `AralikBaslangici` hem `SeriSilme` icin bunu dogrular.
+        let aralik = Ayrinti::AralikBaslangici("COK_GIZLI_SEANS_NOTU".into());
+        let debug_metni = format!("{aralik:?}");
+        assert!(
+            !debug_metni.contains("COK_GIZLI_SEANS_NOTU"),
+            "Debug ciktisi ham dizgiyi icermemeli: {debug_metni}"
+        );
+
+        let seri = Ayrinti::SeriSilme { adet: 3, tarihten: "COK_GIZLI_TARIH".into() };
+        let debug_metni = format!("{seri:?}");
+        assert!(
+            !debug_metni.contains("COK_GIZLI_TARIH"),
+            "Debug ciktisi ham dizgiyi icermemeli: {debug_metni}"
+        );
     }
 
     #[test]

@@ -35,8 +35,17 @@ pub type ApiHata = (StatusCode, Json<Value>);
 
 /// Açık oturumun anahtarıyla veritabanı bağlantısı verir; kilitliyse `401`.
 /// Başarılı her çağrı `Oturum::dokun()`'u tetikler (bkz. modül dokümantasyonu).
+/// `Instant::now()` geçen ince bir sarmalayıcı -- gerçek istekler bunu kullanır.
 pub fn acik_baglanti(state: &AppState) -> Result<Connection, ApiHata> {
-    let now = Instant::now();
+    acik_baglanti_ile(state, Instant::now())
+}
+
+/// `acik_baglanti`'nin zamanı dışarıdan enjekte edilebilen hali. `core::session::Oturum`
+/// da aynı gerekçeyle `Instant`'ı parametre alır: böylece testler gerçekten
+/// beklemek zorunda kalmaz (bkz. Bulgu 2). Gerçek istekler `acik_baglanti`
+/// üzerinden `Instant::now()` ile çağırır; testler bu fonksiyonu doğrudan,
+/// kendi ürettikleri `Instant` değerleriyle çağırabilir.
+pub fn acik_baglanti_ile(state: &AppState, now: Instant) -> Result<Connection, ApiHata> {
     let mut oturum = state.oturum.lock().unwrap_or_else(|e| e.into_inner());
 
     let anahtar = oturum.anahtar(now).ok_or((
@@ -58,7 +67,7 @@ pub fn acik_baglanti(state: &AppState) -> Result<Connection, ApiHata> {
 /// Önemli olan `DbError::DosyaYok`'un kendi `#[error(...)]` metninin
 /// kullanıcıyı yedekten geri yüklemeye yönlendirmesi (bkz. `db.rs`) --
 /// durum kodu değil, gövdedeki bu metin ayrımı taşıyor.
-fn veritabani_hatasi(e: DbError) -> ApiHata {
+pub(crate) fn veritabani_hatasi(e: DbError) -> ApiHata {
     (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "hata": e.to_string() })))
 }
 

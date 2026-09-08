@@ -2,8 +2,10 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use psikolog_core::crypto::keyring::KdfParams;
+use psikolog_server::guard::acik_baglanti_ile;
 use psikolog_server::{router, AppState};
 use serde_json::json;
+use std::time::{Duration, Instant};
 use tower::ServiceExt;
 
 fn test_state() -> (tempfile::TempDir, AppState) {
@@ -41,24 +43,177 @@ async fn kurulu_state() -> (tempfile::TempDir, AppState) {
     (dir, state)
 }
 
+// Bulgu 4: `json.get("danisanlar").is_none()` totolojikti -- basarili yanit
+// govdesi cIPLAK bir dizidir, bir nesne degil, bu yuzden `get()` bir dizi
+// uzerinde ZATEN hep `None` doner; veri gercekten sizsa bile bu assertion
+// hicbir zaman patlamazdi. Asagidaki testler bilinen bir kayit (danisan/
+// randevu) onceden UNLOCKED durumdayken olusturup, kilitliyken donen
+// govdenin (a) bir dizi OLMADIGINI ve (b) o bilinen kaydin adini/ID'sini
+// ICERMEDIGINI dogruluyor -- gercekten anlamli bir sizinti kontrolu.
+
 #[tokio::test]
 async fn kilitliyken_danisan_listesi_401_doner() {
     let (_d, s) = kurulu_state().await;
+    cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Gizli Danisan"}))).await;
     cagir(&s, "POST", "/api/kilitle", None).await;
 
     let (kod, json) = cagir(&s, "GET", "/api/danisanlar", None).await;
     assert_eq!(kod, StatusCode::UNAUTHORIZED);
-    assert!(json.get("danisanlar").is_none(), "kilitliyken veri sizmamalı");
+    assert!(!json.is_array(), "basarili yanit govdesi dizidir, kilitliyken olmamali");
+    assert!(
+        !json.to_string().contains("Gizli Danisan"),
+        "kilitliyken bilinen bir danisan adi govdede olmamali: {json}"
+    );
 }
 
 #[tokio::test]
 async fn kilitliyken_randevu_listesi_401_doner() {
     let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Gizli Danisan"}))).await;
+    cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": d["id"], "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00"
+    }))).await;
     cagir(&s, "POST", "/api/kilitle", None).await;
-    let (kod, _) =
+
+    let (kod, json) =
         cagir(&s, "GET", "/api/randevular?baslangic=2026-09-07T00:00&bitis=2026-09-14T00:00", None)
             .await;
     assert_eq!(kod, StatusCode::UNAUTHORIZED);
+    assert!(!json.is_array(), "basarili yanit govdesi dizidir, kilitliyken olmamali");
+    assert!(
+        !json.to_string().contains("Gizli Danisan"),
+        "kilitliyken bilinen bir danisan adi govdede olmamali: {json}"
+    );
+}
+
+// Bulgu 3: yalnizca GET /api/danisanlar ve GET /api/randevular kapsanmisti.
+// Koruma yapisal (hepsi `acik_baglanti`'yi ilk satirda cagiriyor) ama
+// kapsanmamis bir uc nokta ileride yanlislikla `acik_baglanti` cagirmadan
+// yazilabilir ve hicbir test bunu yakalamaz. Kalan bes uc nokta icin de
+// kilitli-oturum testi: her biri 401 donmeli VE -- Bulgu 4'teki hatayi
+// tekrarlamamak icin -- islem gercekten UYGULANMAMIS olmali. Bunu, kilitliyken
+// istegi yapip sonra DOGRU parolayla tekrar kilit acarak ve depoyu okuyarak
+// dogruluyoruz (yalnizca govde sekline degil, gercek veri durumuna bakiyoruz).
+
+#[tokio::test]
+async fn kilitliyken_danisan_olusturma_401_doner_ve_kaydetmez() {
+    let (_d, s) = kurulu_state().await;
+    cagir(&s, "POST", "/api/kilitle", None).await;
+
+    let (kod, json) =
+        cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Gizli Danisan"}))).await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED);
+    assert!(json.get("id").is_none(), "kilitliyken olusturma basarili gibi id donmemeli");
+    assert!(
+        !json.to_string().contains("Gizli Danisan"),
+        "kilitliyken bilinen bir danisan adi govdede olmamali: {json}"
+    );
+
+    cagir(&s, "POST", "/api/kilit-ac", Some(json!({"parola":"gizliparola"}))).await;
+    let (_, liste) = cagir(&s, "GET", "/api/danisanlar", None).await;
+    assert_eq!(
+        liste.as_array().unwrap().len(),
+        0,
+        "kilitliyken yapilan olusturma istegi kalici olarak kaydedilmemis olmali"
+    );
+}
+
+#[tokio::test]
+async fn kilitliyken_randevu_olusturma_401_doner_ve_kaydetmez() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let cid = d["id"].as_i64().unwrap();
+    cagir(&s, "POST", "/api/kilitle", None).await;
+
+    let (kod, json) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": cid, "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00"
+    }))).await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED);
+    assert!(!json.is_array(), "basarili yanit govdesi dizidir, kilitliyken olmamali");
+
+    cagir(&s, "POST", "/api/kilit-ac", Some(json!({"parola":"gizliparola"}))).await;
+    let (_, hafta) = cagir(
+        &s, "GET",
+        "/api/randevular?baslangic=2026-09-07T00:00&bitis=2026-09-14T00:00", None,
+    ).await;
+    assert_eq!(
+        hafta.as_array().unwrap().len(),
+        0,
+        "kilitliyken yapilan olusturma istegi kalici olarak kaydedilmemis olmali"
+    );
+}
+
+#[tokio::test]
+async fn kilitliyken_randevu_durum_guncelleme_401_doner_ve_degistirmez() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let (_, olusan) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": d["id"], "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00"
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+    cagir(&s, "POST", "/api/kilitle", None).await;
+
+    let (kod, json) =
+        cagir(&s, "PATCH", &format!("/api/randevular/{id}"), Some(json!({"durum":"geldi"}))).await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED);
+    assert!(json.get("hata").is_some());
+
+    cagir(&s, "POST", "/api/kilit-ac", Some(json!({"parola":"gizliparola"}))).await;
+    let (_, hafta) = cagir(
+        &s, "GET",
+        "/api/randevular?baslangic=2026-09-07T00:00&bitis=2026-09-14T00:00", None,
+    ).await;
+    assert_eq!(
+        hafta[0]["durum"], "planlandi",
+        "kilitliyken yapilan durum guncellemesi uygulanmamis olmali"
+    );
+}
+
+#[tokio::test]
+async fn kilitliyken_randevu_silme_401_doner_ve_silmez() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let (_, olusan) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": d["id"], "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00"
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+    cagir(&s, "POST", "/api/kilitle", None).await;
+
+    let (kod, json) = cagir(&s, "DELETE", &format!("/api/randevular/{id}"), None).await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED);
+    assert!(json.get("hata").is_some());
+
+    cagir(&s, "POST", "/api/kilit-ac", Some(json!({"parola":"gizliparola"}))).await;
+    let (_, hafta) = cagir(
+        &s, "GET",
+        "/api/randevular?baslangic=2026-09-07T00:00&bitis=2026-09-14T00:00", None,
+    ).await;
+    assert_eq!(
+        hafta.as_array().unwrap().len(),
+        1,
+        "kilitliyken yapilan silme istegi uygulanmamis olmali"
+    );
+}
+
+#[tokio::test]
+async fn kilitliyken_cakisma_401_doner() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Gizli Danisan"}))).await;
+    cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": d["id"], "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00"
+    }))).await;
+    cagir(&s, "POST", "/api/kilitle", None).await;
+
+    let (kod, json) = cagir(
+        &s, "GET",
+        "/api/cakisma?baslangic=2026-09-07T14:30&bitis=2026-09-07T15:30", None,
+    ).await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED);
+    assert!(!json.is_array(), "basarili yanit govdesi dizidir, kilitliyken olmamali");
+    assert!(
+        !json.to_string().contains("Gizli Danisan"),
+        "kilitliyken bilinen bir danisan adi govdede olmamali: {json}"
+    );
 }
 
 #[tokio::test]
@@ -156,26 +311,38 @@ async fn cakisma_ucu_cakisanlari_dondurur() {
 
 // --- Uc baglayici kural (Plan 1'in son incelemesinden, brief disi) ---
 
-// Kural 1: `Oturum::dokun()` her basarili istekte cagrilmali. Kilit suresini
-// kisa tutup GERCEK zamanla test ediyoruz (Instant::now() HTTP katmaninda
-// disaridan enjekte edilemiyor): kilit suresinin cogu kadar bekle, basarili
-// bir istek yap (dokun() tetiklenmeli), tekrar kilit suresinin cogu kadar
-// bekle. dokun() cagrilmasaydi toplam gecen sure (iki bekleme toplami) kilit
-// suresini asardi ve ikinci istek 401 alirdi.
+// Kural 1: `Oturum::dokun()` her basarili istekte cagrilmali. Zamani
+// `acik_baglanti_ile` uzerinden disaridan enjekte ederek test ediyoruz --
+// `core::session::Oturum`'un kendi testlerindeki desenin aynisi -- hic
+// gercekten beklemeden: bilinen bir `t` anindan oturumu manuel `ac()` ile
+// acip, kilit suresinin cogu kadar ileri bir `Instant` ile basarili bir
+// "istek" yap (dokun() tetiklenmeli), sonra yine kilit suresinin cogu kadar
+// ileri bir `Instant` ile tekrar dene. dokun() cagrilmasaydi iki adimin
+// TOPLAMI (3sn'ye denk) kilit suresini (2sn) asardi ve ikinci cagri
+// Err(401) donerdi (bkz. Bulgu 2 -- onceki surum gercek zamanla 3sn
+// calisiyordu).
 #[tokio::test]
 async fn basarili_istek_oturuma_dokunur_ve_sureyi_uzatir() {
     let (_d, s) = kurulu_state().await;
-    s.oturum.lock().unwrap().kilit_suresi_ayarla(2);
 
-    std::thread::sleep(std::time::Duration::from_millis(1500));
-    let (kod1, _) = cagir(&s, "GET", "/api/danisanlar", None).await;
-    assert_eq!(kod1, StatusCode::OK, "ilk istek kilit suresi dolmadan yapilmali");
+    let t = Instant::now();
+    {
+        let mut oturum = s.oturum.lock().unwrap();
+        let anahtar = oturum.anahtar(t).expect("kurulumdan sonra oturum acik olmali");
+        oturum.kilit_suresi_ayarla(2);
+        // Bilinen bir `t` anindan yeniden ac: son_islem'i kesin olarak
+        // biliyoruz, gercek saatin akisina bagli degiliz.
+        oturum.ac(anahtar, t);
+    }
 
-    std::thread::sleep(std::time::Duration::from_millis(1500));
-    let (kod2, _) = cagir(&s, "GET", "/api/danisanlar", None).await;
-    assert_eq!(
-        kod2,
-        StatusCode::OK,
+    let orta = t + Duration::from_millis(1500);
+    let sonuc1 = acik_baglanti_ile(&s, orta);
+    assert!(sonuc1.is_ok(), "ilk istek kilit suresi dolmadan yapilmali");
+
+    let sonra = orta + Duration::from_millis(1500);
+    let sonuc2 = acik_baglanti_ile(&s, sonra);
+    assert!(
+        sonuc2.is_ok(),
         "basarili istek oturuma dokunmadiysa toplam 3sn gecmis olur ve 2sn'lik kilit suresi asilirdi"
     );
 }
@@ -191,7 +358,11 @@ async fn veri_db_silinmisse_sessizce_yeniden_olusturulmaz_ve_net_hata_doner() {
     std::fs::remove_file(s.db_yolu()).unwrap();
 
     let (kod, json) = cagir(&s, "GET", "/api/danisanlar", None).await;
-    assert_ne!(kod, StatusCode::OK, "silinmis veritabani sessizce bos liste dondurmemeli");
+    assert_eq!(
+        kod,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "silinmis veritabani sessizce bos liste dondurmemeli, acikca 500 donmeli"
+    );
     assert!(
         !s.db_yolu().exists(),
         "acik_baglanti dosyayi sessizce yeniden olusturmamali (open_existing kullanilmali)"
@@ -201,6 +372,55 @@ async fn veri_db_silinmisse_sessizce_yeniden_olusturulmaz_ve_net_hata_doner() {
         hata.contains("yedek"),
         "hata mesaji kullaniciyi yedekten geri yuklemeye yonlendirmeli: {hata}"
     );
+}
+
+// Bulgu 1: yukaridaki kural veri uc noktalari (`guard::acik_baglanti`) icin
+// zaten `open_existing` kullaniyordu ama giris kapisi -- `kilit-ac` -- hala
+// `open_encrypted` kullaniyordu. Senaryo: kullanici `veri.db`'yi yanlislikla
+// sildi (ya da senkronizasyon klasoru yuttu) ama `keystore.json` yerinde.
+// Dogru parolayla kilit acma istegi geldiginde `open_encrypted` BOS bir
+// veritabani YARATIYORDU -- `migrate()` bos semayi basariyla kuruyor,
+// kullanici "kilit acildi" goruyor, hicbir hata almadan tum danisanlarinin
+// kayboldugunu fark ediyordu. Bu test kilit-ac'in artik `open_existing`
+// kullandigini, oturumu ACMADIGINI ve dosyayi sessizce YARATMADIGINI
+// dogrular.
+#[tokio::test]
+async fn veri_db_silinmisken_kilit_ac_oturum_acmaz_ve_dosya_yaratmaz() {
+    let (_d, s) = kurulu_state().await;
+    assert!(s.db_yolu().exists(), "test onkosulu: kurulumdan sonra veri.db var olmali");
+    assert!(s.keystore_yolu().exists(), "test onkosulu: keystore.json var olmali");
+
+    // Oturumu kilitle, sonra veri.db'yi sil ama keystore.json'i birak --
+    // tam olarak brief'teki senaryo (dosya kayboldu, anahtar yerinde).
+    cagir(&s, "POST", "/api/kilitle", None).await;
+    std::fs::remove_file(s.db_yolu()).unwrap();
+
+    let (kod, json) =
+        cagir(&s, "POST", "/api/kilit-ac", Some(json!({"parola":"gizliparola"}))).await;
+
+    assert_eq!(
+        kod,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "dogru parolayla bile kilit acma basarili gorunmemeli"
+    );
+    assert!(
+        !s.db_yolu().exists(),
+        "kilit-ac dosyayi sessizce yeniden olusturmamali (open_existing kullanilmali)"
+    );
+    let hata = json["hata"].as_str().unwrap_or("").to_lowercase();
+    assert!(
+        hata.contains("yedek"),
+        "hata mesaji \"parolaniz hatali\" DEMEMELI, yedekten geri yuklemeye yonlendirmeli: {hata}"
+    );
+    assert!(
+        !hata.contains("parola"),
+        "yanlis teshis kullaniciyi veriyi imha etmeye itmemeli -- \"parola\" kelimesi gecmemeli: {hata}"
+    );
+
+    // Oturum gercekten ACILMAMIS olmali: kilitliyken korunan bir uc noktaya
+    // yapilan istek hala 401 vermeli.
+    let (kod2, _) = cagir(&s, "GET", "/api/danisanlar", None).await;
+    assert_eq!(kod2, StatusCode::UNAUTHORIZED, "basarisiz kilit-ac oturumu ACMAMALI");
 }
 
 // Kural 3: `/api` altinda bilinmeyen bir yol 404 donmeli, SPA fallback'ine

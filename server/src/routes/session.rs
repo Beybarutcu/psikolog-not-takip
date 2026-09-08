@@ -1,9 +1,10 @@
+use crate::guard::veritabani_hatasi;
 use crate::state::{AppState, KeystoreDurumu};
 use axum::{extract::State, http::StatusCode, Json};
 use psikolog_core::crypto::keyring::CryptoError;
 use psikolog_core::store::{
     audit::{kaydet, Cihaz, Eylem},
-    db::open_encrypted,
+    db::{open_encrypted, open_existing},
     keystore,
     schema::migrate,
 };
@@ -73,14 +74,25 @@ pub async fn kilit_ac(
 
     match sonuc {
         Ok(key) => {
-            let conn = match open_encrypted(&s.db_yolu(), &key) {
+            // `open_encrypted` DEĞİL, `open_existing`: dosya yoksa (kullanıcı
+            // `veri.db`'yi yanlışlıkla sildi, senkronizasyon klasörü yuttu,
+            // yarım kalmış bir geri yükleme) kilit açma isteği sessizce BOŞ
+            // bir veritabanı YARATMAMALI. `open_encrypted` bunu yapardı --
+            // doğru parolayla gelen kullanıcı "kilit açıldı" görür, sonra
+            // tüm danışanlarının kaybolduğunu fark eder. Tam olarak
+            // `guard::acik_baglanti`'nin veri uç noktaları için önlediği
+            // durum; giriş kapısı da aynı kuralı izlemeli (bkz. Bulgu 1).
+            // Kurulum akışı (`routes::setup::kurulum`) `open_encrypted`
+            // kullanmaya DEVAM EDER -- orada dosyayı yaratmak doğrudur.
+            let conn = match open_existing(&s.db_yolu(), &key) {
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!("kilit-ac: veritabanı açılamadı: {e}");
-                    return (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(json!({ "hata": "Veritabanı açılamadı." })),
-                    );
+                    // `veritabani_hatasi` her `DbError` varyantını -- `DosyaYok`
+                    // dahil -- kendi `Display` metniyle gövdeye taşır.
+                    // `DosyaYok`'un mesajı kullanıcıyı yedekten geri yüklemeye
+                    // yönlendirir, "parolanız hatalı" DEMEZ (bkz. Bulgu 1).
+                    return veritabani_hatasi(e);
                 }
             };
             // Kurulumdaki (`routes::setup::kurulum`) ile aynı kalıp: göç

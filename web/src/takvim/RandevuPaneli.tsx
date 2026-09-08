@@ -1,9 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Danisan } from '../api'
 import type { Randevu } from './HaftalikTakvim'
 import { dakikaFarki, yerelZaman, zamandanDate } from './hafta'
 
 const VARSAYILAN_SURE_DK = 60
+// Çakışma kontrolü sunucuya her tuş vuruşunda gidiyordu (Görev 5'te bu uç
+// noktanın bilinçli olarak log yazmadığı kararlaştırılmıştı, yani sık
+// çağrılacağı biliniyordu — yine de gereksiz yük). Süre alanına art arda
+// basarken tek istek gitmesi için değişiklik bu kadar süre sessiz kalınca
+// gönderiliyor.
+const CAKISMA_GECIKME_MS = 300
 
 type Kayit = {
   client_id: number
@@ -53,32 +59,68 @@ export function RandevuPaneli({
   const [cakisanlar, setCakisanlar] = useState<Randevu[]>([])
   const [hata, setHata] = useState<string | null>(null)
   const [silOnayi, setSilOnayi] = useState(false)
+  const [islemSuruyor, setIslemSuruyor] = useState(false)
+
+  // onKaydet/onDurumDegis/onSil (ör. kayıt işlemi) tamamlanmadan panel başka
+  // bir randevuya/boş saate geçiş sonucu kaldırılırsa (kaydet çağrısı
+  // AnaEkran'da paneli kapatıyor), aşağıdaki finally/catch bloklarının
+  // kaldırılmış bileşende setState çağırmasını önler — cakismaKontrol
+  // efektindeki `iptal` bayrağıyla aynı desen.
+  const gecerli = useRef(true)
+  useEffect(() => () => {
+    gecerli.current = false
+  }, [])
 
   const bitis = bitisHesapla(baslangic, sureDk)
 
   useEffect(() => {
     let iptal = false
-    void cakismaKontrol(baslangic, bitis, randevu?.id).then((liste) => {
-      if (!iptal) setCakisanlar(liste)
-    })
+    const zamanlayici = setTimeout(() => {
+      void cakismaKontrol(baslangic, bitis, randevu?.id).then((liste) => {
+        if (!iptal) setCakisanlar(liste)
+      })
+    }, CAKISMA_GECIKME_MS)
     return () => {
       iptal = true
+      clearTimeout(zamanlayici)
     }
   }, [baslangic, bitis, randevu?.id, cakismaKontrol])
+
+  // Kaydet/durum/sil işlemleri sürerken düğmeleri devre dışı bırakmak ve
+  // sunucudan dönen hatayı panelin içinde de göstermek için ortak sarmalayıcı.
+  // Hızlı çift tıklama, düğme devre dışı kaldığı için ikinci bir çağrı
+  // üretmiyor (bkz. RandevuPaneli.test.tsx).
+  async function islemCalistir(islem: () => Promise<void>) {
+    setHata(null)
+    setIslemSuruyor(true)
+    try {
+      await islem()
+    } catch (e) {
+      if (gecerli.current) setHata(e instanceof Error ? e.message : 'İşlem tamamlanamadı.')
+    } finally {
+      if (gecerli.current) setIslemSuruyor(false)
+    }
+  }
 
   async function kaydet() {
     if (clientId === '') {
       setHata('Lütfen bir danışan seçin.')
       return
     }
-    setHata(null)
-    await onKaydet({
-      client_id: Number(clientId),
-      baslangic,
-      bitis,
-      ucret: tldenKurusa(ucretTl),
-      ...(tekrar ? { tekrar_sayisi: Number(haftaSayisi) } : {}),
-    })
+    const ucretTrim = ucretTl.trim()
+    if (ucretTrim !== '' && Number.isNaN(Number(ucretTrim))) {
+      setHata('Ücret sayısal bir değer olmalı (ör. 450 veya 450.50).')
+      return
+    }
+    await islemCalistir(() =>
+      onKaydet({
+        client_id: Number(clientId),
+        baslangic,
+        bitis,
+        ucret: tldenKurusa(ucretTl),
+        ...(tekrar ? { tekrar_sayisi: Number(haftaSayisi) } : {}),
+      }),
+    )
   }
 
   return (
@@ -129,8 +171,8 @@ export function RandevuPaneli({
       </label>
       <input
         id="ucret"
-        type="number"
-        min={0}
+        type="text"
+        inputMode="decimal"
         className="mt-1 w-full rounded border p-2"
         value={ucretTl}
         onChange={(e) => setUcretTl(e.target.value)}
@@ -173,7 +215,11 @@ export function RandevuPaneli({
 
       {hata && <p className="mt-3 text-sm text-red-600">{hata}</p>}
 
-      <button className="mt-4 w-full rounded bg-slate-900 py-2 text-white" onClick={() => void kaydet()}>
+      <button
+        className="mt-4 w-full rounded bg-slate-900 py-2 text-white disabled:opacity-50"
+        onClick={() => void kaydet()}
+        disabled={islemSuruyor}
+      >
         Kaydet
       </button>
 
@@ -189,8 +235,9 @@ export function RandevuPaneli({
             ).map(([etiket, kod]) => (
               <button
                 key={kod}
-                className="rounded border py-1 text-sm"
-                onClick={() => void onDurumDegis(randevu.id, kod)}
+                className="rounded border py-1 text-sm disabled:opacity-50"
+                onClick={() => void islemCalistir(() => onDurumDegis(randevu.id, kod))}
+                disabled={islemSuruyor}
               >
                 {etiket}
               </button>
@@ -202,12 +249,17 @@ export function RandevuPaneli({
               <p className="text-sm text-red-800">Bu randevu kalıcı olarak silinsin mi?</p>
               <div className="mt-2 flex gap-2">
                 <button
-                  className="rounded bg-red-700 px-3 py-1 text-sm text-white"
-                  onClick={() => void onSil(randevu.id)}
+                  className="rounded bg-red-700 px-3 py-1 text-sm text-white disabled:opacity-50"
+                  onClick={() => void islemCalistir(() => onSil(randevu.id))}
+                  disabled={islemSuruyor}
                 >
                   Evet, sil
                 </button>
-                <button className="rounded border px-3 py-1 text-sm" onClick={() => setSilOnayi(false)}>
+                <button
+                  className="rounded border px-3 py-1 text-sm"
+                  onClick={() => setSilOnayi(false)}
+                  disabled={islemSuruyor}
+                >
                   Vazgeç
                 </button>
               </div>

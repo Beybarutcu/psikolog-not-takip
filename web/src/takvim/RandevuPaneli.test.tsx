@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RandevuPaneli } from './RandevuPaneli'
 
 const danisanlar = [
@@ -101,5 +101,112 @@ describe('RandevuPaneli', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Evet, sil' }))
     expect(props.onSil).toHaveBeenCalledWith(7)
+  })
+
+  // --- Görev 10 inceleme bulguları --------------------------------------
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('Bulgu 2: kaydet sürerken düğme devre dışı kalır, çift tıklama tek çağrı üretir', async () => {
+    let cozKaydet: () => void = () => {}
+    const onKaydet = vi.fn(
+      () => new Promise<void>((resolve) => {
+        cozKaydet = resolve
+      }),
+    )
+    const props = kur({ onKaydet })
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+
+    const kaydetDugmesi = screen.getByRole('button', { name: 'Kaydet' })
+    await userEvent.click(kaydetDugmesi)
+    expect((kaydetDugmesi as HTMLButtonElement).disabled).toBe(true)
+
+    // İşlem sürerken ikinci tıklama devre dışı düğmede yok sayılır.
+    await userEvent.click(kaydetDugmesi)
+    expect(props.onKaydet).toHaveBeenCalledTimes(1)
+
+    cozKaydet()
+    await waitFor(() => expect((kaydetDugmesi as HTMLButtonElement).disabled).toBe(false))
+  })
+
+  it('Bulgu 2: silme sürerken "Evet, sil" devre dışı kalır, çift tıklama tek çağrı üretir', async () => {
+    let cozSil: () => void = () => {}
+    const onSil = vi.fn(
+      () => new Promise<void>((resolve) => {
+        cozSil = resolve
+      }),
+    )
+    const props = kur({ randevu: mevcut, onSil })
+    await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
+
+    const evetSil = screen.getByRole('button', { name: 'Evet, sil' })
+    await userEvent.click(evetSil)
+    expect((evetSil as HTMLButtonElement).disabled).toBe(true)
+
+    await userEvent.click(evetSil)
+    expect(props.onSil).toHaveBeenCalledTimes(1)
+
+    cozSil()
+    await waitFor(() => expect((evetSil as HTMLButtonElement).disabled).toBe(false))
+  })
+
+  it('Bulgu 3: çakışma kontrolü süre değişince gecikmeli (debounce) çağrılır', async () => {
+    vi.useFakeTimers()
+    try {
+      const cakismaKontrol = vi.fn().mockResolvedValue([])
+      kur({ cakismaKontrol })
+
+      // Mount anında bir zamanlayıcı kurulur ama 300ms dolmadan istek gitmez.
+      await act(() => vi.advanceTimersByTimeAsync(200))
+      expect(cakismaKontrol).not.toHaveBeenCalled()
+      await act(() => vi.advanceTimersByTimeAsync(100))
+      expect(cakismaKontrol).toHaveBeenCalledTimes(1)
+
+      const sureAlani = screen.getByLabelText('Süre (dakika)')
+      // Art arda üç değişiklik — eski yarış durumu koruması (iptal bayrağı)
+      // hâlâ geçerli olmalı, ama debounce sayesinde tek istek gitmeli.
+      fireEvent.change(sureAlani, { target: { value: '61' } })
+      fireEvent.change(sureAlani, { target: { value: '62' } })
+      fireEvent.change(sureAlani, { target: { value: '63' } })
+
+      await act(() => vi.advanceTimersByTimeAsync(200))
+      expect(cakismaKontrol).toHaveBeenCalledTimes(1) // henüz 300ms dolmadı
+
+      await act(() => vi.advanceTimersByTimeAsync(150))
+      expect(cakismaKontrol).toHaveBeenCalledTimes(2) // yalnızca son değerle
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('Bulgu 5: ücret sayıya çevrilemiyorsa kaydetmeyi durdurur ve uyarı gösterir', async () => {
+    const props = kur()
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.clear(screen.getByLabelText('Ücret (TL)'))
+    await userEvent.type(screen.getByLabelText('Ücret (TL)'), 'abc')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+
+    expect(screen.getByText(/ücret.*sayısal/i)).toBeDefined()
+    expect(props.onKaydet).not.toHaveBeenCalled()
+  })
+
+  it('Bulgu 5: ücret alanı boşsa kaydetmeye devam eder (null geçerli)', async () => {
+    const props = kur()
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.clear(screen.getByLabelText('Ücret (TL)'))
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+
+    expect(props.onKaydet).toHaveBeenCalledWith(expect.objectContaining({ ucret: null }))
+  })
+
+  it('Bulgu 4: sunucu hatası panelin içinde de gösterilir', async () => {
+    const onKaydet = vi.fn().mockRejectedValue(new Error('Ücret negatif olamaz.'))
+    kur({ onKaydet })
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+
+    expect(await screen.findByText('Ücret negatif olamaz.')).toBeDefined()
   })
 })

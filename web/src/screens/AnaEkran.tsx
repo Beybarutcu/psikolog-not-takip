@@ -81,7 +81,15 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
       panelKapat()
       await yukle()
     } catch (e) {
+      // Üstteki bant dar bir sayfada gözden kaçabilir (bkz. Görev 10 inceleme
+      // bulgusu) — burada set edilip yeniden fırlatılıyor ki panel de kendi
+      // içinde aynı hatayı gösterebilsin (RandevuPaneli'nin onKaydet'i
+      // bekleyen islemCalistir'i bu reddi yakalayıp yerel hata state'ine
+      // yazıyor). Merkezi 401 dinleyicisi zaten api.ts içindeki `istek`
+      // fonksiyonunda, bu reddin fırlatılmasından önce tetiklenmiş oluyor —
+      // burada yeniden fırlatmak o mekanizmayı etkilemez.
       setHata(e instanceof Error ? e.message : 'Randevu kaydedilemedi.')
+      throw e
     }
   }
 
@@ -92,6 +100,7 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
       await yukle()
     } catch (e) {
       setHata(e instanceof Error ? e.message : 'Randevu güncellenemedi.')
+      throw e
     }
   }
 
@@ -103,6 +112,7 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
       await yukle()
     } catch (e) {
       setHata(e instanceof Error ? e.message : 'Randevu silinemedi.')
+      throw e
     }
   }
 
@@ -132,6 +142,12 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
 
         {panelAcik && (
           <RandevuPaneli
+            // Seçim değişince (başka bir randevu ya da boş saat) bileşen
+            // yeniden mount edilmeli — aksi hâlde panelin iç state'i (silme
+            // onayı, doldurulmuş form alanları) önceki seçimden yeni seçime
+            // sızar (bkz. Görev 10 inceleme Bulgu 1). `key` kimliği seçili
+            // randevunun ya da seçili boş saatin kimliğine bağlanıyor.
+            key={seciliRandevu ? `randevu-${seciliRandevu.id}` : `bos-${seciliBosSaat}`}
             zaman={seciliBosSaat ?? seciliRandevu?.baslangic ?? ''}
             randevu={seciliRandevu}
             danisanlar={danisanlar}

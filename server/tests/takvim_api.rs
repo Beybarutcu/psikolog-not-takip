@@ -422,6 +422,111 @@ async fn olmayan_randevunun_guncellenmesi_404_doner() {
     assert_eq!(kod, StatusCode::NOT_FOUND);
 }
 
+// --- Dal incelemesi I4a: seri silme rotasi ---------------------------
+
+async fn seri_kur(s: &AppState) -> (i64, String) {
+    let (_, d) = cagir(s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let cid = d["id"].as_i64().unwrap();
+    let (_, olusan) = cagir(s, "POST", "/api/randevular", Some(json!({
+        "client_id": cid, "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00",
+        "tekrar_sayisi": 4
+    }))).await;
+    let seri_id = olusan[0]["seri_id"].as_str().unwrap().to_string();
+    (cid, seri_id)
+}
+
+#[tokio::test]
+async fn seri_adedi_silinecek_sayiyi_verir_ve_silmez() {
+    let (_d, s) = kurulu_state().await;
+    let (_cid, sid) = seri_kur(&s).await;
+
+    let (kod, json) = cagir(
+        &s, "GET",
+        &format!("/api/randevular/seri/{sid}?bu_tarihten_itibaren=2026-09-21T00:00"), None,
+    ).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(json["adet"], 2, "21 ve 28 Eylul silinecek, gecmis korunacak");
+
+    let (_, hepsi) = cagir(
+        &s, "GET",
+        "/api/randevular?baslangic=2026-09-01T00:00&bitis=2026-10-01T00:00", None,
+    ).await;
+    assert_eq!(hepsi.as_array().unwrap().len(), 4, "sayim hicbir sey silmemeli");
+}
+
+#[tokio::test]
+async fn seri_silinir_ve_gecmis_korunur() {
+    let (_d, s) = kurulu_state().await;
+    let (_cid, sid) = seri_kur(&s).await;
+
+    let (kod, json) = cagir(
+        &s, "DELETE",
+        &format!("/api/randevular/seri/{sid}?bu_tarihten_itibaren=2026-09-21T00:00"), None,
+    ).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(json["silinen"], 2);
+
+    let (_, kalan) = cagir(
+        &s, "GET",
+        "/api/randevular?baslangic=2026-09-01T00:00&bitis=2026-10-01T00:00", None,
+    ).await;
+    assert_eq!(kalan.as_array().unwrap().len(), 2, "gecmis randevular silinmemeli");
+    assert_eq!(kalan[0]["baslangic"], "2026-09-07T14:00");
+    assert_eq!(kalan[1]["baslangic"], "2026-09-14T14:00");
+}
+
+#[tokio::test]
+async fn kilitliyken_seri_silme_401_doner_ve_silmez() {
+    let (_d, s) = kurulu_state().await;
+    let (_cid, sid) = seri_kur(&s).await;
+    cagir(&s, "POST", "/api/kilitle", None).await;
+
+    let (kod, json) = cagir(
+        &s, "DELETE",
+        &format!("/api/randevular/seri/{sid}?bu_tarihten_itibaren=2026-09-01T00:00"), None,
+    ).await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED);
+    assert!(json.get("silinen").is_none(), "kilitliyken silme sonucu donmemeli");
+
+    cagir(&s, "POST", "/api/kilit-ac", Some(json!({"parola":"gizliparola"}))).await;
+    let (_, kalan) = cagir(
+        &s, "GET",
+        "/api/randevular?baslangic=2026-09-01T00:00&bitis=2026-10-01T00:00", None,
+    ).await;
+    assert_eq!(
+        kalan.as_array().unwrap().len(),
+        4,
+        "kilitliyken yapilan seri silme istegi uygulanmamis olmali"
+    );
+}
+
+#[tokio::test]
+async fn kilitliyken_seri_adedi_401_doner() {
+    let (_d, s) = kurulu_state().await;
+    let (_cid, sid) = seri_kur(&s).await;
+    cagir(&s, "POST", "/api/kilitle", None).await;
+
+    let (kod, json) = cagir(
+        &s, "GET",
+        &format!("/api/randevular/seri/{sid}?bu_tarihten_itibaren=2026-09-01T00:00"), None,
+    ).await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED);
+    assert!(json.get("adet").is_none(), "kilitliyken adet donmemeli");
+}
+
+#[tokio::test]
+async fn seri_silmede_gecersiz_tarih_400_doner() {
+    let (_d, s) = kurulu_state().await;
+    let (_cid, sid) = seri_kur(&s).await;
+
+    let (kod, json) = cagir(
+        &s, "DELETE",
+        &format!("/api/randevular/seri/{sid}?bu_tarihten_itibaren=01.09.2026"), None,
+    ).await;
+    assert_eq!(kod, StatusCode::BAD_REQUEST);
+    assert!(json["hata"].as_str().unwrap().contains("Tarih"));
+}
+
 #[tokio::test]
 async fn cakisma_ucu_cakisanlari_dondurur() {
     let (_d, s) = kurulu_state().await;

@@ -616,6 +616,37 @@ pub fn seri_olustur(
     Ok(uretilenler)
 }
 
+/// `seriyi_sil` çağrılsa KAÇ randevunun silineceğini söyler; hiçbir şey
+/// değiştirmez.
+///
+/// Silme geri alınamaz bir işlem olduğu için onay metninin kaç kaydın
+/// gideceğini söylemesi gerekiyor (bkz. dal incelemesi I4a) ve bu sayı
+/// yalnızca sunucuda bilinebilir: seri, ekranda görünen haftanın çok
+/// ötesine uzanabilir.
+///
+/// `cakisanlari_bul` ile aynı gerekçeyle **log YAZMAZ**: kullanıcıya veri
+/// göstermeyen (yalnızca bir sayı dönen), onay kutusunu hazırlamak için
+/// yapılan bir kontroldür; kullanıcı silmekten vazgeçse bile silinemeyen
+/// loga kalıcı bir satır düşürmesi gürültüden başka bir şey üretmez.
+/// Silmenin KENDİSİ elbette loglanır (bkz. `seriyi_sil`).
+pub fn seri_sayisi(
+    conn: &Connection,
+    seri_id: &str,
+    bu_tarihten_itibaren: &str,
+) -> Result<usize, DepoHatasi> {
+    if !zaman_gecerli_mi(bu_tarihten_itibaren) {
+        return Err(DepoHatasi::GecersizVeri(
+            "Tarih biçimi YYYY-AA-GGTSS:DD olmalı.".into(),
+        ));
+    }
+    let adet: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM appointments WHERE seri_id = ?1 AND baslangic >= ?2",
+        rusqlite::params![seri_id, bu_tarihten_itibaren],
+        |r| r.get(0),
+    )?;
+    Ok(adet as usize)
+}
+
 /// Bir randevu serisini, verilen tarihten (dahil) itibaren siler; öncesi
 /// KORUNUR. Silme ve audit log yazımı tek transaction'da yapılır.
 ///
@@ -1192,6 +1223,66 @@ mod tests {
             3,
             "audit log basarisiz oldugunda seri silme geri alinmali, kayitlar kalmali"
         );
+    }
+
+    // --- Dal incelemesi I4a: seri silme sayimi ---------------------------
+
+    #[test]
+    fn seri_sayisi_silinecek_adedi_verir_ve_gecmisi_saymaz() {
+        let (_d, c, cid) = kurulum();
+        let seri = seri_olustur(
+            &c,
+            &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"),
+            4,
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+        let sid = seri[0].seri_id.clone().unwrap();
+
+        assert_eq!(seri_sayisi(&c, &sid, "2026-09-07T00:00").unwrap(), 4);
+        assert_eq!(
+            seri_sayisi(&c, &sid, "2026-09-21T00:00").unwrap(),
+            2,
+            "gecmis uyeler sayilmamali -- seriyi_sil de onlari silmiyor"
+        );
+
+        // Sayi, gercekten silinecek adetle birebir ayni olmali.
+        let silinecek = seri_sayisi(&c, &sid, "2026-09-21T00:00").unwrap();
+        let silinen = seriyi_sil(&c, &sid, "2026-09-21T00:00", Cihaz::Masaustu).unwrap();
+        assert_eq!(silinen, silinecek, "onay metnindeki sayi gercekle ayni olmali");
+    }
+
+    #[test]
+    fn seri_sayisi_hicbir_sey_degistirmez_ve_log_yazmaz() {
+        let (_d, c, cid) = kurulum();
+        let seri = seri_olustur(
+            &c,
+            &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"),
+            3,
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+        let sid = seri[0].seri_id.clone().unwrap();
+        let once_satir = appointments_satir_sayisi(&c);
+        let once_log = crate::store::audit::son_kayitlar(&c, 200).unwrap().len();
+
+        seri_sayisi(&c, &sid, "2026-09-07T00:00").unwrap();
+
+        assert_eq!(appointments_satir_sayisi(&c), once_satir);
+        assert_eq!(
+            crate::store::audit::son_kayitlar(&c, 200).unwrap().len(),
+            once_log,
+            "sayim log yazmamali (silmenin kendisi loglaniyor)"
+        );
+    }
+
+    #[test]
+    fn seri_sayisi_gecersiz_tarihi_reddeder() {
+        let (_d, c, _cid) = kurulum();
+        assert!(matches!(
+            seri_sayisi(&c, "yok", "07.09.2026 14:00").unwrap_err(),
+            DepoHatasi::GecersizVeri(_)
+        ));
     }
 
     // --- Dal incelemesi I2: seri capinda cakisma -------------------------

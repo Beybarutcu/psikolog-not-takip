@@ -94,6 +94,39 @@ test('mevcut randevunun ucreti guncellenir, kopya olusmaz', async ({ page }) => 
   await expect(page.getByLabel('Ücret (TL)')).toHaveValue('500')
 })
 
+// Dal incelemesi I4a: seri kurulabiliyor ama iptal edilemiyordu
+// (`seriyi_sil`in cagri yeri yoktu). Seri kur, sonra "bu ve sonraki tum
+// tekrarlar" ile iptal et.
+test('seri kurulur ve tek adimda iptal edilir', async ({ page }) => {
+  await kurulumYap(page)
+
+  await page.getByRole('button', { name: 'Danışan ekle' }).click()
+  await page.getByLabel('Ad soyad').fill('Deniz Arslan')
+  await page.getByRole('button', { name: 'Ekle', exact: true }).click()
+  await expect(page.getByText('Deniz Arslan')).toBeVisible()
+
+  await page.locator('button[aria-label$="12:00 boş"]').first().click()
+  await page.getByLabel('Danışan').selectOption({ label: 'Deniz Arslan' })
+  await page.getByLabel('Her hafta tekrarla').check()
+  await page.getByLabel('Kaç hafta').fill('3')
+  await page.getByRole('button', { name: 'Kaydet' }).click()
+
+  const bloklar = page.getByRole('button', { name: 'Deniz Arslan' })
+  await expect(bloklar).toHaveCount(1) // bu haftada serinin ilk uyesi
+
+  await bloklar.first().click()
+  await page.getByRole('button', { name: 'Bu ve sonraki tüm tekrarları sil' }).click()
+  // Onay metni kac randevunun silinecegini ve gecmisin korundugunu soyler.
+  await expect(page.getByText(/3 randevu/)).toBeVisible()
+  await expect(page.getByText(/Geçmiş randevular silinmez/)).toBeVisible()
+  await page.getByRole('button', { name: 'Evet, tekrarları sil' }).click()
+
+  await expect(bloklar).toHaveCount(0)
+  // Sonraki haftalardaki uyeler de gitmis olmali.
+  await page.getByRole('button', { name: 'Sonraki hafta' }).click()
+  await expect(bloklar).toHaveCount(0)
+})
+
 test('haftalar arasi gezinme calisir', async ({ page }) => {
   await kurulumYap(page)
   const baslik = page.locator('h2').first()

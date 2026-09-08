@@ -26,6 +26,11 @@ type Props = {
   onKaydet: (kayit: Kayit) => Promise<void>
   onDurumDegis: (id: number, durum: string) => Promise<void>
   onSil: (id: number) => Promise<void>
+  // Serideki bu randevudan İTİBAREN gelen tüm tekrarları siler; geçmiş
+  // korunur (bkz. sunucudaki `seriyi_sil`).
+  onSeriSil: (seriId: string, buTarihtenItibaren: string) => Promise<void>
+  // Onay metnindeki sayıyı üretir: kaç randevu silinecek.
+  seriSayisiAl: (seriId: string, buTarihtenItibaren: string) => Promise<number>
   onKapat: () => void
   cakismaKontrol: (
     baslangic: string,
@@ -63,7 +68,8 @@ function tldenKurusa(tl: string): number | null {
 }
 
 export function RandevuPaneli({
-  zaman, randevu, danisanlar, onKaydet, onDurumDegis, onSil, onKapat, cakismaKontrol,
+  zaman, randevu, danisanlar, onKaydet, onDurumDegis, onSil, onSeriSil, seriSayisiAl,
+  onKapat, cakismaKontrol,
 }: Props) {
   const baslangic = randevu?.baslangic ?? zaman
   const [clientId, setClientId] = useState<number | ''>(randevu?.client_id ?? '')
@@ -76,6 +82,10 @@ export function RandevuPaneli({
   const [cakisma, setCakisma] = useState<SeriCakismasi | null>(null)
   const [hata, setHata] = useState<string | null>(null)
   const [silOnayi, setSilOnayi] = useState(false)
+  // Seri silme onayı: `null` = onay açık değil, sayı = kaç randevu
+  // silinecek (sunucudan alındı). Silme geri alınamaz olduğu için tekil
+  // silmedeki iki adımlı onay deseni burada da uygulanıyor.
+  const [seriSilOnayi, setSeriSilOnayi] = useState<number | null>(null)
   const [islemSuruyor, setIslemSuruyor] = useState(false)
 
   // onKaydet/onDurumDegis/onSil (ör. kayıt işlemi) tamamlanmadan panel başka
@@ -312,6 +322,60 @@ export function RandevuPaneli({
             >
               Sil
             </button>
+          )}
+
+          {/* Seri iptali. 52 haftalık bir seri iki tıkla kuruluyordu ama
+              iptal etmenin tek yolu 52 randevuyu tek tek silmekti
+              (`seriyi_sil` yazılmış ama hiçbir çağrı yeri yoktu — bkz. dal
+              incelemesi I4a). Kullanıcı artık "bu randevu" ile "bu ve
+              sonraki tüm tekrarlar" arasında seçim yapıyor. */}
+          {randevu.seri_id && !silOnayi && (
+            seriSilOnayi !== null ? (
+              <div className="mt-3 rounded bg-red-50 p-2">
+                <p className="text-sm text-red-800">
+                  Bu randevu ve sonraki {seriSilOnayi - 1} tekrarı ({seriSilOnayi} randevu)
+                  kalıcı olarak silinsin mi? Geçmiş randevular silinmez.
+                </p>
+                <div className="mt-2 flex gap-2">
+                  <button
+                    className="rounded bg-red-700 px-3 py-1 text-sm text-white disabled:opacity-50"
+                    onClick={() =>
+                      void islemCalistir(() =>
+                        onSeriSil(randevu.seri_id as string, randevu.baslangic),
+                      )
+                    }
+                    disabled={islemSuruyor}
+                  >
+                    Evet, tekrarları sil
+                  </button>
+                  <button
+                    className="rounded border px-3 py-1 text-sm"
+                    onClick={() => setSeriSilOnayi(null)}
+                    disabled={islemSuruyor}
+                  >
+                    Vazgeç
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                className="mt-2 w-full text-sm text-red-700 underline disabled:opacity-50"
+                disabled={islemSuruyor}
+                onClick={() =>
+                  void islemCalistir(async () => {
+                    // Onay metnindeki sayı sunucudan alınır: seri ekrandaki
+                    // haftanın çok ötesine uzanabilir.
+                    const adet = await seriSayisiAl(
+                      randevu.seri_id as string,
+                      randevu.baslangic,
+                    )
+                    if (gecerli.current) setSeriSilOnayi(adet)
+                  })
+                }
+              >
+                Bu ve sonraki tüm tekrarları sil
+              </button>
+            )
           )}
         </>
       )}

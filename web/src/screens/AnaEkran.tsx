@@ -154,6 +154,22 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
     }
   }
 
+  // Seriyi bu randevudan İTİBAREN iptal eder; geçmiş randevular sunucuda
+  // korunuyor (bkz. `seriyi_sil`). `seriyi_sil` Görev 6'da yazılmış ve test
+  // edilmişti ama hiçbir çağrı yeri yoktu — 52 haftalık bir seri iki tıkla
+  // kuruluyor, iptal edilemiyordu (bkz. dal incelemesi I4a).
+  async function seriSil(seriId: string, buTarihtenItibaren: string) {
+    try {
+      await takvimApi.seriSil(seriId, buTarihtenItibaren)
+      setHata(null)
+      panelKapat()
+      await yukle()
+    } catch (e) {
+      setHata(e instanceof Error ? e.message : 'Seri silinemedi.')
+      throw e
+    }
+  }
+
   const panelAcik = seciliRandevu !== null || seciliBosSaat !== null
 
   return (
@@ -249,6 +265,8 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
             onKaydet={kaydet}
             onDurumDegis={durumDegis}
             onSil={sil}
+            onSeriSil={seriSil}
+            seriSayisiAl={takvimApi.seriSayisi}
             onKapat={panelKapat}
             cakismaKontrol={takvimApi.cakismaKontrol}
           />

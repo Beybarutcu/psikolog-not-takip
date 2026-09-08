@@ -34,6 +34,8 @@ function kur(ozel = {}) {
     onKaydet: vi.fn().mockResolvedValue(undefined),
     onDurumDegis: vi.fn().mockResolvedValue(undefined),
     onSil: vi.fn().mockResolvedValue(undefined),
+    onSeriSil: vi.fn().mockResolvedValue(undefined),
+    seriSayisiAl: vi.fn().mockResolvedValue(9),
     onKapat: vi.fn(),
     cakismaKontrol: vi.fn().mockResolvedValue(temizCakisma),
     ...ozel,
@@ -211,6 +213,67 @@ describe('RandevuPaneli', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
 
     expect(props.onKaydet).toHaveBeenCalledWith(expect.objectContaining({ ucret: null }))
+  })
+
+  // --- Dal incelemesi I4a: seri silme ---------------------------------
+
+  const seriUyesi = { ...mevcut, seri_id: 'seri-abc' }
+
+  it('I4a: seri üyesi olmayan randevuda seri silme seçeneği görünmez', () => {
+    kur({ randevu: mevcut })
+    expect(screen.queryByRole('button', { name: /sonraki tüm tekrarları sil/i })).toBeNull()
+  })
+
+  it('I4a: seri üyesinde tekil silme ile seri silme birlikte sunulur', () => {
+    kur({ randevu: seriUyesi })
+    expect(screen.getByRole('button', { name: 'Sil' })).toBeDefined()
+    expect(screen.getByRole('button', { name: /bu ve sonraki tüm tekrarları sil/i }).textContent)
+      .toBeDefined()
+  })
+
+  it('I4a: seri silme iki adımlı onay ister, adet gösterir ve geçmişin korunduğunu söyler', async () => {
+    const props = kur({ randevu: seriUyesi, seriSayisiAl: vi.fn().mockResolvedValue(9) })
+
+    await userEvent.click(screen.getByRole('button', { name: /bu ve sonraki tüm tekrarları sil/i }))
+    expect(props.seriSayisiAl).toHaveBeenCalledWith('seri-abc', '2026-09-07T14:00')
+
+    // İlk tıklama silmez: yalnızca onay açar.
+    expect(props.onSeriSil).not.toHaveBeenCalled()
+    const onay = await screen.findByText(/9 randevu/i)
+    expect(onay.textContent).toMatch(/geçmiş randevular silinmez/i)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Evet, tekrarları sil' }))
+    expect(props.onSeriSil).toHaveBeenCalledWith('seri-abc', '2026-09-07T14:00')
+  })
+
+  it('I4a: seri silme onayından vazgeçilebilir', async () => {
+    const props = kur({ randevu: seriUyesi })
+    await userEvent.click(screen.getByRole('button', { name: /bu ve sonraki tüm tekrarları sil/i }))
+    await screen.findByRole('button', { name: 'Evet, tekrarları sil' })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Vazgeç' }))
+    expect(screen.queryByRole('button', { name: 'Evet, tekrarları sil' })).toBeNull()
+    expect(props.onSeriSil).not.toHaveBeenCalled()
+  })
+
+  it('I4a: seri silme sürerken düğme devre dışı kalır, çift tıklama tek çağrı üretir', async () => {
+    let cozSil: () => void = () => {}
+    const onSeriSil = vi.fn(
+      () => new Promise<void>((resolve) => {
+        cozSil = resolve
+      }),
+    )
+    const props = kur({ randevu: seriUyesi, onSeriSil })
+    await userEvent.click(screen.getByRole('button', { name: /bu ve sonraki tüm tekrarları sil/i }))
+
+    const evet = await screen.findByRole('button', { name: 'Evet, tekrarları sil' })
+    await userEvent.click(evet)
+    expect((evet as HTMLButtonElement).disabled).toBe(true)
+    await userEvent.click(evet)
+    expect(props.onSeriSil).toHaveBeenCalledTimes(1)
+
+    cozSil()
+    await waitFor(() => expect((evet as HTMLButtonElement).disabled).toBe(false))
   })
 
   // --- Dal incelemesi I2: seri çapında çakışma ------------------------

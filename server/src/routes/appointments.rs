@@ -7,8 +7,8 @@ use axum::{
 };
 use psikolog_core::store::appointments::{
     aralik_getir, cakisanlari_bul, durum_guncelle, guncelle as depo_guncelle,
-    olustur as tekil_olustur, seri_cakisanlari_bul, seri_olustur, sil, Randevu,
-    RandevuGuncelleme, SeriCakismasi, YeniRandevu,
+    olustur as tekil_olustur, seri_cakisanlari_bul, seri_olustur, seri_sayisi, seriyi_sil, sil,
+    Randevu, RandevuGuncelleme, SeriCakismasi, YeniRandevu,
 };
 use psikolog_core::store::audit::Cihaz;
 use serde::Deserialize;
@@ -134,6 +134,48 @@ pub async fn kaldir(
     let conn = acik_baglanti(&s)?;
     sil(&conn, id, Cihaz::Masaustu).map_err(depo_hatasi)?;
     Ok(Json(json!({})))
+}
+
+#[derive(Deserialize)]
+pub struct SeriSorgusu {
+    /// Bu duvar saatinden (dahil) İTİBAREN sayılır/silinir; öncesi korunur.
+    pub bu_tarihten_itibaren: String,
+}
+
+/// `DELETE /randevular/seri/{seri_id}` çağrılsa kaç randevunun silineceğini
+/// söyler; hiçbir şey değiştirmez.
+///
+/// Silme geri alınamaz: iki adımlı onay metninin kaç kaydın gideceğini
+/// söyleyebilmesi için gerekiyor ve bu sayı yalnızca sunucuda bilinir
+/// (seri, ekrandaki haftanın çok ötesine uzanabilir).
+pub async fn seri_adedi(
+    State(s): State<AppState>,
+    Path(seri_id): Path<String>,
+    Query(q): Query<SeriSorgusu>,
+) -> Result<Json<Value>, ApiHata> {
+    let conn = acik_baglanti(&s)?;
+    let adet = seri_sayisi(&conn, &seri_id, &q.bu_tarihten_itibaren).map_err(depo_hatasi)?;
+    Ok(Json(json!({ "adet": adet })))
+}
+
+/// `seriyi_sil`'in rotası: bir serinin verilen tarihten İTİBAREN gelen
+/// üyelerini siler, GEÇMİŞİ KORUR.
+///
+/// Depo fonksiyonu Görev 6'da yazılmış ve test edilmişti ama hiçbir çağrı
+/// yeri yoktu: 52 haftalık bir seri iki tıkla kuruluyor, iptal etmenin tek
+/// yolu 52 randevuyu tek tek silmek oluyordu (bkz. dal incelemesi I4a).
+///
+/// Diğer rotalarla aynı kapı: ilk satırda `acik_baglanti` -- kilitli
+/// oturumda 401.
+pub async fn seri_kaldir(
+    State(s): State<AppState>,
+    Path(seri_id): Path<String>,
+    Query(q): Query<SeriSorgusu>,
+) -> Result<Json<Value>, ApiHata> {
+    let conn = acik_baglanti(&s)?;
+    let silinen = seriyi_sil(&conn, &seri_id, &q.bu_tarihten_itibaren, Cihaz::Masaustu)
+        .map_err(depo_hatasi)?;
+    Ok(Json(json!({ "silinen": silinen })))
 }
 
 /// Çakışma kontrolü. `tekrar_sayisi` verilirse serinin TÜM haftaları tek

@@ -84,6 +84,22 @@ export const takvimApi = {
     }),
   randevuSil: (id: number) =>
     istek<Record<string, never>>(`/api/randevular/${id}`, { method: 'DELETE' }),
+  // Seri silme geri alınamaz bir işlem: onay metninin kaç randevunun
+  // gideceğini söyleyebilmesi için önce sayı sorulur. Seri ekrandaki
+  // haftanın çok ötesine uzanabildiği için bu sayı yalnızca sunucuda bilinir.
+  seriSayisi: (seriId: string, buTarihtenItibaren: string) =>
+    istek<{ adet: number }>(
+      `/api/randevular/seri/${encodeURIComponent(seriId)}` +
+        `?bu_tarihten_itibaren=${encodeURIComponent(buTarihtenItibaren)}`,
+    ).then((y) => y.adet),
+  // Geçmiş randevular SİLİNMEZ (sunucudaki `seriyi_sil` yalnızca verilen
+  // tarihten itibaren siler) — arayüz metni bunu açıkça söylemeli.
+  seriSil: (seriId: string, buTarihtenItibaren: string) =>
+    istek<{ silinen: number }>(
+      `/api/randevular/seri/${encodeURIComponent(seriId)}` +
+        `?bu_tarihten_itibaren=${encodeURIComponent(buTarihtenItibaren)}`,
+      { method: 'DELETE' },
+    ).then((y) => y.silinen),
   // `tekrarSayisi` verilirse sunucu serinin TÜM haftalarını tek istekte
   // kontrol eder. Haftaları burada hesaplayıp tek tek sormuyoruz: hafta
   // ilerletme duvar saati aritmetiğidir ve `Date` ile yapılırsa yaz saati

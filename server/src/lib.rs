@@ -73,6 +73,13 @@ fn api_router() -> Router<AppState> {
                 .put(routes::appointments::guncelle)
                 .delete(routes::appointments::kaldir),
         )
+        // Seri islemleri ayri bir yol segmentinde: `/randevular/{id}` iki
+        // segmentli, bu uc segmentli -- cakisma yok.
+        .route(
+            "/randevular/seri/{seri_id}",
+            get(routes::appointments::seri_adedi)
+                .delete(routes::appointments::seri_kaldir),
+        )
         .route("/cakisma", get(routes::appointments::cakisma))
         .fallback(api_bulunamadi)
 }

@@ -202,6 +202,20 @@ pub struct YeniDanisan {
 /// Metin/tarih alanları için `Some("")` (veya yalnızca boşluk) `NULL` yazar --
 /// arayüzde bir alanı silmenin karşılığı budur. Alanı hiç göndermemek
 /// (`None`) ise "dokunma" demektir. İkisi farklı şeylerdir.
+///
+/// # Sayısal alanın karşılığı: `null`
+/// `riza_dosya_id` bir sayıdır; onun için "boş dizgi" diye bir değer yoktur.
+/// Kural yine de aynı olmalı, yoksa alan bir kez bağlandığında **koparılamaz**
+/// hâle gelirdi (yanlış dosya seçen kullanıcı onu yalnızca başka bir dosyayla
+/// DEĞİŞTİREBİLİR, kaldıramazdı). Bu yüzden alan `Option<Option<i64>>`:
+/// JSON'da hiç yoksa `None` (dokunma), `null` gelirse `Some(None)` (bağı
+/// kopar), sayı gelirse `Some(Some(id))`. Serde varsayılan davranışı bu iki
+/// durumu ayırt EDEMEZ (ikisini de `None` yapar), bu yüzden alanın kendi
+/// `deserialize_with`'i var.
+///
+/// Not: bağın koptuğu ikinci bir yol daha var --
+/// `attachments::sil` sarkan `riza_dosya_id`'yi aynı transaction'da temizler.
+/// O yol *dosyayı da siler*; burası dosyaya dokunmadan yalnızca bağı çözer.
 #[derive(Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct DanisanGuncelleme {
@@ -211,7 +225,22 @@ pub struct DanisanGuncelleme {
     pub basvuru_nedeni: Option<String>,
     pub risk_notu: Option<String>,
     pub riza_tarihi: Option<String>,
-    pub riza_dosya_id: Option<i64>,
+    #[serde(default, deserialize_with = "acik_null_ayirt_et")]
+    pub riza_dosya_id: Option<Option<i64>>,
+}
+
+/// "Alan yok" ile "alan `null`" arasındaki farkı koruyan çözümleyici.
+///
+/// `Option<Option<i64>>` tek başına yetmez: serde `null` gördüğünde DIŞ
+/// `Option`'ı `None` yapar ve alan hiç gönderilmemiş gibi görünür. Burada
+/// **iç** `Option` çözümlenip sonuç her hâlükârda `Some(...)` ile sarılıyor;
+/// dış `None` yalnızca `#[serde(default)]` yoluyla, yani alan gerçekten
+/// yokken oluşabiliyor.
+fn acik_null_ayirt_et<'de, D>(cozucu: D) -> Result<Option<Option<i64>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<i64>::deserialize(cozucu).map(Some)
 }
 
 fn simdi() -> String {
@@ -419,12 +448,22 @@ pub fn guncelle(
         set.push("risk_notu = ?");
         degerler.push(serbest_metin_dogrula("Risk notu", ham)?);
     }
-    if let Some(dosya_id) = alan.riza_dosya_id {
-        if dosya_id <= 0 {
-            return Err(DepoHatasi::GecersizVeri("Rıza dosyası kimliği geçersiz.".into()));
-        }
+    if let Some(secim) = alan.riza_dosya_id {
+        // `Some(None)` = "bağı kopar" (bkz. `DanisanGuncelleme` dokümantasyonu).
+        // Dosyanın kendisi silinmez; yalnızca danışan kaydındaki işaret çözülür.
         set.push("riza_dosya_id = ?");
-        degerler.push(Value::Integer(dosya_id));
+        degerler.push(match secim {
+            None => Value::Null,
+            Some(dosya_id) => {
+                if dosya_id <= 0 {
+                    // 0 ve negatif hâlâ HATA: bunlar "temizle" demenin yolu
+                    // değil, bir hesaplama/serileştirme kazasının belirtisidir.
+                    // Temizlemenin tek açık yolu `null`.
+                    return Err(DepoHatasi::GecersizVeri("Rıza dosyası kimliği geçersiz.".into()));
+                }
+                Value::Integer(dosya_id)
+            }
+        });
     }
 
     if set.is_empty() {
@@ -1052,6 +1091,88 @@ mod tests {
     }
 
     #[test]
+    fn riza_dosyasi_bagi_koparilabilir_ve_gonderilmezse_korunur() {
+        // Bag bir kez kurulduktan sonra KOPARILAMIYORDU: `None` "dokunma"
+        // demek oldugu icin kullanici dosyayi yalnizca BASKA bir dosyayla
+        // degistirebiliyor, kaldiramiyordu. Metin alanlarinda bos dizgi ne ise
+        // sayisal alanda `null` odur.
+        let (_d, c) = baglanti();
+        let d = ekle(&c, &yeni("Ayse"), Cihaz::Masaustu).unwrap();
+
+        let bagli = guncelle(
+            &c,
+            d.id,
+            &DanisanGuncelleme {
+                riza_dosya_id: Some(Some(42)),
+                riza_tarihi: Some("2026-09-07".into()),
+                ..Default::default()
+            },
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+        assert_eq!(bagli.riza_dosya_id, Some(42));
+
+        // ARTI YON: alan hic gonderilmezse bag DURMALI. Bu olmadan "her
+        // guncellemede temizle" diyen bir uygulama da alttaki testi gecerdi.
+        let dokunulmamis = guncelle(
+            &c,
+            d.id,
+            &DanisanGuncelleme { risk_notu: Some("Dusuk".into()), ..Default::default() },
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+        assert_eq!(dokunulmamis.riza_dosya_id, Some(42), "gonderilmeyen alana dokunulmamali");
+
+        let kopuk = guncelle(
+            &c,
+            d.id,
+            &DanisanGuncelleme { riza_dosya_id: Some(None), ..Default::default() },
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+        assert_eq!(kopuk.riza_dosya_id, None, "acik null bagi koparmali");
+        assert_eq!(
+            kopuk.riza_tarihi.as_deref(),
+            Some("2026-09-07"),
+            "dosya bagini koparmak riza TARIHINI silmemeli"
+        );
+    }
+
+    #[test]
+    fn riza_dosyasi_kimliginde_sifir_ve_negatif_hala_hatadir() {
+        // Temizlemenin yolu `null`; 0/negatif bir kazanin belirtisidir ve
+        // sessizce "temizle" diye yorumlanmamalidir.
+        let (_d, c) = baglanti();
+        let d = ekle(&c, &yeni("Ayse"), Cihaz::Masaustu).unwrap();
+        for kotu in [0, -1] {
+            let hata = guncelle(
+                &c,
+                d.id,
+                &DanisanGuncelleme { riza_dosya_id: Some(Some(kotu)), ..Default::default() },
+                Cihaz::Masaustu,
+            )
+            .unwrap_err();
+            assert!(matches!(hata, DepoHatasi::GecersizVeri(_)), "{kotu} reddedilmeliydi");
+        }
+    }
+
+    #[test]
+    fn json_alanin_yoklugu_ile_null_birbirinden_ayrilir() {
+        // Ayrimi tasiyan yer serde katmani: varsayilan `Option<Option<_>>`
+        // davranisi `null`'i da `None` yapardi ve "kopar" istegi sessizce
+        // "dokunma"ya donusurdu -- API'den bakildiginda dosya bir turlu
+        // kaldirilamazdi. Bu yuzden cozumleme testle sabitleniyor.
+        let yok: DanisanGuncelleme = serde_json::from_str(r#"{"risk_notu":"x"}"#).unwrap();
+        assert_eq!(yok.riza_dosya_id, None, "alan yoksa: dokunma");
+
+        let bos: DanisanGuncelleme = serde_json::from_str(r#"{"riza_dosya_id":null}"#).unwrap();
+        assert_eq!(bos.riza_dosya_id, Some(None), "acik null: kopar");
+
+        let dolu: DanisanGuncelleme = serde_json::from_str(r#"{"riza_dosya_id":7}"#).unwrap();
+        assert_eq!(dolu.riza_dosya_id, Some(Some(7)), "sayi: bagla");
+    }
+
+    #[test]
     fn bos_deger_alani_temizler_alan_gonderilmezse_dokunulmaz() {
         // "Alani gonderme" (None) ile "alani bosalt" (Some("")) FARKLI
         // seylerdir; ikisi karisirsa kullanici bir alani silemez ya da
@@ -1170,7 +1291,7 @@ mod tests {
                 basvuru_nedeni: Some("GIZLI_BASVURU_NEDENI".into()),
                 risk_notu: Some("GIZLI_RISK_NOTU".into()),
                 riza_tarihi: Some("2026-09-07".into()),
-                riza_dosya_id: Some(42),
+                riza_dosya_id: Some(Some(42)),
                 ..Default::default()
             },
             Cihaz::Masaustu,

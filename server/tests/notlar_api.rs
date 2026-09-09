@@ -866,6 +866,21 @@ async fn siniri_asan_govde_reddedilir_ve_kaydedilmez() {
 /// `attachments::ekle`'nin **on üç** ayrı red mesajı vardır ve
 /// `guard::depo_hatasi` bunları doğrudan HTTP gövdesine koyar. Eşleme
 /// bunları düzleştirmemeli: kullanıcı hangi alanı düzelteceğini bilmeli.
+///
+/// On üçün **on ikisi** HTTP'den erişilebilir ve hepsi burada pinlidir. Bu
+/// testin ilk hâli yalnızca sekizini kapsıyordu; kapsanmayan dördü arasında
+/// **MIME'de denetim karakteri** vardı — Görev 5'te mutasyonla kanıtlandığı
+/// gibi, o doğrulayıcı kaldırıldığında `mime: "application/pdf\r\nX-Enjekte: 1"`
+/// kabul edilir ve değer bu görevin indirme rotasında doğrudan
+/// `Content-Type` başlığına konur (CRLF enjeksiyonu; bkz.
+/// `store::attachments::mime_dogrula` belgesi). HTTP'de `\r\n` bir başlık
+/// değerine hiç konulamadığı için burada **HTAB** ile ölçülür: aynı
+/// `is_control()` dalıdır.
+///
+/// On üçüncü ("Dosya çok büyük") HTTP'den **erişilemez**: `DefaultBodyLimit`
+/// daha gövde okunmadan `413` döndürür, `ekle` hiç çağrılmaz. O yol
+/// `core`'un `mesajlar_birbirinden_ayirt_edilebilir` testinde ve buradaki
+/// `siniri_asan_govde_reddedilir_ve_kaydedilmez` testinde ölçülür.
 #[tokio::test]
 async fn ek_yukleme_hatalari_birbirinden_ayirt_edilebilir() {
     let (_d, s, cid, _rid) = dolu_state().await;
@@ -892,6 +907,24 @@ async fn ek_yukleme_hatalari_birbirinden_ayirt_edilebilir() {
             vec!["Dosya adı", "yol ayıracı"],
         ),
         (
+            // `..` yol ayiraci TASIMAZ; ayri bir red yoludur.
+            "nokta adi",
+            "..".into(),
+            "application/pdf".into(),
+            "onam",
+            b"x".to_vec(),
+            vec!["Dosya adı", "geçerli"],
+        ),
+        (
+            // Adda denetim karakteri: `Content-Disposition`'a gidecek deger.
+            "addaki denetim karakteri",
+            "a%0Ab.pdf".into(),
+            "application/pdf".into(),
+            "onam",
+            b"x".to_vec(),
+            vec!["Dosya adı", "denetim karakteri"],
+        ),
+        (
             "yon degistiren karakter",
             "annexe%E2%80%AEfdp.exe".into(),
             "application/pdf".into(),
@@ -899,9 +932,22 @@ async fn ek_yukleme_hatalari_birbirinden_ayirt_edilebilir() {
             b"x".to_vec(),
             vec!["Dosya adı", "yön"],
         ),
+        ("bos mime", "a.pdf".into(), "  ".into(), "onam", b"x".to_vec(), vec!["MIME", "boş"]),
         ("uzun mime", "a.pdf".into(), uzun_mime, "onam", b"x".to_vec(), vec![
             "MIME", "uzun", "128",
         ]),
+        (
+            // CRLF ENJEKSIYON KAPISI. `\r\n` bir HTTP baslik degerine hic
+            // konulamaz; ayni `is_control()` dalini HTAB ile olcuyoruz.
+            // Bu dogrulayici kaldirilirsa deger indirme rotasinda dogrudan
+            // `Content-Type` basligina gider.
+            "mime denetim karakteri",
+            "a.pdf".into(),
+            "application/pdf\tX-Enjekte: 1".into(),
+            "onam",
+            b"x".to_vec(),
+            vec!["MIME", "denetim karakteri"],
+        ),
         ("bicimsiz mime", "a.pdf".into(), "x".into(), "onam", b"x".to_vec(), vec![
             "MIME", "tip/alttip",
         ]),
@@ -912,6 +958,16 @@ async fn ek_yukleme_hatalari_birbirinden_ayirt_edilebilir() {
             "Dosya boş", "0 bayt",
         ]),
     ];
+
+    // Vaka sayisi da pinli (Gorev 5'teki desen): `ekle`ye yeni bir red yolu
+    // eklendiginde HTTP'den erisilebilirligi de burada karara baglanmali,
+    // yoksa yeni yol sessizce kapsam disi kalir.
+    assert_eq!(
+        denemeler.len(),
+        12,
+        "`ekle`nin HTTP'den ERISILEBILEN her red yolu burada olmali (on ucuncusu \
+         `DefaultBodyLimit` yuzunden 413'e gider, bkz. test belgesi)"
+    );
 
     let mut mesajlar: Vec<String> = Vec::new();
     for (vaka, ad, mime, tur, icerik, anahtarlar) in &denemeler {

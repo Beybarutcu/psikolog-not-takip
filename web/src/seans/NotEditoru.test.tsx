@@ -313,6 +313,58 @@ describe('NotEditoru — prop degisimi (yeniden mount olmadan)', () => {
   })
 })
 
+// Görev 9 için: bileşen içi `anahtar !== taslakAnahtari` sıfırlaması yoğun
+// test ediliyor ve ÇALIŞIYOR — ama `key` yolundan KESİN OLARAK ZAYIF. Bu
+// asimetri ölçülmeden bırakılırsa, `key`'i atlamak "zaten test edilmiş"
+// görünür. İki yol EŞDEĞER DEĞİL: aşağıdaki test farkın kendisini pinliyor.
+describe('NotEditoru — prop degisimi `key` yolunun yerini TUTMAZ', () => {
+  const editor = (
+    anahtar: string,
+    kaydet: (k: { sablon: string; icerik: string }) => Promise<void>,
+    anahtarli: boolean,
+  ) => (
+    <NotEditoru
+      {...(anahtarli ? { key: anahtar } : {})}
+      baslangicIcerik=""
+      baslangicSablon="dap"
+      onKaydet={kaydet}
+      gecikmeMs={5000}
+      taslakAnahtari={anahtar}
+    />
+  )
+
+  it('prop degisimi giden seansin bekleyen metnini sunucuya YAZMAZ; key verilirse yazar', async () => {
+    // A) `key` YOK: bileşen yeniden mount edilmez, unmount tahliyesi hiç
+    //    çalışmaz. Metin kaybolmuyor (taslakta duruyor) ama sunucuya
+    //    GİTMİYOR: kilit açılmadan kapatılan bir sekmede o metin gider.
+    const propla = vi.fn().mockResolvedValue(undefined)
+    const a = render(editor('not-a', propla, false))
+    await userEvent.type(alan(), 'a seansinin bekleyen metni')
+
+    a.rerender(editor('not-b', propla, false))
+
+    expect(propla).not.toHaveBeenCalled()
+    expect(taslakOku('not-a')?.icerik).toBe('a seansinin bekleyen metni')
+    a.unmount()
+
+    // B) `key` VAR: geçiş gerçek bir unmount'tur, bekleyen metin
+    //    zamanlayıcı beklenmeden sunucuya yazılır.
+    taslaklariUnut()
+    const keyle = vi.fn().mockResolvedValue(undefined)
+    const b = render(editor('not-a', keyle, true))
+    await userEvent.type(alan(), 'a seansinin bekleyen metni')
+
+    b.rerender(editor('not-b', keyle, true))
+
+    await waitFor(() =>
+      expect(keyle).toHaveBeenCalledWith({
+        sablon: 'dap',
+        icerik: 'a seansinin bekleyen metni',
+      }),
+    )
+  })
+})
+
 describe('NotEditoru — kapanirken bekleyen icerik', () => {
   it('unmount aninda bekleyen icerik zamanlayiciyi beklemeden kaydedilir', async () => {
     const kaydet = vi.fn().mockResolvedValue(undefined)

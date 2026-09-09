@@ -81,13 +81,45 @@
 //!
 //! `notes::danisan_notlari` birleştirme anahtarına `liste:<client_id>` yazar,
 //! çünkü sabit bir `"liste"` kimliği **farklı danışanların dosyalarına**
-//! erişimi tek satırın arkasına saklardı. Burada aynı şablonu kopyalamak
-//! yanlış olurdu ve nedeni şudur: arama belirli bir kaydın açılması değildir;
-//! ayırt edici tek bilgi sorgu metnidir ve **o metin zaten hiçbir koşulda
-//! loglanamaz**. Yani iki ayrı arama için iki satır yazmak, birbirinin
-//! **tıpatıp aynısı** olan iki satır yazmaktır — hiçbir denetim sorusunu
-//! yanıtlamaz, yalnızca hacim üretir. Gizlenen bir şey yok; çünkü
-//! kaydedilebilir bir ayrım da yok.
+//! erişimi tek satırın arkasına saklardı. Burada aynı şablon kopyalanmıyor —
+//! ama gerekçe *"ayırt edilecek başka bir şey yok"* **değildir**; öyle demek
+//! olduğundan fazlasını iddia etmek olurdu. İki arama pekâlâ ayrışır: hangi
+//! danışanların eşleştiği ve **kimin not içeriğinden** parça döndüğü gerçek
+//! bir ayrımdır, üstelik danışan kimliği bu kod tabanında zaten loglanabilir
+//! bir bilgidir (`notes::danisan_notlari` tam da onu yazar).
+//!
+//! Gerekçe şudur: aramanın sonuç kümesi **sorgu metninin bir fonksiyonudur**
+//! ve o metin hiçbir koşulda loglanamaz. Eşleşen danışan kimliklerini yazmak,
+//! sorguyu yazmamakla elde edilen korumayı arkadan delerdi — art arda
+//! aramaların eşleşme listeleri terimi geri kurmaya yeter ("kaygı" arayınca
+//! dönen üç danışanın kim olduğu, terimin kendisinden az şey söylemez). Yani
+//! burada kaydedilmeyen bir ayrım **vardır** ve bilerek kaydedilmemektedir.
+//! Bedeli açıktır ve kabul edilmiştir: log *"bu terapist 14:03'te bu cihazdan
+//! arama yaptı"* der, *"neyi buldu"* demez.
+//!
+//! # İki kip tek bütçeyi paylaşır — biri diğerini silemez
+//!
+//! `ara` iki ayrı sorgu çalıştırır (danışan adı, not içeriği) ve **tek** bir
+//! `limit` bütçesi vardır. Naif birleştirme — ikisini arka arkaya ekleyip
+//! sondan kırpmak — sessiz bir kullanıcı hatası üretir: danışan adlarında
+//! yaygın bir terim ("Yılmaz") 61 danışanla eşleşirse, aynı terimi içeren
+//! seans notu listenin altına değil **tamamen dışına** düşer. Terapist notun
+//! var olduğunu asla göremez; arayüzde "sonuç yok" ile "sonuç kırpıldı"
+//! ayırt edilemez.
+//!
+//! Bu yüzden bütçe paylaştırılır: her kipin `limit / 2` büyüklüğünde bir
+//! **garanti tabanı** vardır, kullanılmayan taban diğerine devredilir. 61
+//! danışan + 1 not, 50 sınırıyla: not kipi 1 satırlık payını alır, kalan 49
+//! danışanlara gider. 40 + 40 ise 25 + 25 olur. Tek kip eşleşiyorsa bütçenin
+//! tamamını o kullanır — taban bir tavan değildir. Toplam, `take` ile
+//! **yapısal olarak** sınırlanır (sondan `truncate` değil): iki sorgu da
+//! `LIMIT` dolusu satır döndürdüğünde bile üst sınır aşılamaz.
+//!
+//! Sıralama sözleşmesi: önce danışanlar (ada göre, `COLLATE NOCASE`), sonra
+//! notlar (en yeni seanstan en eskiye). `LIMIT` her sorgunun **içinde**
+//! olduğu için sıralama hangi satırların hayatta kalacağını da belirler —
+//! `ASC`'ye dönmüş bir `ORDER BY` terapiste en yeni değil **en eski** 50 notu
+//! gösterirdi; testlerle sabitlenir.
 //!
 //! ## Çok kısa sorgu log yazmaz
 //!
@@ -323,8 +355,10 @@ fn parca_cikar(metin: &str, katli_sorgu: &str) -> String {
 /// log satırı bırakmaz ve boş liste döner. `limit` `1..=AZAMI_SONUC`
 /// aralığına kırpılır.
 ///
-/// Sıralama: önce danışanlar (ada göre), sonra notlar (en yeni seanstan
-/// en eskiye). Toplam sonuç sayısı kırpılmış limiti aşmaz.
+/// Sıralama: önce danışanlar (ada göre, `COLLATE NOCASE`), sonra notlar (en
+/// yeni seanstan en eskiye). Toplam sonuç sayısı kırpılmış limiti aşmaz ve
+/// bütçe iki kip arasında paylaştırılır — bir kipin bolluğu diğerini
+/// **tamamen** silemez (bkz. modül başlığı: "İki kip tek bütçeyi paylaşır").
 pub fn ara(
     conn: &Connection,
     sorgu: &str,
@@ -342,8 +376,6 @@ pub fn ara(
     // -1 SQLite'ta "sinirsiz" demektir; alt uctan da kirpiyoruz.
     let sinir = limit.clamp(1, AZAMI_SONUC);
 
-    let mut sonuclar: Vec<AramaSonucu> = Vec::new();
-
     let mut stmt = conn.prepare(SORGU_DANISAN)?;
     let danisanlar = stmt
         .query_map(rusqlite::params![desen, sinir], |r| {
@@ -351,18 +383,6 @@ pub fn ara(
         })?
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
-
-    for (id, ad) in danisanlar {
-        let parca = parca_cikar(&ad, &katli_sorgu);
-        sonuclar.push(AramaSonucu {
-            tur: "danisan".to_string(),
-            client_id: id,
-            danisan_adi: ad,
-            appointment_id: None,
-            tarih: None,
-            parca,
-        });
-    }
 
     let mut stmt = conn.prepare(SORGU_NOT)?;
     let notlar = stmt
@@ -378,7 +398,40 @@ pub fn ara(
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
 
-    for (appointment_id, client_id, danisan_adi, tarih, icerik) in notlar {
+    // BUTCE PAYLASTIRMASI (bkz. modul basligi: "Iki kip tek butceyi paylasir").
+    //
+    // Iki listeyi arka arkaya ekleyip sondan `truncate` etmek, danisan
+    // adlarinda yaygin bir terimin ("Yilmaz") not eslesmelerini listenin
+    // altina degil TAMAMEN disina atmasi demekti. Bunun yerine her kipin
+    // `sinir / 2` buyuklugunde bir GARANTI TABANI var; kullanilmayan taban
+    // digerine devrediliyor, yani taban bir tavan degil. Tek kip esliyorsa
+    // butcenin tamamini o kullanir.
+    //
+    // Toplam `take` ile YAPISAL olarak sinirli: iki sorgu da `LIMIT` dolusu
+    // satir dondurse bile `danisan_payi + not_payi <= toplam` tanim geregi
+    // saglanir (sondan kirpmaya guvenilmez).
+    let toplam = sinir as usize;
+    let taban = toplam / 2;
+    let danisan_payi = danisanlar.len().min(toplam - notlar.len().min(taban));
+    let not_payi = notlar.len().min(toplam - danisan_payi);
+
+    let mut sonuclar: Vec<AramaSonucu> = Vec::with_capacity(danisan_payi + not_payi);
+
+    for (id, ad) in danisanlar.into_iter().take(danisan_payi) {
+        let parca = parca_cikar(&ad, &katli_sorgu);
+        sonuclar.push(AramaSonucu {
+            tur: "danisan".to_string(),
+            client_id: id,
+            danisan_adi: ad,
+            appointment_id: None,
+            tarih: None,
+            parca,
+        });
+    }
+
+    for (appointment_id, client_id, danisan_adi, tarih, icerik) in
+        notlar.into_iter().take(not_payi)
+    {
         sonuclar.push(AramaSonucu {
             tur: "not".to_string(),
             client_id,
@@ -388,8 +441,6 @@ pub fn ara(
             parca: parca_cikar(&icerik, &katli_sorgu),
         });
     }
-
-    sonuclar.truncate(sinir as usize);
 
     // Sorgu metni, sonuc sayisi ve danisan kimligi loga GIRMEZ; yalnizca
     // "bu cihazdan arama yapildi" bilgisi yazilir ve pencere boyunca
@@ -750,6 +801,68 @@ mod tests {
         assert_eq!(ara(&c, "ORTAKKELIME", 50, Cihaz::Masaustu).unwrap().len(), 10);
         assert_eq!(ara(&c, "ORTAKKELIME", -1, Cihaz::Masaustu).unwrap().len(), 1);
         assert_eq!(ara(&c, "ORTAKKELIME", 0, Cihaz::Masaustu).unwrap().len(), 1);
+    }
+
+    // --- Iki kip tek butceyi paylasir (bkz. modul basligi) ----------------
+    //
+    // ONCEKI DAVRANIS BIR KULLANICI HATASIYDI: iki liste arka arkaya eklenip
+    // sondan `truncate` ediliyordu. Danisan adlarinda yaygin bir terim
+    // ("Yilmaz") 61 danisanla eslesince, ayni terimi iceren seans notu
+    // listenin altina degil TAMAMEN disina dusuyordu -- terapist notun
+    // varligini hic goremiyordu. Asagidaki iki test o davranisi sabitler.
+
+    #[test]
+    fn danisan_adlarinda_yaygin_terim_not_eslesmesini_silmez() {
+        let (_d, c, _cid, rid) = kurulum();
+        // 61 danisan: tek basina limitin (50) tamamini yiyecek kadar cok.
+        for i in 0..61 {
+            danisan_ekle(
+                &c,
+                &YeniDanisan { ad_soyad: format!("ORTAKAD Danisan {i:02}"), telefon: None },
+                Cihaz::Masaustu,
+            )
+            .unwrap();
+        }
+        // ...ve ayni terimi iceren TEK bir not.
+        not_kaydet(&c, rid, "dap", "Seansta ORTAKAD gecti.", Cihaz::Masaustu).unwrap();
+
+        let sonuclar = ara(&c, "ORTAKAD", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        let danisan_sayisi = sonuclar.iter().filter(|s| s.tur == "danisan").count();
+        let not_sayisi = sonuclar.iter().filter(|s| s.tur == "not").count();
+
+        assert_eq!(sonuclar.len(), 50, "ust sinir korunmali");
+        assert_eq!(
+            not_sayisi, 1,
+            "not kipi TAMAMEN silinmemeli: 61 danisan + 1 not => 1 not gorunmeli"
+        );
+        assert_eq!(danisan_sayisi, 49, "kullanilmayan not butcesi danisanlara devredilmeli");
+        // Donen notun gercekten aranan not oldugunu dogrula (bos kip degil).
+        let not = sonuclar.iter().find(|s| s.tur == "not").expect("not kipi temsil edilmeli");
+        assert_eq!(not.appointment_id, Some(rid));
+    }
+
+    #[test]
+    fn iki_kip_de_bolsa_butce_paylasilir_ve_ust_sinir_yapisal_olarak_korunur() {
+        // Her iki sorgu da `LIMIT` dolusu (50) satir dondurur. `take` ile
+        // paylastirma kaldirilip yerine sondan kirpma konsaydi bile toplam
+        // 50 kalirdi; kirpma TAMAMEN kaldirilirsa 2x50 = 100 doner. Bu test
+        // her iki mutasyonu da yakalar: toplam 50 VE dagilim 25/25.
+        let (_d, c, cid, _rid) = kurulum();
+        for i in 0..51 {
+            danisan_ekle(
+                &c,
+                &YeniDanisan { ad_soyad: format!("CIFTKIP Danisan {i:02}"), telefon: None },
+                Cihaz::Masaustu,
+            )
+            .unwrap();
+            let r = randevu_ekle(&c, cid, &gun(i));
+            not_kaydet(&c, r, "dap", "CIFTKIP notu", Cihaz::Masaustu).unwrap();
+        }
+
+        let sonuclar = ara(&c, "CIFTKIP", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        assert_eq!(sonuclar.len(), 50, "toplam ust sinir asilmamali (2x50 degil)");
+        assert_eq!(sonuclar.iter().filter(|s| s.tur == "danisan").count(), 25);
+        assert_eq!(sonuclar.iter().filter(|s| s.tur == "not").count(), 25);
     }
 
     #[test]

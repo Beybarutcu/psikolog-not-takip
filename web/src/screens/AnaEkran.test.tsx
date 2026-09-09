@@ -1428,6 +1428,9 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   const kartDanisanlari = [
     { id: 1, ad_soyad: 'Ayşe Yılmaz', telefon: null, durum: 'aktif' },
     { id: 2, ad_soyad: 'Mehmet Demir', telefon: null, durum: 'aktif' },
+    // Saklama süresi TAM BUGÜN dolan dosya: `yerelGun`'ün sınır davranışı
+    // ancak böyle bir dosyada görünür (aşağıdaki gece yarısı bloğu).
+    { id: 3, ad_soyad: 'Zeynep Kaya', telefon: null, durum: 'aktif' },
   ]
 
   // Bu hafta (2026-09-07 Pazartesi) ve GELECEK hafta bir randevu: aramadan
@@ -1461,6 +1464,12 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
       id: 2, ad_soyad: 'Mehmet Demir', telefon: null, durum: 'aktif',
       dogum_tarihi: null, basvuru_nedeni: null, risk_notu: null,
       riza_tarihi: null, riza_dosya_id: null, son_temas: null, saklama_bitis: null,
+    },
+    3: {
+      id: 3, ad_soyad: 'Zeynep Kaya', telefon: '0555 999 88 77', durum: 'aktif',
+      dogum_tarihi: null, basvuru_nedeni: null, risk_notu: null,
+      riza_tarihi: '2019-09-09', riza_dosya_id: null,
+      son_temas: '2019-09-09', saklama_bitis: '2026-09-09',
     },
   }
 
@@ -1653,6 +1662,44 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     // Özel notu getiren uç nokta HİÇ çağrılmadı: metinde görünmemesi
     // (ör. sızıntıyı ekleyen kodun içeriği kırpması) yeterli değil.
     expect(istekYollari.some((y) => y.includes('/ozel-not'))).toBe(false)
+  })
+
+  // `yerelGun`'ün gerekçesi ("UTC'den türetmek sınırdaki bir dosyayı bir gün
+  // kaydırırdı") testsizdi: diğer testler `setSystemTime(… 12:00)` kullanıyor
+  // ve o saatte yerel gün ile UTC günü AYNI. `toISOString().slice(0, 10)`'a
+  // dönen bir mutasyon tüm paketi yeşil bırakıyordu (onuncu biçim).
+  //
+  // Bu GERÇEK bir hata: Istanbul UTC+3, yani 00:00–03:00 arasında UTC hâlâ
+  // dünkü tarihte. Kayan şey `bugun` ve o iki yere birden gidiyor —
+  // `kalanGun` hesabı ve rapor dosya adındaki tarih.
+  describe('yerel gün: gece yarısı ile 03:00 arası (Görev 10 inceleme M3)', () => {
+    beforeEach(() => {
+      // 09 Eylül 01:00 yerel (Europe/Istanbul, UTC+3) = 08 Eylül 22:00 UTC.
+      vi.setSystemTime(new Date(2026, 8, 9, 1, 0))
+    })
+
+    it('saklama suresi BUGUN doluyorsa "doldu" yazar, "1 gun kaldi" degil', async () => {
+      // UTC'den türetilseydi `bugun` 2026-09-08 olurdu, `kalanGun` 1 döner
+      // ve ekran tam dolum gününde "1 gün kaldı" yazardı — imha kararını
+      // veren insana yanlış tarih.
+      render(<AnaEkran kilitle={vi.fn()} />)
+      await userEvent.click(await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç' }))
+      await screen.findByText('0555 999 88 77')
+
+      const bolum = screen.getByRole('region', { name: 'Saklama süresi' })
+      expect(bolum.textContent).toContain('Saklama süresi doldu')
+      expect(bolum.textContent).not.toContain('gün kaldı')
+    })
+
+    it('rapor dosya adindaki tarih YEREL gundur', async () => {
+      render(<AnaEkran kilitle={vi.fn()} />)
+      await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
+      await screen.findByText('0555 111 22 33')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
+      const bag = await screen.findByRole('link', { name: /raporu indir/i })
+      expect(bag.getAttribute('download')).toBe('danisan-1-veri-raporu-2026-09-09.txt')
+    })
   })
 
   // C1 — YAPISAL katman. Davranışsal test "bugün sızmıyor" der; bu test

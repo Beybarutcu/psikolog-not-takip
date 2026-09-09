@@ -300,6 +300,28 @@ describe('DanisanKarti — veri raporu (KVKK md. 11)', () => {
     expect(bag.getAttribute('download')).toContain('.txt')
   })
 
+  it('dosya adinda danisanin ADI GECMEZ, yalnizca kimlik ve tarih', async () => {
+    // Gerekçe `DanisanKarti.tsx`'te yazılıydı ama testli değildi: tek iddia
+    // `.txt` idi ve `dosyaAdi`'na `danisan.ad_soyad` ekleyen bir mutasyon
+    // tüm paketi yeşil bırakıyordu (onuncu biçim).
+    //
+    // Zarar somut: ad sağlık verisiyle birlikte anıldığı anda kendisi de
+    // hassas veri olur ve dosya adları paylaşılan klasörlerde, yedeklerde,
+    // ekran görüntülerinde ve indirme listesinde GÖRÜNÜR.
+    kur()
+    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
+    const bag = await screen.findByRole('link', { name: /raporu indir/i })
+    const ad = bag.getAttribute('download') ?? ''
+
+    // ARTI YÖN: dosya adı gerçekten üretildi ve ayırt edici (boş bir ad da
+    // aşağıdaki eksi yön iddialarını geçerdi).
+    expect(ad).toBe('danisan-12-veri-raporu-2026-09-09.txt')
+    // Adın hiçbir parçası, hiçbir yazımıyla geçmiyor.
+    for (const parca of ['Ayşe', 'Yılmaz', 'Ayse', 'Yilmaz']) {
+      expect(ad.toLocaleLowerCase('tr')).not.toContain(parca.toLocaleLowerCase('tr'))
+    }
+  })
+
   it('rapor resmi not iceriklerini TASIR', async () => {
     kur()
     await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))

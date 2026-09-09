@@ -153,6 +153,8 @@ export function DanisanKarti({
         // Dosya adında danışanın ADI YOK: ad sağlık verisiyle birlikte
         // anıldığı anda kendisi de hassas veri olur ve dosya adları
         // paylaşılan klasörlerde, yedeklerde, ekran görüntülerinde görünür.
+        // Testli (bir yorum bu iddiayı tek başına taşıyamaz):
+        // `DanisanKarti.test.tsx` "dosya adinda danisanin ADI GECMEZ".
         dosyaAdi: `danisan-${danisan.id}-veri-raporu-${bugun}.txt`,
         notSayisi: notlar.length,
         kirpilmisOlabilir,

@@ -44,19 +44,27 @@ export function boyutBicimle(bayt: number): string {
  * İki takvim günü arasındaki gün farkı (`bitis - bugun`), ya da biçim
  * bozuksa `null`.
  *
- * # `Date.UTC` — ve bu seçimin testle KORUNMADIĞI
+ * # `Date.UTC` bir HATAYA karşı koruma DEĞİL
  *
- * Yerel `new Date(y, m, d)` ile hesaplansaydı, yaz saati geçişini kapsayan
- * bir aralıkta milisaniye farkı 23 ya da 25 saatlik bir gün üretir ve "kalan
- * gün" bir gün kayardı. Aynı kayma, sunucudaki `saklama_suresi_dolanlar`'ın
- * `bugun`'ü istemciden almasının da gerekçesi.
+ * Bu satırın eski gerekçesi "yerel `new Date(y, m, d)` yaz saati geçişini
+ * kapsayan bir aralıkta 23/25 saatlik gün üretir ve kalan gün bir gün
+ * kayardı; bu bir korumadır ama testle değil yalnızca bu yorumla korunuyor"
+ * idi. **Yanlıştı ve silindi.**
  *
- * **Ama bu dosyanın testleri o hatayı yakalayamaz:** test ortamının saat
- * dilimi `Europe/Istanbul` (bkz. `vite.config.ts`) ve Türkiye 2016'dan beri
- * kalıcı UTC+3 — yaz saati geçişi YOK. Yerel aritmetiğe dönen bir mutasyon
- * burada hiçbir testi kırmaz. Bu satır bir korumadır ama testle değil,
- * yalnızca bu açıklamayla korunuyor; yerini bir teste bırakmasının tek yolu
- * saat dilimi başına ayrı bir test çalıştırıcısıdır (bugün yok).
+ * Aşağıdaki `Math.round` o kaymayı ZATEN emiyor: ±1 saatlik bir geçiş gün
+ * cinsinden ±0,0417'dir ve tam sayıya yuvarlama bunu her durumda yutar.
+ * (Ampirik olarak da doğrulandı: `Date.UTC` ile yerel aritmetik, yaz saati
+ * sınırlarını kapsayan tarih çiftlerinde `Europe/Istanbul`,
+ * `America/New_York`, `America/Santiago`, `Asia/Beirut`, `Pacific/Chatham`
+ * ve `Australia/Lord_Howe` saat dilimlerinde AYNI sonucu veriyor.)
+ *
+ * `Date.UTC`'nin tek işlevi hesabı ana bilgisayarın saat diliminden
+ * bağımsız kılmak — okunurluk ve belirlilik, savunma değil. Bu yüzden
+ * burada "testle korunmayan bir koruma" da yok: korunacak bir hata yok.
+ *
+ * Saat dilimi burada gerçekten yük taşımıyor; taşıdığı yer `bugun`'ün
+ * NEREDEN türetildiğidir (`AnaEkran::yerelGun` — yerel duvar saati, UTC
+ * değil) ve orası testli.
  */
 export function kalanGun(bugun: string, bitis: string): number | null {
   const coz = (s: string): number | null => {

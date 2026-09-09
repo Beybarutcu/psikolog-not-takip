@@ -442,6 +442,46 @@ describe('NotEditoru — kisitlar', () => {
     expect(screen.queryByRole('textbox', { name: /şablon/i })).toBeNull()
   })
 
+  it("mount'ta icerik SENTEZLENMEZ: baslangicSablon baslik EKLEMEZ", async () => {
+    // Bilinçli karar, eksik özellik değil (bkz. `baslangicIcerik` doc'u).
+    // Mount'ta başlık eklenseydi ekrandaki hâl açılışın ilk anında
+    // sunucudakinden farklı olur, editör kullanıcı tek tuşa basmadan bir
+    // kayıt (ve silinemez bir denetim satırı) atardı — yalnızca not
+    // AÇILDIĞI için. Yeni not için başlıkları çağıran taraf geçirir.
+    const props = kur({ baslangicIcerik: '', baslangicSablon: 'dap', gecikmeMs: 20 })
+    expect(alan().value).toBe('')
+    expect((screen.getByLabelText('Şablon') as HTMLSelectElement).value).toBe('dap')
+
+    await new Promise((coz) => setTimeout(coz, 120))
+    expect(props.onKaydet).not.toHaveBeenCalled()
+
+    // Aynı başlıklar SEÇİM üzerinden geliyor: yol kapalı değil, yalnızca
+    // mount'a bağlı değil.
+    await userEvent.selectOptions(screen.getByLabelText('Şablon'), 'soap')
+    expect(alan().value).toContain('Öznel')
+  })
+
+  it('ekrandaki icerik sunucudakine geri donunce taslak deposunda kalinti kalmaz', async () => {
+    // Taslak deposu ŞİFRELENMEMİŞ düz metin sağlık verisi tutuyor. Kullanıcı
+    // yazıp geri sildiğinde depoda ara hâl kalıyordu ve içerik
+    // karşılaştırmalı temizlik onu asla düşürmezdi: kurtaracak bir şey
+    // taşımayan kopya sayfa ömrü boyunca bellekte kalırdı.
+    const props = kur({
+      baslangicIcerik: 'gecen haftadan kalan not',
+      gecikmeMs: 5000,
+      taslakAnahtari: 'not-3',
+    })
+
+    await userEvent.type(alan(), ' ek')
+    expect(taslakOku('not-3')?.icerik).toBe('gecen haftadan kalan not ek')
+
+    await userEvent.keyboard('{Backspace}{Backspace}{Backspace}')
+    expect(alan().value).toBe('gecen haftadan kalan not')
+    expect(taslakOku('not-3')).toBeUndefined()
+    // Hiçbir kayıt atılmadı: silinen tek şey fazlalık kopya.
+    expect(props.onKaydet).not.toHaveBeenCalled()
+  })
+
   it('not icerigi konsola yazilmaz', async () => {
     const casuslar = (['log', 'info', 'warn', 'error', 'debug'] as const).map((ad) =>
       vi.spyOn(console, ad).mockImplementation(() => {}),

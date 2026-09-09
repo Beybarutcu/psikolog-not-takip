@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { YetkisizHata } from '../api'
 import { SABLON_ADLARI, SABLON_KODLARI, sablonMetni } from './sablon'
-import { taslakOku, taslakTemizle, taslakYaz } from './taslak'
+import { taslakDus, taslakOku, taslakTemizle, taslakYaz } from './taslak'
 
 /**
  * Otomatik kayıtlı seans notu editörü.
@@ -41,6 +41,19 @@ import { taslakOku, taslakTemizle, taslakYaz } from './taslak'
 type Kayit = { sablon: string; icerik: string }
 
 type Props = {
+  /**
+   * Editörün açılış içeriği — OLDUĞU GİBİ gösterilir.
+   *
+   * Bu bileşen mount anında içerik SENTEZLEMEZ: `baslangicSablon` boş bir
+   * nota başlıklarını EKLEMEZ. Ekleseydi, ekrandaki hâl açılışın ilk anında
+   * sunucudakinden farklı olurdu ve editör kullanıcı tek tuşa basmadan bir
+   * kayıt (ve silinemez bir denetim satırı) üretirdi — yalnızca not
+   * AÇILDIĞI için. Şablon başlıkları iki yerde ekleniyor: boş editörde
+   * kullanıcı şablonu SEÇTİĞİNDE (`sablonDegis`) ve yeni bir not için
+   * çağıran taraf `sablonMetni(...)`'i buraya geçirdiğinde. İkincisi
+   * bilerek çağıranın kararı: "yeni not" ile "geçen haftaki boş not"
+   * ayrımını bilen taraf odur.
+   */
   baslangicIcerik: string
   baslangicSablon: string
   onKaydet: (kayit: Kayit) => Promise<void>
@@ -157,7 +170,21 @@ export function NotEditoru({
 
   useEffect(() => {
     const kayit = { sablon, icerik }
-    if (imza(kayit) === sonKaydedilen.current) return
+    if (imza(kayit) === sonKaydedilen.current) {
+      // Ekrandaki hâl sunucudakiyle AYNI: bu anahtardaki taslak artık
+      // kurtaracak hiçbir şey taşımıyor (kullanıcı yazdığını geri aldı ya da
+      // kayıt doğrulandı). Depo şifrelenmemiş düz metin sağlık verisi tutuyor;
+      // fazlalık kopya sayfa ömrü boyunca bellekte kalmamalı — tasarımın
+      // kabul ettiği bedel "o an kaydedilmemiş metin", "dokunulmuş her seans"
+      // değil.
+      //
+      // `taslakTemizle` değil koşulsuz düşürme: depodaki kayıt son tuş
+      // vuruşundan öncesine ait bir ara hâl olabilir ve içerik
+      // karşılaştırması onu asla silmezdi. Yarışa karşı koruma, içerik
+      // karşılaştırmasının yerine uçuş kontrolüdür.
+      if (ucustaki.current === null) taslakDus(taslakAnahtari)
+      return
+    }
 
     // Taslak GECİKMESİZ yazılır. Gecikmeli yazılsaydı, kilit tam o gecikme
     // içinde devreye girdiğinde son yazılanlar hiçbir yerde olmazdı.

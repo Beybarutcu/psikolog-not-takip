@@ -68,6 +68,23 @@ export function taslakTemizle(anahtar: string, kaydedilen: Taslak): void {
   }
 }
 
+/**
+ * Taslağı KOŞULSUZ düşürür.
+ *
+ * `taslakTemizle`'den farkı ve tek meşru kullanımı: ekrandaki içeriğin
+ * sunucudakiyle AYNI olduğu bilindiğinde. O anda depodaki kayıt son tuş
+ * vuruşundan öncesine ait bir ARA hâl olabilir (kullanıcı yazıp geri
+ * sildiğinde depoda öyle kalır) ve içerik karşılaştırması onu asla
+ * silmezdi — kurtaracak bir şey taşımadığı hâlde sayfa ömrü boyunca
+ * şifrelenmemiş düz metin sağlık verisi olarak bellekte kalırdı.
+ *
+ * Çağıran, uçuşta bir kayıt OLMADIĞINI da doğrulamak zorundadır: aksi hâlde
+ * `taslakTemizle`'nin üstündeki yarış geri gelir.
+ */
+export function taslakDus(anahtar: string): void {
+  taslaklar.delete(anahtar)
+}
+
 /** Yalnızca testler için: depo modül düzeyinde olduğu için testler arası sızar. */
 export function taslaklariUnut(): void {
   taslaklar.clear()

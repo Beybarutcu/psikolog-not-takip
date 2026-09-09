@@ -133,6 +133,82 @@ export type SeriCakismasi = {
   kontrol_edilen_hafta: number
 }
 
+/** `GET/PUT /api/randevular/{id}/not` yanıtı (sunucudaki `SeansNotu`). */
+export type SeansNotu = {
+  appointment_id: number
+  client_id: number
+  sablon: string
+  icerik: string
+  guncelleme_zamani: string
+}
+
+/**
+ * `GET/PUT /api/randevular/{id}/ozel-not` yanıtı (sunucudaki `OzelNot`).
+ *
+ * `sablon` alanı YOK ve olmamalı: özel notun şablonu yoktur. Şekil resmî
+ * nottan bilerek farklı — iki sözleşme birbirine karışamasın (bkz.
+ * `server/src/routes/private_notes.rs`).
+ */
+export type OzelNot = {
+  appointment_id: number
+  icerik: string
+  guncelleme_zamani: string
+}
+
+/**
+ * **Resmî** seans notu istemcisi (`progress_notes`).
+ *
+ * # Burada özel nota giden hiçbir yol YOKTUR
+ *
+ * Sunucuda ayrım yapısaldır: `routes::notes` ile `routes::private_notes`
+ * ayrı modüller, ayrı yol önekleri. Aynı ayrım istemcide de yapısal olmalı,
+ * çünkü sızıntının istemci tarafındaki biçimi şudur: ileride bir dışa
+ * aktarım, yazdırma ya da rapor ekranı "notları getiren istemciyi" arar,
+ * `notApi`'yi bulur ve olduğu gibi kullanır. O nesnenin özel nota erişimi
+ * olsaydı tek bir yeniden kullanım özel notu rapora koyardı.
+ *
+ * Bu yüzden özel not `ozelNotApi`'de, AYRI bir nesnede duruyor ve buradaki
+ * hiçbir fonksiyonun ürettiği URL `ozel` geçmiyor. `api.test.ts` bunu hem
+ * URL'ler üzerinden hem de "resmî istemci hiçbir koşulda `ozel-not` yoluna
+ * gitmez" biçiminde ölçüyor.
+ */
+export const notApi = {
+  notGetir: (randevuId: number) => istek<SeansNotu>(`/api/randevular/${randevuId}/not`),
+  notKaydet: (randevuId: number, sablon: string, icerik: string) =>
+    istek<SeansNotu>(`/api/randevular/${randevuId}/not`, {
+      method: 'PUT',
+      body: JSON.stringify({ sablon, icerik }),
+    }),
+  // Danışanın geçmiş notları — YALNIZCA resmî notlar. Sunucudaki
+  // `notes::danisan_listesi` özel not tablosuna hiç bakmaz; istemcide de
+  // bu listeyi besleyen ikinci bir kaynak yok.
+  //
+  // `limit` çağıranın kararı ve zorunlu: sunucu `?limit=`i 1..=200 aralığına
+  // kırpıyor, ama varsayılanı 50. "Son üç seans" gösteren bir panelin 50
+  // seans notunun TAM İÇERİĞİNİ indirmesi için hiçbir sebep yok.
+  danisanNotlari: (danisanId: number, limit: number) =>
+    istek<SeansNotu[]>(`/api/danisanlar/${danisanId}/notlar?limit=${limit}`),
+}
+
+/**
+ * Terapistin **özel** notunun istemcisi (`private_notes`) — ve istemcide bu
+ * tabloya erişen tek yer.
+ *
+ * Liste döndüren bir fonksiyon burada bilerek YOKTUR; sunucuda da yoktur.
+ * Böyle bir şeye ihtiyaç doğarsa gerekçesi bu başlıkta yeniden tartışılmalı.
+ */
+export const ozelNotApi = {
+  getir: (randevuId: number) => istek<OzelNot>(`/api/randevular/${randevuId}/ozel-not`),
+  // Gövde yalnızca `icerik` taşır: `sablon` göndermek sunucuda sessizce
+  // yok sayılırdı ve arayüzde "özel notun da şablonu var" yanılsaması
+  // yaratırdı.
+  kaydet: (randevuId: number, icerik: string) =>
+    istek<OzelNot>(`/api/randevular/${randevuId}/ozel-not`, {
+      method: 'PUT',
+      body: JSON.stringify({ icerik }),
+    }),
+}
+
 export const api = {
   durumAl: () =>
     istek<{

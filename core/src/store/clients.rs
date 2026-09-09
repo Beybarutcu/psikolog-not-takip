@@ -72,8 +72,25 @@ use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
-/// Saklama süresinin varsayılan uzunluğu (yıl). Süresi dolan dosyalar
+/// Saklama süresinin **varsayılan** uzunluğu (yıl). Süresi dolan dosyalar
 /// **otomatik silinmez**, yalnızca listelenir (bkz. `saklama_suresi_dolanlar`).
+///
+/// # 7 nereden geliyor -- ve neden bağlayıcı DEĞİL
+/// Bu sayı bir hukuki zorunluluk değildir. Tasarım belgesi (§7 "Yedekleme ve
+/// saklama", `docs/superpowers/specs/2026-09-07-psikolog-not-takip-design.md`)
+/// şunu söylüyor: Türkiye'de bağlayıcı tek bir süre yoktur -- TPD etik
+/// yönetmeliği süre vermez, Sağlık Bakanlığı arşiv düzenlemesinde psikolojik
+/// görüşme kartı **5 yıl**, APA ise **7 yıl** önerir. Belge bu yüzden sürenin
+/// "sabitlenmemesini", danışan başına ayarlanabilir olmasını ve çocuk
+/// danışanlar için "21 yaşına kadar" seçeneğini istiyor.
+///
+/// Kod bugün bunu karşılamıyor: `clients` tablosunda danışan başına bir
+/// saklama süresi alanı YOK, tek kaynak bu sabit. Bu bilinçli bir eksiklik
+/// (kapsam), bir tasarım kararı değil -- sayının kaynağı kodda yazılı
+/// olmadığı için "7 yıl mevzuat" sanılması riskini bu not kapatıyor.
+/// `son_temasi_tazele` süreyi zaten **parametre** olarak alır; danışan başına
+/// alan eklendiğinde değişmesi gereken tek yer, bu sabiti geçen çağrı
+/// yerleridir (`appointments::son_temasi_isaretle`).
 pub const VARSAYILAN_SAKLAMA_YILI: i64 = 7;
 
 /// `ad_soyad` için üst sınır (karakter, bayt değil -- Türkçe harfler çok
@@ -600,11 +617,27 @@ fn yil_ekle(tarih: &str, yil: i64) -> Result<String, DepoHatasi> {
 /// listeye baktığı loglanması gereken bilgidir. Bu ekran ileride kendi
 /// kendini yenileyen bir yola dönüşürse karar yeniden verilmeli; mekanizma
 /// (`LogHacmi::OturumBasi`) hazır -- `getir` için de aynı not var.
+///
+/// # `bugun` neden doğrulanıyor
+/// Karşılaştırma SQL'de **sözlükseldir** (`saklama_bitis <= ?1`): sütun
+/// `TEXT` ve `YYYY-AA-GG` biçimi sıralı olduğu için bu doğru çalışır --
+/// **ama yalnızca `bugun` da aynı biçimdeyse**. `"2026-9-7"` (tek haneli ay)
+/// geçilirse `'9' > '1'` olduğundan `"2026-12-31"` de listeye girer;
+/// `"2026-09-07T00:00"` geçilirse 10 karakterden uzun olduğu için sınır
+/// kayar. İkisi de hata vermeden YANLIŞ bir imha listesi üretirdi -- KVKK'nın
+/// sorduğu sorunun cevabı sessizce bozulurdu. Kardeşi `yil_ekle` aynı
+/// gerekçeyle biçimi önce doğruluyor; burada da aynısı yapılır.
 pub fn saklama_suresi_dolanlar(
     conn: &Connection,
     bugun: &str,
     cihaz: Cihaz,
 ) -> Result<Vec<Danisan>, DepoHatasi> {
+    if !tarih_gecerli_mi(bugun) {
+        return Err(DepoHatasi::GecersizVeri(
+            "Saklama listesi tarihi YYYY-AA-GG biçiminde geçerli bir gün olmalı.".into(),
+        ));
+    }
+
     let mut stmt = conn.prepare(&format!(
         "SELECT {SUTUNLAR} FROM clients
          WHERE saklama_bitis IS NOT NULL AND saklama_bitis <= ?1
@@ -1194,6 +1227,29 @@ mod tests {
         let dolanlar = saklama_suresi_dolanlar(&c, "2026-09-07", Cihaz::Masaustu).unwrap();
         assert_eq!(dolanlar.len(), 1);
         assert_eq!(dolanlar[0].ad_soyad, "Eski");
+    }
+
+    #[test]
+    fn saklama_listesi_bozuk_bicimli_bugunu_reddeder() {
+        // Karsilastirma SQL'de SOZLUKSEL: `"2026-9-7"` gecilirse `'9' > '1'`
+        // oldugundan `"2026-12-31"` de "suresi dolmus" sayilirdi;
+        // `"2026-09-07T00:00"` gecilirse sinir kayardi. Ikisi de HATA VERMEDEN
+        // yanlis bir imha listesi uretirdi.
+        let (_d, c) = baglanti();
+        let gec = ekle(&c, &yeni("Gec"), Cihaz::Masaustu).unwrap();
+        son_temasi_tazele(&c, gec.id, "2019-12-31", VARSAYILAN_SAKLAMA_YILI).unwrap(); // -> 2026-12-31
+
+        for kotu in ["2026-9-7", "2026-09-07T00:00", "2026-02-30", "", "bugun"] {
+            let hata = saklama_suresi_dolanlar(&c, kotu, Cihaz::Masaustu).unwrap_err();
+            assert!(matches!(hata, DepoHatasi::GecersizVeri(_)), "{kotu} reddedilmeliydi");
+        }
+
+        // ARTI YON: dogru bicimli bir gun HALA calismali -- her sey reddeden
+        // bir uygulama ustteki dongunun tamamini gecerdi.
+        let dolanlar = saklama_suresi_dolanlar(&c, "2026-09-07", Cihaz::Masaustu).unwrap();
+        assert!(dolanlar.is_empty(), "2026-12-31 bitisli dosya 2026-09-07'de dolmamis olmali");
+        let dolanlar = saklama_suresi_dolanlar(&c, "2027-01-01", Cihaz::Masaustu).unwrap();
+        assert_eq!(dolanlar.len(), 1, "bitisten sonraki gun listeye girmeli");
     }
 
     #[test]

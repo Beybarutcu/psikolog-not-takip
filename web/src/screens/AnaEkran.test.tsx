@@ -73,9 +73,57 @@ function jsonYanit(govde: unknown): Response {
 let sunucuSaklamaDolanlar: typeof danisanlar = []
 let sunucuDepolama = { toplam_boyut: 0, esik: 500 * 1024 * 1024, uyari: false }
 
-function ekUcYaniti(yol: string): Response | null {
+// --- Yedekleme: mount'ta `POST /api/yedekler`, gerekirse `POST /api/yedek`
+//
+// VARSAYILAN NOTR: bugunun yedegi ZATEN ALINMIS. Boylece varsayilan halde
+// otomatik yedek TETIKLENMEZ ve mevcut testlerin istek sayilari/ekran
+// iddialari degismez. Otomatik yedegi olcen testler listeyi kendileri
+// bosaltir.
+type TestYedek = { dosya_adi: string; tarih: string; boyut: number }
+let sunucuYedekDizini: string
+let sunucuYedekleri: TestYedek[]
+let yedekIstekleri: { damga: string; hedef_dizin?: string }[]
+/** Kurulursa `POST /api/yedek` bu mesajla `500` doner (disk dolu vb.). */
+let yedekAlmaHatasi: string | null
+/** Kurulursa `POST /api/yedekler` bu mesajla `400` doner (klasor secilmemis). */
+let yedekListeHatasi: string | null
+
+/** Testlerin varsaydigi "bugun" — `AnaEkran::yerelGun` ile ayni bicimde. */
+const BUGUN = '2026-09-09'
+
+function hataYaniti(kod: number, mesaj: string): Response {
+  return {
+    ok: false,
+    status: kod,
+    json: async () => ({ hata: mesaj }),
+  } as unknown as Response
+}
+
+function ekUcYaniti(yol: string, secenekler?: RequestInit): Response | null {
   if (yol.startsWith('/api/saklama-suresi-dolanlar')) return jsonYanit(sunucuSaklamaDolanlar)
   if (yol.startsWith('/api/depolama-durumu')) return jsonYanit(sunucuDepolama)
+  // `/api/yedekler` ONCE: `/api/yedek` onun oneki.
+  if (yol.startsWith('/api/yedekler')) {
+    if (yedekListeHatasi) return hataYaniti(400, yedekListeHatasi)
+    return jsonYanit({ hedef_dizin: sunucuYedekDizini, yedekler: sunucuYedekleri })
+  }
+  if (yol.startsWith('/api/yedek')) {
+    const govde = JSON.parse((secenekler?.body as string) ?? '{}') as {
+      damga: string
+      hedef_dizin?: string
+    }
+    yedekIstekleri.push(govde)
+    if (yedekAlmaHatasi) return hataYaniti(500, yedekAlmaHatasi)
+    if (govde.hedef_dizin) {
+      sunucuYedekDizini = govde.hedef_dizin
+      yedekListeHatasi = null
+    }
+    sunucuYedekleri = [
+      { dosya_adi: `yedek-${govde.damga}.db`, tarih: govde.damga, boyut: 4096 },
+      ...sunucuYedekleri.filter((y) => y.tarih !== govde.damga),
+    ]
+    return jsonYanit({ tarih: govde.damga, boyut: 4096 })
+  }
   return null
 }
 
@@ -130,6 +178,11 @@ beforeEach(() => {
   sunucuGecmisi = []
   sunucuSaklamaDolanlar = []
   sunucuDepolama = { toplam_boyut: 0, esik: 500 * 1024 * 1024, uyari: false }
+  sunucuYedekDizini = '/Volumes/YEDEK/terapi'
+  sunucuYedekleri = [{ dosya_adi: `yedek-${BUGUN}.db`, tarih: BUGUN, boyut: 4096 }]
+  yedekIstekleri = []
+  yedekAlmaHatasi = null
+  yedekListeHatasi = null
   // Taslak deposu MODÜL DÜZEYİNDE (bileşen ağacının dışında) yaşıyor ve
   // kendi belgesi "testler arası sızar" diyor. `SeansPaneli.test.tsx` ile
   // `NotEditoru.test.tsx` temizliyordu, bu dosya temizlemiyordu: bugün
@@ -150,7 +203,7 @@ describe('AnaEkran — panel kimliği (Görev 10 inceleme Bulgu 1)', () => {
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
-      const ekUc = ekUcYaniti(yol)
+      const ekUc = ekUcYaniti(yol, secenekler)
       if (ekUc) return ekUc
       const notlar = notYaniti(yol, secenekler?.method ?? 'GET', null)
       if (notlar) return notlar
@@ -233,7 +286,7 @@ describe('AnaEkran — düzenleme kipi POST değil PUT üretir (C1)', () => {
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
-      const ekUc = ekUcYaniti(yol)
+      const ekUc = ekUcYaniti(yol, secenekler)
       if (ekUc) return ekUc
       const method = secenekler?.method ?? 'GET'
       const govde = secenekler?.body ? JSON.parse(String(secenekler.body)) : null
@@ -332,7 +385,7 @@ describe('AnaEkran — gereksiz yeniden yükleme yapmaz (Plan 3 Görev 2)', () =
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
-      const ekUc = ekUcYaniti(yol)
+      const ekUc = ekUcYaniti(yol, secenekler)
       if (ekUc) return ekUc
       const method = secenekler?.method ?? 'GET'
       istekler.push({ yol, method })
@@ -448,7 +501,7 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
-      const ekUc = ekUcYaniti(yol)
+      const ekUc = ekUcYaniti(yol, secenekler)
       if (ekUc) return ekUc
       const method = secenekler?.method ?? 'GET'
       istekler.push({ yol, method })
@@ -624,7 +677,7 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
   it('sunucu hatası gösterilir ve danışan listede kalır', async () => {
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
-      const ekUc = ekUcYaniti(yol)
+      const ekUc = ekUcYaniti(yol, secenekler)
       if (ekUc) return ekUc
       const method = secenekler?.method ?? 'GET'
       if (method === 'POST' && yol.endsWith('/arsivle')) {
@@ -662,7 +715,7 @@ describe('AnaEkran — danışan ekleme doğrulama hatası (Plan 2 devri)', () =
     vi.setSystemTime(new Date(2026, 8, 9, 12, 0))
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
-      const ekUc = ekUcYaniti(yol)
+      const ekUc = ekUcYaniti(yol, secenekler)
       if (ekUc) return ekUc
       const method = secenekler?.method ?? 'GET'
       if (yol === '/api/danisanlar' && method === 'POST') {
@@ -729,7 +782,7 @@ describe('AnaEkran — seçili randevu yeniden yüklemede bayatlamaz (Plan 2 dev
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
-      const ekUc = ekUcYaniti(yol)
+      const ekUc = ekUcYaniti(yol, secenekler)
       if (ekUc) return ekUc
       const method = secenekler?.method ?? 'GET'
       if (notYetkisiz && /\/(ozel-)?not$|\/notlar/.test(yol)) {
@@ -875,7 +928,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
-      const ekUc = ekUcYaniti(yol)
+      const ekUc = ekUcYaniti(yol, secenekler)
       if (ekUc) return ekUc
       const method = secenekler?.method ?? 'GET'
       const govde = secenekler?.body ? JSON.parse(String(secenekler.body)) : null
@@ -1372,7 +1425,7 @@ describe('AnaEkran — seans geçişi × uçuştaki istek (Görev 9)', () => {
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
-      const ekUc = ekUcYaniti(yol)
+      const ekUc = ekUcYaniti(yol, secenekler)
       if (ekUc) return ekUc
       const method = secenekler?.method ?? 'GET'
       const govde = secenekler?.body ? JSON.parse(String(secenekler.body)) : null
@@ -1618,7 +1671,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
         } as unknown as Response
       }
 
-      const ekUc = ekUcYaniti(yol)
+      const ekUc = ekUcYaniti(yol, secenekler)
       if (ekUc) return ekUc
 
       const notlar = notYaniti(yol, method, null)
@@ -2209,5 +2262,155 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
       expect(screen.queryByRole('link', { name: 'onam-formu.pdf' })).toBeNull(),
     )
     expect(istekYollari.filter((y) => y === 'GET /api/danisanlar/1').length).toBeGreaterThan(1)
+  })
+})
+
+// =====================================================================
+// YEDEKLEME — tasarim §7'nin ana ekran karsiligi
+// =====================================================================
+//
+// # Bu bloktaki testlerin olctugu sey
+//
+// `core::backup` bastan beri test edilmisti ve hepsi yesildi; eksik olan
+// CAGRI YERIYDI. Dolayisiyla buradaki iddialar "yedek fonksiyonu calisiyor
+// mu" degil, "urun kullanicinin verisini gercekten yedekliyor mu":
+// otomatik yedek tetikleniyor mu, AYNI GUN ikinci kez tetiklenmiyor mu,
+// alinamadiginda kullanici bunu ekranda goruyor mu.
+describe('AnaEkran — yedekleme (tasarim §7)', () => {
+  const gercekFetch = globalThis.fetch
+  let istekler: { yol: string; method: string; govde: string | null }[]
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    // 2026-09-09 Carsamba, YEREL saat 12:00. `BUGUN` bu gunun damgasi.
+    vi.setSystemTime(new Date(2026, 8, 9, 12, 0))
+    istekler = []
+
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
+      const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      istekler.push({
+        yol,
+        method: secenekler?.method ?? 'GET',
+        govde: (secenekler?.body as string) ?? null,
+      })
+      const ekUc = ekUcYaniti(yol, secenekler)
+      if (ekUc) return ekUc
+      const notlar = notYaniti(yol, secenekler?.method ?? 'GET', null)
+      if (notlar) return notlar
+      if (yol.startsWith('/api/danisanlar')) return jsonYanit(danisanlar)
+      if (yol.startsWith('/api/randevular')) return jsonYanit([])
+      throw new Error(`beklenmeyen istek: ${yol}`)
+    }) as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    globalThis.fetch = gercekFetch
+  })
+
+  async function ekraniAc() {
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('region', { name: 'Yedekleme' })
+  }
+
+  it('bugunun yedegi yoksa acilista OTOMATIK alinir ve damga YEREL takvim gunudur', async () => {
+    sunucuYedekleri = []
+    await ekraniAc()
+
+    await waitFor(() => expect(yedekIstekleri.length).toBe(1))
+    // Damga sunucudan degil ISTEMCIDEN geliyor (duvar saati sozlesmesi):
+    // `toISOString().slice(0,10)` kullanan bir surum Istanbul'da 00:00-03:00
+    // arasinda bir gun geriye yazardi. Burada saat 12:00 oldugu icin iki
+    // yorum da ayni sonucu verir; ayrimi `yerelGun`'un kendi testi olcuyor.
+    expect(yedekIstekleri[0]).toEqual({ damga: BUGUN, hedef_dizin: undefined })
+
+    // Ekran sonucu gosteriyor: "yedegim aliniyor mu" sorusunun bir cevabi var.
+    const bolum = screen.getByRole('region', { name: 'Yedekleme' })
+    await waitFor(() => expect(bolum.textContent).toContain(BUGUN))
+    expect(bolum.textContent).toContain('/Volumes/YEDEK/terapi')
+  })
+
+  it('bugunun yedegi VARSA ikinci kez alinmaz', async () => {
+    // EKSI YON. Bu olmadan "her acilista yedek al" mutasyonu yukaridaki
+    // testi gecerdi -- ve her acilis sunucuda SILINEMEZ bir `disa_aktarma`
+    // satiri yazardi (bkz. `store::audit` hacim politikasi).
+    await ekraniAc()
+    await waitFor(() => expect(istekler.some((i) => i.yol === '/api/yedekler')).toBe(true))
+    // Listeleme bitip otomatik yedek KARARI verildikten sonra olcuyoruz.
+    await waitFor(() =>
+      expect(screen.getByRole('region', { name: 'Yedekleme' }).textContent).toContain(BUGUN),
+    )
+    expect(yedekIstekleri).toEqual([])
+  })
+
+  it('DUN alinmis bir yedek bugunu karsilamaz', async () => {
+    // "Herhangi bir yedek varsa yeter" mutasyonunun kirildigi yer: tasarim
+    // GUNDE BIR yedek istiyor, "bir kere" degil.
+    sunucuYedekleri = [{ dosya_adi: 'yedek-2026-09-08.db', tarih: '2026-09-08', boyut: 4096 }]
+    await ekraniAc()
+    await waitFor(() => expect(yedekIstekleri.length).toBe(1))
+    expect(yedekIstekleri[0].damga).toBe(BUGUN)
+  })
+
+  it('yedek alinamazsa ana ekranda KALICI uyari cikar ve sunucunun mesaji korunur', async () => {
+    // Tasarim §7: "Yedek alinamazsa (disk dolu, klasor erisilemez) ana
+    // ekranda kalici uyari cikar; sessiz gecilmez."
+    sunucuYedekleri = []
+    yedekAlmaHatasi = 'Bu klasöre yazılamıyor. Salt okunur bir disk olabilir.'
+    await ekraniAc()
+
+    const uyari = await screen.findByRole('alert')
+    // Mesaj OLDUGU GIBI: "klasor bulunamadi" ile "klasore yazilamiyor" ayri
+    // sorunlar ve kullanici hangisini duzeltecegini bilmeli.
+    expect(uyari.textContent).toContain('Salt okunur bir disk olabilir.')
+
+    // KALICI: baska bir etkilesim onu temizlemiyor.
+    await userEvent.click(screen.getByRole('button', { name: 'Danışan ekle' }))
+    expect(screen.getByRole('alert').textContent).toContain('Salt okunur bir disk olabilir.')
+  })
+
+  it('klasor secilmemisse uyari cikar; klasor secilince yedek HEMEN alinir', async () => {
+    yedekListeHatasi = 'Yedek klasörü belli değil. Yedeklerinizin bulunduğu klasörün yolunu yazın.'
+    sunucuYedekleri = []
+    await ekraniAc()
+
+    expect((await screen.findByRole('alert')).textContent).toMatch(/klasörü belli değil/i)
+    // Klasor secilmeden hicbir yedek DENENMEZ: sunucu zaten reddederdi ve
+    // her deneme bos yere bir istek olurdu.
+    expect(yedekIstekleri).toEqual([])
+
+    await userEvent.click(screen.getByRole('button', { name: 'Yedek klasörünü değiştir' }))
+    await userEvent.type(
+      screen.getByLabelText(/yedeklerin yazılacağı klasörün yolu/i),
+      '/Volumes/USB/yedek',
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet ve yedek al' }))
+
+    // Klasoru secmek ile ilk yedegi almak TEK islem: ayri bir "ayarla"
+    // adimi olsaydi kullanici "yedegim var" sanip yedeksiz kalirdi.
+    await waitFor(() => expect(yedekIstekleri.length).toBe(1))
+    expect(yedekIstekleri[0]).toEqual({ damga: BUGUN, hedef_dizin: '/Volumes/USB/yedek' })
+
+    // Uyari kalkiyor ve yeni klasor ekranda.
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    expect(screen.getByRole('region', { name: 'Yedekleme' }).textContent).toContain(
+      '/Volumes/USB/yedek',
+    )
+  })
+
+  it('"Simdi yedek al" ayni gun icin bile yeniden yedek alir', async () => {
+    // Otomatik yedek gunde bir kez; ELLE yedek kullanicinin acik istegidir
+    // (ornegin dosyalari harici diske kopyalamadan once). Ikisini ayni
+    // kurala baglamak, kullanicinin istedigi anda yedek almasini
+    // engellerdi.
+    await ekraniAc()
+    await waitFor(() =>
+      expect(screen.getByRole('region', { name: 'Yedekleme' }).textContent).toContain(BUGUN),
+    )
+    expect(yedekIstekleri).toEqual([])
+
+    await userEvent.click(screen.getByRole('button', { name: 'Şimdi yedek al' }))
+    await waitFor(() => expect(yedekIstekleri.length).toBe(1))
+    expect(yedekIstekleri[0].damga).toBe(BUGUN)
   })
 })

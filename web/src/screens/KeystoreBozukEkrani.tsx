@@ -5,11 +5,14 @@
  * psikolog ve yıllarca birikmiş danışan kaydına erişemiyor. İki kural metnin
  * biçimini belirliyor:
  *
- * 1. **Ürünün bugün yapamadığı bir şeyi tarif etme.** `backup::yedek_al`'ı
- *    henüz hiçbir akış çağırmıyor; yani çoğu kullanıcıda bir "yedek klasörü"
- *    YOKTUR. Geri yükleme adımları bu yüzden koşullu ("yedeğiniz varsa") ve
- *    yedeği olmayan kullanıcının yolu eşit ağırlıkta duruyor. Kullanıcıyı var
- *    olmayan bir klasörü aramaya göndermek, onu eskisinden çaresiz bırakır.
+ * 1. **Ürünün bugün yapamadığı bir şeyi tarif etme.** Bu kural metni bir kez
+ *    daha değiştirdi: `backup::yedek_al` artık ürüne bağlı ve uygulamanın
+ *    kendi geri yükleme ekranı var. Bu yüzden metnin başına o ekrana giden
+ *    bir düğme eklendi ve "uygulama şu an kendiliğinden yedek almıyor"
+ *    cümlesi kaldırıldı — artık doğru değil. Koşullu kısım ("yedeğiniz
+ *    varsa") duruyor: klasörünü hiç seçmemiş bir kullanıcının yedeği hâlâ
+ *    olmayabilir ve onu var olmayan bir klasörü aramaya göndermek eskisinden
+ *    çaresiz bırakır.
  * 2. **Elle prosedür, kodun yaptığı işin aynısını yaptırmalı.**
  *    `backup::geri_yukle` yerleştirmeden sonra `veri.db-wal`/`veri.db-shm`'yi
  *    siler ("WAL dosyalari eski veritabanina aitti, birakilirsa tutarsizlik
@@ -17,7 +20,14 @@
  *    anında veri dizininde neredeyse her zaman bir WAL vardır; bu adım metinden
  *    düşerse kullanıcı geri yüklediği veritabanını ilk denemesinde bozar.
  */
-export function KeystoreBozukEkrani({ veriDizini }: { veriDizini: string }) {
+export function KeystoreBozukEkrani({
+  veriDizini,
+  onGeriYukle,
+}: {
+  veriDizini: string
+  /** Uygulamanın kendi geri yükleme ekranını açar. */
+  onGeriYukle: () => void
+}) {
   return (
     <div className="mx-auto max-w-lg p-8">
       <h1 className="text-2xl font-semibold text-red-700">Anahtar dosyası okunamıyor</h1>
@@ -50,12 +60,21 @@ export function KeystoreBozukEkrani({ veriDizini }: { veriDizini: string }) {
 
       <h2 className="mt-6 text-base font-semibold">Bir yedeğiniz varsa</h2>
       <p className="mt-2 text-sm text-slate-600">
-        Uygulama şu an kendiliğinden yedek almıyor; bir yedek klasörünüz ancak onu kendiniz
-        oluşturduysanız vardır. Böyle bir klasörünüz varsa, içindeki her yedek{' '}
-        <strong>iki dosyadan</strong> oluşur: kayıtlarınızın kopyası (<code>yedek-TARİH.db</code>)
-        ve o kopyayı açan anahtar dosyası (<code>yedek-TARİH.keystore.json</code>). Bu ikisi
-        birlikte geri yüklendiğinde uygulama, o yedeğin alındığı gündeki parolanızla yeniden
-        açılır.
+        Her yedek <strong>iki dosyadan</strong> oluşur: kayıtlarınızın kopyası
+        (<code>yedek-TARİH.db</code>) ve o kopyayı açan anahtar dosyası
+        (<code>yedek-TARİH.keystore.json</code>). Bu ikisi birlikte geri yüklendiğinde uygulama,
+        o yedeğin alındığı gündeki parolanızla yeniden açılır.
+      </p>
+      <button
+        type="button"
+        className="mt-3 w-full rounded-lg bg-slate-900 py-2 text-sm text-white"
+        onClick={onGeriYukle}
+      >
+        Yedekten geri yükle
+      </button>
+      <p className="mt-2 text-sm text-slate-600">
+        Uygulamanın kendi geri yükleme ekranı çifti birlikte yerleştirir ve aşağıdaki elle
+        yapılacak adımların hepsini sizin için yapar. Çalışmazsa elle de yapabilirsiniz:
       </p>
       <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-600">
         <li>

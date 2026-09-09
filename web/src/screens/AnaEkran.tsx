@@ -5,6 +5,7 @@ import {
   notApi,
   ozelNotApi,
   takvimApi,
+  yedekApi,
   YetkisizHata,
   type Danisan,
   type DanisanDosyasi,
@@ -12,6 +13,7 @@ import {
   type EkBilgisi,
   type OzelNot,
   type SeansNotu,
+  type YedekListesi,
 } from '../api'
 import { HizliArama } from '../arama/HizliArama'
 import { boyutBicimle } from '../danisan/bicim'
@@ -193,6 +195,15 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   // şeyi gerektirir (hiçbir şey gösterme). Bu uç nokta sunucuda LOG YAZMAZ,
   // bu yüzden ek yükleme/silme sonrasında tazelenebiliyor.
   const [depolama, setDepolama] = useState<DepolamaDurumu | null>(null)
+  // Yedekleme durumu. `null` = henüz gelmedi ya da klasör seçilmemiş.
+  const [yedek, setYedek] = useState<YedekListesi | null>(null)
+  // Tasarım §7: "Yedek alınamazsa (disk dolu, klasör erişilemez) ana ekranda
+  // KALICI uyarı çıkar; sessiz geçilmez." Bu state o uyarıdır ve kendi
+  // kendine kaybolmaz — yalnızca başarılı bir yedekle temizlenir.
+  const [yedekUyarisi, setYedekUyarisi] = useState<string | null>(null)
+  const [klasorFormuAcik, setKlasorFormuAcik] = useState(false)
+  const [klasorGirdisi, setKlasorGirdisi] = useState('')
+  const [yedekSuruyor, setYedekSuruyor] = useState(false)
   // Aramadan gelen "şu seansa git" isteği. Hedef randevu başka bir haftada
   // olabilir; hafta değiştirilir, randevu listesi yeniden yüklenir ve seçim
   // ANCAK O LİSTEDEN yapılır — ekranda görünmeyen bir randevuya bağlı bir
@@ -313,6 +324,74 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   useEffect(() => {
     void danisanApi.depolamaDurumu().then(setDepolama).catch(() => {})
   }, [kartTazeleme])
+
+  /**
+   * Bugünün yedeğini alır ve listeyi tazeler.
+   *
+   * `hedefDizin` verilirse sunucu onu önce **ayar olarak kaydeder**, sonra
+   * yedeği oraya alır (bkz. `yedekApi.al`). Klasör seçmekle ilk yedeği
+   * almak tek işlem: ayrı bir "ayarla" adımı olsaydı klasörünü seçip
+   * yedeği almayan bir kullanıcı "yedeğim var" sanırdı.
+   */
+  const yedekAl = useCallback(async (hedefDizin?: string) => {
+    setYedekSuruyor(true)
+    try {
+      await yedekApi.al(yerelGun(new Date()), hedefDizin)
+      setYedek(await yedekApi.listele())
+      setYedekUyarisi(null)
+      setKlasorFormuAcik(false)
+      return true
+    } catch (e) {
+      if (e instanceof YetkisizHata) return false
+      // Sunucudan gelen mesaj OLDUĞU GİBİ gösteriliyor: "klasör bulunamadı",
+      // "bu klasöre yazılamıyor" ve "anahtar dosyası bulunamadı" birbirinden
+      // ayrı sorunlar ve kullanıcı hangisini düzelteceğini bilmeli
+      // (`danisanEkle` ile aynı gerekçe).
+      setYedekUyarisi(e instanceof Error ? e.message : 'Yedek alınamadı.')
+      return false
+    } finally {
+      setYedekSuruyor(false)
+    }
+  }, [])
+
+  // OTOMATİK GÜNLÜK YEDEK — tasarım §7 ("günde bir kez otomatik şifreli
+  // yedek", 7 gün dönüşümlü; dönüşümü çekirdek yapıyor).
+  //
+  // Zamanlayıcı YOK ve olmayacak: uygulama kapalıyken zaten yedek
+  // alınamaz, açıkken de "oturum başına bir kez" bu ürün için "günde bir
+  // kez"in gerçekleşebilir hâlidir. Etki bir kez çalışır (bağımlılık
+  // listesi boş): hafta değişimi, kayıt ya da kart tazelemesi bunu
+  // tetiklemez.
+  //
+  // Damga İSTEMCİNİN yerel takvim günü (`yerelGun`) — duvar saati
+  // sözleşmesi. Sunucudan türetilseydi Istanbul'da 00:00–03:00 arasında
+  // yedek bir gün geriye yazılır ve "bugün alındı mı" yanlış yanıtlanırdı.
+  //
+  // Klasör seçilmemişse sunucu `400` döner ve mesajı kalıcı uyarı olur:
+  // kullanıcı klasörünü seçene kadar hiçbir yedek alınamaz ve bunu ana
+  // ekranda görür. Sessiz geçilmiyor.
+  useEffect(() => {
+    let iptal = false
+    void (async () => {
+      const bugun = yerelGun(new Date())
+      try {
+        const liste = await yedekApi.listele()
+        if (iptal) return
+        setYedek(liste)
+        // Bugünün yedeği zaten varsa ikinci kez alınmaz: her çağrı sunucuda
+        // SİLİNEMEZ bir `disa_aktarma` satırı yazar (bkz. `store::audit`
+        // hacim politikası) ve aynı gün için ikinci satır gürültüdür.
+        if (liste.yedekler.some((y) => y.tarih === bugun)) return
+        await yedekAl()
+      } catch (e) {
+        if (iptal || e instanceof YetkisizHata) return
+        setYedekUyarisi(e instanceof Error ? e.message : 'Yedek durumu okunamadı.')
+      }
+    })()
+    return () => {
+      iptal = true
+    }
+  }, [yedekAl])
 
   // Seans notu verisi RANDEVU KİMLİĞİNE bağlı yükleniyor, `seciliRandevu`
   // NESNESİNE değil. `yukle()` her çağrıldığında seçili randevu taze bir
@@ -1013,6 +1092,102 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
           ve eski dosyalarınızı gözden geçirmek isteyebilirsiniz.
         </p>
       )}
+
+      {/* YEDEKLEME — tasarım §7.
+          "Yedek alınamazsa (disk dolu, klasör erişilemez) ana ekranda KALICI
+          uyarı çıkar; sessiz geçilmez." Uyarı kendi kendine kaybolmaz;
+          yalnızca başarılı bir yedek onu temizler.
+
+          Bölüm HER ZAMAN görünür (uyarı olmasa da): "yedeğim alınıyor mu"
+          sorusunun ekranda bir cevabı olmalı. Bu ürünün üçüncü başarı
+          ölçütü "bilgisayar bozulursa veri kaybolmasın" ve o ölçüt, ancak
+          kullanıcı yedeğinin durumunu görebiliyorsa karşılanır. */}
+      <section
+        aria-label="Yedekleme"
+        className={`mb-4 rounded border p-3 text-sm ${
+          yedekUyarisi
+            ? 'border-amber-400 bg-amber-50 text-amber-900'
+            : 'border-slate-200 bg-slate-50 text-slate-600'
+        }`}
+      >
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="font-medium">Yedekleme</span>
+          {yedek !== null && yedek.yedekler.length > 0 ? (
+            <span>
+              Son yedek: <strong>{yedek.yedekler[0].tarih}</strong> (
+              {boyutBicimle(yedek.yedekler[0].boyut)}) · saklanan yedek:{' '}
+              {yedek.yedekler.length}
+            </span>
+          ) : (
+            <span>Henüz alınmış bir yedek yok.</span>
+          )}
+          <button
+            type="button"
+            className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+            disabled={yedekSuruyor}
+            onClick={() => void yedekAl()}
+          >
+            {yedekSuruyor ? 'Yedek alınıyor…' : 'Şimdi yedek al'}
+          </button>
+          <button
+            type="button"
+            className="rounded border px-2 py-1 text-xs"
+            onClick={() => {
+              setKlasorGirdisi(yedek?.hedef_dizin ?? '')
+              setKlasorFormuAcik((acik) => !acik)
+            }}
+          >
+            Yedek klasörünü değiştir
+          </button>
+        </div>
+
+        {yedek !== null && (
+          <p className="mt-1 break-all font-mono text-xs">{yedek.hedef_dizin}</p>
+        )}
+
+        {/* KALICI UYARI. `role="status"` degil `role="alert"`: bu, gozden
+            kacmamasi gereken bir durum -- kullanicinin verisi su an
+            yedeklenmiyor. */}
+        {yedekUyarisi && (
+          <p role="alert" className="mt-2">
+            {yedekUyarisi}
+          </p>
+        )}
+
+        {klasorFormuAcik && (
+          <div className="mt-2">
+            <label className="block text-xs" htmlFor="yedek-klasoru-girdisi">
+              Yedeklerin yazılacağı klasörün yolu
+            </label>
+            <div className="mt-1 flex gap-2">
+              <input
+                id="yedek-klasoru-girdisi"
+                className="w-full rounded border p-2 font-mono text-xs"
+                placeholder="/Volumes/YEDEK/terapi-yedek"
+                value={klasorGirdisi}
+                onChange={(e) => setKlasorGirdisi(e.target.value)}
+              />
+              <button
+                type="button"
+                className="shrink-0 rounded bg-slate-900 px-3 py-1 text-xs text-white disabled:opacity-50"
+                disabled={yedekSuruyor || klasorGirdisi.trim() === ''}
+                onClick={() => void yedekAl(klasorGirdisi.trim())}
+              >
+                Kaydet ve yedek al
+              </button>
+            </div>
+            {/* Klasoru secmek ile ilk yedegi almak TEK islem: ayri bir
+                "ayarla" adimi olsaydi, klasorunu secip yedegi almayan bir
+                kullanici "yedegim var" sanirdi. Metin bunu soyluyor. */}
+            <p className="mt-1 text-xs">
+              Harici disk ya da bulut klasörü seçebilirsiniz; yedek dosyaları zaten
+              şifrelidir. Kaydedince ilk yedek hemen alınır. Finder'da klasöre sağ tıklayıp{' '}
+              <kbd>⌥</kbd> tuşuna basılıyken “… Yol Adı Olarak Kopyala” deyince yol panoya
+              kopyalanır.
+            </p>
+          </div>
+        )}
+      </section>
 
       {hata && <p className="mb-4 text-sm text-red-600">{hata}</p>}
 

@@ -8,6 +8,9 @@ import {
   ekIndirmeYolu,
   notApi,
   ozelNotApi,
+  veritabaniBozukOlunca,
+  VeritabaniBozukHata,
+  yedekApi,
   YetkisizHata,
   yetkisizOlunca,
 } from './api'
@@ -461,5 +464,108 @@ describe('danışan dosyası uç noktalarında 401', () => {
     // rapor uretilirse kayitsiz bir kopya olusur.
     sunucu(() => ({ ok: false, status: 404, govde: { hata: 'Kayıt bulunamadı.' } }))
     await expect(danisanApi.raporKaydiOlustur(7)).rejects.toThrow('Kayıt bulunamadı.')
+  })
+})
+
+// =====================================================================
+// YEDEKLEME ISTEMCISI
+// =====================================================================
+
+describe('yedekApi — yedek alma, listeleme, geri yükleme', () => {
+  it('yedek alma damgayı ve (verilmişse) klasörü gövdede gönderir', async () => {
+    await yedekApi.al('2026-09-09', '/Volumes/USB/yedek')
+    expect(cagrilar).toEqual([
+      {
+        yol: '/api/yedek',
+        method: 'POST',
+        govde: { damga: '2026-09-09', hedef_dizin: '/Volumes/USB/yedek' },
+      },
+    ])
+  })
+
+  it('klasör verilmezse gövdede hedef_dizin YOKTUR (kayıtlı ayar kullanılır)', async () => {
+    await yedekApi.al('2026-09-09')
+    expect(cagrilar[0].govde).toEqual({ damga: '2026-09-09' })
+  })
+
+  it('klasör yolu SORGU DİZESİNDE değil, gövdede gider', async () => {
+    // Yol kullanıcının adını içerebilir (`/Users/ayse/Dropbox/...`) ve
+    // URL'ler tarayıcı geçmişine ve genel amaçlı erişim günlüklerine düşer
+    // (`ekYukle`'nin dosya adı kararıyla aynı sınıf).
+    await yedekApi.listele('/Users/ayse/Dropbox/yedek')
+    expect(cagrilar[0].yol).toBe('/api/yedekler')
+    expect(cagrilar[0].yol).not.toContain('ayse')
+    expect(cagrilar[0].govde).toEqual({ dizin: '/Users/ayse/Dropbox/yedek' })
+    expect(cagrilar[0].method).toBe('POST')
+  })
+
+  it('geri yükleme yol değil DOSYA ADI gönderir', async () => {
+    await yedekApi.geriYukle({ dosya_adi: 'yedek-2026-09-08.db', parola: 'gizli' })
+    expect(cagrilar).toEqual([
+      {
+        yol: '/api/geri-yukleme',
+        method: 'POST',
+        govde: { dosya_adi: 'yedek-2026-09-08.db', parola: 'gizli' },
+      },
+    ])
+  })
+})
+
+// =====================================================================
+// "VERITABANI BOZUK" MEKANIZMASI -- 401'in birebir esi
+// =====================================================================
+
+describe('veritabani_bozuk yanıtı', () => {
+  it('dinleyici throw edilmeden ÖNCE senkron tetiklenir ve VeritabaniBozukHata atılır', async () => {
+    sunucu(() => ({
+      ok: false,
+      status: 500,
+      govde: { hata: 'Kayıt dosyanız açıldı ama içeriği bozuk.', veritabani_bozuk: true },
+    }))
+    const sira: string[] = []
+    const birak = veritabaniBozukOlunca(() => sira.push('dinleyici'))
+
+    await expect(
+      notApi.notGetir(7).catch((e) => {
+        sira.push('throw')
+        throw e
+      }),
+    ).rejects.toBeInstanceOf(VeritabaniBozukHata)
+
+    expect(sira).toEqual(['dinleyici', 'throw'])
+    birak()
+  })
+
+  it('bayrak YOKKEN sıradan bir hata atılır ve dinleyici tetiklenmez', async () => {
+    // EKSİ YÖN: karar sunucunun AYRI BAYRAĞINA bakıyor, hata METNİNE değil.
+    // Metin kullanıcı için yazılmıştır ve yarın değişebilir; ekran seçimini
+    // ona bağlamak, metni düzelten birinin geri yükleme ekranını sessizce
+    // devre dışı bırakması demekti.
+    sunucu(() => ({
+      ok: false,
+      status: 500,
+      govde: { hata: 'Kayıt dosyanız açıldı ama içeriği bozuk.' },
+    }))
+    const dinleyici = vi.fn()
+    const birak = veritabaniBozukOlunca(dinleyici)
+
+    await expect(notApi.notGetir(7)).rejects.not.toBeInstanceOf(VeritabaniBozukHata)
+    expect(dinleyici).not.toHaveBeenCalled()
+    birak()
+  })
+
+  it('401 hâlâ YetkisizHata: iki mekanizma birbirini gölgelemez', async () => {
+    sunucu(() => ({
+      ok: false,
+      status: 401,
+      govde: { hata: 'Oturum kilitli.', veritabani_bozuk: true },
+    }))
+    const bozukDinleyici = vi.fn()
+    const birak = veritabaniBozukOlunca(bozukDinleyici)
+
+    // Kilitli oturum HER ZAMAN kilit ekranina gider: 401 once degerlendirilir.
+    await expect(notApi.notGetir(7)).rejects.toBeInstanceOf(YetkisizHata)
+    expect(bozukDinleyici).not.toHaveBeenCalled()
+    birak()
   })
 })

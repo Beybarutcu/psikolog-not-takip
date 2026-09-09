@@ -20,10 +20,12 @@
 //!   kötüdür: her ikisi de erişilemez hâle gelir.
 
 use crate::crypto::keyring::DataKey;
+use crate::store::audit::{kaydet, Cihaz, Eylem, LogHacmi};
 use crate::store::db::{open_encrypted, DbError};
 use crate::store::keystore;
 use rusqlite::backup::Backup;
 use rusqlite::ffi::ErrorCode;
+use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -97,9 +99,41 @@ pub enum YedekHatasi {
     /// bozukluk yedeğe de kopyalanır.
     #[error("Anahtar dosyası bozuk olduğu için yedek alınmadı; bozuk anahtar yedeklenmez.")]
     KaynakKeystoreBozuk,
+    /// Dosya işlemi BAŞARILI oldu ama denetim kaydı yazılamadı.
+    ///
+    /// # Neden işlem geri alınmıyor
+    /// `attachments::icerik_getir` "kaydedemediğimiz erişimi vermeyiz"
+    /// diyerek fail-closed davranır: orada geri alınacak bir şey yoktur,
+    /// içerik döndürülmez ve konu kapanır. Burada durum terstir -- geri
+    /// almak, diskteki **geçerli bir yedeği silmek** demektir. Bu ürünün
+    /// üçüncü başarı ölçütü "bilgisayar bozulursa veri kaybolmasın"; bir
+    /// log satırı yazılamadı diye kullanıcının tek kopyasını yok etmek o
+    /// ölçütün doğrudan ihlalidir. (Aynı yön `routes::session::kilitle`'de
+    /// de seçilmişti: güvenlik/veri lehine olan eylem, log yazılamasa bile
+    /// tamamlanır.)
+    ///
+    /// Sessiz DEĞİL: hata çağırana döner ve kullanıcı işlemin yapıldığını
+    /// ama kayda geçmediğini görür. Yalnızca `&'static str` taşır --
+    /// derleme zamanı sabiti, hassas veri taşıyamaz.
+    #[error("{0} İşlem geri alınmadı; dosyalar yerinde duruyor.")]
+    KayitYazilamadi(&'static str),
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+/// Diskteki bir yedek çifti hakkında **iç** bilgi.
+///
+/// # `Serialize` BİLEREK YOK (ertelenmiş madde, dal incelemesi)
+///
+/// Bu tip `serde::Serialize` türetiyordu ve `yol` alanı **mutlak** bir
+/// dosya yoludur (`/Users/<ad>/Library/Application Support/...`). Bir HTTP
+/// ucundan olduğu gibi döndürülseydi kullanıcının ev dizini -- yani adı --
+/// tarayıcıya (ve oradan her yere) giderdi. Türetme kaldırıldı: artık bunu
+/// bir yanıt gövdesine koymak **derlenmez**. Rota katmanı yalnızca dosya
+/// adı/tarih/boyut taşıyan kendi dar tipini kurar
+/// (`server::routes::restore::YedekOzeti`).
+///
+/// Yorum bir koruma değildir; koruma derleyicidedir. Bu türetmeyi geri
+/// eklemek, o korumayı sessizce kaldırmak olur.
+#[derive(Debug, Clone)]
 pub struct YedekBilgisi {
     /// Yedeğin veritabanı dosyası. Anahtar dosyası için
     /// `keystore_yedek_yolu(&yol)`.
@@ -434,6 +468,112 @@ pub fn geri_yukle(
     let _ = std::fs::remove_file(&db_onceki);
     let _ = std::fs::remove_file(&keystore_onceki);
     Ok(())
+}
+
+/// Yedeği alır **ve** denetim kaydına yazar.
+///
+/// # Neden log burada, rota katmanında değil
+///
+/// Bu kod tabanının kuralı: *"çekirdek hacim kararını verir; rota ikinci bir
+/// SİLİNEMEZ satır yazmaz"* ve kural yapısal olarak zorlanıyor
+/// (`notlar_api.rs::rota_modulleri_audit_kaydet_cagirmaz`). Yedek alma bir
+/// **dışa aktarmadır**: veri şifreli de olsa uygulamanın veri dizininden
+/// çıkıp harici bir diske/bulut klasörüne yazılır. Emsal
+/// `attachments::icerik_getir` -- tek bir ek indirmesi bile
+/// `DisaAktarma` + `LogHacmi::HerCagri` ile yazılıyor, gerekçesi
+/// *"birleştirilseydi on indirmenin dokuzu görünmez olurdu"*. Yedek alma
+/// ondan da seyrek ve hesabı verilmesi gereken bir işlem; birleştirme
+/// penceresi burada anlamsız olurdu.
+///
+/// `varlik_id` **tarih damgasıdır** (`yedek_al` onu `YYYY-AA-GG` biçimine
+/// zorlar). Hedef dizin yolu loga **girmez**: kullanıcının ev dizinini
+/// içerebilir ve `audit_log` silinemez.
+///
+/// Sıra: önce yedek, sonra log -- `icerik_getir` ile aynı ("önce oku, yoksa
+/// dön, SONRA logla"): başarısız bir yedek log satırı bırakmaz. Log
+/// yazılamazsa yedek **geri alınmaz**, bkz. `YedekHatasi::KayitYazilamadi`.
+pub fn yedek_al_ve_kaydet(
+    conn: &Connection,
+    db_yolu: &Path,
+    keystore_yolu: &Path,
+    hedef_dizin: &Path,
+    damga: &str,
+    key: &DataKey,
+    cihaz: Cihaz,
+) -> Result<YedekBilgisi, YedekHatasi> {
+    let bilgi = yedek_al(db_yolu, keystore_yolu, hedef_dizin, damga, key)?;
+    kaydet(conn, Eylem::DisaAktarma, VARLIK, damga, cihaz, None, LogHacmi::HerCagri).map_err(
+        |_| YedekHatasi::KayitYazilamadi("Yedek alındı ama denetim kaydına yazılamadı."),
+    )?;
+    Ok(bilgi)
+}
+
+/// `audit_log.varlik` değeri -- yedek/geri yükleme satırları için.
+/// `routes::restore` geri yükleme satırını yazarken de bunu kullanır, iki
+/// kopya sessizce ayrışmasın.
+pub const VARLIK: &str = "backup";
+
+/// Verilen damgaya ait **tam** (iki dosyası da yerinde) bir yedek var mı.
+///
+/// Otomatik günlük yedeğin "bugün zaten alındı mı" sorusunu yanıtlar.
+/// `yedekleri_listele` üzerinden çalışır, yani **eksik çift bulunmuş sayılmaz**:
+/// anahtar dosyası kaybolmuş bir yedek geri yüklenemez, dolayısıyla o günü
+/// "yedeklenmiş" saymak kullanıcıya var olmayan bir güvenlik ağı vaat ederdi.
+pub fn gunun_yedegi_var_mi(hedef_dizin: &Path, damga: &str) -> Result<bool, YedekHatasi> {
+    Ok(yedekleri_listele(hedef_dizin)?.iter().any(|b| b.tarih == damga))
+}
+
+// =====================================================================
+// YEDEK AYARLARI -- hedef dizin, DÜZ METİN dosyada
+// =====================================================================
+
+/// Yedek ayarlarının dosya adı (uygulamanın veri dizini içinde).
+pub const AYAR_DOSYA_ADI: &str = "yedek-ayarlari.json";
+
+/// Kullanıcının seçtiği yedek hedef dizini.
+///
+/// # Neden şifreli veritabanında DEĞİL
+///
+/// Bu ayarın okunması gereken en kritik an, veritabanının **açılamadığı**
+/// andır: `veri.db` bozuk ya da `keystore.json` okunamıyor ve kullanıcı geri
+/// yükleme ekranında "yedeklerim nerede?" sorusunun cevabına muhtaç.
+/// `app_meta`'ya yazılsaydı tam da o anda erişilemez olurdu -- yani ayarın
+/// tek gerçek işi yapılamazdı.
+///
+/// Gizlilik dengesi: dosya yalnızca bir **klasör yolu** tutar; danışan
+/// verisi, dosya adı, anahtar veya parola taşımaz. Uygulamanın veri dizini
+/// yolu zaten `/api/durum` ile (aynı gerekçeyle) bildiriliyor. Yedeklerin
+/// kendisi şifrelidir; yolu bilmek onları açmaya yaramaz.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct YedekAyarlari {
+    /// `None` = kullanıcı henüz bir klasör seçmedi. Bu durumda otomatik
+    /// yedek **alınmaz** (nereye alınacağı bilinmiyor) ve arayüz kalıcı bir
+    /// uyarı gösterir.
+    pub hedef_dizin: Option<String>,
+}
+
+/// Ayarları okur. Dosya yoksa **ya da bozuksa** varsayılanı (hedef dizin
+/// seçilmemiş) döndürür; hata yaymaz.
+///
+/// Bozuk bir ayar dosyası yüzünden uygulamanın açılmaması ya da geri yükleme
+/// ekranının çalışmaması kabul edilemez: bu dosya bir kolaylıktır, verinin
+/// kendisi değil. En kötü durumda kullanıcı klasörü yeniden seçer.
+pub fn ayarlari_oku(veri_dizini: &Path) -> YedekAyarlari {
+    std::fs::read(veri_dizini.join(AYAR_DOSYA_ADI))
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+/// Ayarları **atomik** yazar (geçici dosya + rename), `keystore::save` ile
+/// aynı desen: yarım yazılmış bir JSON, bir sonraki açılışta ayarı sessizce
+/// sıfırlardı.
+pub fn ayarlari_yaz(veri_dizini: &Path, ayar: &YedekAyarlari) -> std::io::Result<()> {
+    std::fs::create_dir_all(veri_dizini)?;
+    let yol = veri_dizini.join(AYAR_DOSYA_ADI);
+    let gecici = yol.with_extension("json.tmp");
+    std::fs::write(&gecici, serde_json::to_vec_pretty(ayar)?)?;
+    std::fs::rename(&gecici, &yol)
 }
 
 /// Yerleştirme yarıda kaldığında kenara alınmış önceki sürümleri yerine
@@ -978,6 +1118,170 @@ mod tests {
         let hata = yedek_al(&o.db, &o.keystore_yolu, &o.hedef, "2026-09-07", &o.key).unwrap_err();
         assert!(matches!(hata, YedekHatasi::KaynakKeystoreBozuk), "gelen: {hata:?}");
         assert!(!o.hedef.join("yedek-2026-09-07.db").exists());
+    }
+
+    // --- Urune baglama: denetim kaydi, gunluk yedek, ayarlar ------------
+
+    /// Oturumun veritabanindaki log satirlarini `eylem|varlik|varlik_id`
+    /// olarak dondurur.
+    fn log_satirlari(c: &rusqlite::Connection) -> Vec<String> {
+        crate::store::audit::son_kayitlar(c, 200)
+            .unwrap()
+            .into_iter()
+            .map(|k| format!("{}|{}|{}", k.eylem, k.varlik, k.varlik_id))
+            .collect()
+    }
+
+    #[test]
+    fn yedek_alma_denetim_kaydina_tam_bir_satir_yazar() {
+        let o = kur("parola123");
+        let c = open_encrypted(&o.db, &o.key).unwrap();
+        let once = log_satirlari(&c).len();
+
+        yedek_al_ve_kaydet(
+            &c,
+            &o.db,
+            &o.keystore_yolu,
+            &o.hedef,
+            "2026-09-07",
+            &o.key,
+            crate::store::audit::Cihaz::Masaustu,
+        )
+        .unwrap();
+
+        let sonra = log_satirlari(&c);
+        assert_eq!(sonra.len(), once + 1, "TAM OLARAK bir satir eklenmeli");
+        assert!(
+            sonra.contains(&"disa_aktarma|backup|2026-09-07".to_string()),
+            "yedek alma silinemez kayitta gorunmeli -- {sonra:?}"
+        );
+    }
+
+    #[test]
+    fn ard_arda_iki_yedek_iki_satir_yazar() {
+        // `attachments::icerik_getir` ile ayni gerekce: birlestirilseydi iki
+        // yedekten biri gorunmez olurdu. `LogHacmi::HerCagri` secimini
+        // KANITLAYAN test budur -- `OturumBasi(5)` mutasyonu burada kirilir.
+        let o = kur("parola123");
+        let c = open_encrypted(&o.db, &o.key).unwrap();
+        let once = log_satirlari(&c).len();
+
+        for gun in ["2026-09-07", "2026-09-08"] {
+            yedek_al_ve_kaydet(
+                &c,
+                &o.db,
+                &o.keystore_yolu,
+                &o.hedef,
+                gun,
+                &o.key,
+                crate::store::audit::Cihaz::Masaustu,
+            )
+            .unwrap();
+        }
+
+        let sonra = log_satirlari(&c);
+        assert_eq!(sonra.len(), once + 2, "her yedek ayri satir yazmali -- {sonra:?}");
+    }
+
+    #[test]
+    fn basarisiz_yedek_log_satiri_birakmaz() {
+        // `seriyi_sil` dersi: olmamis bir islem silinemez loga gurultu
+        // dusurmemeli. Anahtar dosyasi yoksa yedek HIC alinmaz.
+        let o = kur("parola123");
+        let c = open_encrypted(&o.db, &o.key).unwrap();
+        let once = log_satirlari(&c).len();
+
+        let yok = o.kok.join("olmayan-keystore.json");
+        let hata = yedek_al_ve_kaydet(
+            &c,
+            &o.db,
+            &yok,
+            &o.hedef,
+            "2026-09-07",
+            &o.key,
+            crate::store::audit::Cihaz::Masaustu,
+        )
+        .unwrap_err();
+        assert!(matches!(hata, YedekHatasi::KaynakKeystoreYok), "gelen: {hata:?}");
+        assert_eq!(log_satirlari(&c).len(), once, "basarisiz yedek log yazmamali");
+    }
+
+    #[test]
+    fn yedek_log_satiri_hedef_dizin_yolunu_tasimaz() {
+        // Hedef dizin kullanicinin ev dizinini (dolayisiyla ADINI) icerebilir
+        // ve `audit_log` SILINEMEZ. Yol loga girmemeli.
+        let o = kur("parola123");
+        let c = open_encrypted(&o.db, &o.key).unwrap();
+        yedek_al_ve_kaydet(
+            &c,
+            &o.db,
+            &o.keystore_yolu,
+            &o.hedef,
+            "2026-09-07",
+            &o.key,
+            crate::store::audit::Cihaz::Masaustu,
+        )
+        .unwrap();
+
+        let kayit = crate::store::audit::son_kayitlar(&c, 1).unwrap().remove(0);
+        let tumu = format!("{}|{}|{}|{:?}", kayit.eylem, kayit.varlik, kayit.varlik_id, kayit.ayrinti);
+        let hedef_metni = o.hedef.display().to_string();
+        assert!(!tumu.contains(&hedef_metni), "hedef dizin yolu loga girmis: {tumu}");
+        assert!(
+            !tumu.contains(&o.kok.display().to_string()),
+            "veri dizini yolu loga girmis: {tumu}"
+        );
+    }
+
+    #[test]
+    fn gunun_yedegi_var_mi_tam_cifti_arar() {
+        let o = kur("parola123");
+        assert!(!gunun_yedegi_var_mi(&o.hedef, "2026-09-07").unwrap(), "on kosul: yedek yok");
+
+        let bilgi = yedek_al(&o.db, &o.keystore_yolu, &o.hedef, "2026-09-07", &o.key).unwrap();
+        assert!(gunun_yedegi_var_mi(&o.hedef, "2026-09-07").unwrap());
+        assert!(
+            !gunun_yedegi_var_mi(&o.hedef, "2026-09-08").unwrap(),
+            "baska bir gun yedeklenmis sayilmamali"
+        );
+
+        // EKSIK CIFT "yedeklenmis" SAYILMAMALI: geri yuklenemeyecek bir yedek,
+        // o gunu guvende gostererek yenisinin alinmasini engellerdi.
+        std::fs::remove_file(keystore_yedek_yolu(&bilgi.yol)).unwrap();
+        assert!(
+            !gunun_yedegi_var_mi(&o.hedef, "2026-09-07").unwrap(),
+            "anahtarsiz yedek o gunu 'yedeklenmis' saymamali"
+        );
+    }
+
+    #[test]
+    fn ayarlar_diske_yazilip_geri_okunur() {
+        let d = tempfile::tempdir().unwrap();
+        assert!(ayarlari_oku(d.path()).hedef_dizin.is_none(), "on kosul: ayar yok");
+
+        ayarlari_yaz(d.path(), &YedekAyarlari { hedef_dizin: Some("/Volumes/YEDEK".into()) })
+            .unwrap();
+        assert_eq!(ayarlari_oku(d.path()).hedef_dizin.as_deref(), Some("/Volumes/YEDEK"));
+    }
+
+    #[test]
+    fn bozuk_ayar_dosyasi_varsayilana_duser_ve_patlamaz() {
+        // Bu dosya bir kolayliktir, verinin kendisi degil: bozuksa uygulama
+        // acilmali ve geri yukleme ekrani calismali. En kotu durumda kullanici
+        // klasoru yeniden secer.
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join(AYAR_DOSYA_ADI), b"{ bu json degil").unwrap();
+        assert!(ayarlari_oku(d.path()).hedef_dizin.is_none());
+    }
+
+    #[test]
+    fn ayar_dosyasi_gecici_kalinti_birakmaz() {
+        let d = tempfile::tempdir().unwrap();
+        ayarlari_yaz(d.path(), &YedekAyarlari { hedef_dizin: Some("/tmp/y".into()) }).unwrap();
+        assert!(
+            !d.path().join("yedek-ayarlari.json.tmp").exists(),
+            "atomik yazma gecici dosya birakmamali"
+        );
     }
 
     #[test]

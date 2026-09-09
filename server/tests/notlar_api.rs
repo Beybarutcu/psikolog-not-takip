@@ -1486,7 +1486,18 @@ fn kod_satirlari(kaynak: &str) -> String {
 /// oturumda çalışmaları GEREKİR) ve denetim kaydını da **kendileri** yazar
 /// -- `giris`/`cikis`/`kurulum` satırlarını yazacak bir çekirdek çağrısı
 /// yok, kaynak onlar.
-const VERI_DISI_ROTALAR: [&str; 2] = ["session.rs", "setup.rs"];
+///
+/// `restore.rs` (yedek listeleme + geri yükleme) aynı sınıfa **bilerek**
+/// katıldı: geri yüklemenin var oluş sebebi oturumun açılamadığı durumdur
+/// (bozuk veritabanı, okunamayan anahtar dosyası, boş bir veri dizini),
+/// dolayısıyla `acik_baglanti` orada tanım gereği `401` dönerdi. Yetkisiz
+/// DEĞİL: çağıran, geri yüklenecek yedeğin **kendi** anahtar dosyasını
+/// açabilen parolayı vermek zorunda ve `geri_yukleme` satırını modül
+/// kendisi yazar -- eski veritabanı artık yerinde olmadığı için o satırı
+/// yazabilecek bir çekirdek çağrısı da yok. Yedek ALMA bilerek AYRI bir
+/// modülde (`backup.rs`) ve kapının İÇİNDE; ikisini birleştirmek, kapısız
+/// bir modülde kapı isteyen bir handler bulundurmak olurdu.
+const VERI_DISI_ROTALAR: [&str; 3] = ["restore.rs", "session.rs", "setup.rs"];
 
 /// İstisna listesinin bayatlamadığını doğrular: adı yazılı her dosya
 /// gerçekten diskte olmalı. Dosya yeniden adlandırılırsa istisna sessizce
@@ -1732,7 +1743,7 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
     // degisiklik BILINCLI olarak onaylanir. Birincil koruma artik yukaridaki
     // bire bir esleme -- sayiyi guncellemek tek basina bir kapiyi geri
     // getirmez.
-    assert_eq!(toplam, 27, "toplam veri handler'i sayisi 27 olmali");
+    assert_eq!(toplam, 28, "toplam veri handler'i sayisi 28 olmali");
 }
 
 // =====================================================================

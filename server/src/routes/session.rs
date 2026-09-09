@@ -4,7 +4,7 @@ use axum::{extract::State, http::StatusCode, Json};
 use psikolog_core::crypto::keyring::CryptoError;
 use psikolog_core::store::{
     audit::{kaydet, Cihaz, Eylem, LogHacmi},
-    db::open_existing,
+    db::{butunluk_kontrol, open_existing, DbError},
     keystore,
     schema::migrate,
 };
@@ -105,6 +105,33 @@ pub async fn kilit_ac(
                     return veritabani_hatasi(e);
                 }
             };
+            // BÜTÜNLÜK KONTROLÜ — tasarım §8: "Veritabanı bozuk → açılışta
+            // bütünlük kontrolü; bozuksa geri yükleme ekranına düşer."
+            //
+            // Bugüne kadar `PRAGMA integrity_check` kod tabanında HİÇBİR
+            // YERDE çalışmıyordu (`backup.rs`'te yalnızca bir yorumda
+            // geçiyordu): açılabilen ama içeriği bozuk bir veritabanı tespit
+            // edilmiyordu. Anahtar doğru olduğu için `open_existing`
+            // başarılı olur, oturum açılır ve bozulma ancak bozuk sayfaya
+            // denk gelen bir sorguda -- yani rastgele bir anda, anlaşılmaz
+            // bir hata olarak -- yüzeye çıkardı.
+            //
+            // Kontrol `migrate`'ten ÖNCE: bozuk bir dosyaya şema göçü
+            // yazmaya çalışmak bozulmayı derinleştirebilir.
+            //
+            // Oturum AÇILMAZ. Yanıt `veritabani_bozuk: true` taşır ve
+            // arayüz bunu geri yükleme ekranına düşmek için kullanır
+            // (`web/src/api.ts::VeritabaniBozukHata`). Bayrak ayrı bir
+            // alandır, metne bakılarak çıkarılmaz: hata metni kullanıcı için
+            // yazılmıştır ve değişebilir; ekran seçimi ona bağlanamaz.
+            if let Err(e) = butunluk_kontrol(&conn) {
+                eprintln!("kilit-ac: bütünlük kontrolü başarısız: {e}");
+                let bozuk = matches!(e, DbError::Bozuk);
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({ "hata": e.to_string(), "veritabani_bozuk": bozuk })),
+                );
+            }
             // Kurulumdaki (`routes::setup::kurulum`) ile aynı kalıp: göç
             // hatası sessizce yutulup oturum açılmamalı. Bugün zararsız (V1
             // idempotent) ama sonraki planlar `migrate`'i genişletecek --

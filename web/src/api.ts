@@ -11,8 +11,42 @@ export class YetkisizHata extends Error {
   }
 }
 
+/**
+ * Sunucu "veritabanı bozuk" dediğinde fırlatılır.
+ *
+ * `YetkisizHata` ile aynı gerekçe ve aynı sınıftan bir ayrım: bu, sıradan
+ * bir 500 değildir. Kullanıcının parolası **doğrudur** ve yapılması gereken
+ * tek şey yedekten geri yüklemektir; genel bir hata mesajı göstermek onu
+ * parolasını yeniden denemeye, sonra da "her şeyi silip baştan kurmaya"
+ * iter — bu kod tabanında dört katmanda bulunan hata sınıfının tam olarak
+ * kendisi.
+ */
+export class VeritabaniBozukHata extends Error {
+  constructor(mesaj: string) {
+    super(mesaj)
+    this.name = 'VeritabaniBozukHata'
+  }
+}
+
 type YetkisizDinleyici = () => void
 const yetkisizDinleyiciler = new Set<YetkisizDinleyici>()
+const bozukDinleyiciler = new Set<YetkisizDinleyici>()
+
+/**
+ * `veritabani_bozuk` yanıtından merkezî olarak haberdar olmayı sağlar —
+ * 401 mekanizmasının (`yetkisizOlunca`) birebir eşi.
+ *
+ * Neden dinleyici, neden `KilitEkrani`'nin kendi `catch`'i değil: bozuk
+ * veritabanı **hangi ekranda** olunduğundan bağımsız bir durumdur ve
+ * gidilecek yer her zaman aynıdır (geri yükleme ekranı). Kararı `App`
+ * veriyor; ekranların bunu bilmesine gerek yok.
+ */
+export function veritabaniBozukOlunca(dinleyici: YetkisizDinleyici): () => void {
+  bozukDinleyiciler.add(dinleyici)
+  return () => {
+    bozukDinleyiciler.delete(dinleyici)
+  }
+}
 
 // Uygulamanın tek bir yerde (App.tsx) merkezi olarak 401'den haberdar
 // olmasını sağlar: takvim ızgarası, ileride eklenecek randevu paneli (Görev
@@ -40,11 +74,21 @@ export function yetkisizOlunca(dinleyici: YetkisizDinleyici): () => void {
  * ekranına dönmeyi buradan öğreniyor (`api.test.ts` sırayı ölçüyor).
  */
 async function basarisizYanitiFirlat(yanit: Response): Promise<never> {
-  const govde: { hata?: string } = await yanit.json().catch(() => ({}))
+  const govde: { hata?: string; veritabani_bozuk?: boolean } = await yanit
+    .json()
+    .catch(() => ({}))
   const mesaj = govde.hata ?? 'Beklenmeyen bir hata oluştu.'
   if (yanit.status === 401) {
     for (const dinleyici of yetkisizDinleyiciler) dinleyici()
     throw new YetkisizHata(mesaj)
+  }
+  // Karar sunucunun AYRI BAYRAĞINA bakılarak veriliyor, hata metnine göre
+  // DEĞİL: metin kullanıcı için yazılmıştır ve yarın değişebilir; ekran
+  // seçimini ona bağlamak, metni düzelten birinin geri yükleme ekranını
+  // sessizce devre dışı bırakması demekti.
+  if (govde.veritabani_bozuk === true) {
+    for (const dinleyici of bozukDinleyiciler) dinleyici()
+    throw new VeritabaniBozukHata(mesaj)
   }
   throw new Error(mesaj)
 }
@@ -605,6 +649,102 @@ export const danisanApi = {
 export const aramaApi = {
   ara: (sorgu: string) =>
     istek<AramaSonucu[]>(`/api/ara?q=${encodeURIComponent(sorgu)}&limit=${ARAMA_SINIRI}`),
+}
+
+/** `POST /api/yedekler` yanıtındaki tek yedek (sunucudaki `YedekOzeti`). */
+export type YedekOzeti = {
+  /**
+   * `yedek-YYYY-AA-GG.db`. Geri yükleme isteğinin tanıtıcısı da budur:
+   * istemci **hiçbir zaman bir yol göndermez**, yalnızca bu adı geri
+   * gönderir ve sunucu onu klasörle kendisi birleştirir.
+   */
+  dosya_adi: string
+  tarih: string
+  /** Yalnızca `.db` dosyasının boyutu (bayt). */
+  boyut: number
+}
+
+/**
+ * `POST /api/yedekler` yanıtı.
+ *
+ * `hedef_dizin` **mutlak** bir klasör yoludur ve bilerek dönüyor: geri
+ * yükleme ekranı kullanıcıya "yedekleriniz şu klasörde" diyebilmek zorunda
+ * (macOS'ta bu klasör bir harici diskte ya da Finder'ın gizlediği bir yerde
+ * olabilir). Aynı karar `/api/durum`'un `veri_dizini` alanında da verildi.
+ *
+ * Yedeklerin kendi mutlak yolları **dönmez**: `YedekOzeti` yalnızca dosya
+ * adı taşır ve sunucudaki `core::backup::YedekBilgisi` artık `Serialize`
+ * türetmiyor, yani onu olduğu gibi döndürmek derlenmez.
+ */
+export type YedekListesi = {
+  hedef_dizin: string
+  yedekler: YedekOzeti[]
+}
+
+/**
+ * Yedekleme ve geri yükleme istemcisi.
+ *
+ * # Otomatik yedek nerede
+ *
+ * Tasarım §7 "günde bir kez otomatik şifreli yedek" istiyor. Damgayı
+ * (`YYYY-AA-GG`) **istemci** üretiyor, sunucu kendi saatinden türetmiyor:
+ * kod tabanının duvar saati sözleşmesi bu (`saklama-suresi-dolanlar?bugun=`
+ * ile aynı gerekçe). Istanbul UTC+3 iken 00:00–03:00 arasında UTC hâlâ
+ * dünkü tarihtedir; sunucudan türetilen bir damga o üç saatte yedeği bir
+ * gün geriye yazar ve "bugün yedek alındı mı" sorusu yanlış yanıtlanır.
+ *
+ * Tetikleyen yer `AnaEkran`: oturum açıldıktan sonra bir kez liste çekilir
+ * ve bugünün yedeği yoksa alınır. Zamanlayıcı yok — uygulama açık değilken
+ * zaten yedek alınamaz; "açılışta bir kez" bu ürün için "günde bir kez"in
+ * gerçekleşebilir hâlidir.
+ */
+export const yedekApi = {
+  /**
+   * Yedek alır (`POST /api/yedek`).
+   *
+   * `hedefDizin` verilirse **önce ayar olarak kaydedilir**, sonra yedek
+   * oraya alınır. Ayrı bir "klasörü ayarla" ucu bilerek YOK: klasörünü
+   * seçip yedeği almayan bir kullanıcı "yedeğim var" sanırdı.
+   */
+  al: (damga: string, hedefDizin?: string) =>
+    istek<{ tarih: string; boyut: number }>('/api/yedek', {
+      method: 'POST',
+      body: JSON.stringify({ damga, hedef_dizin: hedefDizin }),
+    }),
+  /**
+   * Klasördeki geri yüklenebilir yedekleri listeler (`POST /api/yedekler`).
+   *
+   * `POST` ve klasör yolu **gövdede**: yol kullanıcının adını içerebilir
+   * (`/Users/ayse/Dropbox/...`) ve URL'ler tarayıcı geçmişine ve genel
+   * amaçlı erişim günlüklerine düşer (`ekYukle`'nin dosya adı kararıyla
+   * aynı sınıf).
+   *
+   * Kilit gerektirmez: "hangi yedeklerim var" sorusu tam da kilitliyken,
+   * bozuk bir veritabanının ardından sorulur.
+   */
+  listele: (dizin?: string) =>
+    istek<YedekListesi>('/api/yedekler', {
+      method: 'POST',
+      body: JSON.stringify({ dizin }),
+    }),
+  /**
+   * Bir yedek çiftini geri yükler (`POST /api/geri-yukleme`).
+   *
+   * Parola **o yedeğin alındığı tarihteki** paroladır: yedek kendi anahtar
+   * dosyasıyla birlikte alınır ve geri yüklendiğinde o günün parolası
+   * yeniden geçerli olur. Açık oturumun anahtarı kullanılmaz — yeni bir
+   * bilgisayarda zaten böyle bir anahtar yoktur.
+   */
+  geriYukle: (girdi: {
+    dizin?: string
+    dosya_adi: string
+    parola?: string
+    kurtarma_kodu?: string
+  }) =>
+    istek<{ tarih: string }>('/api/geri-yukleme', {
+      method: 'POST',
+      body: JSON.stringify(girdi),
+    }),
 }
 
 export const api = {

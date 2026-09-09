@@ -275,7 +275,13 @@ impl std::fmt::Debug for AramaSonucu {
 /// SQL karşılığı `SORGU_DANISAN`/`SORGU_NOT` içindeki `lower()` + 12
 /// `replace()` zinciridir: SQLite'ın `lower()`'ı ASCII olduğu için büyük
 /// Türkçe harfler ayrıca eşlenir. İkisi ayrışırsa arama sessizce çalışmaz —
-/// davranışsal testler her iki sorgu üzerinde bunu sabitler.
+/// davranışsal testler her iki sorgu üzerinde bunu sabitler
+/// (`her_katlanan_harf_*_iki_yonlu_calisir`, harf harf).
+///
+/// `'I'` ve `'i'` kolları **fazlalıktır** ve bilerek bırakılmıştır: ikisini
+/// de aşağıdaki `d => d.to_ascii_lowercase()` kolu zaten `'i'`'ye götürür, bu
+/// yüzden onları silen bir mutasyon hiçbir testi kırmaz. Burada durmalarının
+/// nedeni okunabilirlik: "i ailesinin dört biçimi" tek satırda görünüyor.
 fn katla_karakter(k: char) -> char {
     match k {
         'ı' | 'İ' | 'I' | 'i' => 'i',
@@ -734,6 +740,109 @@ mod tests {
 
         assert_eq!(ara(&c, "ipek sahin", 20, Cihaz::Masaustu).unwrap().len(), 2);
         assert_eq!(ara(&c, "İPEK ŞAHİN", 20, Cihaz::Masaustu).unwrap().len(), 2);
+    }
+
+    /// Katlanan HER harf ve ASCII karsiligi.
+    ///
+    /// SQL tarafinda ilk dordu `lower()`'in ASCII kolundan ve iki `replace`
+    /// ciftinden (`'ı'->'i'`, `'İ'->'i'`) gelir; kalan on tanesi dogrudan
+    /// `SORGU_DANISAN`/`SORGU_NOT` icindeki `replace` zincirinin on halkasidir.
+    /// Rust tarafinda hepsi `katla_karakter`'in bir kolu.
+    ///
+    /// Bu tablo bir INCELEME BULGUSUNU kapatir: kurulum verisindeki adlar
+    /// ("Ayse Yilmaz", "Mehmet Demir", "İpek Şahin", "Ipek Sahin") ve not
+    /// metinleri, 12 `replace` ciftinin 10'unu HIC calistirmiyordu -- her
+    /// biri tek tek silinse de suit 25/25 yesil kaliyordu. Sonuc: "Çağrı
+    /// Öztürk" veya "Yılmaz" adli bir danisan ASCII sorguyla SESSIZCE
+    /// bulunamaz hâle gelebilirdi. Asagidaki iki test her halkayi kendi
+    /// verisiyle, iki yonlu olarak calistirir.
+    const KATLANAN_HARFLER: [(char, char); 14] = [
+        ('ı', 'i'),
+        ('İ', 'i'),
+        ('I', 'i'),
+        ('i', 'i'),
+        ('ş', 's'),
+        ('Ş', 's'),
+        ('ğ', 'g'),
+        ('Ğ', 'g'),
+        ('ü', 'u'),
+        ('Ü', 'u'),
+        ('ö', 'o'),
+        ('Ö', 'o'),
+        ('ç', 'c'),
+        ('Ç', 'c'),
+    ];
+
+    #[test]
+    fn her_katlanan_harf_danisan_adi_sorgusunda_iki_yonlu_calisir() {
+        let (_d, c, _cid, _rid) = kurulum();
+
+        for (sira, (harf, ascii)) in KATLANAN_HARFLER.iter().enumerate() {
+            // (1) Ad TURKCE harfi icerir, sorgu ASCII'dir -> SQL `replace`
+            //     zincirinin ilgili halkasi calisir.
+            let turkce_ad = format!("Sqlkatla{harf}z Kayit{sira:02}");
+            // (2) Ad ASCII'dir, sorgu TURKCE harf icerir -> `katla_karakter`
+            //     ilgili kolu calisir.
+            let ascii_ad = format!("Rustkatla{ascii}z Kayit{sira:02}");
+            for ad in [&turkce_ad, &ascii_ad] {
+                danisan_ekle(
+                    &c,
+                    &YeniDanisan { ad_soyad: ad.clone(), telefon: None },
+                    Cihaz::Masaustu,
+                )
+                .unwrap();
+            }
+
+            let ascii_sorgu = format!("sqlkatla{ascii}z kayit{sira:02}");
+            let bulunan = ara(&c, &ascii_sorgu, AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+            assert!(
+                bulunan.iter().any(|s| s.tur == "danisan" && s.danisan_adi == turkce_ad),
+                "SQL katlamasi '{harf}' -> '{ascii}' halkasi calismiyor: \
+                 '{ascii_sorgu}' sorgusu '{turkce_ad}' adini bulmali"
+            );
+
+            let turkce_sorgu = format!("rustkatla{harf}z kayit{sira:02}");
+            let bulunan = ara(&c, &turkce_sorgu, AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+            assert!(
+                bulunan.iter().any(|s| s.tur == "danisan" && s.danisan_adi == ascii_ad),
+                "katla_karakter '{harf}' -> '{ascii}' kolu calismiyor: \
+                 '{turkce_sorgu}' sorgusu '{ascii_ad}' adini bulmali"
+            );
+        }
+    }
+
+    #[test]
+    fn her_katlanan_harf_not_icerigi_sorgusunda_iki_yonlu_calisir() {
+        let (_d, c, cid, _rid) = kurulum();
+
+        for (sira, (harf, ascii)) in KATLANAN_HARFLER.iter().enumerate() {
+            let r = randevu_ekle(&c, cid, &gun(sira));
+            // Tek notta iki yon: TURKCE harfli kelime (ASCII sorguyla
+            // aranacak) ve ASCII kelime (TURKCE sorguyla aranacak).
+            let icerik =
+                format!("Seans{sira:02}: sqlkatla{harf}z ve rustkatla{ascii}z gecti.");
+            not_kaydet(&c, r, "dap", &icerik, Cihaz::Masaustu).unwrap();
+
+            let ascii_sorgu = format!("sqlkatla{ascii}z");
+            let bulunan = ara(&c, &ascii_sorgu, AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+            assert!(
+                bulunan
+                    .iter()
+                    .any(|s| s.tur == "not" && s.parca.contains(&format!("Seans{sira:02}"))),
+                "SQL katlamasi '{harf}' -> '{ascii}' halkasi not iceriginde calismiyor: \
+                 '{ascii_sorgu}' sorgusu Seans{sira:02} notunu bulmali"
+            );
+
+            let turkce_sorgu = format!("rustkatla{harf}z");
+            let bulunan = ara(&c, &turkce_sorgu, AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+            assert!(
+                bulunan
+                    .iter()
+                    .any(|s| s.tur == "not" && s.parca.contains(&format!("Seans{sira:02}"))),
+                "katla_karakter '{harf}' -> '{ascii}' kolu not iceriginde calismiyor: \
+                 '{turkce_sorgu}' sorgusu Seans{sira:02} notunu bulmali"
+            );
+        }
     }
 
     #[test]

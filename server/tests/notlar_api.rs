@@ -1213,10 +1213,33 @@ fn rota_modulleri_audit_kaydet_cagirmaz() {
     }
 }
 
-/// Her yeni handler'ın ilk satırı `acik_baglanti`'dir.
+/// Her veri handler'ının **ilk satırı** `acik_baglanti`'dir.
+///
+/// Bu testin ilan edilen görevi, elle bakımlı 14 satırlık davranışsal
+/// listenin kapsamadığı **yarınki** handler'ı yakalamaktır. Önceki hâli bunu
+/// yapmıyordu: ham kaynakta `pub async fn ` ve `acik_baglanti(&s)?`
+/// geçişlerini **sayıp** eşitliğine bakıyordu. İki mutasyon da hayatta kaldı
+/// (deney çıktıları için bkz. task-7-report.md):
+///
+/// - **(a) Yorum sayacı şişiriyor.** Bir handler kapısız bırakılıp başka bir
+///   handler'ın üstüne `/// Ornek: let conn = acik_baglanti(&s)?;` doküman
+///   satırı eklendiğinde sayılar yine eşitleniyordu. Aynı dosyadaki kardeş
+///   yapısal testler yorumları zaten eliyordu; bu elemiyordu.
+/// - **(b) İki karşıt kusur birbirini götürüyor.** Bir handler kapıyı atlar,
+///   başka biri kapıyı iki kez çağırırsa toplamlar yine eşit çıkıyordu.
+///
+/// Ayrıca "ilk satır" iddiası hiç denetlenmiyordu: kapı fonksiyonun sonunda
+/// da olsa test geçerdi — oysa kilit kontrolünden ÖNCE çalışan her satır
+/// (parametre okuma, log, yan etki) kilitli oturumda da çalışır.
+///
+/// Yeni biçim: yorumlar elenir, kaynak `pub async fn ` ile **parçalanır** ve
+/// her parçanın gövdesinin **ilk satırının** kapı olduğu iddia edilir —
+/// sayım değil, **bire bir eşleme**. Kapının parça başına tam bir kez geçmesi
+/// de ayrıca iddia edilir, böylece (b) tipi telafi imkânsızdır.
 #[test]
 fn her_veri_handleri_acik_baglantidan_gecer() {
-    let moduller: [(&str, &str, usize); 5] = [
+    const KAPI: &str = "let conn = acik_baglanti(&s)?;";
+    let moduller: [(&str, &str, usize); 6] = [
         ("notes.rs", include_str!("../src/routes/notes.rs"), 3),
         ("private_notes.rs", include_str!("../src/routes/private_notes.rs"), 2),
         ("attachments.rs", include_str!("../src/routes/attachments.rs"), 5),
@@ -1224,18 +1247,55 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
         // clients.rs: liste, olustur, arsivle_uc (eski 3) + getir_uc,
         // guncelle_uc, saklama_listesi (yeni 3).
         ("clients.rs", include_str!("../src/routes/clients.rs"), 6),
+        // Gorev 7 oncesi 11 veri handler'i vardi (clients 3 + appointments 8).
+        ("appointments.rs", include_str!("../src/routes/appointments.rs"), 8),
     ];
+
     let mut toplam = 0;
     for (ad, kaynak, beklenen) in moduller {
-        let handler = kaynak.matches("pub async fn ").count();
-        let kapi = kaynak.matches("acik_baglanti(&s)?").count();
-        assert_eq!(handler, beklenen, "{ad}: handler sayisi degistiyse bu test guncellenmeli");
-        assert_eq!(kapi, handler, "{ad}: her handler `acik_baglanti`'den gecmeli");
-        toplam += handler;
+        // Yorum satirlari kuralin KENDISINDEN bahsedebilir; yalnizca kod
+        // satirlarina bakiyoruz (kardes yapisal testlerle ayni eleme).
+        let kod: String = kaynak
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let parcalar: Vec<&str> = kod.split("pub async fn ").skip(1).collect();
+        assert_eq!(
+            parcalar.len(),
+            beklenen,
+            "{ad}: handler sayisi degistiyse bu test guncellenmeli"
+        );
+
+        for parca in &parcalar {
+            let isim = parca.split('(').next().unwrap_or("").trim();
+            // Imza tek satirlik da olabilir, cok satirlik da; ikisinde de
+            // govde `{` ile biten ILK satirdan sonra baslar.
+            let imza_sonu = parca
+                .lines()
+                .position(|l| l.trim_end().ends_with('{'))
+                .unwrap_or_else(|| panic!("{ad}::{isim}: handler imzasi '{{' ile bitmeli"));
+            let ilk_satir = parca
+                .lines()
+                .skip(imza_sonu + 1)
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("");
+            assert_eq!(
+                ilk_satir.trim(),
+                KAPI,
+                "{ad}::{isim}: handler'in ILK satiri `{KAPI}` olmali -- kilit \
+                 kontrolunden once calisan her satir kilitli oturumda da calisir"
+            );
+            // (b) telafisi: iki kez cagiran bir handler, kapisiz kalan bir
+            // baskasini artik ortemez.
+            assert_eq!(
+                parca.matches("acik_baglanti(").count(),
+                1,
+                "{ad}::{isim}: kapi tam bir kez cagrilmali"
+            );
+        }
+        toplam += parcalar.len();
     }
-    // Gorev 7 oncesi 11 veri handler'i vardi (clients 3 + appointments 8);
-    // bu gorev 14 ekledi. clients.rs'in 3'u eskiden sayiliydi.
-    let appointments = include_str!("../src/routes/appointments.rs").matches("pub async fn ").count();
-    assert_eq!(appointments, 8);
-    assert_eq!(toplam + appointments, 25, "toplam veri handler'i sayisi 25 olmali");
+    assert_eq!(toplam, 25, "toplam veri handler'i sayisi 25 olmali");
 }

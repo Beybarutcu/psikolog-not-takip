@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { AramaSonucu, AramaYaniti } from '../api'
 
 /**
@@ -53,6 +54,23 @@ type Props = {
 export const GECIKME_MS = 250
 
 /**
+ * Katmanın içindeki odaklanabilir öğeler — **belge sırasında**.
+ *
+ * Görünürlük süzgeci YOK (`offsetParent`, `getBoundingClientRect`): jsdom
+ * düzen hesaplamıyor ve öyle bir süzgeç testlerde listeyi boşaltıp odak
+ * tuzağını sessizce etkisizleştirirdi (üçüncü biçim: "ortama bağlı
+ * etkisizleşen test"). Katmanın içinde gizli bir odaklanabilir öğe zaten
+ * yok; koşullu render edilenler DOM'da hiç bulunmuyor.
+ */
+function odaklanabilirler(kok: HTMLElement): HTMLElement[] {
+  return Array.from(
+    kok.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  )
+}
+
+/**
  * Aramanın çalışması için gereken en az karakter — sunucudaki
  * `ASGARI_SORGU` ile aynı. İstemcide de duruyor çünkü sunucu bu durumda
  * **boş liste** dönüyor (hata değil): kontrol yalnızca sunucuda olsaydı her
@@ -83,6 +101,23 @@ export function HizliArama({ ara, onDanisanSec, onSeansSec, gecikmeMs = GECIKME_
   >(null)
   const [hataKaydi, setHataKaydi] = useState<{ sorgu: string; mesaj: string } | null>(null)
   const kutuRef = useRef<HTMLInputElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const acButonRef = useRef<HTMLButtonElement>(null)
+  // Katman açılmadan HEMEN ÖNCE odakta olan öğe. Kapanışta odak buraya
+  // döner. Ctrl+K sayfanın herhangi bir yerinden basılabilir, dolayısıyla
+  // "tetikleyen öğe" her zaman açma düğmesi değildir.
+  const tetikleyiciRef = useRef<HTMLElement | null>(null)
+  // Portal kabı. Katman `document.body`ye taşınıyor çünkü "arkadaki her
+  // şeyi `inert` yap" ancak katman uygulama ağacının DIŞINDAYSA mümkün:
+  // katman ağacın içindeyken kökü `inert` yapmak katmanı da atıl kılardı.
+  const kapsayiciRef = useRef<HTMLDivElement | null>(null)
+  if (kapsayiciRef.current === null) {
+    kapsayiciRef.current = document.createElement('div')
+  }
+  // İlk render'da odak efekti ÇALIŞMAMALI: `acik` başlangıçta `false` ve
+  // efekt koşulsuz çalışsaydı bileşen mount olur olmaz odağı kendi açma
+  // düğmesine çekerdi.
+  const ilkRenderRef = useRef(true)
 
   // Kapanış TEK yerde: sorgu ve yanıtlar birlikte silinir. İki ayrı çağrı
   // yeri olsaydı biri sonuçları temizlemeyi unutabilirdi.
@@ -93,12 +128,20 @@ export function HizliArama({ ara, onDanisanSec, onSeansSec, gecikmeMs = GECIKME_
     setHataKaydi(null)
   }
 
+  /** Katmanı açar ve odağın geri döneceği öğeyi yakalar. */
+  function ac() {
+    const etkin = document.activeElement
+    tetikleyiciRef.current =
+      etkin instanceof HTMLElement && etkin !== document.body ? etkin : null
+    setAcik(true)
+  }
+
   useEffect(() => {
     function tus(olay: KeyboardEvent) {
       if ((olay.ctrlKey || olay.metaKey) && olay.key.toLowerCase() === 'k') {
         // Tarayıcının kendi kısayolunu (adres çubuğu araması) engelle.
         olay.preventDefault()
-        setAcik(true)
+        ac()
         return
       }
       if (olay.key === 'Escape') kapat()
@@ -107,9 +150,90 @@ export function HizliArama({ ara, onDanisanSec, onSeansSec, gecikmeMs = GECIKME_
     return () => document.removeEventListener('keydown', tus)
   }, [])
 
-  useEffect(() => {
-    if (acik) kutuRef.current?.focus()
+  // (1) Portal kabını gövdeye TAK. `useLayoutEffect`: kap DOM'a girmeden
+  //     yapılan bir boyama katmanı görünmez bırakırdı.
+  useLayoutEffect(() => {
+    const kap = kapsayiciRef.current
+    if (kap === null || !acik) return
+    document.body.appendChild(kap)
+    return () => kap.remove()
   }, [acik])
+
+  // (2) ARKADAKİ HER ŞEY `inert`. Bu, `aria-modal="true"` demenin bedeli:
+  //     etiket "arkadaki her şey atıl" diye söz veriyor ve sözün gerçek
+  //     olması gerekiyor (aksi hâlde ekran okuyucu kullanıcısı, gören bir
+  //     kullanıcının kolayca fark ettiği içeriği hiç bulamaz).
+  //
+  //     Sıra önemli: bu efekt (1)'den SONRA bildiriliyor, yani kap zaten
+  //     gövdenin bir çocuğu ve kendisi `inert` yapılmıyor. Temizlik de
+  //     ters sırada değil, aynı sırada koşar; `inert` yalnızca BU efektin
+  //     eklediği öğelerden kaldırılır (başkasının koyduğu bir `inert`
+  //     sessizce silinmez).
+  useLayoutEffect(() => {
+    const kap = kapsayiciRef.current
+    if (!acik) return
+    const degistirilenler: HTMLElement[] = []
+    for (const cocuk of Array.from(document.body.children)) {
+      if (!(cocuk instanceof HTMLElement) || cocuk === kap) continue
+      if (cocuk.hasAttribute('inert')) continue
+      cocuk.setAttribute('inert', '')
+      degistirilenler.push(cocuk)
+    }
+    return () => {
+      for (const oge of degistirilenler) oge.removeAttribute('inert')
+    }
+  }, [acik])
+
+  // (3) ODAK. Açılışta arama kutusuna, kapanışta tetikleyen öğeye.
+  //     (2)'den SONRA bildirildiği için kapanışta `inert` çoktan
+  //     kaldırılmış olur -- React bir commit'te önce TÜM temizlikleri,
+  //     sonra tüm efekt gövdelerini koşar. Atıl bir öğeye `focus()`
+  //     çağırmak gerçek tarayıcıda hiçbir şey yapmaz.
+  useEffect(() => {
+    if (ilkRenderRef.current) {
+      ilkRenderRef.current = false
+      return
+    }
+    if (acik) {
+      kutuRef.current?.focus()
+      return
+    }
+    const hedef = tetikleyiciRef.current ?? acButonRef.current
+    tetikleyiciRef.current = null
+    hedef?.focus()
+  }, [acik])
+
+  /**
+   * ODAK TUZAĞI. Tab, katmanın son öğesinden ilkine (Shift+Tab tersine)
+   * sarar; odak hiçbir zaman arkadaki -- artık `inert` olan -- içeriğe
+   * geçmez.
+   *
+   * `inert` tek başına yeterli görünse de değildir: `inert` desteklemeyen
+   * bir tarayıcıda (ya da katman gövdeye taşınamadığı bir durumda) tuzak
+   * ikinci savunma hattı olur. Asıl yükü hangisinin taşıdığı ölçülebilir:
+   * tuzak silinince `Tab odagi katmanin ICINDE tutar` testi kırılır.
+   */
+  function tabTuzagi(olay: React.KeyboardEvent<HTMLDivElement>) {
+    if (olay.key !== 'Tab') return
+    const panel = panelRef.current
+    if (panel === null) return
+    const ogeler = odaklanabilirler(panel)
+    if (ogeler.length === 0) return
+    const ilk = ogeler[0]
+    const son = ogeler[ogeler.length - 1]
+    const etkin = document.activeElement
+    if (olay.shiftKey) {
+      if (etkin === ilk || !panel.contains(etkin)) {
+        olay.preventDefault()
+        son.focus()
+      }
+      return
+    }
+    if (etkin === son || !panel.contains(etkin)) {
+      olay.preventDefault()
+      ilk.focus()
+    }
+  }
 
   const kirpilmis = sorgu.trim()
 
@@ -155,33 +279,42 @@ export function HizliArama({ ara, onDanisanSec, onSeansSec, gecikmeMs = GECIKME_
     }
   }, [acik, kirpilmis, ara, gecikmeMs])
 
-  if (!acik) {
-    return (
-      <button
-        type="button"
-        className="rounded border px-3 py-1 text-sm"
-        onClick={() => setAcik(true)}
-      >
-        Hızlı arama (Ctrl+K)
-      </button>
-    )
-  }
-
-  return (
-    <div
-      role="dialog"
-      // `aria-modal` BİLEREK yok. Bu satır içi bir `div`: odak tuzağı yok,
-      // arkada backdrop yok, sayfanın geri kalanı `inert` değil ve Tab ile
-      // gerçekten dışarı çıkılabiliyor. `aria-modal="true"` yazmak ekran
-      // okuyucu kullanıcısına "arkadaki her şey atıl" demektir; yanlış
-      // olduğu için o kullanıcı, gören bir kullanıcının kolayca fark ettiği
-      // içeriği hiç bulamaz hâle gelirdi — erişilebilirlik etiketinin
-      // gerçeği yanlış anlatması, etiketin hiç olmamasından kötüdür.
-      // Gerçek bir modal yapmak (odak tuzağı + `inert`) ayrı bir iştir;
-      // yapılana kadar burada dürüst olan, modal olmayan bir `dialog`.
-      aria-label="Hızlı arama"
-      className="rounded-lg border border-slate-300 bg-white p-3"
+  const acmaDugmesi = (
+    <button
+      ref={acButonRef}
+      type="button"
+      className="rounded border px-3 py-1 text-sm"
+      onClick={ac}
     >
+      Hızlı arama (Ctrl+K)
+    </button>
+  )
+
+  if (!acik) return acmaDugmesi
+
+  const katman = (
+    // Backdrop. Tıklamak katmanı kapatır (standart modal davranışı) ve
+    // arkadaki içeriğin görsel olarak da devre dışı olduğunu söyler --
+    // `inert` yalnızca yardımcı teknolojiye ve klavyeye görünür.
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/30 p-8"
+      onMouseDown={(olay) => {
+        if (olay.target === olay.currentTarget) kapat()
+      }}
+    >
+      <div
+        ref={panelRef}
+        role="dialog"
+        // `aria-modal="true"` ARTIK DOĞRU. Eskiden bilerek yoktu: panel
+        // satır içi bir `div`di, odak tuzağı, backdrop ve `inert` yoktu ve
+        // etiket ekran okuyucu kullanıcısına yalan söylerdi. Bugün üçü de
+        // var (bkz. yukarıdaki (1)-(3) efektleri ve `tabTuzagi`), yani
+        // etiket gerçeği anlatıyor.
+        aria-modal="true"
+        aria-label="Hızlı arama"
+        onKeyDown={tabTuzagi}
+        className="w-full max-w-2xl rounded-lg border border-slate-300 bg-white p-3 shadow-xl"
+      >
       <div className="flex items-center gap-2">
         <input
           ref={kutuRef}
@@ -268,6 +401,17 @@ export function HizliArama({ ara, onDanisanSec, onSeansSec, gecikmeMs = GECIKME_
           )}
         </ul>
       )}
+      </div>
     </div>
+  )
+
+  return (
+    <>
+      {/* Açma düğmesi katman AÇIKKEN de monte kalır: odağın geri döneceği
+          öğe budur (Ctrl+K başka bir yerden basıldıysa yedek hat).
+          Kapanışta unmount edilmiş bir düğmeye `focus()` çağrılamazdı. */}
+      {acmaDugmesi}
+      {createPortal(katman, kapsayiciRef.current)}
+    </>
   )
 }

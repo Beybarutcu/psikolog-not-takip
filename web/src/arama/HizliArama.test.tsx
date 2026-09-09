@@ -61,15 +61,15 @@ describe('HizliArama — açılış ve kapanış', () => {
     expect(kutu()).toBeDefined()
   })
 
-  it('modal OLMADIGI icin `aria-modal` DEMEZ', async () => {
-    // Panel satır içi bir `div`: odak tuzağı, backdrop ve `inert` yok,
-    // Tab ile dışarı çıkılabiliyor. `aria-modal="true"` demek ekran
-    // okuyucu kullanıcısına "arkadaki her şey atıl" demektir; yanlış
-    // olduğu için o kullanıcı sayfanın geri kalanını hiç bulamazdı.
+  it('`aria-modal="true"` DER -- artik gercekten modal', async () => {
+    // Etiket eskiden BİLEREK yoktu: panel satır içi bir `div`di, odak
+    // tuzağı, backdrop ve `inert` yoktu; etiket ekran okuyucu
+    // kullanıcısına yalan söylerdi. Bugün üçü de var (aşağıdaki testler),
+    // dolayısıyla etiket gerçeği anlatıyor.
     kur()
     await ac()
     const kutucuk = screen.getByRole('dialog', { name: 'Hızlı arama' })
-    expect(kutucuk.getAttribute('aria-modal')).toBeNull()
+    expect(kutucuk.getAttribute('aria-modal')).toBe('true')
   })
 
   it('Cmd+K ile de acilir (macOS)', async () => {
@@ -161,6 +161,147 @@ describe('HizliArama — açılış ve kapanış', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Aramayı kapat' }))
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(document.body.textContent).not.toContain('uyku düzeni ve kaygı')
+  })
+})
+
+// `aria-modal="true"` bir SÖZDÜR: "arkadaki her şey atıl". Aşağıdaki
+// testler o sözün dört parçasını da ölçüyor. Biri bile kalkarsa etiket
+// yeniden yalan söylemeye başlar ve o zaman etiketin kendisi de kalkmalı
+// (dürüstlük gereği bir kez zaten kaldırılmıştı).
+describe('HizliArama — gerçek modal davranışı', () => {
+  // `document.body`ye elle eklenen öğeler RTL'in `cleanup`ı tarafından
+  // KALDIRILMAZ. Temizlenmezlerse bir sonraki teste sızar ve orada hâlâ
+  // ODAKLI olurlar -- "odak nereye döndü" iddiaları sessizce yanlış şeyi
+  // ölçmeye başlar (bu test dosyasında bir kez tam olarak bu oldu).
+  let eklenenler: HTMLElement[] = []
+
+  afterEach(() => {
+    for (const oge of eklenenler) oge.remove()
+    eklenenler = []
+    ;(document.activeElement as HTMLElement | null)?.blur()
+  })
+
+  /** Katmanın dışında kalan, odaklanabilir bir "arka plan" öğesi. */
+  function arkaPlanli(ozel: Partial<React.ComponentProps<typeof HizliArama>> = {}) {
+    const disarisi = document.createElement('button')
+    disarisi.textContent = 'Arka plandaki düğme'
+    document.body.appendChild(disarisi)
+    eklenenler.push(disarisi)
+    const props = kur(ozel)
+    return { ...props, disarisi }
+  }
+
+  it('acilinca odak arama kutusuna gider', async () => {
+    kur()
+    await ac()
+    expect(document.activeElement).toBe(kutu())
+  })
+
+  it('kapaninca odak TETIKLEYEN ogeye geri doner', async () => {
+    // Ctrl+K sayfanın herhangi bir yerinden basılabilir; odak açma
+    // düğmesine değil, kullanıcının BULUNDUĞU yere dönmeli. Aksi hâlde
+    // klavye kullanıcısı her aramadan sonra sayfanın başına atılır.
+    const { disarisi } = arkaPlanli()
+    disarisi.focus()
+    expect(document.activeElement).toBe(disarisi)
+
+    await ac()
+    expect(document.activeElement).toBe(kutu())
+
+    await userEvent.keyboard('{Escape}')
+    expect(document.activeElement).toBe(disarisi)
+  })
+
+  it('odak yakalanacak bir oge yoksa ACMA DUGMESINE doner', async () => {
+    // Ctrl+K odak `body`deyken basıldığında yedek hat: `body.focus()`
+    // hiçbir şey yapmaz ve kullanıcı odağı KAYBEDERDİ.
+    kur()
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    expect(document.activeElement).toBe(document.body)
+    await ac()
+    await userEvent.keyboard('{Escape}')
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Hızlı arama (Ctrl+K)' }),
+    )
+  })
+
+  it('arkadaki icerik `inert` olur ve kapaninca geri alinir', async () => {
+    const { disarisi } = arkaPlanli()
+    expect(disarisi.hasAttribute('inert')).toBe(false)
+
+    await ac()
+    expect(disarisi.hasAttribute('inert')).toBe(true)
+    // Katmanın KENDİSİ atıl olmamalı: kendi kabını da `inert` yapan bir
+    // uygulama katmanı kullanılamaz kılardı.
+    const kutucuk = screen.getByRole('dialog', { name: 'Hızlı arama' })
+    expect(kutucuk.closest('[inert]')).toBeNull()
+
+    await userEvent.keyboard('{Escape}')
+    expect(disarisi.hasAttribute('inert')).toBe(false)
+  })
+
+  it('katman disinda ZATEN duran bir `inert` sessizce KALDIRILMAZ', async () => {
+    // Kapanış temizliği yalnızca KENDİ eklediklerini geri almalı; başka
+    // bir katmanın koyduğu `inert`i silmek onu sessizce erişilebilir
+    // kılardı.
+    const { disarisi } = arkaPlanli()
+    disarisi.setAttribute('inert', '')
+
+    await ac()
+    await userEvent.keyboard('{Escape}')
+    expect(disarisi.hasAttribute('inert')).toBe(true)
+  })
+
+  it('Tab odagi katmanin ICINDE tutar (ileri ve geri)', async () => {
+    // `inert` desteklemeyen bir tarayıcıda tuzak ikinci savunma hattı;
+    // jsdom `inert` semantiğini uygulamıyor, dolayısıyla burada ölçülen
+    // ŞEY tuzağın kendisi.
+    kur()
+    await ac()
+    await userEvent.type(kutu(), 'kaygi')
+    await screen.findByText(/uyku düzeni ve kaygı üzerine konuşuldu/)
+
+    const panel = screen.getByRole('dialog', { name: 'Hızlı arama' })
+    const odaklanabilir = () =>
+      Array.from(
+        panel.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled])'),
+      )
+    const ogeler = odaklanabilir()
+    expect(ogeler.length).toBeGreaterThan(1)
+
+    // Son öğeden ileri Tab -> ilk öğeye sarar.
+    ogeler[ogeler.length - 1].focus()
+    await userEvent.tab()
+    expect(document.activeElement).toBe(ogeler[0])
+
+    // İlk öğeden geri Tab -> son öğeye sarar.
+    ogeler[0].focus()
+    await userEvent.tab({ shift: true })
+    expect(document.activeElement).toBe(ogeler[ogeler.length - 1])
+  })
+
+  it('backdrop tiklamasi kapatir, panel ici tiklama KAPATMAZ', async () => {
+    kur()
+    await ac()
+    // Panel içine tıklamak kapatmamalı (yoksa kullanıcı metin seçemez).
+    await userEvent.click(screen.getByRole('dialog', { name: 'Hızlı arama' }))
+    expect(screen.queryByRole('dialog')).not.toBeNull()
+
+    const backdrop = screen.getByRole('dialog', { name: 'Hızlı arama' }).parentElement
+    expect(backdrop).not.toBeNull()
+    await userEvent.click(backdrop as HTMLElement)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('kapaninca portal kabi govdeden KALKAR', async () => {
+    // Gizlenmiş ama duran bir katman kabı, ekranda görünmeyen bir not
+    // parçasını DOM'da bırakırdı.
+    kur()
+    const oncekiSayi = document.body.children.length
+    await ac()
+    expect(document.body.children.length).toBe(oncekiSayi + 1)
+    await userEvent.keyboard('{Escape}')
+    expect(document.body.children.length).toBe(oncekiSayi)
   })
 })
 

@@ -878,6 +878,55 @@ mod tests {
     }
 
     #[test]
+    fn takvimde_olmayan_gune_randevu_acilamaz() {
+        // Bicimce kusursuz, takvimde yok. Bu satir olusabilseydi randevu
+        // "geldi" isaretlendiginde `son_temasi_isaretle` -> `son_temasi_tazele`
+        // -> `yil_ekle` zinciri gunu cozumleyip reddeder ve durum
+        // guncellemesinin TAMAMI geri alinirdi -- hata mesaji da kullanicinin
+        // hic dokunmadigi "Son temas tarihi" alanini adlandirirdi. Kok delik
+        // `zaman::zaman_gecerli_mi` icinde kapatildi; burada randevu
+        // katmanindan sabitleniyor.
+        let (_d, c, cid) = kurulum();
+        for (bas, bit) in [
+            ("2026-02-30T14:00", "2026-02-30T15:00"),
+            ("2026-13-45T99:99", "2026-13-45T99:99"),
+            ("2026-09-07T14:00", "2026-02-30T15:00"),
+        ] {
+            let hata = olustur(&c, &yeni(cid, bas, bit), Cihaz::Masaustu).unwrap_err();
+            assert!(
+                matches!(hata, DepoHatasi::GecersizVeri(_)),
+                "{bas} - {bit} reddedilmeliydi"
+            );
+        }
+
+        let sayi: i64 =
+            c.query_row("SELECT COUNT(*) FROM appointments", [], |r| r.get(0)).unwrap();
+        assert_eq!(sayi, 0, "gecersiz gunlu randevu veritabanina yazilmamali");
+    }
+
+    #[test]
+    fn gecerli_randevu_geldi_isaretlenince_son_temas_yazilir_ve_hata_donmez() {
+        // ARTI YON: takvim kontrolu eklenirken gecerli bir gunu de reddetmis
+        // olsaydik ustteki eksi yon testi yine gecerdi. Bu test, tam olarak
+        // gerileme raporundaki cagriyi (olustur + durum_guncelle("geldi"))
+        // ucdan uca calistirir ve randevunun `planlandi` kalmadigini kanitlar.
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2028-02-29T14:00", "2028-02-29T15:00"), Cihaz::Masaustu)
+            .expect("artik yilin 29 Subat'i gecerli bir gundur");
+        durum_guncelle(&c, r.id, "geldi", Cihaz::Masaustu).expect("gecerli gun kabul edilmeli");
+
+        let durum: String = c
+            .query_row("SELECT durum FROM appointments WHERE id = ?1", [r.id], |x| x.get(0))
+            .unwrap();
+        assert_eq!(durum, "geldi");
+        assert_eq!(
+            danisanin_son_temasi(&c, cid),
+            (Some("2028-02-29".into()), Some("2035-02-28".into())),
+            "son temas ve saklama bitisi yazilmali"
+        );
+    }
+
+    #[test]
     fn aralik_sorgusu_baslangici_dahil_bitisi_haric_alir() {
         let (_d, c, cid) = kurulum();
         olustur(&c, &yeni(cid, "2026-09-07T09:00", "2026-09-07T10:00"), Cihaz::Masaustu).unwrap();

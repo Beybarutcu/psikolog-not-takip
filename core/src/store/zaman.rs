@@ -11,14 +11,45 @@
 //! taşındı -- iki (veya daha fazla) kopyadan biri güncellenip diğeri
 //! unutulursa sessiz bir tutarsızlık doğar, bu yüzden TEK tanım burada
 //! tutulur ve diğer modüller buradan içe aktarır.
+//!
+//! # Biçim YETMEZ: takvim de kontrol edilir
+//! Bu fonksiyon uzun süre yalnızca uzunluk/ayıraç/rakam kontrolü yaptı ve
+//! `"2026-02-30T14:00"`, `"2026-13-45T99:99"` gibi biçimce kusursuz ama
+//! takvimde var olmayan damgaları geçirdi. Bu yalnızca "çirkin veri" değildi:
+//! böyle bir randevu `geldi` işaretlendiğinde `appointments::son_temasi_isaretle`
+//! günü `clients::son_temasi_tazele` -> `yil_ekle` -> `tarih_gecerli_mi`
+//! zincirine veriyor, o zincir günü GERÇEKTEN çözümlediği için reddediyor ve
+//! **durum güncellemesinin tamamı geri alınıyordu** -- üstelik hata mesajı
+//! kullanıcının hiç dokunmadığı bir alanı ("Son temas tarihi") adlandırıyordu.
+//! Doğru düzeltme mesajı değiştirmek değil, geçersiz günün veritabanına HİÇ
+//! girmemesiydi; bu yüzden kontrol kaynakta, tek kapıda yapılıyor.
+//!
+//! Duvar saati sözleşmesi korunur: dizgi yalnızca **doğrulamak için**
+//! ayrıştırılır, `Date`/`OffsetDateTime`'a çevrilip geri yazılmaz; saklanan
+//! dizgi neyse odur.
 pub fn zaman_gecerli_mi(s: &str) -> bool {
     let b = s.as_bytes();
-    b.len() == 16
+    let bicim = b.len() == 16
         && b[4] == b'-'
         && b[7] == b'-'
         && b[10] == b'T'
         && b[13] == b':'
-        && b.iter().enumerate().all(|(i, c)| matches!(i, 4 | 7 | 10 | 13) || c.is_ascii_digit())
+        && b.iter().enumerate().all(|(i, c)| matches!(i, 4 | 7 | 10 | 13) || c.is_ascii_digit());
+    if !bicim {
+        return false;
+    }
+    // Gün gerçekten takvimde var mı? `tarih_gecerli_mi` ile AYNI mekanizma
+    // (`tarih_coz`) kullanılıyor: iki ayrı takvim kuralı kopyası tutulsaydı
+    // biri güncellenip diğeri unutulurdu (bu modülün var oluş nedeni).
+    if tarih_coz(&s[0..10]).is_none() {
+        return false;
+    }
+    // Saat/dakika. `bicim` bu dört karakterin rakam olduğunu garanti eder,
+    // dolayısıyla ayrıştırma başarısız olamaz; yine de `is_some_and` ile
+    // panik yolu bırakılmıyor.
+    let saat_ok = s[11..13].parse::<u8>().is_ok_and(|h| h <= 23);
+    let dakika_ok = s[14..16].parse::<u8>().is_ok_and(|d| d <= 59);
+    saat_ok && dakika_ok
 }
 
 /// Yalnızca TARİH (saat yok) biçimi: `YYYY-AA-GG`, 10 karakter.
@@ -65,6 +96,44 @@ mod tests {
     #[test]
     fn gecerli_bicim_kabul_edilir() {
         assert!(zaman_gecerli_mi("2026-09-07T14:00"));
+    }
+
+    /// ARTI YÖN -- sıkılaştırmanın gerçek günleri REDDETMEDİĞİ.
+    ///
+    /// Bu test olmasaydı `zaman_gecerli_mi`'yi `false` döndüren bir uygulama
+    /// da eksi yön testlerinin hepsini geçerdi (tek yönlü mutasyon kapsamı).
+    /// Fonksiyon altı giriş noktasında kullanılıyor; "her şeyi reddet" hatası
+    /// randevu oluşturmayı tamamen kırardı.
+    #[test]
+    fn takvimde_var_olan_zamanlar_kabul_edilir() {
+        assert!(zaman_gecerli_mi("2026-02-28T14:00"), "subatin son gunu");
+        assert!(zaman_gecerli_mi("2028-02-29T14:00"), "2028 artik yil");
+        assert!(zaman_gecerli_mi("2026-01-31T00:00"), "gun ve saat alt/ust sinirlari");
+        assert!(zaman_gecerli_mi("2026-12-31T23:59"), "yilin son dakikasi");
+        assert!(zaman_gecerli_mi("2026-04-30T09:05"), "30 gunluk ay");
+    }
+
+    #[test]
+    fn takvimde_olmayan_zaman_reddedilir() {
+        // Bicimce kusursuz (16 karakter, ayiraclar yerinde, hepsi rakam) ama
+        // takvimde yok. Yalnizca bicim kontrolu yapan eski uygulama bunlari
+        // GECIRIYORDU; gecen damga sonradan `son_temasi_tazele` zincirinde
+        // patlayip durum guncellemesini geri aliyordu.
+        assert!(!zaman_gecerli_mi("2026-02-30T14:00"), "subatin 30'u yok");
+        assert!(!zaman_gecerli_mi("2026-02-29T14:00"), "2026 artik yil degil");
+        assert!(!zaman_gecerli_mi("2026-13-01T00:00"), "13. ay yok");
+        assert!(!zaman_gecerli_mi("2026-00-10T00:00"), "0. ay yok");
+        assert!(!zaman_gecerli_mi("2026-01-32T00:00"), "32. gun yok");
+        assert!(!zaman_gecerli_mi("2026-01-00T00:00"), "0. gun yok");
+        assert!(!zaman_gecerli_mi("2026-04-31T00:00"), "nisan 30 cekiyor");
+    }
+
+    #[test]
+    fn gecersiz_saat_ve_dakika_reddedilir() {
+        assert!(!zaman_gecerli_mi("2026-01-01T24:00"), "24:00 diye bir saat yok");
+        assert!(!zaman_gecerli_mi("2026-01-01T25:00"));
+        assert!(!zaman_gecerli_mi("2026-01-01T00:60"));
+        assert!(!zaman_gecerli_mi("2026-13-45T99:99"), "hepsi birden bozuk");
     }
 
     #[test]

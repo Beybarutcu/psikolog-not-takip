@@ -60,6 +60,11 @@ fn api_router() -> Router<AppState> {
         .route("/kilit-ac", post(routes::session::kilit_ac))
         .route("/kilitle", post(routes::session::kilitle))
         .route("/danisanlar", get(routes::clients::liste).post(routes::clients::olustur))
+        // Arşivleme ayrı bir yol segmentinde ve `POST`: yumuşak silmedir,
+        // `DELETE` değildir (gerekçe için bkz. `routes::clients::arsivle_uc`).
+        // Görev 7'nin ekleyeceği `/danisanlar/{id}` ile çakışmaz -- bu üç
+        // segmentli.
+        .route("/danisanlar/{id}/arsivle", post(routes::clients::arsivle_uc))
         .route(
             "/randevular",
             get(routes::appointments::liste).post(routes::appointments::olustur),

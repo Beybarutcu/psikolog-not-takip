@@ -270,6 +270,136 @@ async fn danisan_eklenir_ve_listelenir() {
     assert_eq!(liste.as_array().unwrap().len(), 1);
 }
 
+// --- Plan 2'den devredilen madde 2: arsivleme rotasi ------------------
+
+#[tokio::test]
+async fn danisan_arsivlenir_ve_listeden_dusser_ama_silinmez() {
+    let (_d, s) = kurulu_state().await;
+    let (_, a) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Mehmet"}))).await;
+    let id = a["id"].as_i64().unwrap();
+
+    let (kod, _) = cagir(&s, "POST", &format!("/api/danisanlar/{id}/arsivle"), None).await;
+    assert_eq!(kod, StatusCode::OK);
+
+    let (_, liste) = cagir(&s, "GET", "/api/danisanlar", None).await;
+    assert_eq!(liste.as_array().unwrap().len(), 1, "arsivlenen danisan listede olmamali");
+    assert_eq!(liste[0]["ad_soyad"], "Mehmet");
+
+    // Arsivleme FIZIKSEL SILME DEGILDIR: kayit duruyor, yalnizca durumu
+    // degisti. Arayuz metni de bunu soyluyor -- burada dogrulanan sey o
+    // metnin dogru oldugudur.
+    let conn = acik_baglanti_ile(&s, Instant::now()).unwrap();
+    let (sayi, durum): (i64, String) = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM clients), durum FROM clients WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(sayi, 2, "arsivleme satiri SILMEMELI");
+    assert_eq!(durum, "arsiv");
+}
+
+#[tokio::test]
+async fn arsivlenen_danisan_randevu_secim_listesinde_gorunmez() {
+    // Devredilen maddenin somut sonucu: randevu acilir menusu sinirsiz
+    // buyuyordu. Menu `GET /api/danisanlar` ile besleniyor.
+    let (_d, s) = kurulu_state().await;
+    let (_, a) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let id = a["id"].as_i64().unwrap();
+    let (_, once) = cagir(&s, "GET", "/api/danisanlar", None).await;
+    assert_eq!(once.as_array().unwrap().len(), 1, "on kosul: danisan listede");
+
+    cagir(&s, "POST", &format!("/api/danisanlar/{id}/arsivle"), None).await;
+
+    let (_, sonra) = cagir(&s, "GET", "/api/danisanlar", None).await;
+    assert!(sonra.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn olmayan_danisanin_arsivlenmesi_404_doner() {
+    let (_d, s) = kurulu_state().await;
+    let (kod, json) = cagir(&s, "POST", "/api/danisanlar/9999/arsivle", None).await;
+    assert_eq!(kod, StatusCode::NOT_FOUND);
+    assert!(json.get("hata").is_some());
+}
+
+// Kilitli oturum korumasi: arsivleme de `guard::acik_baglanti` kapisindan
+// gecmeli. Bulgu 4 dersi geregi yalnizca 401'e degil, islemin GERCEKTEN
+// uygulanmamis olduguna da bakiliyor.
+#[tokio::test]
+async fn kilitliyken_danisan_arsivleme_401_doner_ve_arsivlemez() {
+    let (_d, s) = kurulu_state().await;
+    let (_, a) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Gizli Danisan"}))).await;
+    let id = a["id"].as_i64().unwrap();
+    cagir(&s, "POST", "/api/kilitle", None).await;
+
+    let (kod, json) = cagir(&s, "POST", &format!("/api/danisanlar/{id}/arsivle"), None).await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED);
+    assert!(json.get("hata").is_some());
+    assert!(
+        !json.to_string().contains("Gizli Danisan"),
+        "kilitliyken bilinen bir danisan adi govdede olmamali: {json}"
+    );
+
+    cagir(&s, "POST", "/api/kilit-ac", Some(json!({"parola":"gizliparola"}))).await;
+    let (_, liste) = cagir(&s, "GET", "/api/danisanlar", None).await;
+    assert_eq!(
+        liste.as_array().unwrap().len(),
+        1,
+        "kilitliyken yapilan arsivleme istegi uygulanmamis olmali"
+    );
+}
+
+// --- Plan 2'den devredilen madde 1: ad/telefon dogrulamasi HTTP'de ----
+
+#[tokio::test]
+async fn gecersiz_telefon_400_ve_alani_adlandiran_mesaj_doner() {
+    let (_d, s) = kurulu_state().await;
+    let (kod, json) = cagir(
+        &s, "POST", "/api/danisanlar",
+        Some(json!({"ad_soyad":"Ayse","telefon":"asdfgh"})),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::BAD_REQUEST);
+    // "Danisan eklenemedi" yeterli DEGIL: kullanici hangi alani duzeltecegini
+    // bilmeli (bu kod tabaninda "her hata parola hatasidir" sinifi dort
+    // katmanda ayri ayri bulundu).
+    let mesaj = json["hata"].as_str().unwrap();
+    assert!(mesaj.contains("Telefon"), "hata mesaji alani adlandirmali: {mesaj}");
+
+    let (_, liste) = cagir(&s, "GET", "/api/danisanlar", None).await;
+    assert!(liste.as_array().unwrap().is_empty(), "reddedilen kayit yazilmamis olmali");
+}
+
+#[tokio::test]
+async fn gecerli_telefon_hala_kabul_edilir() {
+    // Reddetme testinin ikizi: her seyi reddeden bir dogrulayici ustteki
+    // testi de gecerdi.
+    let (_d, s) = kurulu_state().await;
+    let (kod, olusan) = cagir(
+        &s, "POST", "/api/danisanlar",
+        Some(json!({"ad_soyad":"Ayse","telefon":"+90 (212) 555 12 34"})),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::CREATED);
+    assert_eq!(olusan["telefon"], "+90 (212) 555 12 34");
+}
+
+#[tokio::test]
+async fn cok_uzun_ad_400_doner() {
+    let (_d, s) = kurulu_state().await;
+    let (kod, json) = cagir(
+        &s, "POST", "/api/danisanlar",
+        Some(json!({"ad_soyad": "a".repeat(200)})),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::BAD_REQUEST);
+    let mesaj = json["hata"].as_str().unwrap();
+    assert!(mesaj.contains("adı"), "hata mesaji alani adlandirmali: {mesaj}");
+}
+
 #[tokio::test]
 async fn randevu_olusturulur_ve_hafta_sorgusunda_gorunur() {
     let (_d, s) = kurulu_state().await;

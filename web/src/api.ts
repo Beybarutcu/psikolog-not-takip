@@ -54,6 +54,13 @@ export const takvimApi = {
       method: 'POST',
       body: JSON.stringify({ ad_soyad, telefon }),
     }),
+  // Arşivleme FİZİKSEL SİLME DEĞİLDİR: sunucudaki `clients::arsivle` yalnızca
+  // `durum`'u 'arsiv' yapar; danışanın randevuları, notları ve dosyaları
+  // yerinde kalır, danışan yalnızca aktif listeden (ve onunla beslenen randevu
+  // açılır menüsünden) düşer. Uç nokta bu yüzden `DELETE` değil, ne yaptığını
+  // adında söyleyen bir `POST` — ve arayüz metni de aynı şeyi söylemeli.
+  danisanArsivle: (id: number) =>
+    istek<Record<string, never>>(`/api/danisanlar/${id}/arsivle`, { method: 'POST' }),
   randevulariGetir: (baslangic: string, bitis: string) =>
     istek<Randevu[]>(
       `/api/randevular?baslangic=${encodeURIComponent(baslangic)}&bitis=${encodeURIComponent(bitis)}`,

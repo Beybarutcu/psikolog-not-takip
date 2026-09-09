@@ -40,7 +40,7 @@
 use crate::store::audit::{
     kaydet, kaydet_birlestirerek, Ayrinti, Cihaz, Eylem, BIRLESTIRME_PENCERESI_DK,
 };
-use crate::store::clients::DepoHatasi;
+use crate::store::clients::{son_temasi_tazele, DepoHatasi, VARSAYILAN_SAKLAMA_YILI};
 use crate::store::zaman::zaman_gecerli_mi;
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -285,7 +285,59 @@ pub fn durum_guncelle(
         Some(Ayrinti::Durum(sabit_durum)),
     )?;
 
+    if sabit_durum == "geldi" {
+        son_temasi_isaretle(&tx, id)?;
+    }
+
     tx.commit()?;
+    Ok(())
+}
+
+/// Randevu "geldi" olarak işaretlendiğinde danışanın son temas tarihini ve
+/// saklama süresi bitişini tazeler.
+///
+/// # Neden burada
+/// `clients::son_temasi_tazele` Plan 3 Görev 4'te yazıldı; **çağrı yeri
+/// olmadan bırakılsaydı** `clients::arsivle` ile tam olarak aynı duruma
+/// düşerdi (yazılmış, test edilmiş, hiç çağrılmayan fonksiyon -- Plan 2'nin
+/// devrettiği maddelerden biri buydu). Danışanın "son teması", GERÇEKLEŞMİŞ
+/// son seansıdır: planlanmış ama gelinmemiş bir randevu temas değildir, bu
+/// yüzden yalnızca `geldi` bu yolu tetikler.
+///
+/// # Neden geriye gitmez
+/// Kullanıcı eski bir randevuyu sonradan "geldi" işaretleyebilir. Son temas
+/// bu yüzden yalnızca İLERİ taşınır; aksi hâlde geçmişe dönük bir düzeltme
+/// saklama süresini kısaltır ve dosya erkenden imha listesine düşerdi.
+/// Tekdüzelik kararı burada, çağıranda verilir: `son_temasi_tazele` kendisi
+/// koşulsuzdur (bir yanlış girilmiş tarihi geri almak isteyen bir çağıran da
+/// olabilir).
+///
+/// Ayrı bir log satırı YAZMAZ: bunu tetikleyen kullanıcı eylemi (durum
+/// değişikliği) hemen yukarıda zaten loglandı; ikinci satır aynı tek eylem
+/// için ikinci bir silinemez kayıt olurdu (bkz. hacim politikası).
+fn son_temasi_isaretle(tx: &Connection, randevu_id: i64) -> Result<(), DepoHatasi> {
+    let (client_id, baslangic) = tx.query_row(
+        "SELECT client_id, baslangic FROM appointments WHERE id = ?1",
+        [randevu_id],
+        |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+    )?;
+
+    // `baslangic` 16 karakterlik duvar saati damgasıdır (`olustur`/`guncelle`
+    // bunu doğrular); son temas ise yalnızca GÜN tutar.
+    let Some(gun) = baslangic.get(0..10) else {
+        return Err(DepoHatasi::GecersizVeri("Randevu başlangıcı çözümlenemedi.".into()));
+    };
+
+    let mevcut: Option<String> =
+        tx.query_row("SELECT son_temas FROM clients WHERE id = ?1", [client_id], |r| r.get(0))?;
+
+    let ileri_mi = match &mevcut {
+        None => true,
+        Some(m) => m.as_str() < gun,
+    };
+    if ileri_mi {
+        son_temasi_tazele(tx, client_id, gun, VARSAYILAN_SAKLAMA_YILI)?;
+    }
     Ok(())
 }
 
@@ -1743,5 +1795,113 @@ mod tests {
         assert_eq!(kayitlar.len() - once, 1, "gercek silme tam olarak 1 satir yazmali");
         assert_eq!(kayitlar[0].eylem, "silme");
         assert_eq!(kayitlar[0].varlik, "appointment_seri");
+    }
+
+    // --- Son temas / saklama suresi baglantisi --------------------------
+
+    fn danisanin_son_temasi(c: &rusqlite::Connection, cid: i64) -> (Option<String>, Option<String>) {
+        c.query_row("SELECT son_temas, saklama_bitis FROM clients WHERE id = ?1", [cid], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn geldi_isaretlemek_son_temasi_ve_saklama_bitisini_tazeler() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        assert_eq!(
+            danisanin_son_temasi(&c, cid),
+            (None, None),
+            "on kosul: randevu olusturmak tek basina temas degildir"
+        );
+
+        durum_guncelle(&c, r.id, "geldi", Cihaz::Masaustu).unwrap();
+
+        assert_eq!(
+            danisanin_son_temasi(&c, cid),
+            (Some("2026-09-07".into()), Some("2033-09-07".into())),
+            "gerceklesen seans son temasi tazelemeli"
+        );
+    }
+
+    #[test]
+    fn gelmedi_ve_iptal_son_temasi_degistirmez() {
+        // Ters yon: her durum degisikligi temas SAYILMAMALI. Bu test
+        // olmasaydi "durum ne olursa olsun tazele" diyen bir uygulama da
+        // ustteki testi gecerdi.
+        let (_d, c, cid) = kurulum();
+        for (i, durum) in ["gelmedi", "iptal", "planlandi"].iter().enumerate() {
+            let gun = format!("2026-09-0{}", i + 1);
+            let r = olustur(
+                &c,
+                &yeni(cid, &format!("{gun}T14:00"), &format!("{gun}T15:00")),
+                Cihaz::Masaustu,
+            )
+            .unwrap();
+            durum_guncelle(&c, r.id, durum, Cihaz::Masaustu).unwrap();
+            assert_eq!(
+                danisanin_son_temasi(&c, cid),
+                (None, None),
+                "{durum} bir temas degildir"
+            );
+        }
+    }
+
+    #[test]
+    fn son_temas_geriye_gitmez() {
+        let (_d, c, cid) = kurulum();
+        let yeni_r = olustur(&c, &yeni(cid, "2026-09-14T14:00", "2026-09-14T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        let eski_r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+
+        durum_guncelle(&c, yeni_r.id, "geldi", Cihaz::Masaustu).unwrap();
+        // Kullanici gecmis bir randevuyu SONRADAN "geldi" isaretliyor.
+        durum_guncelle(&c, eski_r.id, "geldi", Cihaz::Masaustu).unwrap();
+
+        assert_eq!(
+            danisanin_son_temasi(&c, cid).0.as_deref(),
+            Some("2026-09-14"),
+            "gecmise donuk duzeltme son temasi geri almamali"
+        );
+    }
+
+    #[test]
+    fn geldi_isaretlemek_hala_tek_log_satiri_uretir() {
+        // Son temas tazelemesi AYRI bir log satiri yazmamali: "Geldi"
+        // isaretlemek tek bir kullanici eylemidir (Plan 3 Gorev 2'de
+        // duzeltilen "iki satir" hatasinin ayni sinifi).
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        let once = crate::store::audit::son_kayitlar(&c, 200).unwrap().len();
+
+        durum_guncelle(&c, r.id, "geldi", Cihaz::Masaustu).unwrap();
+
+        assert_eq!(
+            crate::store::audit::son_kayitlar(&c, 200).unwrap().len() - once,
+            1,
+            "geldi isaretlemek tam olarak 1 satir yazmali"
+        );
+    }
+
+    #[test]
+    fn geldi_audit_basarisiz_olursa_son_temas_da_geri_alinir() {
+        // Atomiklik: durum + log + son temas TEK transaction. `audit_log`
+        // dusurulunce ucu birden geri alinmali.
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        c.execute("DROP TABLE audit_log", []).unwrap();
+
+        assert!(durum_guncelle(&c, r.id, "geldi", Cihaz::Masaustu).is_err());
+
+        assert_eq!(danisanin_son_temasi(&c, cid), (None, None), "son temas geri alinmali");
+        let durum: String = c
+            .query_row("SELECT durum FROM appointments WHERE id = ?1", [r.id], |x| x.get(0))
+            .unwrap();
+        assert_eq!(durum, "planlandi", "randevu durumu da geri alinmali");
     }
 }

@@ -15,6 +15,17 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   const [yeniAdSoyad, setYeniAdSoyad] = useState('')
   const [yeniTelefon, setYeniTelefon] = useState('')
   const [danisanHata, setDanisanHata] = useState<string | null>(null)
+  // Arşivleme geri alınamaz SANILAN bir işlemdir (aslında değil — kayıtlar
+  // duruyor), bu yüzden randevu silmedeki iki adımlı onay deseni burada da
+  // uygulanıyor. Onay state'i ONAYLANAN DANIŞANIN KENDİSİDİR: Görev 10
+  // inceleme Bulgu 1'de panelin iç state'i bir seçimden diğerine sızıyordu ve
+  // çözüm state'i seçime bağlamaktı (`key` prop'u). Burada aynı ilke, bu kez
+  // state'in kendisi seçimi taşıyacak biçimde: başka bir danışanın
+  // "Arşivle"sine basmak onayı devretmez, tümüyle değiştirir; onay metni de
+  // her zaman state'teki danışanın adını gösterir.
+  const [arsivOnayi, setArsivOnayi] = useState<Danisan | null>(null)
+  const [arsivBilgisi, setArsivBilgisi] = useState<string | null>(null)
+  const [arsivSuruyor, setArsivSuruyor] = useState(false)
 
   const yukle = useCallback(async () => {
     const gunler = haftaGunleri(haftaBasi)
@@ -90,7 +101,40 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
       // birleştirme (`clients::listele`) zaten kapatıyor.
       setDanisanlar(await takvimApi.danisanlariGetir())
     } catch (e) {
+      // Sunucudan gelen mesaj OLDUĞU GİBİ gösteriliyor: doğrulama hataları
+      // hangi alanın (ad mı, telefon mu) neden reddedildiğini söylüyor
+      // (bkz. `store::clients` doğrulayıcıları). Burada onu genel bir
+      // "Danışan eklenemedi." ile değiştirmek, kullanıcıya neyi
+      // düzelteceğini söylememek olurdu — bu kod tabanında tekrar eden
+      // "her hata parola hatasıdır" sınıfının ta kendisi.
       setDanisanHata(e instanceof Error ? e.message : 'Danışan eklenemedi.')
+    }
+  }
+
+  // Arşivleme SİLME DEĞİLDİR. `clients::arsivle` Plan 2 Görev 3'te yazılmış
+  // ama hiçbir yerden çağrılmıyordu: danışan eklenebiliyor, arşivlenemiyordu
+  // ve hem bu liste hem de randevu panelindeki açılır menü sınırsız
+  // büyüyordu (`seriyi_sil` ile aynı bulgu sınıfı, bkz. dal incelemesi I4a).
+  async function danisanArsivle(danisan: Danisan) {
+    setArsivSuruyor(true)
+    try {
+      await takvimApi.danisanArsivle(danisan.id)
+      setDanisanHata(null)
+      setArsivOnayi(null)
+      // Sunucudan YENİDEN ÇEKİLMİYOR: sonuç yerel olarak kesin biçimde
+      // bilinebilir (tek bir id listeden düşer) ve her `danisanlariGetir`
+      // çağrısı sunucuda kalıcı bir `goruntuleme` satırı üretme riski taşır
+      // (bkz. Plan 3 Görev 2 ve `durumDegis`/`sil` için aynı gerekçe).
+      setDanisanlar((onceki) => onceki.filter((d) => d.id !== danisan.id))
+      // Kullanıcı "hiçbir şey olmadı" da sanmamalı: ad listeden düşüyor VE
+      // ne olduğu açıkça yazılıyor.
+      setArsivBilgisi(
+        `${danisan.ad_soyad} arşivlendi. Kayıtları silinmedi; yalnızca listede görünmüyor.`,
+      )
+    } catch (e) {
+      setDanisanHata(e instanceof Error ? e.message : 'Danışan arşivlenemedi.')
+    } finally {
+      setArsivSuruyor(false)
     }
   }
 
@@ -248,15 +292,66 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
         )}
 
         {danisanHata && <p className="mt-1 text-sm text-red-600">{danisanHata}</p>}
+        {arsivBilgisi && <p className="mt-1 text-sm text-slate-600">{arsivBilgisi}</p>}
 
         {danisanlar.length > 0 && (
           <ul className="mt-2 flex flex-wrap gap-2 text-sm text-slate-700">
             {danisanlar.map((d) => (
-              <li key={d.id} className="rounded-full bg-slate-100 px-3 py-1">
-                {d.ad_soyad}
+              <li
+                key={d.id}
+                className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1"
+              >
+                <span>{d.ad_soyad}</span>
+                {/* Erişilebilir ad bilerek yalnızca "Arşivle": danışan adını
+                    da içerseydi takvimdeki randevu düğmesiyle aynı ada sahip
+                    ikinci bir düğme oluşur ve ad ile arama yapan testler
+                    (ve ekran okuyucu kullanıcısı) hangisinin randevu,
+                    hangisinin arşivleme olduğunu ayırt edemezdi. Hangi
+                    danışan olduğu onay metninde açıkça yazıyor. */}
+                <button
+                  type="button"
+                  className="text-slate-500 underline disabled:opacity-50"
+                  title="Danışanı arşivle"
+                  disabled={arsivSuruyor}
+                  onClick={() => {
+                    setArsivBilgisi(null)
+                    setArsivOnayi(d)
+                  }}
+                >
+                  Arşivle
+                </button>
               </li>
             ))}
           </ul>
+        )}
+
+        {/* İki adımlı onay. Metin ne olduğunu ve ne OLMADIĞINI birlikte
+            söylüyor: kullanıcı ne "sildim, gitti" ne de "hiçbir şey olmadı"
+            sanmalı. */}
+        {arsivOnayi && (
+          <div className="mt-2 rounded bg-amber-50 p-2">
+            <p className="text-sm text-amber-900">
+              {arsivOnayi.ad_soyad} arşivlensin mi? Danışan listeden ve randevu seçiminden
+              kaldırılır. Geçmiş randevuları, notları ve dosyaları silinmez — kayıtlar
+              durmaya devam eder, yalnızca listede görünmez.
+            </p>
+            <div className="mt-2 flex gap-2">
+              <button
+                className="rounded bg-amber-700 px-3 py-1 text-sm text-white disabled:opacity-50"
+                disabled={arsivSuruyor}
+                onClick={() => void danisanArsivle(arsivOnayi)}
+              >
+                Evet, arşivle
+              </button>
+              <button
+                className="rounded border px-3 py-1 text-sm"
+                disabled={arsivSuruyor}
+                onClick={() => setArsivOnayi(null)}
+              >
+                Vazgeç
+              </button>
+            </div>
+          </div>
         )}
       </div>
 

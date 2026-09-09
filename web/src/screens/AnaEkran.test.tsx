@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AnaEkran } from './AnaEkran'
@@ -563,5 +563,120 @@ describe('AnaEkran — danışan ekleme doğrulama hatası (Plan 2 devri)', () =
 
     expect(await screen.findByText(/Telefon en az 7 rakam içermeli/)).toBeDefined()
     expect(screen.queryByText('Danışan eklenemedi.')).toBeNull()
+  })
+})
+
+// Plan 2'den devredilen madde: `seciliRandevu`, `yukle()` sonrası bayatlıyor.
+// Panelin `key`'i `randevu-${id}` olduğu için kimlik değişmediğinde bileşen
+// yeniden mount EDİLMEZ ve panel, yeniden yüklemeden önceki nesneyi tutmaya
+// devam eder. Plan 2'de görünmezdi (panel `durum` basmıyordu); Plan 3'te
+// seans notu editörü bu nesneye bağlanacak — yazdığı `appointment_id` ve
+// `client_id` buradan gelecek. Bayat nesne, notun yanlış (ya da artık var
+// olmayan) bir randevuya yazılması demektir.
+//
+// Testler AnaEkran seviyesinde: RandevuPaneli.test.tsx'teki testler her
+// zaman temiz bir mount yapar ve bu regresyonu göremez.
+describe('AnaEkran — seçili randevu yeniden yüklemede bayatlamaz (Plan 2 devri)', () => {
+  const gercekFetch = globalThis.fetch
+  // Sunucudaki kayıt. Testler bunu değiştirip yeniden yükleme tetikliyor.
+  let sunucudakiler: typeof randevuA[] = []
+  let randevuIstegi = 0
+  let randevularYetkisiz = false
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 9, 12, 0))
+    sunucudakiler = [randevuA]
+    randevuIstegi = 0
+    randevularYetkisiz = false
+
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL) => {
+      const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      if (yol.startsWith('/api/danisanlar')) {
+        return { ok: true, json: async () => danisanlar } as unknown as Response
+      }
+      if (yol.startsWith('/api/cakisma')) {
+        return {
+          ok: true,
+          json: async () => ({
+            cakisanlar: [], cakisan_hafta_sayisi: 0, kontrol_edilen_hafta: 1,
+          }),
+        } as unknown as Response
+      }
+      if (yol.startsWith('/api/randevular')) {
+        randevuIstegi += 1
+        // Tarih aralığı bilerek yok sayılıyor: ölçülen şey haftanın hangi
+        // randevuları içerdiği değil, yeniden yüklemenin seçili nesneye ne
+        // yaptığı.
+        if (randevularYetkisiz && randevuIstegi > 1) {
+          return {
+            ok: false,
+            status: 401,
+            json: async () => ({ hata: 'Oturum zaman aşımına uğradı.' }),
+          } as unknown as Response
+        }
+        return { ok: true, json: async () => sunucudakiler } as unknown as Response
+      }
+      throw new Error(`beklenmeyen istek: ${yol}`)
+    }) as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    globalThis.fetch = gercekFetch
+    vi.restoreAllMocks()
+  })
+
+  async function randevuSec() {
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    expect(screen.getByRole('heading', { name: 'Randevu' })).toBeDefined()
+  }
+
+  it('yeniden yükleme, panelin elindeki randevuyu TAZELER', async () => {
+    await randevuSec()
+    expect(screen.getByText(/2026-09-07 10:00/)).toBeDefined()
+
+    // Kayıt sunucuda değişti (ör. başka bir uygulama örneği güncelledi).
+    sunucudakiler = [{
+      ...randevuA,
+      baslangic: '2026-09-07T11:00',
+      bitis: '2026-09-07T12:00',
+      client_id: 2,
+      danisan_adi: 'Mehmet Demir',
+    }]
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
+
+    // Panel yeniden mount edilmedi (`key` aynı id) ama elindeki nesne taze.
+    // Bayat kalsaydı burada hâlâ 10:00 yazardı — ve editör notu, kaydı
+    // değişmiş bir randevunun eski kopyasına dayanarak yazardı.
+    await waitFor(() => expect(screen.getByText(/2026-09-07 11:00/)).toBeDefined())
+    expect(screen.queryByText(/2026-09-07 10:00/)).toBeNull()
+  })
+
+  it('yeniden yüklemede randevu artık gelmiyorsa panel kapanır', async () => {
+    await randevuSec()
+
+    // Randevu sunucuda yok (ör. seri iptali bu randevuyu da kapsadı).
+    sunucudakiler = []
+    await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
+
+    // Var olmayan bir randevuya bağlı panel (ve ileride not editörü) açık
+    // kalırsa, otomatik kayıt silinmiş bir `appointment_id`'ye yazmaya
+    // çalışır.
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Randevu' })).toBeNull())
+  })
+
+  it('401 sonrası panel kapanır', async () => {
+    randevularYetkisiz = true
+    await randevuSec()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
+
+    // Oturum kilitlendi: takvim listesi zaten temizleniyordu ama panel
+    // seçili danışanı ve saatini göstermeye devam ediyordu.
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Randevu' })).toBeNull())
   })
 })

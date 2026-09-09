@@ -35,7 +35,24 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
       sonGun.getFullYear(), sonGun.getMonth(), sonGun.getDate(), 23, 59,
     ))
     try {
-      setRandevular(await takvimApi.randevulariGetir(baslangic, bitis))
+      const gelen = await takvimApi.randevulariGetir(baslangic, bitis)
+      setRandevular(gelen)
+      // Seçili randevu TAZE nesneyle değiştirilir. Panelin `key`'i
+      // `randevu-${id}` olduğu için kimlik aynı kaldığında bileşen yeniden
+      // mount EDİLMEZ; `seciliRandevu` burada tazelenmezse panel, yeniden
+      // yüklemeden önceki nesneyi tutmaya devam eder. Plan 2'de görünür bir
+      // etkisi yoktu (panel `durum` basmıyor); Plan 3'te seans notu editörü
+      // bu nesneye bağlanacak ve yazdığı `appointment_id` ile `client_id`
+      // buradan gelecek — bayat bir nesneden gelen kimlik, notu yanlış (ya
+      // da artık var olmayan) bir randevuya yazmak demektir.
+      //
+      // Listede yoksa seçim KAPATILIR: randevu silinmiş olabilir (ör. seri
+      // iptali bu randevuyu da kapsadı) ya da başka bir haftaya bakılıyordur.
+      // Her iki durumda da ekranda görünmeyen bir randevuya bağlı bir not
+      // editörü açık tutmak, kaydı belirsiz bir kimliğe göndermek olurdu.
+      setSeciliRandevu((secili) =>
+        secili === null ? null : (gelen.find((r) => r.id === secili.id) ?? null),
+      )
       setHata(null)
     } catch (e) {
       if (e instanceof YetkisizHata) {
@@ -45,6 +62,14 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
         // ekranda danışan adları kalmasın diye randevu listesi burada
         // hemen temizleniyor.
         setRandevular([])
+        // Panel de kapatılıyor: açık panel seçili danışanın adını (açılır
+        // menüde) ve saatini taşıyor, yani listeyi temizlemek tek başına
+        // ekranı boşaltmıyordu. Panelde açık bir not editörünün yazılmamış
+        // metni bu yüzden kaybolmaz — o metin `seans/taslak.ts`'te, bileşen
+        // ağacının dışında duruyor ve kilit açılıp seans yeniden açıldığında
+        // geri yükleniyor (bkz. `NotEditoru`'nun 401 kararı).
+        setSeciliRandevu(null)
+        setSeciliBosSaat(null)
       }
       setHata(e instanceof Error ? e.message : 'Randevular yüklenemedi.')
     }

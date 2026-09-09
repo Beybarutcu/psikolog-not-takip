@@ -377,6 +377,16 @@ pub fn ozel_not_kaydet(
 /// okunur. Aynı kural özel not listesi eklenirse de geçerlidir. Testle
 /// korunur: `randevu_baska_danisana_tasininca_not_da_tasinir`.
 ///
+/// # Var olmayan danışan `Bulunamadi` döner — log YAZILMAZ
+/// Varlık kontrolü olmadan bu fonksiyon, olmayan her kimlik için ayrı bir
+/// birleştirme anahtarı (`liste:<id>`) ürettiğinden **silinemez** bir satır
+/// bırakırdı; Görev 7'de rota açılınca yol parametresindeki her sayı kalıcı
+/// bir satır basardı. Bu, `audit`'in kendi kuralının ihlalidir: *hiçbir
+/// satırı etkilemeyen işlemler loglanırsa dışarıdan tetiklenebilir, sınırsız
+/// ve silinemez bir gürültü yolu açılır.* Desen `clients::getir` ve
+/// `not_getir`/`randevunun_danisani` ile aynıdır: **önce oku, yoksa dön,
+/// sonra logla.**
+///
 /// # `limit`
 /// Doğrudan `LIMIT`'e geçer ve burada **doğrulanmaz**: negatif bir değer
 /// (`-1`) SQLite'ta "sınırsız" demektir, yani çağıran taraf sınır koymamış
@@ -394,6 +404,15 @@ pub fn danisan_notlari(
     limit: i64,
     cihaz: Cihaz,
 ) -> Result<Vec<SeansNotu>, DepoHatasi> {
+    // Once varlik kontrolu, SONRA log: olmayan bir danisan silinemez bir
+    // satir birakmasin (bkz. fonksiyon dokumantasyonu).
+    let var: Option<i64> = conn
+        .query_row("SELECT id FROM clients WHERE id = ?1", [client_id], |r| r.get(0))
+        .optional()?;
+    if var.is_none() {
+        return Err(DepoHatasi::Bulunamadi);
+    }
+
     let mut stmt = conn.prepare(
         "SELECT p.appointment_id, a.client_id, p.sablon, p.icerik, p.guncelleme_zamani
          FROM progress_notes p
@@ -937,6 +956,28 @@ mod tests {
             b_notlari[0].client_id, b.id,
             "donen client_id de yetkili kaynaktan (randevudan) gelmeli"
         );
+    }
+
+    #[test]
+    fn olmayan_danisanin_not_listesi_bulunamadi_dondurur_ve_log_yazmaz() {
+        // `audit`'in kendi kurali: hicbir satiri etkilemeyen islemler
+        // loglanirsa disaridan tetiklenebilir, SINIRSIZ ve SILINEMEZ bir
+        // gurultu yolu acilir. Her farkli kimlik ayri bir birlestirme
+        // anahtari (`liste:<id>`) uretiyordu.
+        let (_d, c, _cid, _rid) = kurulum();
+        let onceki: i64 =
+            c.query_row("SELECT COUNT(*) FROM audit_log", [], |r| r.get(0)).unwrap();
+
+        for yok in [90001, 90002, 90003] {
+            assert!(matches!(
+                danisan_notlari(&c, yok, 50, Cihaz::Masaustu).unwrap_err(),
+                DepoHatasi::Bulunamadi
+            ));
+        }
+
+        let sonraki: i64 =
+            c.query_row("SELECT COUNT(*) FROM audit_log", [], |r| r.get(0)).unwrap();
+        assert_eq!(sonraki, onceki, "olmayan danisan icin log satiri yazilmamali");
     }
 
     #[test]

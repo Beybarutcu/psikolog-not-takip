@@ -1,6 +1,7 @@
+use crate::store::appointments::ASGARI_UCRET;
 use rusqlite::{Connection, OptionalExtension};
 
-pub const CURRENT_VERSION: i64 = 3;
+pub const CURRENT_VERSION: i64 = 4;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -138,6 +139,117 @@ INSERT OR IGNORE INTO templates (kod, ad, basliklar, yerlesik) VALUES
     ('serbest', 'Serbest', '[]', 1);
 "#;
 
+/// Surum 4: `appointments.ucret` icin veritabani kisiti.
+///
+/// # Neden tablo yeniden olusturuluyor
+///
+/// `ucret >= 0` kurali bugune kadar YALNIZCA uygulama katmanindaydi
+/// (`appointments::ucret_gecerli_mi`). SQLite var olan bir tabloya `CHECK`
+/// EKLEYEMEZ (`ALTER TABLE ... ADD CONSTRAINT` yok), bu yuzden SQLite'in
+/// kendi belgeledigi yol izleniyor: yeni tablo, veri kopyasi, eski tabloyu
+/// dusur, yeniden adlandir, indeksleri kur.
+///
+/// # KRITIK: bu adim yabanci anahtarlar KAPALIYKEN calismak zorunda
+///
+/// `progress_notes` ve `private_notes` `appointments`'a `ON DELETE CASCADE`
+/// ile bagli. Yabanci anahtarlar acikken `DROP TABLE appointments` ortulu
+/// bir `DELETE FROM appointments` calistirir ve **butun seans notlariyla
+/// ozel notlari siler** -- yani "ucrete kisit ekleyen" bir gocun yan etkisi
+/// klinik kaydin tamaminin yok olmasi olurdu. `migrate` bu yuzden
+/// `PRAGMA foreign_keys`'i BEGIN'den once kapatir (pragma transaction icinde
+/// no-op'tur) ve her cikista geri acar; `v4_uygula` de kopyalamadan sonra
+/// `pragma_foreign_key_check` ile baglarin saglam kaldigini dogrular.
+///
+/// # `CHECK (ucret IS NULL OR ucret >= 0)`
+///
+/// `NULL` bilerek gecerli: ucretsiz ya da henuz girilmemis seans. Sabit
+/// `appointments::ASGARI_UCRET` ile ayni kumeyi tasir; ayrisma
+/// `tests::ucret_alt_siniri_semada_ve_uygulama_katmaninda_ayni` ile iki
+/// yonlu yakalanir. Sayi buraya ELLE yazili -- goc adimi tarihsel bir
+/// metindir, mutasyona ugrayabilen bir sabitten turetilemez.
+///
+/// `CREATE TABLE`'da `IF NOT EXISTS` YOK: `appointments_v4` adinda bir nesne
+/// kalmissa bir onceki gocun yarida kaldigi anlamina gelir ve sessizce
+/// uzerine calismak yerine hata verilmelidir. Adimin kendisi idempotent
+/// degildir; onu koruyan sey surum kapisidir
+/// (`tests::surum_kapisi_uygulanmis_adimi_yeniden_calistirmaz`).
+const V4: &str = r#"
+CREATE TABLE appointments_v4 (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id         INTEGER NOT NULL REFERENCES clients(id),
+    baslangic         TEXT NOT NULL,
+    bitis             TEXT NOT NULL,
+    durum             TEXT NOT NULL DEFAULT 'planlandi',
+    ucret             INTEGER,
+    odendi            INTEGER NOT NULL DEFAULT 0,
+    seri_id           TEXT,
+    olusturma_zamani  TEXT NOT NULL,
+    guncelleme_zamani TEXT NOT NULL,
+    CHECK (durum IN ('planlandi','geldi','gelmedi','iptal')),
+    CHECK (bitis > baslangic),
+    CHECK (ucret IS NULL OR ucret >= 0)
+);
+
+INSERT INTO appointments_v4
+    (id, client_id, baslangic, bitis, durum, ucret, odendi, seri_id,
+     olusturma_zamani, guncelleme_zamani)
+SELECT id, client_id, baslangic, bitis, durum, ucret, odendi, seri_id,
+       olusturma_zamani, guncelleme_zamani
+FROM appointments;
+
+DROP TABLE appointments;
+
+ALTER TABLE appointments_v4 RENAME TO appointments;
+
+CREATE INDEX IF NOT EXISTS ix_app_baslangic ON appointments(baslangic);
+CREATE INDEX IF NOT EXISTS ix_app_client ON appointments(client_id);
+CREATE INDEX IF NOT EXISTS ix_app_seri ON appointments(seri_id);
+"#;
+
+/// V4 adimi: once mevcut verinin yeni kisiti gecip gecmedigi denetlenir,
+/// sonra tablo yeniden olusturulur, en sonunda yabanci anahtar baglari
+/// dogrulanir.
+///
+/// Uc adimin da hatasi cagirandaki **tek transaction** icinde olustugu icin
+/// herhangi biri basarisiz olursa sema butunuyle eski haline doner
+/// (`tests::basarisiz_v4_migrate_semayi_geri_alir`).
+fn v4_uygula(tx: &Connection) -> Result<(), MigrateHatasi> {
+    // Uygulama katmani negatif ucreti her zaman reddetti, ama ham SQL'le
+    // ya da baska bir aractan gelen bir satir olabilir. Ciplak bir
+    // "CHECK constraint failed" mesaji kullaniciya hicbir sey anlatmaz;
+    // bu kod tabaninin kurali hatalarin AYRISIK olmasi (bkz. `DbError`).
+    let ihlal: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM appointments WHERE ucret IS NOT NULL AND ucret < ?1",
+        [ASGARI_UCRET],
+        |r| r.get(0),
+    )?;
+    if ihlal > 0 {
+        return Err(MigrateHatasi::UcretKisitiIhlali { adet: ihlal as usize });
+    }
+
+    tx.execute_batch(V4)?;
+
+    // Yeniden olusturma, `appointments`'a bagli olan (ve olan) yabanci
+    // anahtarlari bozmus olabilir -- ve bu goc yabanci anahtarlar KAPALIYKEN
+    // calisiyor, yani motor bunu kendiliginden soylemez. SQLite'in
+    // belgeledigi yordamdaki dogrulama adimi bu.
+    //
+    // Kume, yeniden olusturmanin bozabilecegi UC tabloyla sinirli: tum
+    // semayi taramak, bu gocle hicbir ilgisi olmayan eski bir kirik bag
+    // yuzunden yukseltmeyi engellerdi.
+    for tablo in ["appointments", "progress_notes", "private_notes"] {
+        let kirik: i64 = tx.query_row(
+            &format!("SELECT COUNT(*) FROM pragma_foreign_key_check('{tablo}')"),
+            [],
+            |r| r.get(0),
+        )?;
+        if kirik > 0 {
+            return Err(MigrateHatasi::YabanciAnahtarKirik { tablo, adet: kirik as usize });
+        }
+    }
+    Ok(())
+}
+
 /// Surum 3'te `clients` tablosuna eklenen sutunlar.
 ///
 /// `ALTER TABLE ... ADD COLUMN`'un `IF NOT EXISTS` bicimi yok, bu yuzden
@@ -186,6 +298,28 @@ pub enum MigrateHatasi {
     BozukSurum(String),
     #[error("veritabani hatasi: {0}")]
     Sqlite(#[from] rusqlite::Error),
+    /// V4, `appointments` tablosunu `CHECK (ucret IS NULL OR ucret >= 0)`
+    /// ile yeniden olusturuyor. Veritabaninda bu kisiti ihlal eden satir
+    /// varsa yukseltme UYGULANMAZ ve hicbir kayit degismez.
+    ///
+    /// `Sqlite`'tan **ayri** bir varyant olmasinin sebebi bu kod tabaninin
+    /// dort katmanda tekrarlanan hata sinifi: "her hata ayni hatadir".
+    /// Ciplak bir `CHECK constraint failed`, kullanicinin ne yapmasi
+    /// gerektigini soylemez. Yalnizca ADET tasinir, kayit icerigi TASINMAZ.
+    #[error(
+        "veritabaninda ucreti eksi olan {adet} randevu var; sema yukseltmesi uygulanmadi ve \
+         hicbir kayit degismedi. Once o randevularin ucretini duzeltin."
+    )]
+    UcretKisitiIhlali { adet: usize },
+    /// V4'un tablo yeniden olusturma adimindan sonra
+    /// `pragma_foreign_key_check` kirik bag buldu: yukseltme geri alinir.
+    ///
+    /// Tablo ADI `&'static str`'dir (sabit kume), kayit icerigi tasinmaz.
+    #[error(
+        "sema yukseltmesinden sonra `{tablo}` tablosunda {adet} kirik bag bulundu; \
+         yukseltme geri alindi ve hicbir kayit degismedi"
+    )]
+    YabanciAnahtarKirik { tablo: &'static str, adet: usize },
 }
 
 /// `app_meta` tablosundaki `schema_version` degerini okur.
@@ -226,10 +360,21 @@ pub fn okunan_surum(conn: &Connection) -> Result<i64, MigrateHatasi> {
 /// tumu **tek transaction** icinde calisir -- yarim uygulanmis bir sema asla
 /// kalici olmaz. Veritabani surumu uygulamadan yeniyse (kullanici eski bir
 /// `.app` geri koymus olabilir) yukseltme reddedilir ve surum damgasi
-/// DEGISTIRILMEZ. Ayni baglantida birden fazla kez cagirmak guvenlidir
-/// (idempotent): butun betikler `IF NOT EXISTS` kullanir, sutun eklemeleri
-/// `sutun_ekle` uzerinden gecer ve surum damgasi zaten guncelse yeniden
-/// yazmak zararsizdir.
+/// DEGISTIRILMEZ. Ayni baglantida birden fazla kez cagirmak guvenlidir:
+/// V1-V3 betikleri `IF NOT EXISTS` kullanir, sutun eklemeleri `sutun_ekle`
+/// uzerinden gecer ve surum damgasi zaten guncelse yeniden yazmak
+/// zararsizdir. V4 (tablo yeniden olusturma) kendi basina idempotent
+/// DEGILDIR -- ikinci kez calisirsa `appointments_v4` cakisir ve hata
+/// verir; onu koruyan sey `if mevcut < 4` surum kapisidir. Kapinin dusmesi
+/// bu yuzden `tests::surum_kapisi_uygulanmis_adimi_yeniden_calistirmaz`
+/// ile ayrica sabitleniyor.
+///
+/// # V4 yabanci anahtarlari GECICI OLARAK kapatir
+///
+/// Gerekce `V4` basliginda: `DROP TABLE appointments` yabanci anahtarlar
+/// acikken butun seans/ozel notlari cascade ile silerdi. Pragma
+/// transaction icinde no-op oldugu icin BEGIN'den once kapatilir ve her
+/// cikista geri acilir.
 pub fn migrate(conn: &Connection) -> Result<(), MigrateHatasi> {
     let mevcut = okunan_surum(conn)?;
 
@@ -237,6 +382,44 @@ pub fn migrate(conn: &Connection) -> Result<(), MigrateHatasi> {
         return Err(MigrateHatasi::SurumDusuk { veritabani: mevcut, uygulama: CURRENT_VERSION });
     }
 
+    // V4 `appointments` tablosunu YENIDEN OLUSTURUYOR ve bu, yabanci
+    // anahtarlar acikken YAPILAMAZ: `DROP TABLE appointments` ortulu bir
+    // `DELETE FROM appointments` calistirir, `progress_notes` ve
+    // `private_notes` uzerindeki `ON DELETE CASCADE` tetiklenir ve butun
+    // seans/ozel notlar silinir (bkz. `V4` basligi -- bu gocteki en yikici
+    // tek hata).
+    //
+    // `PRAGMA foreign_keys` transaction ICINDE no-op'tur; bu yuzden
+    // BEGIN'den ONCE kapatilir. Baglantinin varsayilani `db::open_*`
+    // tarafindan `ON` yapiliyor ve buradan cikarken -- hata yolunda da --
+    // `ON`'a geri donuluyor.
+    let fk_kapatiliyor = mevcut < 4;
+    if fk_kapatiliyor {
+        conn.pragma_update(None, "foreign_keys", "OFF")?;
+    }
+
+    let sonuc = adimlari_uygula(conn, mevcut);
+
+    if fk_kapatiliyor {
+        let geri_acma = conn.pragma_update(None, "foreign_keys", "ON");
+        // Geri acma hatasi ASIL hatanin yerine gecmez: cagirana "goc neden
+        // basarisiz oldu" sorusunun cevabi donmeli. Goc basariliysa geri
+        // acmanin basarisizligi gercek bir hatadir (baglanti kisitsiz
+        // calismaya devam ederdi) ve dondurulur.
+        if sonuc.is_ok() {
+            geri_acma?;
+        }
+    }
+
+    sonuc
+}
+
+/// `migrate`'in transaction'li govdesi.
+///
+/// `migrate`'ten AYRI bir fonksiyon: yabanci anahtar pragmasi transaction'in
+/// disinda kalmak zorunda (bkz. `migrate`), dolayisiyla "kapat / uygula /
+/// geri ac" uclusunun ortasi kendi kapsamina alindi.
+fn adimlari_uygula(conn: &Connection, mevcut: i64) -> Result<(), MigrateHatasi> {
     let tx = conn.unchecked_transaction()?;
 
     if mevcut < 1 {
@@ -250,6 +433,9 @@ pub fn migrate(conn: &Connection) -> Result<(), MigrateHatasi> {
         for (tablo, tanim) in V3_SUTUNLAR {
             sutun_ekle(&tx, tablo, tanim)?;
         }
+    }
+    if mevcut < 4 {
+        v4_uygula(&tx)?;
     }
 
     tx.execute(
@@ -361,7 +547,7 @@ mod tests {
 
         let hata = migrate(&c).unwrap_err();
         assert!(
-            matches!(hata, MigrateHatasi::SurumDusuk { veritabani: 99, uygulama: 3 }),
+            matches!(hata, MigrateHatasi::SurumDusuk { veritabani: 99, uygulama: 4 }),
             "ileri surumlu veritabani acilmamali: {hata:?}"
         );
 
@@ -392,13 +578,13 @@ mod tests {
     }
 
     #[test]
-    fn surum_uc_olarak_kaydedilir() {
+    fn surum_dort_olarak_kaydedilir() {
         let (_d, c) = baglanti();
         // deger sutunu TEXT'tir; metin okuyup ayristir. Gerekce Plan 1 Gorev 6'da.
         let ham: String = c
             .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(ham.parse::<i64>().unwrap(), 3);
+        assert_eq!(ham.parse::<i64>().unwrap(), 4);
     }
 
     #[test]
@@ -847,7 +1033,7 @@ mod tests {
     }
 
     #[test]
-    fn v2_veritabani_veri_kaybetmeden_v3e_yukselir() {
+    fn v2_veritabani_veri_kaybetmeden_guncel_surume_yukselir() {
         let dir = tempfile::tempdir().unwrap();
         let yol = dir.path().join("veri.db");
         let key = crate::crypto::keyring::generate_data_key();
@@ -860,7 +1046,7 @@ mod tests {
         let ham: String = c
             .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(ham.parse::<i64>().unwrap(), 3);
+        assert_eq!(ham.parse::<i64>().unwrap(), CURRENT_VERSION);
 
         let ad: String =
             c.query_row("SELECT ad_soyad FROM clients WHERE id=1", [], |r| r.get(0)).unwrap();
@@ -1049,5 +1235,415 @@ mod tests {
             )
             .unwrap();
         assert_eq!(tur, "table", "catisan nesne degismeden kalmali");
+    }
+
+    // ---- Surum 4: `ucret >= 0` veritabani kisiti --------------------------
+    //
+    // V4 `appointments` tablosunu YENIDEN OLUSTURUYOR. Bu adimin uc ayri
+    // yikici hata modu var ve her biri asagida ayri ayri olculuyor:
+    //
+    //   1. `DROP TABLE` cascade ile butun seans/ozel notlari silebilir
+    //      (yabanci anahtarlar acik kalirsa) -- **Critical**;
+    //   2. tasima sirasinda veri kaybolabilir;
+    //   3. yeniden olusturulan tablo indeksleri/yabanci anahtarlari
+    //      kaybedebilir, yani cascade davranisi SESSIZCE olebilir.
+
+    /// V3 semali, icinde danisan + randevu + iki not olan bir veritabani
+    /// hazirlar (henuz V4 yok). Kimlikler: danisan 1, randevu 1.
+    fn v3_veritabani(yol: &std::path::Path, key: &crate::crypto::keyring::DataKey) {
+        let c = crate::store::db::open_encrypted(yol, key).unwrap();
+        c.execute_batch(V1).unwrap();
+        c.execute_batch(V2).unwrap();
+        c.execute_batch(V3).unwrap();
+        for (tablo, tanim) in V3_SUTUNLAR {
+            sutun_ekle(&c, tablo, tanim).unwrap();
+        }
+        c.execute(
+            "INSERT INTO app_meta (anahtar, deger) VALUES ('schema_version','3')
+             ON CONFLICT(anahtar) DO UPDATE SET deger=excluded.deger",
+            [],
+        )
+        .unwrap();
+        c.execute_batch(
+            "INSERT INTO clients (ad_soyad, durum, olusturma_zamani)
+             VALUES ('Eski Danisan','aktif','2026-01-01T00:00:00Z');
+             INSERT INTO appointments
+               (client_id, baslangic, bitis, durum, ucret, odendi, seri_id,
+                olusturma_zamani, guncelleme_zamani)
+             VALUES (1,'2026-09-07T14:00','2026-09-07T15:00','geldi',45000,1,'seri-abc','z','z');
+             INSERT INTO progress_notes (appointment_id, client_id, sablon, icerik, guncelleme_zamani)
+             VALUES (1,1,'soap','V3TEN KALAN RESMI NOT','z');
+             INSERT INTO private_notes (appointment_id, client_id, icerik, guncelleme_zamani)
+             VALUES (1,1,'V3TEN KALAN OZEL NOT','z');",
+        )
+        .unwrap();
+    }
+
+    fn randevu_ve_not_sayilari(c: &rusqlite::Connection) -> (i64, i64, i64) {
+        let say = |t: &str| -> i64 {
+            c.query_row(&format!("SELECT count(*) FROM {t}"), [], |r| r.get(0)).unwrap()
+        };
+        (say("appointments"), say("progress_notes"), say("private_notes"))
+    }
+
+    /// `appointments` tablosunun `sqlite_master`'daki tanimi.
+    fn appointments_semasi(c: &rusqlite::Connection) -> String {
+        c.query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='appointments'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn v3_veritabani_veri_kaybetmeden_v4e_yukselir() {
+        let dir = tempfile::tempdir().unwrap();
+        let yol = dir.path().join("veri.db");
+        let key = crate::crypto::keyring::generate_data_key();
+        v3_veritabani(&yol, &key);
+
+        let c = crate::store::db::open_encrypted(&yol, &key).unwrap();
+        // ON KOSUL: yukseltmeden ONCE kisit YOK. Bu satirlar olmadan
+        // asagidaki "kisit var" iddiasi, V4 hic calismasa bile saglanabilirdi.
+        assert!(
+            !appointments_semasi(&c).contains("ucret IS NULL"),
+            "on kosul: V3 semasinda ucret KISITI olmamali (sutun var, CHECK yok)"
+        );
+        assert!(
+            c.execute("UPDATE appointments SET ucret = -1 WHERE id = 1", []).is_ok(),
+            "on kosul: V3'te eksi ucret veritabanina yazilabiliyor olmali"
+        );
+        c.execute("UPDATE appointments SET ucret = 45000 WHERE id = 1", []).unwrap();
+
+        migrate(&c).unwrap();
+
+        let ham: String = c
+            .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ham.parse::<i64>().unwrap(), 4);
+
+        // Randevunun HER alani tasindi -- yalnizca satir sayisi degil.
+        #[allow(clippy::type_complexity)]
+        let (id, cid, bas, bit, durum, ucret, odendi, seri): (
+            i64,
+            i64,
+            String,
+            String,
+            String,
+            Option<i64>,
+            i64,
+            Option<String>,
+        ) = c
+            .query_row(
+                "SELECT id, client_id, baslangic, bitis, durum, ucret, odendi, seri_id
+                 FROM appointments",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                        r.get(7)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (id, cid, bas.as_str(), bit.as_str(), durum.as_str(), ucret, odendi, seri.as_deref()),
+            (
+                1,
+                1,
+                "2026-09-07T14:00",
+                "2026-09-07T15:00",
+                "geldi",
+                Some(45000),
+                1,
+                Some("seri-abc")
+            ),
+            "v3 -> v4 yukseltmesi randevunun alanlarini oldugu gibi tasimali"
+        );
+
+        // Ve kisit ARTIK var.
+        assert!(
+            c.execute("UPDATE appointments SET ucret = -1 WHERE id = 1", []).is_err(),
+            "v4 sonrasi eksi ucret veritabaninca reddedilmeli"
+        );
+    }
+
+    #[test]
+    fn v4_yukseltmesi_seans_ve_ozel_notlari_silmez() {
+        // ** BU TESTIN KORUDUGU SEY (Critical) **
+        //
+        // `progress_notes` ve `private_notes` `appointments`'a
+        // `ON DELETE CASCADE` ile bagli. V4 tabloyu yeniden olusturmak icin
+        // `DROP TABLE appointments` calistiriyor ve yabanci anahtarlar ACIK
+        // kalirsa SQLite bunu ortulu bir `DELETE FROM appointments` gibi
+        // isler: butun klinik kayit gider.
+        //
+        // MUTASYON: `migrate`'teki `pragma_update(..., "foreign_keys", "OFF")`
+        // satirini sil -> notlarin ikisi de yok olur, bu test kirilir.
+        let dir = tempfile::tempdir().unwrap();
+        let yol = dir.path().join("veri.db");
+        let key = crate::crypto::keyring::generate_data_key();
+        v3_veritabani(&yol, &key);
+
+        let c = crate::store::db::open_encrypted(&yol, &key).unwrap();
+        // ON KOSUL: notlar yukseltmeden ONCE gercekten oradaydi.
+        assert_eq!(randevu_ve_not_sayilari(&c), (1, 1, 1), "on kosul: v3 verisi yerinde olmali");
+
+        migrate(&c).unwrap();
+
+        assert_eq!(
+            randevu_ve_not_sayilari(&c),
+            (1, 1, 1),
+            "V4 yukseltmesi randevuyu ya da notlari SILMEMELI"
+        );
+        // Icerik de bozulmamis olmali: "satir sayisi ayni" bos satirlarla da
+        // saglanabilirdi.
+        let resmi: String =
+            c.query_row("SELECT icerik FROM progress_notes WHERE id=1", [], |r| r.get(0)).unwrap();
+        let ozel: String =
+            c.query_row("SELECT icerik FROM private_notes WHERE id=1", [], |r| r.get(0)).unwrap();
+        assert_eq!(resmi, "V3TEN KALAN RESMI NOT");
+        assert_eq!(ozel, "V3TEN KALAN OZEL NOT");
+    }
+
+    #[test]
+    fn v4_sonrasi_cascade_indeksler_ve_yabanci_anahtarlar_yerinde() {
+        // Yeniden olusturulan tablo bagli davranisi SESSIZCE kaybedebilir:
+        // notlar silinmez ama randevu silinince de gitmezler (sarkan kayit),
+        // ya da indeksler geri gelmez. Ucu de burada olculuyor.
+        let dir = tempfile::tempdir().unwrap();
+        let yol = dir.path().join("veri.db");
+        let key = crate::crypto::keyring::generate_data_key();
+        v3_veritabani(&yol, &key);
+
+        let c = crate::store::db::open_encrypted(&yol, &key).unwrap();
+        migrate(&c).unwrap();
+
+        // (1) Indeksler geri geldi.
+        for indeks in ["ix_app_baslangic", "ix_app_client", "ix_app_seri"] {
+            let sayi: i64 = c
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='index' AND name=?1",
+                    [indeks],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(sayi, 1, "{indeks} yeniden olusturmadan sonra kaybolmus");
+        }
+
+        // (2) `clients`'a giden yabanci anahtar HALA zorlaniyor.
+        let sonuc = c.execute(
+            "INSERT INTO appointments (client_id, baslangic, bitis, durum, olusturma_zamani, guncelleme_zamani)
+             VALUES (999,'2026-09-08T14:00','2026-09-08T15:00','planlandi','z','z')",
+            [],
+        );
+        assert!(sonuc.is_err(), "olmayan danisana randevu eklenebiliyor: yabanci anahtar kaybolmus");
+
+        // (3) ON DELETE CASCADE: randevu silinince notlar da gider.
+        c.execute("DELETE FROM appointments WHERE id=1", []).unwrap();
+        assert_eq!(
+            randevu_ve_not_sayilari(&c),
+            (0, 0, 0),
+            "v4 sonrasi randevu silinince notlar da silinmeli (cascade)"
+        );
+    }
+
+    #[test]
+    fn basarisiz_v4_migrate_semayi_geri_alir() {
+        // V4'un ORTASINDA -- tablo dusurulup yeniden adlandirildiktan SONRA --
+        // gercek bir hata tetikler.
+        //
+        // Enjeksiyon yolu: `progress_notes`'ta var olmayan bir randevuya
+        // isaret eden bir satir. Bu, bu gocun kendi dogrulama adiminin
+        // (`pragma_foreign_key_check`) yakalamak icin var oldugu durum ve
+        // gercek hayatta yarim bir geri yuklemeden/ham SQL'den gelebilir.
+        // Hata `DROP TABLE` + `ALTER TABLE ... RENAME`ten SONRA olustugu icin
+        // geri alma gercekten yarim uygulanmis bir semayi toparlamak zorunda.
+        let dir = tempfile::tempdir().unwrap();
+        let yol = dir.path().join("veri.db");
+        let key = crate::crypto::keyring::generate_data_key();
+        v3_veritabani(&yol, &key);
+        {
+            let c = crate::store::db::open_encrypted(&yol, &key).unwrap();
+            // Sarkan satiri yerlestirmek icin kisitlari gecici olarak kapat:
+            // uretimde bu satir zaten kisitlarin zorlanmadigi bir yoldan gelir.
+            c.pragma_update(None, "foreign_keys", "OFF").unwrap();
+            c.execute(
+                "INSERT INTO progress_notes (appointment_id, client_id, sablon, icerik, guncelleme_zamani)
+                 VALUES (4242,1,'dap','SARKAN NOT','z')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let c = crate::store::db::open_encrypted(&yol, &key).unwrap();
+        let onceki_sema = appointments_semasi(&c);
+        let hata = migrate(&c).unwrap_err();
+        assert!(
+            matches!(
+                hata,
+                MigrateHatasi::YabanciAnahtarKirik { tablo: "progress_notes", adet: 1 }
+            ),
+            "kirik bag ayrisik bir hata olarak donmeli: {hata:?}"
+        );
+
+        // (1) TABLO GERI GELDI ve tanimi ESKISININ AYNISI: `DROP TABLE` +
+        //     `RENAME` geri alindi.
+        assert_eq!(
+            appointments_semasi(&c),
+            onceki_sema,
+            "basarisiz V4 eski tablo tanimini geri getirmeli"
+        );
+        assert!(
+            !appointments_semasi(&c).contains("ucret IS NULL"),
+            "basarisiz V4 yeni kisiti geride birakmamali"
+        );
+
+        // (2) Gecici tablo geride kalmamali.
+        let gecici: i64 = c
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name='appointments_v4'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(gecici, 0, "basarisiz V4 `appointments_v4` tablosunu geride birakmamali");
+
+        // (3) VERI DURUYOR -- ozellikle cascade tetiklenmedi.
+        assert_eq!(
+            randevu_ve_not_sayilari(&c),
+            (1, 2, 1),
+            "geri alma randevuyu ya da notlari silmemeli (sarkan not dahil 2 resmi not)"
+        );
+
+        // (4) Indeksler yerinde.
+        for indeks in ["ix_app_baslangic", "ix_app_client", "ix_app_seri"] {
+            let sayi: i64 = c
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='index' AND name=?1",
+                    [indeks],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(sayi, 1, "{indeks} geri almadan sonra kaybolmus");
+        }
+
+        // (5) Surum damgasi yukselmedi.
+        let ham: String = c
+            .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ham, "3", "basarisiz migrate surum damgasini yukseltmemeli");
+
+        // (6) Yabanci anahtarlar GERI ACILDI: goc hata yolundan cikti ama
+        //     baglanti kisitsiz kalmamali.
+        let fk: i64 = c.query_row("PRAGMA foreign_keys", [], |r| r.get(0)).unwrap();
+        assert_eq!(fk, 1, "basarisiz goc yabanci anahtarlari kapali birakmamali");
+    }
+
+    #[test]
+    fn negatif_ucretli_kayit_v4_yukseltmesini_ayrisik_hatayla_reddeder() {
+        // Uygulama katmani eksi ucreti hep reddetti, ama ham SQL'le gelmis
+        // bir satir olabilir. Beklenen davranis: ciplak bir "CHECK constraint
+        // failed" DEGIL, ne yapilacagini soyleyen ayri bir hata -- ve hicbir
+        // sey degismemis bir veritabani.
+        let dir = tempfile::tempdir().unwrap();
+        let yol = dir.path().join("veri.db");
+        let key = crate::crypto::keyring::generate_data_key();
+        v3_veritabani(&yol, &key);
+        {
+            let c = crate::store::db::open_encrypted(&yol, &key).unwrap();
+            c.execute("UPDATE appointments SET ucret = -500 WHERE id = 1", []).unwrap();
+        }
+
+        let c = crate::store::db::open_encrypted(&yol, &key).unwrap();
+        let hata = migrate(&c).unwrap_err();
+        assert!(
+            matches!(hata, MigrateHatasi::UcretKisitiIhlali { adet: 1 }),
+            "eksi ucret ayrisik bir hata olarak donmeli: {hata:?}"
+        );
+        // Mesaj kullaniciya ne yapacagini soylemeli ve "her sey bozuldu"
+        // izlenimi vermemeli (bu kod tabaninin dort katmanda tekrarlanan
+        // hata sinifi).
+        let metin = hata.to_string();
+        assert!(metin.contains("hicbir kayit degismedi"), "mesaj: {metin}");
+
+        // Kayit AYNEN duruyor ve surum yukselmedi.
+        let ucret: i64 =
+            c.query_row("SELECT ucret FROM appointments WHERE id=1", [], |r| r.get(0)).unwrap();
+        assert_eq!(ucret, -500, "reddedilen goc veriyi degistirmemeli");
+        assert_eq!(randevu_ve_not_sayilari(&c), (1, 1, 1));
+        let ham: String = c
+            .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ham, "3");
+    }
+
+    #[test]
+    fn ucret_alt_siniri_semada_ve_uygulama_katmaninda_ayni() {
+        // AYRISMAYI YAKALAYAN TEST. Kural iki yerde yazili:
+        //   - `appointments::ASGARI_UCRET` (uygulama katmani),
+        //   - `schema::V4` icindeki `CHECK (ucret IS NULL OR ucret >= 0)`.
+        //
+        // Iki yon de olculuyor ve veritabanina denenen degerler SABITTEN
+        // turetiliyor:
+        //   * `CHECK`'i gevsetmek (ornegin `>= -100`) -> "bir alti reddedilir"
+        //     iddiasi kirilir;
+        //   * `ASGARI_UCRET`'i degistirmek -> denenen degerler kayar ve
+        //     "sinirdaki deger kabul edilir" iddiasi kirilir.
+        use crate::store::appointments::{ucret_gecerli_mi, ASGARI_UCRET};
+        let (_d, c) = baglanti();
+        danisan_ve_randevu(&c);
+
+        let ucreti_yaz = |deger: Option<i64>| -> Result<usize, rusqlite::Error> {
+            c.execute("UPDATE appointments SET ucret = ?1 WHERE id = 1", [deger])
+        };
+
+        // ARTI YON: uygulama katmaninin kabul ettigi degerleri veritabani da
+        // kabul etmeli. (Bu yari olmadan "her seyi reddeden" bir CHECK de
+        // eksi yon iddiasini gecerdi.)
+        for gecerli in [Some(ASGARI_UCRET), Some(ASGARI_UCRET + 45000), None] {
+            assert!(ucret_gecerli_mi(gecerli), "on kosul: {gecerli:?} uygulama katmaninca gecerli");
+            assert!(
+                ucreti_yaz(gecerli).is_ok(),
+                "uygulama katmani {gecerli:?} degerini kabul ediyor ama CHECK reddetti"
+            );
+        }
+
+        // EKSI YON: uygulama katmaninin reddettigi deger veritabanina da
+        // girememeli.
+        let gecersiz = Some(ASGARI_UCRET - 1);
+        assert!(!ucret_gecerli_mi(gecersiz), "on kosul: {gecersiz:?} uygulama katmaninca gecersiz");
+        assert!(
+            ucreti_yaz(gecersiz).is_err(),
+            "uygulama katmani {gecersiz:?} degerini reddediyor ama CHECK kabul etti -- \
+             kisit yalnizca uygulama katmaninda kalmis"
+        );
+    }
+
+    #[test]
+    fn randevu_durum_kumesi_semada_ve_uygulama_katmaninda_ayni() {
+        // `ucret` icin yazilan ayrisma testinin kardesi: `durum` kumesi de
+        // hem `GECERLI_DURUMLAR` sabitinde hem `CHECK`'te yazili.
+        use crate::store::appointments::GECERLI_DURUMLAR;
+        let (_d, c) = baglanti();
+        danisan_ve_randevu(&c);
+
+        for durum in GECERLI_DURUMLAR {
+            assert!(
+                c.execute("UPDATE appointments SET durum = ?1 WHERE id = 1", [durum]).is_ok(),
+                "GECERLI_DURUMLAR icindeki '{durum}' CHECK tarafindan reddedildi"
+            );
+        }
+        assert!(
+            c.execute("UPDATE appointments SET durum = 'uydurma' WHERE id = 1", []).is_err(),
+            "kume disindaki durum CHECK tarafindan kabul edildi"
+        );
     }
 }

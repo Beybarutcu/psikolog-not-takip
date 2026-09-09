@@ -11,8 +11,42 @@ export class YetkisizHata extends Error {
   }
 }
 
+/**
+ * Sunucu "veritabanı bozuk" dediğinde fırlatılır.
+ *
+ * `YetkisizHata` ile aynı gerekçe ve aynı sınıftan bir ayrım: bu, sıradan
+ * bir 500 değildir. Kullanıcının parolası **doğrudur** ve yapılması gereken
+ * tek şey yedekten geri yüklemektir; genel bir hata mesajı göstermek onu
+ * parolasını yeniden denemeye, sonra da "her şeyi silip baştan kurmaya"
+ * iter — bu kod tabanında dört katmanda bulunan hata sınıfının tam olarak
+ * kendisi.
+ */
+export class VeritabaniBozukHata extends Error {
+  constructor(mesaj: string) {
+    super(mesaj)
+    this.name = 'VeritabaniBozukHata'
+  }
+}
+
 type YetkisizDinleyici = () => void
 const yetkisizDinleyiciler = new Set<YetkisizDinleyici>()
+const bozukDinleyiciler = new Set<YetkisizDinleyici>()
+
+/**
+ * `veritabani_bozuk` yanıtından merkezî olarak haberdar olmayı sağlar —
+ * 401 mekanizmasının (`yetkisizOlunca`) birebir eşi.
+ *
+ * Neden dinleyici, neden `KilitEkrani`'nin kendi `catch`'i değil: bozuk
+ * veritabanı **hangi ekranda** olunduğundan bağımsız bir durumdur ve
+ * gidilecek yer her zaman aynıdır (geri yükleme ekranı). Kararı `App`
+ * veriyor; ekranların bunu bilmesine gerek yok.
+ */
+export function veritabaniBozukOlunca(dinleyici: YetkisizDinleyici): () => void {
+  bozukDinleyiciler.add(dinleyici)
+  return () => {
+    bozukDinleyiciler.delete(dinleyici)
+  }
+}
 
 // Uygulamanın tek bir yerde (App.tsx) merkezi olarak 401'den haberdar
 // olmasını sağlar: takvim ızgarası, ileride eklenecek randevu paneli (Görev
@@ -40,11 +74,21 @@ export function yetkisizOlunca(dinleyici: YetkisizDinleyici): () => void {
  * ekranına dönmeyi buradan öğreniyor (`api.test.ts` sırayı ölçüyor).
  */
 async function basarisizYanitiFirlat(yanit: Response): Promise<never> {
-  const govde: { hata?: string } = await yanit.json().catch(() => ({}))
+  const govde: { hata?: string; veritabani_bozuk?: boolean } = await yanit
+    .json()
+    .catch(() => ({}))
   const mesaj = govde.hata ?? 'Beklenmeyen bir hata oluştu.'
   if (yanit.status === 401) {
     for (const dinleyici of yetkisizDinleyiciler) dinleyici()
     throw new YetkisizHata(mesaj)
+  }
+  // Karar sunucunun AYRI BAYRAĞINA bakılarak veriliyor, hata metnine göre
+  // DEĞİL: metin kullanıcı için yazılmıştır ve yarın değişebilir; ekran
+  // seçimini ona bağlamak, metni düzelten birinin geri yükleme ekranını
+  // sessizce devre dışı bırakması demekti.
+  if (govde.veritabani_bozuk === true) {
+    for (const dinleyici of bozukDinleyiciler) dinleyici()
+    throw new VeritabaniBozukHata(mesaj)
   }
   throw new Error(mesaj)
 }
@@ -138,14 +182,35 @@ export type AramaSonucu = {
 }
 
 /**
+ * `GET /api/ara` yanıtı (sunucudaki `AramaYaniti`).
+ *
+ * Çıplak dizi DEĞİL: `kirpildi` olmadan "sonuç yok" ile "sonuç kırpıldı"
+ * ayırt edilemiyordu. Bütçe paylaştırması sessiz kaybı hafifletti ama
+ * kaldırmadı — 61 danışan eşleşirse 12'si hâlâ düşer ve terapist var olan
+ * bir notu bulamadığını fark etmezdi.
+ *
+ * `kirpildi` sunucuda **ölçülür** (her iki sorgu `LIMIT sinir + 1` ile
+ * çalışır), istemcide tahmin edilmez.
+ */
+export type AramaYaniti = {
+  sonuclar: AramaSonucu[]
+  /** Eşleşen en az bir kayıt daha var ama sınıra sığmadı. */
+  kirpildi: boolean
+}
+
+/**
  * Bir aramanın döndürebileceği en fazla sonuç — sunucudaki `AZAMI_SONUC`.
  *
  * Sunucu `limit`i `1..=50` aralığına kırpıyor; daha büyük bir sayı göndermek
- * sessizce 50'ye düşerdi. Değerin burada da yazılı olmasının nedeni yalnızca
- * istek kurmak değil: `/api/ara` yanıtı **"daha fazla sonuç var" işareti
- * taşımıyor** (Görev 6'nın bilinen boşluğu; bütçe paylaştırması sessiz kaybı
- * hafifletti, kaldırmadı). Arayüzün "sonuç sayısı == sınır" durumunu
- * ölçebilmesi için sınırı bilmesi gerekiyor.
+ * sessizce 50'ye düşerdi, bu yüzden istek bu değerle kurulur.
+ *
+ * # Eskiden bir de "kırpılma sezgisi" için kullanılıyordu; ARTIK DEĞİL
+ *
+ * `/api/ara` yanıtı kırpılma işareti taşımadığı için arayüz
+ * "sonuç sayısı == sınır" diye tahmin yürütüyordu. O sezgi **iki yönde de
+ * yanlıştı**: tam 50 eşleşmede (hiçbiri düşmemişken) uyarıyor, iki kipin
+ * bütçesi ayrı ayrı dolduğunda (toplam 50'nin altındayken de düşen eşleşme
+ * varken) uyarmıyordu. Bugün karar sunucudan gelen `kirpildi` alanına ait.
  */
 export const ARAMA_SINIRI = 50
 
@@ -604,7 +669,103 @@ export const danisanApi = {
  */
 export const aramaApi = {
   ara: (sorgu: string) =>
-    istek<AramaSonucu[]>(`/api/ara?q=${encodeURIComponent(sorgu)}&limit=${ARAMA_SINIRI}`),
+    istek<AramaYaniti>(`/api/ara?q=${encodeURIComponent(sorgu)}&limit=${ARAMA_SINIRI}`),
+}
+
+/** `POST /api/yedekler` yanıtındaki tek yedek (sunucudaki `YedekOzeti`). */
+export type YedekOzeti = {
+  /**
+   * `yedek-YYYY-AA-GG.db`. Geri yükleme isteğinin tanıtıcısı da budur:
+   * istemci **hiçbir zaman bir yol göndermez**, yalnızca bu adı geri
+   * gönderir ve sunucu onu klasörle kendisi birleştirir.
+   */
+  dosya_adi: string
+  tarih: string
+  /** Yalnızca `.db` dosyasının boyutu (bayt). */
+  boyut: number
+}
+
+/**
+ * `POST /api/yedekler` yanıtı.
+ *
+ * `hedef_dizin` **mutlak** bir klasör yoludur ve bilerek dönüyor: geri
+ * yükleme ekranı kullanıcıya "yedekleriniz şu klasörde" diyebilmek zorunda
+ * (macOS'ta bu klasör bir harici diskte ya da Finder'ın gizlediği bir yerde
+ * olabilir). Aynı karar `/api/durum`'un `veri_dizini` alanında da verildi.
+ *
+ * Yedeklerin kendi mutlak yolları **dönmez**: `YedekOzeti` yalnızca dosya
+ * adı taşır ve sunucudaki `core::backup::YedekBilgisi` artık `Serialize`
+ * türetmiyor, yani onu olduğu gibi döndürmek derlenmez.
+ */
+export type YedekListesi = {
+  hedef_dizin: string
+  yedekler: YedekOzeti[]
+}
+
+/**
+ * Yedekleme ve geri yükleme istemcisi.
+ *
+ * # Otomatik yedek nerede
+ *
+ * Tasarım §7 "günde bir kez otomatik şifreli yedek" istiyor. Damgayı
+ * (`YYYY-AA-GG`) **istemci** üretiyor, sunucu kendi saatinden türetmiyor:
+ * kod tabanının duvar saati sözleşmesi bu (`saklama-suresi-dolanlar?bugun=`
+ * ile aynı gerekçe). Istanbul UTC+3 iken 00:00–03:00 arasında UTC hâlâ
+ * dünkü tarihtedir; sunucudan türetilen bir damga o üç saatte yedeği bir
+ * gün geriye yazar ve "bugün yedek alındı mı" sorusu yanlış yanıtlanır.
+ *
+ * Tetikleyen yer `AnaEkran`: oturum açıldıktan sonra bir kez liste çekilir
+ * ve bugünün yedeği yoksa alınır. Zamanlayıcı yok — uygulama açık değilken
+ * zaten yedek alınamaz; "açılışta bir kez" bu ürün için "günde bir kez"in
+ * gerçekleşebilir hâlidir.
+ */
+export const yedekApi = {
+  /**
+   * Yedek alır (`POST /api/yedek`).
+   *
+   * `hedefDizin` verilirse **önce ayar olarak kaydedilir**, sonra yedek
+   * oraya alınır. Ayrı bir "klasörü ayarla" ucu bilerek YOK: klasörünü
+   * seçip yedeği almayan bir kullanıcı "yedeğim var" sanırdı.
+   */
+  al: (damga: string, hedefDizin?: string) =>
+    istek<{ tarih: string; boyut: number }>('/api/yedek', {
+      method: 'POST',
+      body: JSON.stringify({ damga, hedef_dizin: hedefDizin }),
+    }),
+  /**
+   * Klasördeki geri yüklenebilir yedekleri listeler (`POST /api/yedekler`).
+   *
+   * `POST` ve klasör yolu **gövdede**: yol kullanıcının adını içerebilir
+   * (`/Users/ayse/Dropbox/...`) ve URL'ler tarayıcı geçmişine ve genel
+   * amaçlı erişim günlüklerine düşer (`ekYukle`'nin dosya adı kararıyla
+   * aynı sınıf).
+   *
+   * Kilit gerektirmez: "hangi yedeklerim var" sorusu tam da kilitliyken,
+   * bozuk bir veritabanının ardından sorulur.
+   */
+  listele: (dizin?: string) =>
+    istek<YedekListesi>('/api/yedekler', {
+      method: 'POST',
+      body: JSON.stringify({ dizin }),
+    }),
+  /**
+   * Bir yedek çiftini geri yükler (`POST /api/geri-yukleme`).
+   *
+   * Parola **o yedeğin alındığı tarihteki** paroladır: yedek kendi anahtar
+   * dosyasıyla birlikte alınır ve geri yüklendiğinde o günün parolası
+   * yeniden geçerli olur. Açık oturumun anahtarı kullanılmaz — yeni bir
+   * bilgisayarda zaten böyle bir anahtar yoktur.
+   */
+  geriYukle: (girdi: {
+    dizin?: string
+    dosya_adi: string
+    parola?: string
+    kurtarma_kodu?: string
+  }) =>
+    istek<{ tarih: string }>('/api/geri-yukleme', {
+      method: 'POST',
+      body: JSON.stringify(girdi),
+    }),
 }
 
 export const api = {
@@ -629,4 +790,35 @@ export const api = {
       body: JSON.stringify(girdi),
     }),
   kilitle: () => istek<Record<string, never>>('/api/kilitle', { method: 'POST' }),
+  /**
+   * Parolayı değiştirir (`POST /api/parola`).
+   *
+   * # Mevcut parola ZORUNLU
+   *
+   * Yalnızca yeni parola göndermek yetmez: oturum açıkken bilgisayarın
+   * başına geçen biri parolayı değiştirip terapisti kendi verisinden
+   * kilitleyebilirdi. Sunucu mevcut parolayı `unlock_with_password` ile
+   * doğruluyor ve yanlışsa `401` dönüyor — bu, "oturum kilitli" 401'inden
+   * ayrı bir durum ama aynı mekanizmadan geçer. `App` merkezi 401
+   * dinleyicisiyle kilit ekranına döner; çağıran taraf (`AnaEkran`) bu
+   * yüzden hatayı `YetkisizHata` olup olmadığına bakmadan kendi
+   * bandında gösterir ve kullanıcı yeniden dener.
+   *
+   * # Parolalar GÖVDEDE
+   *
+   * Sorgu dizesinde değil: URL'ler tarayıcı geçmişine ve genel amaçlı
+   * erişim günlüklerine düşer (`ekYukle`'nin dosya adı ve
+   * `yedekApi.listele`'nin klasör yolu kararlarıyla aynı sınıf).
+   *
+   * # Yanıt boş
+   *
+   * Ne yeni parola, ne kurtarma kodu, ne de anahtarla ilgili bir alan
+   * döner. Kurtarma kodu **değişmez** (aynı veri anahtarını açmaya devam
+   * eder), bu yüzden kullanıcıya yeniden gösterilecek bir şey de yoktur.
+   */
+  parolaDegistir: (mevcutParola: string, yeniParola: string) =>
+    istek<Record<string, never>>('/api/parola', {
+      method: 'POST',
+      body: JSON.stringify({ mevcut_parola: mevcutParola, yeni_parola: yeniParola }),
+    }),
 }

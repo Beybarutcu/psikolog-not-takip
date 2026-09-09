@@ -59,6 +59,12 @@ fn api_router() -> Router<AppState> {
         .route("/kurulum", post(routes::setup::kurulum))
         .route("/kilit-ac", post(routes::session::kilit_ac))
         .route("/kilitle", post(routes::session::kilitle))
+        // Parola degistirme: kilit kapisinin ICINDE (28. veri handler'i) ve
+        // `POST` -- parolalar GOVDEDE gider, sorgu dizesinde degil (URL'ler
+        // tarayici gecmisine ve gunluklere duser). `core::keystore::
+        // change_password` Plan 1'den beri yazili ve testliydi ama hicbir
+        // cagri yeri yoktu; bu, o zincirin arayuze kadar uzanan halkasi.
+        .route("/parola", post(routes::password::degistir))
         .route("/danisanlar", get(routes::clients::liste).post(routes::clients::olustur))
         // Arşivleme ayrı bir yol segmentinde ve `POST`: yumuşak silmedir,
         // `DELETE` değildir (gerekçe için bkz. `routes::clients::arsivle_uc`).
@@ -139,6 +145,25 @@ fn api_router() -> Router<AppState> {
         )
         .route("/ara", get(routes::search::ara_uc))
         .route("/saklama-suresi-dolanlar", get(routes::clients::saklama_listesi))
+        // --- Yedekleme ve geri yukleme (tasarim §7 ve §8) -----------------
+        //
+        // Yedek ALMA kapinin ICINDE (`routes::backup`, 27. veri handler'i):
+        // danisan verisinin tamaminin kopyasini uretir.
+        //
+        // Geri yukleme ve yedek listeleme kapinin DISINDA
+        // (`routes::restore`, `VERI_DISI_ROTALAR`): var olus sebepleri tam
+        // da oturumun acilamadigi durumdur -- bozuk veritabani, okunamayan
+        // anahtar dosyasi ya da bos bir veri dizini (yeni bilgisayar).
+        // Yetki oradan gelmiyor demek degil: cagiran, geri yuklenecek
+        // YEDEGIN KENDI anahtar dosyasini acabilen parolayi vermek zorunda
+        // (bkz. `routes::restore` modul basligi).
+        //
+        // Ikisi de `POST` ve klasor yolunu GOVDEDE aliyor: yol kullanicinin
+        // adini icerebilir ve URL'ler tarayici gecmisine/gunluklere duser
+        // (`routes::attachments`'in dosya adi karariyla ayni sinif).
+        .route("/yedek", post(routes::backup::al))
+        .route("/yedekler", post(routes::restore::listele))
+        .route("/geri-yukleme", post(routes::restore::uygula))
         .fallback(api_bulunamadi)
 }
 

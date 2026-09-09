@@ -32,7 +32,7 @@ use axum::{
     Json,
 };
 use psikolog_core::store::audit::Cihaz;
-use psikolog_core::store::search::{ara, AramaSonucu, AZAMI_SONUC};
+use psikolog_core::store::search::{ara, AramaYaniti, AZAMI_SONUC};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -46,12 +46,23 @@ pub struct AramaSorgusu {
 /// İki karakterden kısa bir sorgu hiçbir tabloyu okumaz, hiçbir log satırı
 /// bırakmaz ve **boş liste** döner (400 değil): arayüz kullanıcı yazarken her
 /// tuşta çağırır, "sorgu çok kısa" hatası göstermek doğru davranış değildir.
+///
+/// # Yanıt çıplak dizi DEĞİL: `{ sonuclar, kirpildi }`
+///
+/// Bütçe paylaştırması sessiz kaybı hafifletti ama kaldırmadı: 61 danışan
+/// eşleşirse 12'si hâlâ düşer ve çıplak bir dizi "hepsi bu" ile "kırpıldı"yı
+/// ayırt edilemez kılıyordu. `kirpildi` bir tahmin değil ölçümdür (bkz.
+/// `store::search::AramaYaniti`); arayüz onu kullanıcıyı aramayı daraltmaya
+/// yönlendirmek için kullanır.
+///
+/// Bayrak **yalnızca gövde meselesidir**: ne sonuç sayısı ne kırpılma
+/// bilgisi `audit_log`'a yazılır.
 pub async fn ara_uc(
     State(s): State<AppState>,
     Sorgu(q): Sorgu<AramaSorgusu>,
-) -> Result<Json<Vec<AramaSonucu>>, ApiHata> {
+) -> Result<Json<AramaYaniti>, ApiHata> {
     let conn = acik_baglanti(&s)?;
-    let sonuclar =
+    let yanit =
         ara(&conn, &q.q, q.limit.unwrap_or(AZAMI_SONUC), Cihaz::Masaustu).map_err(depo_hatasi)?;
-    Ok(Json(sonuclar))
+    Ok(Json(yanit))
 }

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  api,
   aramaApi,
   danisanApi,
   notApi,
   ozelNotApi,
   takvimApi,
+  yedekApi,
   YetkisizHata,
   type Danisan,
   type DanisanDosyasi,
@@ -12,6 +14,7 @@ import {
   type EkBilgisi,
   type OzelNot,
   type SeansNotu,
+  type YedekListesi,
 } from '../api'
 import { HizliArama } from '../arama/HizliArama'
 import { boyutBicimle } from '../danisan/bicim'
@@ -137,7 +140,19 @@ function yerelGun(tarih: Date): string {
   return `${tarih.getFullYear()}-${iki(tarih.getMonth() + 1)}-${iki(tarih.getDate())}`
 }
 
-export function AnaEkran({ kilitle }: { kilitle: () => void }) {
+export function AnaEkran({
+  kilitle,
+  onGeriYukle,
+}: {
+  kilitle: () => void
+  /**
+   * Geri yükleme ekranını açar (tasarım §7: "uygulama içinden geri yükle
+   * ekranı"). Ekranın üç felaket yolu (bozuk veritabanı, okunamayan anahtar
+   * dosyası, yeni bilgisayar) `App` tarafından yönetiliyor; bu, her şey
+   * çalışırken kullanılan dördüncü yol.
+   */
+  onGeriYukle: () => void
+}) {
   const [haftaBasi, setHaftaBasi] = useState(() => haftaninBasi(new Date()))
   const [randevular, setRandevular] = useState<Randevu[]>([])
   const [danisanlar, setDanisanlar] = useState<Danisan[]>([])
@@ -193,6 +208,29 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   // şeyi gerektirir (hiçbir şey gösterme). Bu uç nokta sunucuda LOG YAZMAZ,
   // bu yüzden ek yükleme/silme sonrasında tazelenebiliyor.
   const [depolama, setDepolama] = useState<DepolamaDurumu | null>(null)
+  // Yedekleme durumu. `null` = henüz gelmedi ya da klasör seçilmemiş.
+  const [yedek, setYedek] = useState<YedekListesi | null>(null)
+  // Tasarım §7: "Yedek alınamazsa (disk dolu, klasör erişilemez) ana ekranda
+  // KALICI uyarı çıkar; sessiz geçilmez." Bu state o uyarıdır ve kendi
+  // kendine kaybolmaz — yalnızca başarılı bir yedekle temizlenir.
+  const [yedekUyarisi, setYedekUyarisi] = useState<string | null>(null)
+  const [klasorFormuAcik, setKlasorFormuAcik] = useState(false)
+  const [klasorGirdisi, setKlasorGirdisi] = useState('')
+  const [yedekSuruyor, setYedekSuruyor] = useState(false)
+  // PAROLA DEĞİŞTİRME. `keystore::change_password` Plan 1'den beri yazılı ve
+  // testliydi ama hiçbir çağrı yeri yoktu: kullanıcı parolasını
+  // DEĞİŞTİREMİYORDU (`seriyi_sil`, `clients::arsivle`, `depolama_durumu`
+  // ile aynı "kodda var, üründe yok" sınıfı).
+  //
+  // Alanlar form kapanınca temizleniyor: bir parola, hiç görünmeyen bir
+  // panelin state'inde oturmamalı.
+  const [parolaFormuAcik, setParolaFormuAcik] = useState(false)
+  const [mevcutParola, setMevcutParola] = useState('')
+  const [yeniParola, setYeniParola] = useState('')
+  const [yeniParolaTekrar, setYeniParolaTekrar] = useState('')
+  const [parolaHatasi, setParolaHatasi] = useState<string | null>(null)
+  const [parolaBilgisi, setParolaBilgisi] = useState<string | null>(null)
+  const [parolaSuruyor, setParolaSuruyor] = useState(false)
   // Aramadan gelen "şu seansa git" isteği. Hedef randevu başka bir haftada
   // olabilir; hafta değiştirilir, randevu listesi yeniden yüklenir ve seçim
   // ANCAK O LİSTEDEN yapılır — ekranda görünmeyen bir randevuya bağlı bir
@@ -313,6 +351,74 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   useEffect(() => {
     void danisanApi.depolamaDurumu().then(setDepolama).catch(() => {})
   }, [kartTazeleme])
+
+  /**
+   * Bugünün yedeğini alır ve listeyi tazeler.
+   *
+   * `hedefDizin` verilirse sunucu onu önce **ayar olarak kaydeder**, sonra
+   * yedeği oraya alır (bkz. `yedekApi.al`). Klasör seçmekle ilk yedeği
+   * almak tek işlem: ayrı bir "ayarla" adımı olsaydı klasörünü seçip
+   * yedeği almayan bir kullanıcı "yedeğim var" sanırdı.
+   */
+  const yedekAl = useCallback(async (hedefDizin?: string) => {
+    setYedekSuruyor(true)
+    try {
+      await yedekApi.al(yerelGun(new Date()), hedefDizin)
+      setYedek(await yedekApi.listele())
+      setYedekUyarisi(null)
+      setKlasorFormuAcik(false)
+      return true
+    } catch (e) {
+      if (e instanceof YetkisizHata) return false
+      // Sunucudan gelen mesaj OLDUĞU GİBİ gösteriliyor: "klasör bulunamadı",
+      // "bu klasöre yazılamıyor" ve "anahtar dosyası bulunamadı" birbirinden
+      // ayrı sorunlar ve kullanıcı hangisini düzelteceğini bilmeli
+      // (`danisanEkle` ile aynı gerekçe).
+      setYedekUyarisi(e instanceof Error ? e.message : 'Yedek alınamadı.')
+      return false
+    } finally {
+      setYedekSuruyor(false)
+    }
+  }, [])
+
+  // OTOMATİK GÜNLÜK YEDEK — tasarım §7 ("günde bir kez otomatik şifreli
+  // yedek", 7 gün dönüşümlü; dönüşümü çekirdek yapıyor).
+  //
+  // Zamanlayıcı YOK ve olmayacak: uygulama kapalıyken zaten yedek
+  // alınamaz, açıkken de "oturum başına bir kez" bu ürün için "günde bir
+  // kez"in gerçekleşebilir hâlidir. Etki bir kez çalışır (bağımlılık
+  // listesi boş): hafta değişimi, kayıt ya da kart tazelemesi bunu
+  // tetiklemez.
+  //
+  // Damga İSTEMCİNİN yerel takvim günü (`yerelGun`) — duvar saati
+  // sözleşmesi. Sunucudan türetilseydi Istanbul'da 00:00–03:00 arasında
+  // yedek bir gün geriye yazılır ve "bugün alındı mı" yanlış yanıtlanırdı.
+  //
+  // Klasör seçilmemişse sunucu `400` döner ve mesajı kalıcı uyarı olur:
+  // kullanıcı klasörünü seçene kadar hiçbir yedek alınamaz ve bunu ana
+  // ekranda görür. Sessiz geçilmiyor.
+  useEffect(() => {
+    let iptal = false
+    void (async () => {
+      const bugun = yerelGun(new Date())
+      try {
+        const liste = await yedekApi.listele()
+        if (iptal) return
+        setYedek(liste)
+        // Bugünün yedeği zaten varsa ikinci kez alınmaz: her çağrı sunucuda
+        // SİLİNEMEZ bir `disa_aktarma` satırı yazar (bkz. `store::audit`
+        // hacim politikası) ve aynı gün için ikinci satır gürültüdür.
+        if (liste.yedekler.some((y) => y.tarih === bugun)) return
+        await yedekAl()
+      } catch (e) {
+        if (iptal || e instanceof YetkisizHata) return
+        setYedekUyarisi(e instanceof Error ? e.message : 'Yedek durumu okunamadı.')
+      }
+    })()
+    return () => {
+      iptal = true
+    }
+  }, [yedekAl])
 
   // Seans notu verisi RANDEVU KİMLİĞİNE bağlı yükleniyor, `seciliRandevu`
   // NESNESİNE değil. `yukle()` her çağrıldığında seçili randevu taze bir
@@ -509,6 +615,55 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
     },
     [seansId],
   )
+
+  /** Parola formunu kapatır ve **girilen parolaları state'ten siler.** */
+  function parolaFormunuKapat() {
+    setParolaFormuAcik(false)
+    setMevcutParola('')
+    setYeniParola('')
+    setYeniParolaTekrar('')
+    setParolaHatasi(null)
+  }
+
+  /**
+   * Parolayı değiştirir.
+   *
+   * # "Yeni parola tekrar" YALNIZCA burada kontrol edilir
+   *
+   * Sunucu iki alanı karşılaştıramaz (ikincisi ona hiç gönderilmiyor) —
+   * yazım hatası yapan bir kullanıcı, yeni parolasını bilmeden
+   * değiştirmiş olurdu. Uzunluk kuralı ise **kopyalanmıyor**: sunucunun
+   * mesajı ("en az 8 karakter olmalı") olduğu gibi gösteriliyor, iki
+   * kopya sessizce ayrışmasın (`AZAMI_EK_BOYUTU`'nun aksine — o, isteği
+   * hiç atmadan reddedebilmek için istemcide de duruyor).
+   *
+   * # Hata mesajı OLDUĞU GİBİ gösterilir
+   *
+   * "Mevcut parolanız hatalı" ile "yeni parola çok kısa" farklı sorunlar
+   * ve kullanıcı hangisini düzelteceğini bilmeli — bu kod tabanında dört
+   * katmanda bulunan "her hata parola hatasıdır" sınıfının tam karşılığı.
+   */
+  async function parolayiDegistir() {
+    if (yeniParola !== yeniParolaTekrar) {
+      setParolaHatasi('Yeni parola ile tekrarı aynı değil. Parolanız değişmedi.')
+      return
+    }
+    setParolaSuruyor(true)
+    try {
+      await api.parolaDegistir(mevcutParola, yeniParola)
+      parolaFormunuKapat()
+      // Kullanıcı "başka ne değişti" sorusunu sormadan yanıtı görmeli:
+      // kurtarma kodu ve eski yedekler hakkındaki iki gerçek burada.
+      setParolaBilgisi(
+        'Parolanız değişti. Kurtarma kodunuz aynı kaldı ve çalışmaya devam ediyor. ' +
+          'Bugünden önce alınmış yedekler ESKİ parolanızla açılır.',
+      )
+    } catch (e) {
+      setParolaHatasi(e instanceof Error ? e.message : 'Parola değiştirilemedi.')
+    } finally {
+      setParolaSuruyor(false)
+    }
+  }
 
   function haftaDegis(yon: number) {
     setHaftaBasi((onceki) => {
@@ -1013,6 +1168,229 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
           ve eski dosyalarınızı gözden geçirmek isteyebilirsiniz.
         </p>
       )}
+
+      {/* YEDEKLEME — tasarım §7.
+          "Yedek alınamazsa (disk dolu, klasör erişilemez) ana ekranda KALICI
+          uyarı çıkar; sessiz geçilmez." Uyarı kendi kendine kaybolmaz;
+          yalnızca başarılı bir yedek onu temizler.
+
+          Bölüm HER ZAMAN görünür (uyarı olmasa da): "yedeğim alınıyor mu"
+          sorusunun ekranda bir cevabı olmalı. Bu ürünün üçüncü başarı
+          ölçütü "bilgisayar bozulursa veri kaybolmasın" ve o ölçüt, ancak
+          kullanıcı yedeğinin durumunu görebiliyorsa karşılanır. */}
+      <section
+        aria-label="Yedekleme"
+        className={`mb-4 rounded border p-3 text-sm ${
+          yedekUyarisi
+            ? 'border-amber-400 bg-amber-50 text-amber-900'
+            : 'border-slate-200 bg-slate-50 text-slate-600'
+        }`}
+      >
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="font-medium">Yedekleme</span>
+          {yedek !== null && yedek.yedekler.length > 0 ? (
+            <span>
+              Son yedek: <strong>{yedek.yedekler[0].tarih}</strong> (
+              {boyutBicimle(yedek.yedekler[0].boyut)}) · saklanan yedek:{' '}
+              {yedek.yedekler.length}
+            </span>
+          ) : (
+            <span>Henüz alınmış bir yedek yok.</span>
+          )}
+          <button
+            type="button"
+            className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+            disabled={yedekSuruyor}
+            onClick={() => void yedekAl()}
+          >
+            {yedekSuruyor ? 'Yedek alınıyor…' : 'Şimdi yedek al'}
+          </button>
+          <button
+            type="button"
+            className="rounded border px-2 py-1 text-xs"
+            onClick={() => {
+              setKlasorGirdisi(yedek?.hedef_dizin ?? '')
+              setKlasorFormuAcik((acik) => !acik)
+            }}
+          >
+            Yedek klasörünü değiştir
+          </button>
+          {/* Tasarim §7: "Uygulama icinden 'geri yukle' ekrani; her yedegin
+              tarihi ve boyutu listelenir." Ekran uc felaket yolundan da
+              (bozuk veritabani, okunamayan anahtar, yeni bilgisayar)
+              acilabiliyor; AMA her sey CALISIRKEN de bir yol olmali:
+              yanlislikla silinen bir danisan ya da bozulan bir not, ancak
+              eski bir yedekten geri gelir ve o an ortada hicbir "felaket"
+              yoktur. Ekranin kendisi iki adimli: burada yalnizca aciliyor,
+              geri yukleme orada onaylaniyor. */}
+          <button
+            type="button"
+            className="rounded border px-2 py-1 text-xs"
+            onClick={onGeriYukle}
+          >
+            Yedekten geri yükle
+          </button>
+        </div>
+
+        {yedek !== null && (
+          <p className="mt-1 break-all font-mono text-xs">{yedek.hedef_dizin}</p>
+        )}
+
+        {/* KALICI UYARI. `role="status"` degil `role="alert"`: bu, gozden
+            kacmamasi gereken bir durum -- kullanicinin verisi su an
+            yedeklenmiyor. */}
+        {yedekUyarisi && (
+          <p role="alert" className="mt-2">
+            {yedekUyarisi}
+          </p>
+        )}
+
+        {klasorFormuAcik && (
+          <div className="mt-2">
+            <label className="block text-xs" htmlFor="yedek-klasoru-girdisi">
+              Yedeklerin yazılacağı klasörün yolu
+            </label>
+            <div className="mt-1 flex gap-2">
+              <input
+                id="yedek-klasoru-girdisi"
+                className="w-full rounded border p-2 font-mono text-xs"
+                placeholder="/Volumes/YEDEK/terapi-yedek"
+                value={klasorGirdisi}
+                onChange={(e) => setKlasorGirdisi(e.target.value)}
+              />
+              <button
+                type="button"
+                className="shrink-0 rounded bg-slate-900 px-3 py-1 text-xs text-white disabled:opacity-50"
+                disabled={yedekSuruyor || klasorGirdisi.trim() === ''}
+                onClick={() => void yedekAl(klasorGirdisi.trim())}
+              >
+                Kaydet ve yedek al
+              </button>
+            </div>
+            {/* Klasoru secmek ile ilk yedegi almak TEK islem: ayri bir
+                "ayarla" adimi olsaydi, klasorunu secip yedegi almayan bir
+                kullanici "yedegim var" sanirdi. Metin bunu soyluyor. */}
+            <p className="mt-1 text-xs">
+              Harici disk ya da bulut klasörü seçebilirsiniz; yedek dosyaları zaten
+              şifrelidir. Kaydedince ilk yedek hemen alınır. Finder'da klasöre sağ tıklayıp{' '}
+              <kbd>⌥</kbd> tuşuna basılıyken “… Yol Adı Olarak Kopyala” deyince yol panoya
+              kopyalanır.
+            </p>
+          </div>
+        )}
+      </section>
+
+      {/* PAROLA — `keystore::change_password` Plan 1'den beri yazılı ve
+          testliydi ama hiçbir çağrı yeri yoktu: parola DEĞİŞTİRİLEMİYORDU.
+          Bölüm her zaman görünür (yalnızca form katlanıyor): "parolamı nasıl
+          değiştiririm" sorusunun ekranda bir cevabı olmalı. */}
+      <section
+        aria-label="Parola"
+        className="mb-4 rounded border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600"
+      >
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="font-medium">Parola</span>
+          <button
+            type="button"
+            className="rounded border px-2 py-1 text-xs"
+            onClick={() => {
+              setParolaBilgisi(null)
+              if (parolaFormuAcik) parolaFormunuKapat()
+              else setParolaFormuAcik(true)
+            }}
+          >
+            {parolaFormuAcik ? 'Vazgeç' : 'Parolayı değiştir'}
+          </button>
+        </div>
+
+        {/* `role="status"`: değişiklik ekranda sessizce olup bitiyordu.
+            Metin ne olduğunu VE ne OLMADIĞINI birlikte söylüyor (arşivleme
+            onayıyla aynı ilke). */}
+        {parolaBilgisi && (
+          <p role="status" className="mt-2 text-slate-700">
+            {parolaBilgisi}
+          </p>
+        )}
+
+        {parolaFormuAcik && (
+          <div className="mt-2 max-w-md">
+            <div>
+              <label className="block text-xs" htmlFor="mevcut-parola">
+                Mevcut parolanız
+              </label>
+              <input
+                id="mevcut-parola"
+                type="password"
+                autoComplete="current-password"
+                className="mt-1 w-full rounded border p-2"
+                value={mevcutParola}
+                onChange={(e) => setMevcutParola(e.target.value)}
+              />
+            </div>
+            <div className="mt-2">
+              <label className="block text-xs" htmlFor="yeni-parola">
+                Yeni parola
+              </label>
+              <input
+                id="yeni-parola"
+                type="password"
+                autoComplete="new-password"
+                className="mt-1 w-full rounded border p-2"
+                value={yeniParola}
+                onChange={(e) => setYeniParola(e.target.value)}
+              />
+            </div>
+            <div className="mt-2">
+              <label className="block text-xs" htmlFor="yeni-parola-tekrar">
+                Yeni parola (tekrar)
+              </label>
+              <input
+                id="yeni-parola-tekrar"
+                type="password"
+                autoComplete="new-password"
+                className="mt-1 w-full rounded border p-2"
+                value={yeniParolaTekrar}
+                onChange={(e) => setYeniParolaTekrar(e.target.value)}
+              />
+            </div>
+
+            {parolaHatasi && (
+              <p role="alert" className="mt-2 text-red-600">
+                {parolaHatasi}
+              </p>
+            )}
+
+            <button
+              type="button"
+              className="mt-2 rounded bg-slate-900 px-3 py-2 text-xs text-white disabled:opacity-50"
+              disabled={parolaSuruyor}
+              onClick={() => void parolayiDegistir()}
+            >
+              {parolaSuruyor ? 'Değiştiriliyor…' : 'Parolayı değiştir'}
+            </button>
+
+            {/* İKİ GERÇEĞİ ÖNCEDEN söyler; kullanıcı bunları ancak
+                parolasını unuttuğunda ya da eski bir yedeği geri yüklemeye
+                çalıştığında -- yani çok geç -- öğrenmemeli.
+
+                1. Kurtarma kodu DEĞİŞMEZ: veri anahtarı hem parolayla hem
+                   kurtarma koduyla ayrı ayrı sarmalanıyor ve sunucudaki
+                   `change_password` yalnızca parola sarmalamasını
+                   yeniliyor.
+                2. Eski yedekler ESKİ parolayla açılır: her yedek kendi
+                   anahtar dosyasıyla birlikte alınır ve geçmişteki o
+                   dosyaya dokunulmaz. */}
+            <div className="mt-2 text-xs">
+              <p>Kurtarma kodunuz değişmez; aynı kod çalışmaya devam eder.</p>
+              <p className="mt-1">
+                Bugünden önce alınmış yedekler <strong>eski</strong> parolanızla açılır — her
+                yedek kendi anahtar dosyasıyla birlikte alınır. Eski parolanızı unutmayın.
+              </p>
+              <p className="mt-1">Oturumunuz açık kalır; yeniden giriş yapmanız gerekmez.</p>
+            </div>
+          </div>
+        )}
+      </section>
 
       {hata && <p className="mb-4 text-sm text-red-600">{hata}</p>}
 

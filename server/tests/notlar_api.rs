@@ -513,7 +513,7 @@ async fn arama_ozel_not_dondurmez() {
     // ARTI YON: arama resmi notu BULUR (yoksa asagidaki eksi yon totoloji).
     let (kod, sonuc) = cagir(&s, "GET", "/api/ara?q=kaygi", None).await;
     assert_eq!(kod, StatusCode::OK);
-    let bulunan = sonuc.as_array().unwrap();
+    let bulunan = sonuc["sonuclar"].as_array().unwrap();
     assert_eq!(bulunan.len(), 1, "resmi not bulunmali: {sonuc}");
     assert_eq!(bulunan[0]["tur"], "not");
     assert_eq!(bulunan[0]["client_id"], cid);
@@ -521,7 +521,10 @@ async fn arama_ozel_not_dondurmez() {
     // EKSI YON: ozel nottaki kelime hicbir sey dondurmez.
     let (kod, sonuc) = cagir(&s, "GET", "/api/ara?q=ANAHTARKELIME", None).await;
     assert_eq!(kod, StatusCode::OK);
-    assert!(sonuc.as_array().unwrap().is_empty(), "ozel not aramaya girmemeli: {sonuc}");
+    assert!(
+        sonuc["sonuclar"].as_array().unwrap().is_empty(),
+        "ozel not aramaya girmemeli: {sonuc}"
+    );
     assert!(!sonuc.to_string().contains("hipotez"));
 }
 
@@ -721,7 +724,7 @@ async fn arama_limiti_de_kirpilir() {
         .await;
     }
 
-    let say = |v: &serde_json::Value| v.as_array().unwrap().len();
+    let say = |v: &serde_json::Value| v["sonuclar"].as_array().unwrap().len();
 
     // ON KOSUL + ARTI YON: uc not da gercekten eslesiyor, yani asagidaki
     // sayilar limitin FARKINI olcuyor, kurulumun darligini degil.
@@ -749,6 +752,54 @@ async fn arama_limiti_de_kirpilir() {
 }
 
 #[tokio::test]
+async fn arama_yaniti_kirpilmayi_bildirir_ve_sonuc_sayisi_loga_girmez() {
+    // BILINEN BOSLUK KAPANIYOR: butce paylastirmasi sessiz kaybi
+    // hafifletti ama kaldirmadi. Ciplak bir dizi "hepsi bu" ile
+    // "kirpildi"yi ayirt edilemez kiliyordu; terapist var olan bir notu
+    // bulamadigini fark etmiyordu.
+    //
+    // IKI YON AYNI TESTTE: ayni kurulumda once kirpilmayan sonra kirpilan
+    // bir arama. "Hep true" ve "hep false" mutasyonlarinin ikisi de kirilir.
+    let (_d, s) = kurulu_state().await;
+    let cid = danisan_ekle(&s, "Ayse Yilmaz").await;
+    for gun in ["2026-09-07", "2026-09-14", "2026-09-21"] {
+        let rid = randevu_ekle(&s, cid, gun).await;
+        cagir(
+            &s,
+            "PUT",
+            &format!("/api/randevular/{rid}/not"),
+            Some(json!({"sablon":"dap","icerik": format!("kaygi duzeyi {gun}")})),
+        )
+        .await;
+    }
+
+    // Sinir 3, eslesme 3: hicbir sey dusmedi.
+    let (kod, tam) = cagir(&s, "GET", "/api/ara?q=kaygi&limit=3", None).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(tam["sonuclar"].as_array().unwrap().len(), 3, "on kosul: ucu de donmeli");
+    assert_eq!(
+        tam["kirpildi"],
+        json!(false),
+        "tam sinirdaki arama kirpilmis sayilmamali: {tam}"
+    );
+
+    // Sinir 2, eslesme 3: biri dustu.
+    let (kod, kirpik) = cagir(&s, "GET", "/api/ara?q=kaygi&limit=2", None).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(kirpik["sonuclar"].as_array().unwrap().len(), 2);
+    assert_eq!(kirpik["kirpildi"], json!(true), "dusen eslesme bildirilmeli: {kirpik}");
+
+    // SONUC SAYISI VE KIRPILMA LOGA GIRMEZ (bkz. `store::search` basligi):
+    // yalnizca "bu cihazdan arama yapildi" satiri, sabit `varlik_id` ile.
+    let arama_satirlari: Vec<String> =
+        log_satirlari(&s).await.into_iter().filter(|x| x.contains("|arama|")).collect();
+    assert!(!arama_satirlari.is_empty(), "on kosul: arama satiri yazilmis olmali");
+    for satir in arama_satirlari {
+        assert_eq!(satir, "goruntuleme|arama|genel", "arama satiri sabit olmali: {satir}");
+    }
+}
+
+#[tokio::test]
 async fn iki_karakterden_kisa_sorgu_bos_liste_dondurur() {
     let (_d, s, _cid, rid) = dolu_state().await;
     cagir(
@@ -761,7 +812,10 @@ async fn iki_karakterden_kisa_sorgu_bos_liste_dondurur() {
 
     let (kod, sonuc) = cagir(&s, "GET", "/api/ara?q=k", None).await;
     assert_eq!(kod, StatusCode::OK, "kisa sorgu hata degil, bos liste");
-    assert!(sonuc.as_array().unwrap().is_empty());
+    assert!(sonuc["sonuclar"].as_array().unwrap().is_empty());
+    // Kisa sorgu KIRPILMIS da sayilmamali: uyari, kullanicinin daraltmasi
+    // gereken gercek bir durum icin ayrilmis.
+    assert_eq!(sonuc["kirpildi"], serde_json::json!(false), "{sonuc}");
 }
 
 // =====================================================================
@@ -1486,7 +1540,18 @@ fn kod_satirlari(kaynak: &str) -> String {
 /// oturumda çalışmaları GEREKİR) ve denetim kaydını da **kendileri** yazar
 /// -- `giris`/`cikis`/`kurulum` satırlarını yazacak bir çekirdek çağrısı
 /// yok, kaynak onlar.
-const VERI_DISI_ROTALAR: [&str; 2] = ["session.rs", "setup.rs"];
+///
+/// `restore.rs` (yedek listeleme + geri yükleme) aynı sınıfa **bilerek**
+/// katıldı: geri yüklemenin var oluş sebebi oturumun açılamadığı durumdur
+/// (bozuk veritabanı, okunamayan anahtar dosyası, boş bir veri dizini),
+/// dolayısıyla `acik_baglanti` orada tanım gereği `401` dönerdi. Yetkisiz
+/// DEĞİL: çağıran, geri yüklenecek yedeğin **kendi** anahtar dosyasını
+/// açabilen parolayı vermek zorunda ve `geri_yukleme` satırını modül
+/// kendisi yazar -- eski veritabanı artık yerinde olmadığı için o satırı
+/// yazabilecek bir çekirdek çağrısı da yok. Yedek ALMA bilerek AYRI bir
+/// modülde (`backup.rs`) ve kapının İÇİNDE; ikisini birleştirmek, kapısız
+/// bir modülde kapı isteyen bir handler bulundurmak olurdu.
+const VERI_DISI_ROTALAR: [&str; 3] = ["restore.rs", "session.rs", "setup.rs"];
 
 /// İstisna listesinin bayatlamadığını doğrular: adı yazılı her dosya
 /// gerçekten diskte olmalı. Dosya yeniden adlandırılırsa istisna sessizce
@@ -1732,7 +1797,7 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
     // degisiklik BILINCLI olarak onaylanir. Birincil koruma artik yukaridaki
     // bire bir esleme -- sayiyi guncellemek tek basina bir kapiyi geri
     // getirmez.
-    assert_eq!(toplam, 27, "toplam veri handler'i sayisi 27 olmali");
+    assert_eq!(toplam, 29, "toplam veri handler'i sayisi 29 olmali");
 }
 
 // =====================================================================

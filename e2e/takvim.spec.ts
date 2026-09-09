@@ -55,6 +55,18 @@ test('kilitliyken randevu ucu veri sizdirmaz', async ({ page, request }) => {
   await expect(page.getByRole('button', { name: 'Zeynep Kaya', exact: true }).first()).toBeVisible()
 
   await page.getByRole('button', { name: 'Kilitle' }).click()
+  // BARIYER -- yoksa test bir YARIS olcerdi. `click()` yalnizca tiklamanin
+  // gonderildigi anda coozulur; `POST /api/kilitle` hala ucusta olabilir ve
+  // asagidaki istek acik oturuma denk gelip `200` alir. Bu kirilganlik
+  // bastan beri vardi ama tetiklenmiyordu; yedekleme bolumunun mount'ta
+  // attigi ek istek ve dorduncu e2e sunucusunun getirdigi yuk onu gorunur
+  // yapti (olculdu: dort kosudan ikisinde `200` geldi, ekran ise "Kilitli"
+  // gosteriyordu). Kardes testlerin hepsi (`notlar.spec.ts:234`, `:271`,
+  // `kurulum.spec.ts:19`) zaten bu bariyeri kullaniyor.
+  //
+  // Iddia ZAYIFLAMIYOR: test "kilitliyken 401 doner" diyor ve bu satir tam
+  // olarak "kilitliyken" on kosulunu kuruyor.
+  await expect(page.getByRole('heading', { name: 'Kilitli' })).toBeVisible()
 
   const yanit = await request.get(
     '/api/randevular?baslangic=2026-01-01T00:00&bitis=2030-01-01T00:00',

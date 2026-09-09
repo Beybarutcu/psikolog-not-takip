@@ -48,6 +48,31 @@ use time::{format_description::well_known::Rfc3339, Date, Month, OffsetDateTime}
 
 pub const GECERLI_DURUMLAR: [&str; 4] = ["planlandi", "geldi", "gelmedi", "iptal"];
 
+/// Ücretin (kuruş) uygulama katmanındaki alt sınırı.
+///
+/// `GECERLI_DURUMLAR` ile aynı sınıftan bir sabit: kural **iki yerde**
+/// yazılıdır — burada ve `schema::V4`'teki
+/// `CHECK (ucret IS NULL OR ucret >= 0)` kısıtında. İkisinin ayrışması
+/// sessiz bir hatadır (uygulama reddeder, veritabanı kabul eder ya da
+/// tersi), bu yüzden
+/// `schema::tests::ucret_alt_siniri_semada_ve_uygulama_katmaninda_ayni`
+/// ayrışmayı **iki yönlü** yakalar: sınırdaki değer veritabanınca kabul
+/// edilmeli, bir altı hem uygulama katmanınca hem `CHECK` tarafından
+/// reddedilmelidir.
+///
+/// Sabit `V4` betiğine gömülmüyor (`format!` ile üretilmiyor): bir göç
+/// adımı **tarihsel** metindir; sabitten türetilseydi bugün yükselen bir
+/// veritabanı ile dün yükselmiş bir veritabanı farklı şemalar alırdı.
+pub const ASGARI_UCRET: i64 = 0;
+
+/// Bir ücret değerinin uygulama katmanınca kabul edilip edilmediği.
+///
+/// `None` (ücretsiz/girilmemiş seans) geçerlidir — şemadaki `ucret IS NULL`
+/// kolunun karşılığı.
+pub fn ucret_gecerli_mi(ucret: Option<i64>) -> bool {
+    !ucret.is_some_and(|u| u < ASGARI_UCRET)
+}
+
 /// Bir seride üretilebilecek azami randevu sayısı (ilk randevu dahil).
 /// Bkz. `seri_olustur` -- terapi süreci sonsuz olmadığı için sonsuz seri
 /// kurulamaması kabul edilebilir bir bedel.
@@ -169,7 +194,7 @@ pub fn olustur(
             "Randevu bitişi başlangıcından sonra olmalı.".into(),
         ));
     }
-    if yeni.ucret.is_some_and(|u| u < 0) {
+    if !ucret_gecerli_mi(yeni.ucret) {
         return Err(DepoHatasi::GecersizVeri("Ücret negatif olamaz.".into()));
     }
 
@@ -389,7 +414,7 @@ pub fn guncelle(
             "Randevu bitişi başlangıcından sonra olmalı.".into(),
         ));
     }
-    if yeni.ucret.is_some_and(|u| u < 0) {
+    if !ucret_gecerli_mi(yeni.ucret) {
         return Err(DepoHatasi::GecersizVeri("Ücret negatif olamaz.".into()));
     }
 

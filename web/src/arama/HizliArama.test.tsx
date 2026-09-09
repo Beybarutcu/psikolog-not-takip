@@ -2,7 +2,7 @@ import aramaKaynagi from './HizliArama.tsx?raw'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AramaSonucu } from '../api'
+import type { AramaSonucu, AramaYaniti } from '../api'
 import { ARAMA_SINIRI } from '../api'
 import { GECIKME_MS, HizliArama } from './HizliArama'
 
@@ -24,9 +24,14 @@ const notSonucu: AramaSonucu = {
   parca: '…uyku düzeni ve kaygı üzerine konuşuldu…',
 }
 
+/** `AramaYaniti` kısayolu: testlerin çoğu kırpılmayla ilgilenmiyor. */
+function yanit(sonuclar: AramaSonucu[], kirpildi = false): AramaYaniti {
+  return { sonuclar, kirpildi }
+}
+
 function kur(ozel: Partial<React.ComponentProps<typeof HizliArama>> = {}) {
   const props = {
-    ara: vi.fn().mockResolvedValue([danisanSonucu, notSonucu]),
+    ara: vi.fn().mockResolvedValue(yanit([danisanSonucu, notSonucu])),
     onDanisanSec: vi.fn(),
     onSeansSec: vi.fn(),
     // Gecikme testlerde kısaltılıyor (NotEditoru'nun `gecikmeMs` deseni).
@@ -56,15 +61,15 @@ describe('HizliArama — açılış ve kapanış', () => {
     expect(kutu()).toBeDefined()
   })
 
-  it('modal OLMADIGI icin `aria-modal` DEMEZ', async () => {
-    // Panel satır içi bir `div`: odak tuzağı, backdrop ve `inert` yok,
-    // Tab ile dışarı çıkılabiliyor. `aria-modal="true"` demek ekran
-    // okuyucu kullanıcısına "arkadaki her şey atıl" demektir; yanlış
-    // olduğu için o kullanıcı sayfanın geri kalanını hiç bulamazdı.
+  it('`aria-modal="true"` DER -- artik gercekten modal', async () => {
+    // Etiket eskiden BİLEREK yoktu: panel satır içi bir `div`di, odak
+    // tuzağı, backdrop ve `inert` yoktu; etiket ekran okuyucu
+    // kullanıcısına yalan söylerdi. Bugün üçü de var (aşağıdaki testler),
+    // dolayısıyla etiket gerçeği anlatıyor.
     kur()
     await ac()
     const kutucuk = screen.getByRole('dialog', { name: 'Hızlı arama' })
-    expect(kutucuk.getAttribute('aria-modal')).toBeNull()
+    expect(kutucuk.getAttribute('aria-modal')).toBe('true')
   })
 
   it('Cmd+K ile de acilir (macOS)', async () => {
@@ -131,7 +136,7 @@ describe('HizliArama — açılış ve kapanış', () => {
     let ikinciTur = false
     const ara = vi.fn(async () =>
       // İkinci turda arama hiç bitmiyor: ekranda ne varsa bayat olandır.
-      ikinciTur ? new Promise<AramaSonucu[]>(() => {}) : [notSonucu],
+      ikinciTur ? new Promise<AramaYaniti>(() => {}) : yanit([notSonucu]),
     )
     kur({ ara })
     await ac()
@@ -156,6 +161,147 @@ describe('HizliArama — açılış ve kapanış', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Aramayı kapat' }))
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(document.body.textContent).not.toContain('uyku düzeni ve kaygı')
+  })
+})
+
+// `aria-modal="true"` bir SÖZDÜR: "arkadaki her şey atıl". Aşağıdaki
+// testler o sözün dört parçasını da ölçüyor. Biri bile kalkarsa etiket
+// yeniden yalan söylemeye başlar ve o zaman etiketin kendisi de kalkmalı
+// (dürüstlük gereği bir kez zaten kaldırılmıştı).
+describe('HizliArama — gerçek modal davranışı', () => {
+  // `document.body`ye elle eklenen öğeler RTL'in `cleanup`ı tarafından
+  // KALDIRILMAZ. Temizlenmezlerse bir sonraki teste sızar ve orada hâlâ
+  // ODAKLI olurlar -- "odak nereye döndü" iddiaları sessizce yanlış şeyi
+  // ölçmeye başlar (bu test dosyasında bir kez tam olarak bu oldu).
+  let eklenenler: HTMLElement[] = []
+
+  afterEach(() => {
+    for (const oge of eklenenler) oge.remove()
+    eklenenler = []
+    ;(document.activeElement as HTMLElement | null)?.blur()
+  })
+
+  /** Katmanın dışında kalan, odaklanabilir bir "arka plan" öğesi. */
+  function arkaPlanli(ozel: Partial<React.ComponentProps<typeof HizliArama>> = {}) {
+    const disarisi = document.createElement('button')
+    disarisi.textContent = 'Arka plandaki düğme'
+    document.body.appendChild(disarisi)
+    eklenenler.push(disarisi)
+    const props = kur(ozel)
+    return { ...props, disarisi }
+  }
+
+  it('acilinca odak arama kutusuna gider', async () => {
+    kur()
+    await ac()
+    expect(document.activeElement).toBe(kutu())
+  })
+
+  it('kapaninca odak TETIKLEYEN ogeye geri doner', async () => {
+    // Ctrl+K sayfanın herhangi bir yerinden basılabilir; odak açma
+    // düğmesine değil, kullanıcının BULUNDUĞU yere dönmeli. Aksi hâlde
+    // klavye kullanıcısı her aramadan sonra sayfanın başına atılır.
+    const { disarisi } = arkaPlanli()
+    disarisi.focus()
+    expect(document.activeElement).toBe(disarisi)
+
+    await ac()
+    expect(document.activeElement).toBe(kutu())
+
+    await userEvent.keyboard('{Escape}')
+    expect(document.activeElement).toBe(disarisi)
+  })
+
+  it('odak yakalanacak bir oge yoksa ACMA DUGMESINE doner', async () => {
+    // Ctrl+K odak `body`deyken basıldığında yedek hat: `body.focus()`
+    // hiçbir şey yapmaz ve kullanıcı odağı KAYBEDERDİ.
+    kur()
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    expect(document.activeElement).toBe(document.body)
+    await ac()
+    await userEvent.keyboard('{Escape}')
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Hızlı arama (Ctrl+K)' }),
+    )
+  })
+
+  it('arkadaki icerik `inert` olur ve kapaninca geri alinir', async () => {
+    const { disarisi } = arkaPlanli()
+    expect(disarisi.hasAttribute('inert')).toBe(false)
+
+    await ac()
+    expect(disarisi.hasAttribute('inert')).toBe(true)
+    // Katmanın KENDİSİ atıl olmamalı: kendi kabını da `inert` yapan bir
+    // uygulama katmanı kullanılamaz kılardı.
+    const kutucuk = screen.getByRole('dialog', { name: 'Hızlı arama' })
+    expect(kutucuk.closest('[inert]')).toBeNull()
+
+    await userEvent.keyboard('{Escape}')
+    expect(disarisi.hasAttribute('inert')).toBe(false)
+  })
+
+  it('katman disinda ZATEN duran bir `inert` sessizce KALDIRILMAZ', async () => {
+    // Kapanış temizliği yalnızca KENDİ eklediklerini geri almalı; başka
+    // bir katmanın koyduğu `inert`i silmek onu sessizce erişilebilir
+    // kılardı.
+    const { disarisi } = arkaPlanli()
+    disarisi.setAttribute('inert', '')
+
+    await ac()
+    await userEvent.keyboard('{Escape}')
+    expect(disarisi.hasAttribute('inert')).toBe(true)
+  })
+
+  it('Tab odagi katmanin ICINDE tutar (ileri ve geri)', async () => {
+    // `inert` desteklemeyen bir tarayıcıda tuzak ikinci savunma hattı;
+    // jsdom `inert` semantiğini uygulamıyor, dolayısıyla burada ölçülen
+    // ŞEY tuzağın kendisi.
+    kur()
+    await ac()
+    await userEvent.type(kutu(), 'kaygi')
+    await screen.findByText(/uyku düzeni ve kaygı üzerine konuşuldu/)
+
+    const panel = screen.getByRole('dialog', { name: 'Hızlı arama' })
+    const odaklanabilir = () =>
+      Array.from(
+        panel.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled])'),
+      )
+    const ogeler = odaklanabilir()
+    expect(ogeler.length).toBeGreaterThan(1)
+
+    // Son öğeden ileri Tab -> ilk öğeye sarar.
+    ogeler[ogeler.length - 1].focus()
+    await userEvent.tab()
+    expect(document.activeElement).toBe(ogeler[0])
+
+    // İlk öğeden geri Tab -> son öğeye sarar.
+    ogeler[0].focus()
+    await userEvent.tab({ shift: true })
+    expect(document.activeElement).toBe(ogeler[ogeler.length - 1])
+  })
+
+  it('backdrop tiklamasi kapatir, panel ici tiklama KAPATMAZ', async () => {
+    kur()
+    await ac()
+    // Panel içine tıklamak kapatmamalı (yoksa kullanıcı metin seçemez).
+    await userEvent.click(screen.getByRole('dialog', { name: 'Hızlı arama' }))
+    expect(screen.queryByRole('dialog')).not.toBeNull()
+
+    const backdrop = screen.getByRole('dialog', { name: 'Hızlı arama' }).parentElement
+    expect(backdrop).not.toBeNull()
+    await userEvent.click(backdrop as HTMLElement)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('kapaninca portal kabi govdeden KALKAR', async () => {
+    // Gizlenmiş ama duran bir katman kabı, ekranda görünmeyen bir not
+    // parçasını DOM'da bırakırdı.
+    kur()
+    const oncekiSayi = document.body.children.length
+    await ac()
+    expect(document.body.children.length).toBe(oncekiSayi + 1)
+    await userEvent.keyboard('{Escape}')
+    expect(document.body.children.length).toBe(oncekiSayi)
   })
 })
 
@@ -276,7 +422,7 @@ describe('HizliArama — sonuçlar', () => {
   })
 
   it('sonuc yoksa bunu soyler', async () => {
-    const { ara } = kur({ ara: vi.fn().mockResolvedValue([]) })
+    const { ara } = kur({ ara: vi.fn().mockResolvedValue(yanit([])) })
     await ac()
     await userEvent.type(kutu(), 'zzzz')
     await waitFor(() => expect(ara).toHaveBeenCalled())
@@ -286,15 +432,27 @@ describe('HizliArama — sonuçlar', () => {
   it('yanit beklenirken "sonuc bulunamadi" DEMEZ', async () => {
     // Türetilen liste yanıt gelene kadar boş; ayrım yapılmasaydı ekranda
     // henüz sorulmamış bir sorunun cevabı görünürdü.
-    let coz: (s: AramaSonucu[]) => void = () => {}
-    kur({ ara: vi.fn(() => new Promise<AramaSonucu[]>((c) => { coz = c })) })
+    let coz: (s: AramaYaniti) => void = () => {}
+    const ara = vi.fn(() => new Promise<AramaYaniti>((c) => { coz = c }))
+    kur({ ara })
     await ac()
     await userEvent.type(kutu(), 'kaygi')
 
     expect(await screen.findByText(/aranıyor/i)).toBeDefined()
     expect(screen.queryByText(/sonuç bulunamadı/i)).toBeNull()
 
-    coz([])
+    // SENKRONİZASYON BARİYERİ (dal incelemesi M6 ile aynı sınıf, altıncı
+    // biçim). "Aranıyor…" metni istek ATILMADAN da görünür: `bekleniyor`
+    // yalnızca "sorgu yeterince uzun ve yanıt yok" demek. Yüklü bir
+    // makinede `userEvent.type` tuşlar arasında gerçekten bekliyor,
+    // 5 ms'lik debounce ARA bir önek için ('ka') dolabiliyor ve son
+    // sorgunun ('kaygi') zamanlayıcısı hâlâ beklerken `coz` o ara isteğe
+    // işaret ediyor. O hâlde `coz(...)` BAYAT bir sorguyu çözer, ekranda
+    // hiçbir şey değişmez ve test **ürün doğru çalıştığı hâlde** kırılır
+    // (tam paket koşusunda bir kez oldu). Bariyer, çözülecek isteğin
+    // gerçekten SON sorguya ait olmasını garanti eder.
+    await waitFor(() => expect(ara).toHaveBeenCalledWith('kaygi'))
+    coz(yanit([]))
     expect(await screen.findByText(/sonuç bulunamadı/i)).toBeDefined()
   })
 
@@ -302,7 +460,7 @@ describe('HizliArama — sonuçlar', () => {
     // Sonuçlar hangi sorguya ait olduklarıyla birlikte tutuluyor ve render
     // sırasında süzülüyor; efekte bırakılsaydı arada bir kare boyunca
     // önceki sorgunun not parçaları ekranda kalırdı.
-    const bekleyen = vi.fn(async (q: string) => (q === 'kaygi' ? [notSonucu] : []))
+    const bekleyen = vi.fn(async (q: string) => yanit(q === 'kaygi' ? [notSonucu] : []))
     kur({ ara: bekleyen })
     await ac()
     await userEvent.type(kutu(), 'kaygi')
@@ -316,7 +474,7 @@ describe('HizliArama — sonuçlar', () => {
     let basarisiz = false
     const ara = vi.fn(async (q: string) => {
       if (basarisiz) throw new Error('Arama yapılamadı.')
-      return q === 'kaygi' ? [notSonucu] : []
+      return yanit(q === 'kaygi' ? [notSonucu] : [])
     })
     kur({ ara })
     await ac()
@@ -332,11 +490,11 @@ describe('HizliArama — sonuçlar', () => {
   })
 })
 
-// Görev 6'dan devreden bilinen boşluk: `/api/ara` "daha fazla sonuç var"
-// işareti TAŞIMIYOR. Bütçe paylaştırması sessiz kaybı hafifletti ama
-// kaldırmadı — 61 danışan eşleşirse 12'si hâlâ düşüyor. Arayüz sayıyı
-// kendisi ölçüp kullanıcıyı daraltmaya yönlendirmeli.
-describe('HizliArama — sonuçlar kırpılmış olabilir', () => {
+// Görev 6'dan devreden bilinen boşluk KAPANDI: `/api/ara` artık `kirpildi`
+// işaretini taşıyor ve arayüz onu kullanıyor. Eskiden arayüz "sonuç sayısı
+// == ARAMA_SINIRI" diye tahmin yürütüyordu; o sezgi iki yönde de yanlıştı
+// ve aşağıdaki ilk iki test tam olarak o iki yönü ölçüyor.
+describe('HizliArama — sunucu sonuçların kırpıldığını bildirdiğinde', () => {
   function sonuclar(adet: number): AramaSonucu[] {
     return Array.from({ length: adet }, (_, i) => ({
       ...danisanSonucu,
@@ -346,30 +504,50 @@ describe('HizliArama — sonuçlar kırpılmış olabilir', () => {
     }))
   }
 
-  it('sonuc sayisi sinira ESITSE aramayi daraltma uyarisi gosterir', async () => {
-    kur({ ara: vi.fn().mockResolvedValue(sonuclar(ARAMA_SINIRI)) })
+  it('`kirpildi` DOGRUYSA aramayi daraltma uyarisi gosterir', async () => {
+    // Sayı sınırın çok ALTINDA ama sunucu kırpıldığını söylüyor: eski
+    // sezgi (`sayi == 50`) burada uyarmayı KAÇIRIRDI. İki kipin bütçesi
+    // ayrı ayrı dolduğunda gerçekleşen durum tam olarak bu.
+    kur({ ara: vi.fn().mockResolvedValue(yanit(sonuclar(4), true)) })
     await ac()
     await userEvent.type(kutu(), 'yilmaz')
     expect(await screen.findByText(/aramayı daraltın/i)).toBeDefined()
   })
 
-  it('sinirin ALTINDA uyari YOKTUR', async () => {
-    // Her zaman uyaran bir arayüz uyarıyı anlamsızlaştırır.
-    kur({ ara: vi.fn().mockResolvedValue(sonuclar(ARAMA_SINIRI - 1)) })
+  it('`kirpildi` YANLISSA sonuc sayisi sinira ESIT olsa bile uyarmaz', async () => {
+    // Eski sezginin yanlış uyardığı yön: tam 50 eşleşme var, hiçbiri
+    // düşmedi. Her zaman uyaran bir arayüz uyarıyı anlamsızlaştırır.
+    kur({ ara: vi.fn().mockResolvedValue(yanit(sonuclar(ARAMA_SINIRI), false)) })
     await ac()
     await userEvent.type(kutu(), 'yilmaz')
     await screen.findByRole('button', { name: /Danisan 1 — danışan dosyasını aç/ })
     expect(screen.queryByText(/aramayı daraltın/i)).toBeNull()
   })
 
-  it('uyari sonuc SAYISINI ekranda yazar ama loga yazmaz', async () => {
+  it('uyari GOSTERILEN sonuc sayisini ekranda yazar ama loga yazmaz', async () => {
     const casus = vi.spyOn(console, 'log').mockImplementation(() => {})
-    kur({ ara: vi.fn().mockResolvedValue(sonuclar(ARAMA_SINIRI)) })
+    kur({ ara: vi.fn().mockResolvedValue(yanit(sonuclar(7), true)) })
     await ac()
     await userEvent.type(kutu(), 'yilmaz')
     const uyari = await screen.findByText(/aramayı daraltın/i)
-    expect(uyari.textContent).toContain(String(ARAMA_SINIRI))
+    expect(uyari.textContent).toContain('7 sonuç gösteriliyor')
     expect(casus).not.toHaveBeenCalled()
+  })
+
+  it('uyari BAYAT bir yanittan kalmaz', async () => {
+    // Sorgu değişince uyarı da sonuçlarla birlikte düşmeli; aksi hâlde
+    // kırpılmayan yeni bir sonuç listesinin üstünde eski uyarı durur.
+    const ara = vi.fn(async (q: string) =>
+      q === 'yilmaz' ? yanit(sonuclar(4), true) : yanit(sonuclar(1), false),
+    )
+    kur({ ara })
+    await ac()
+    await userEvent.type(kutu(), 'yilmaz')
+    await screen.findByText(/aramayı daraltın/i)
+
+    await userEvent.clear(kutu())
+    await userEvent.type(kutu(), 'demir')
+    await waitFor(() => expect(screen.queryByText(/aramayı daraltın/i)).toBeNull())
   })
 })
 
@@ -412,8 +590,10 @@ describe('HizliArama — gizlilik', () => {
       expect(kod).not.toContain('ozel-not')
       expect(kod).not.toContain('private_notes')
       // ARTI YÖN: yorum ayıklama kodu boşaltmadı (boş bir dizgi yukarıdaki
-      // üç iddiayı da geçerdi).
-      expect(kod).toContain('ARAMA_SINIRI')
+      // üç iddiayı da geçerdi). Sentinel olarak `kirpildi` seçildi: hem
+      // kod bölümünde geçiyor hem de bu bileşenin sunucudan gelen
+      // kırpılma işaretini gerçekten okuduğunu söylüyor.
+      expect(kod).toContain('kirpildi')
       expect(kod).toContain('export function HizliArama')
     })
   })

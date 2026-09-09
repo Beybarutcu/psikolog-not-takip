@@ -3,9 +3,17 @@ import { useState } from 'react'
 type Props = {
   kurulumYap: (parola: string) => Promise<{ kurtarma_kodu: string }>
   onTamam: () => void
+  /**
+   * Geri yükleme ekranını açar — **kurulum yapılmadan önce**.
+   *
+   * Bu ekranın en tehlikeli kullanıcısı, bilgisayarı değişmiş ve elinde
+   * yalnızca yedek klasörü olan kişidir; kurulum yaparsa yedeğindeki
+   * kayıtlar kalıcı olarak açılamaz hâle gelir.
+   */
+  onGeriYukle: () => void
 }
 
-export function KurulumSihirbazi({ kurulumYap, onTamam }: Props) {
+export function KurulumSihirbazi({ kurulumYap, onTamam, onGeriYukle }: Props) {
   const [parola, setParola] = useState('')
   const [tekrar, setTekrar] = useState('')
   const [hata, setHata] = useState<string | null>(null)
@@ -94,6 +102,31 @@ export function KurulumSihirbazi({ kurulumYap, onTamam }: Props) {
       <button className="mt-6 w-full rounded-lg bg-slate-900 py-2 text-white" onClick={devamEt}>
         Devam et
       </button>
+
+      {/* ELİNDE YEDEK OLANIN ÇIKIŞI — kurulumdan ÖNCE.
+          Bu ekranın en tehlikeli kullanıcısı, bilgisayarı değişmiş ve elinde
+          yalnızca yedek klasörü olan kişidir. Onun için doğru sıra "önce
+          kurulum, sonra geri yükleme" DEĞİLDİR: kurulum yeni bir veri
+          anahtarı üretir ve `keystore.json`'ı yazar; o andan sonra yedekteki
+          kayıtlar hiçbir parolayla açılamaz. Uyarı bu yüzden düğmenin
+          yanında ve kurulum akışının içinde duruyor — kullanıcının onu
+          aramasına gerek kalmadan. */}
+      <div className="mt-8 rounded-lg border border-amber-400 bg-amber-50 p-4">
+        <h2 className="text-sm font-semibold text-amber-900">Daha önce yedek aldıysanız</h2>
+        <p className="mt-2 text-sm text-amber-900">
+          Bilgisayarınız değiştiyse ya da uygulamayı yeniden kurduysanız,{' '}
+          <strong>kurulum yapmadan önce</strong> yedeğinizi geri yükleyin. Kurulum yeni bir
+          anahtar üretir ve eskisinin yerine geçer; o andan sonra yedeğinizdeki kayıtlar
+          hiçbir parolayla — kurtarma kodunuzla bile — açılamaz.
+        </p>
+        <button
+          type="button"
+          className="mt-3 w-full rounded-lg border border-amber-700 py-2 text-sm text-amber-900"
+          onClick={onGeriYukle}
+        >
+          Yedekten geri yükle
+        </button>
+      </div>
     </div>
   )
 }

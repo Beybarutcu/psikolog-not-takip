@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  api,
   AZAMI_EK_BOYUTU,
   aramaApi,
   ARAMA_SINIRI,
@@ -8,6 +9,9 @@ import {
   ekIndirmeYolu,
   notApi,
   ozelNotApi,
+  veritabaniBozukOlunca,
+  VeritabaniBozukHata,
+  yedekApi,
   YetkisizHata,
   yetkisizOlunca,
 } from './api'
@@ -367,6 +371,58 @@ describe('ekIndir — kilitli oturumda SPA yıkılmaz', () => {
   })
 })
 
+describe('api.parolaDegistir — parola değiştirme', () => {
+  it('POST ile /api/parola adresine iki parolayi da GOVDEDE gonderir', async () => {
+    await api.parolaDegistir('eski-parola', 'yeni-parola')
+    expect(cagrilar).toEqual([
+      {
+        yol: '/api/parola',
+        method: 'POST',
+        govde: { mevcut_parola: 'eski-parola', yeni_parola: 'yeni-parola' },
+      },
+    ])
+  })
+
+  it('parola URL de tasinmaz', async () => {
+    // URL'ler tarayici gecmisine ve genel amacli erisim gunluklerine duser;
+    // govdeler dusmez (`ekYukle`nin dosya adi ve `yedekApi.listele`nin
+    // klasor yolu kararlariyla ayni sinif). Bir gun birileri "kolaylik
+    // olsun" diye sorgu dizesine tasirsa bu test kirilir.
+    await api.parolaDegistir('KANARYA-ESKI', 'KANARYA-YENI')
+    expect(cagrilar[0].yol).toBe('/api/parola')
+    expect(cagrilar[0].yol).not.toContain('KANARYA')
+  })
+
+  it('mevcut parola ZORUNLU olarak gonderilir', async () => {
+    // Yalnizca yeni parola gonderen bir istemci, sunucunun dogrulamasini
+    // fiilen atlatamaz (sunucu 401 doner) ama arayuz "parolam degisti"
+    // sanabilirdi. Alanin gonderildigi burada sabitleniyor.
+    await api.parolaDegistir('mevcut', 'yenisi-uzun')
+    const govde = cagrilar[0].govde as Record<string, unknown>
+    expect(govde.mevcut_parola).toBe('mevcut')
+  })
+
+  it('401de YetkisizHata firlatir (merkezi mekanizmadan gecer)', async () => {
+    sunucu(() => ({ ok: false, status: 401, govde: { hata: 'Mevcut parolanız hatalı.' } }))
+    await expect(api.parolaDegistir('yanlis', 'yenisi-uzun')).rejects.toThrow(
+      'Mevcut parolanız hatalı.',
+    )
+  })
+
+  it('400te sunucunun mesaji OLDUGU GIBI firlatilir', async () => {
+    // "Her hata parola hatasidir" tuzagi: kisa parola ile yanlis parola ayri
+    // sorunlar ve kullanici hangisini duzeltecegini bilmeli.
+    sunucu(() => ({
+      ok: false,
+      status: 400,
+      govde: { hata: 'Yeni parola en az 8 karakter olmalı. Parolanız değişmedi.' },
+    }))
+    await expect(api.parolaDegistir('dogru', 'kisa')).rejects.toThrow(
+      'Yeni parola en az 8 karakter olmalı. Parolanız değişmedi.',
+    )
+  })
+})
+
 describe('aramaApi — hızlı arama', () => {
   it('sorguyu kodlar ve limiti sunucunun üst sınırına sabitler', async () => {
     await aramaApi.ara('kaygı & panik')
@@ -461,5 +517,108 @@ describe('danışan dosyası uç noktalarında 401', () => {
     // rapor uretilirse kayitsiz bir kopya olusur.
     sunucu(() => ({ ok: false, status: 404, govde: { hata: 'Kayıt bulunamadı.' } }))
     await expect(danisanApi.raporKaydiOlustur(7)).rejects.toThrow('Kayıt bulunamadı.')
+  })
+})
+
+// =====================================================================
+// YEDEKLEME ISTEMCISI
+// =====================================================================
+
+describe('yedekApi — yedek alma, listeleme, geri yükleme', () => {
+  it('yedek alma damgayı ve (verilmişse) klasörü gövdede gönderir', async () => {
+    await yedekApi.al('2026-09-09', '/Volumes/USB/yedek')
+    expect(cagrilar).toEqual([
+      {
+        yol: '/api/yedek',
+        method: 'POST',
+        govde: { damga: '2026-09-09', hedef_dizin: '/Volumes/USB/yedek' },
+      },
+    ])
+  })
+
+  it('klasör verilmezse gövdede hedef_dizin YOKTUR (kayıtlı ayar kullanılır)', async () => {
+    await yedekApi.al('2026-09-09')
+    expect(cagrilar[0].govde).toEqual({ damga: '2026-09-09' })
+  })
+
+  it('klasör yolu SORGU DİZESİNDE değil, gövdede gider', async () => {
+    // Yol kullanıcının adını içerebilir (`/Users/ayse/Dropbox/...`) ve
+    // URL'ler tarayıcı geçmişine ve genel amaçlı erişim günlüklerine düşer
+    // (`ekYukle`'nin dosya adı kararıyla aynı sınıf).
+    await yedekApi.listele('/Users/ayse/Dropbox/yedek')
+    expect(cagrilar[0].yol).toBe('/api/yedekler')
+    expect(cagrilar[0].yol).not.toContain('ayse')
+    expect(cagrilar[0].govde).toEqual({ dizin: '/Users/ayse/Dropbox/yedek' })
+    expect(cagrilar[0].method).toBe('POST')
+  })
+
+  it('geri yükleme yol değil DOSYA ADI gönderir', async () => {
+    await yedekApi.geriYukle({ dosya_adi: 'yedek-2026-09-08.db', parola: 'gizli' })
+    expect(cagrilar).toEqual([
+      {
+        yol: '/api/geri-yukleme',
+        method: 'POST',
+        govde: { dosya_adi: 'yedek-2026-09-08.db', parola: 'gizli' },
+      },
+    ])
+  })
+})
+
+// =====================================================================
+// "VERITABANI BOZUK" MEKANIZMASI -- 401'in birebir esi
+// =====================================================================
+
+describe('veritabani_bozuk yanıtı', () => {
+  it('dinleyici throw edilmeden ÖNCE senkron tetiklenir ve VeritabaniBozukHata atılır', async () => {
+    sunucu(() => ({
+      ok: false,
+      status: 500,
+      govde: { hata: 'Kayıt dosyanız açıldı ama içeriği bozuk.', veritabani_bozuk: true },
+    }))
+    const sira: string[] = []
+    const birak = veritabaniBozukOlunca(() => sira.push('dinleyici'))
+
+    await expect(
+      notApi.notGetir(7).catch((e) => {
+        sira.push('throw')
+        throw e
+      }),
+    ).rejects.toBeInstanceOf(VeritabaniBozukHata)
+
+    expect(sira).toEqual(['dinleyici', 'throw'])
+    birak()
+  })
+
+  it('bayrak YOKKEN sıradan bir hata atılır ve dinleyici tetiklenmez', async () => {
+    // EKSİ YÖN: karar sunucunun AYRI BAYRAĞINA bakıyor, hata METNİNE değil.
+    // Metin kullanıcı için yazılmıştır ve yarın değişebilir; ekran seçimini
+    // ona bağlamak, metni düzelten birinin geri yükleme ekranını sessizce
+    // devre dışı bırakması demekti.
+    sunucu(() => ({
+      ok: false,
+      status: 500,
+      govde: { hata: 'Kayıt dosyanız açıldı ama içeriği bozuk.' },
+    }))
+    const dinleyici = vi.fn()
+    const birak = veritabaniBozukOlunca(dinleyici)
+
+    await expect(notApi.notGetir(7)).rejects.not.toBeInstanceOf(VeritabaniBozukHata)
+    expect(dinleyici).not.toHaveBeenCalled()
+    birak()
+  })
+
+  it('401 hâlâ YetkisizHata: iki mekanizma birbirini gölgelemez', async () => {
+    sunucu(() => ({
+      ok: false,
+      status: 401,
+      govde: { hata: 'Oturum kilitli.', veritabani_bozuk: true },
+    }))
+    const bozukDinleyici = vi.fn()
+    const birak = veritabaniBozukOlunca(bozukDinleyici)
+
+    // Kilitli oturum HER ZAMAN kilit ekranina gider: 401 once degerlendirilir.
+    await expect(notApi.notGetir(7)).rejects.toBeInstanceOf(YetkisizHata)
+    expect(bozukDinleyici).not.toHaveBeenCalled()
+    birak()
   })
 })

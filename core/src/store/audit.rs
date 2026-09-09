@@ -195,6 +195,16 @@ pub enum Eylem {
     Ekleme,
     Silme,
     DisaAktarma,
+    /// Bir yedekten geri yükleme: veritabanının **tamamı** yedekteki hâliyle
+    /// değiştirildi.
+    ///
+    /// `Duzenleme` DEĞİL ve bu ayrım denetim için asıl olandır: geri yükleme,
+    /// o yedeğin alındığı andan sonraki **her kaydı** (danışan, randevu, not,
+    /// ek) geri alır. Onu sıradan bir düzenleme satırı olarak yazmak,
+    /// denetimi yapan kişiye "bir alan güncellendi" der; olan biten ise
+    /// veritabanının değiştirilmesidir. `varlik_id` geri yüklenen yedeğin
+    /// tarih damgasıdır -- yani hangi ana dönüldüğü kayda geçer.
+    GeriYukleme,
     Giris,
     Cikis,
 }
@@ -207,6 +217,7 @@ impl Eylem {
             Eylem::Ekleme => "ekleme",
             Eylem::Silme => "silme",
             Eylem::DisaAktarma => "disa_aktarma",
+            Eylem::GeriYukleme => "geri_yukleme",
             Eylem::Giris => "giris",
             Eylem::Cikis => "cikis",
         }

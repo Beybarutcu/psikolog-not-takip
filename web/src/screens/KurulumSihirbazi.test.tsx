@@ -6,7 +6,7 @@ import { KurulumSihirbazi } from './KurulumSihirbazi'
 describe('KurulumSihirbazi', () => {
   it('kisa parolayi reddeder ve sunucuya gitmez', async () => {
     const kurulumYap = vi.fn()
-    render(<KurulumSihirbazi kurulumYap={kurulumYap} onTamam={() => {}} />)
+    render(<KurulumSihirbazi kurulumYap={kurulumYap} onTamam={() => {}} onGeriYukle={() => {}} />)
 
     await userEvent.type(screen.getByLabelText('Ana parola'), 'kisa')
     await userEvent.type(screen.getByLabelText('Parola tekrar'), 'kisa')
@@ -18,7 +18,7 @@ describe('KurulumSihirbazi', () => {
 
   it('parolalar eslesmezse uyarir', async () => {
     const kurulumYap = vi.fn()
-    render(<KurulumSihirbazi kurulumYap={kurulumYap} onTamam={() => {}} />)
+    render(<KurulumSihirbazi kurulumYap={kurulumYap} onTamam={() => {}} onGeriYukle={() => {}} />)
 
     await userEvent.type(screen.getByLabelText('Ana parola'), 'gizliparola')
     await userEvent.type(screen.getByLabelText('Parola tekrar'), 'baskaparola')
@@ -31,7 +31,7 @@ describe('KurulumSihirbazi', () => {
   it('kurtarma kodunu gosterir ve onaylanmadan devam ettirmez', async () => {
     const kurulumYap = vi.fn().mockResolvedValue({ kurtarma_kodu: 'ABCDE-FGHJK-MNPQR-STVWX-YZ234' })
     const onTamam = vi.fn()
-    render(<KurulumSihirbazi kurulumYap={kurulumYap} onTamam={onTamam} />)
+    render(<KurulumSihirbazi kurulumYap={kurulumYap} onTamam={onTamam} onGeriYukle={() => {}} />)
 
     await userEvent.type(screen.getByLabelText('Ana parola'), 'gizliparola')
     await userEvent.type(screen.getByLabelText('Parola tekrar'), 'gizliparola')
@@ -54,7 +54,7 @@ describe('KurulumSihirbazi', () => {
     // dosyasini tasirsa yedegi geri yuklenemez hale gelir; bunu ogrenecegi tek
     // an, ogrenmenin fayda etmeyecegi an olur.
     const kurulumYap = vi.fn().mockResolvedValue({ kurtarma_kodu: 'ABCDE-FGHJK-MNPQR-STVWX-YZ234' })
-    const { container } = render(<KurulumSihirbazi kurulumYap={kurulumYap} onTamam={() => {}} />)
+    const { container } = render(<KurulumSihirbazi kurulumYap={kurulumYap} onTamam={() => {}} onGeriYukle={() => {}} />)
 
     await userEvent.type(screen.getByLabelText('Ana parola'), 'gizliparola')
     await userEvent.type(screen.getByLabelText('Parola tekrar'), 'gizliparola')

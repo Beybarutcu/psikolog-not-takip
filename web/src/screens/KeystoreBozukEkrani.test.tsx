@@ -1,11 +1,12 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
 import { KeystoreBozukEkrani } from './KeystoreBozukEkrani'
 
 const VERI_DIZINI = '/Users/psikolog/Library/Application Support/psikolog-not-takip'
 
-function kur() {
-  return render(<KeystoreBozukEkrani veriDizini={VERI_DIZINI} />)
+function kur(onGeriYukle: () => void = () => {}) {
+  return render(<KeystoreBozukEkrani veriDizini={VERI_DIZINI} onGeriYukle={onGeriYukle} />)
 }
 
 describe('KeystoreBozukEkrani', () => {
@@ -70,17 +71,20 @@ describe('KeystoreBozukEkrani', () => {
 
   // --- Inceleme maddesi 1: var olmayan bir kurtarma yolu kesin dille anlatilmaz ---
   it('geri yukleme adimlarini kosullu sunar ve yedegi olmayana da bir yol gosterir', () => {
-    // `backup::yedek_al`'i bugun hicbir akis cagirmiyor: cogu kullanicida bir
-    // yedek klasoru YOKTUR. Ekran "yedek klasorunuzu acin" diye kesin bir emir
-    // verirse, kullanici bulamayacagi bir klasoru arar ve eskisinden caresiz
-    // kalir.
+    // Metin eskiden "uygulama su an kendiliginden yedek almiyor" diyordu ve o
+    // an DOGRUYDU: `backup::yedek_al`'in hicbir cagri yeri yoktu. Artik var,
+    // dolayisiyla o cumle bir yalana donusurdu ve kaldirildi. Kural
+    // degismedi: ekran, urunun yapabildigini soyler, yapamadigini degil.
     const { container } = kur()
     const metin = container.textContent ?? ''
 
-    // Yedek adimlari kosullu bir baslik altinda.
+    // Bayat cumlenin geri gelmedigi ACIKCA olculuyor: yalnizca silmek,
+    // birinin onu geri yazmasini engellemez.
+    expect(metin).not.toMatch(/kendiliğinden yedek almıyor/i)
+
+    // Yedek adimlari hala kosullu bir baslik altinda: klasorunu hic secmemis
+    // bir kullanicinin yedegi olmayabilir.
     expect(screen.getByRole('heading', { name: /bir yedeğiniz varsa/i })).toBeDefined()
-    // Yedeklemenin kendiliginden calismadigi acikca yaziyor.
-    expect(metin).toMatch(/kendiliğinden yedek almıyor/i)
 
     // Yedegi olmayan kullanicinin yolu esit agirlikta: kendi basligi olan bir
     // bolum, sonda sikismis tek satir degil.
@@ -88,6 +92,17 @@ describe('KeystoreBozukEkrani', () => {
     expect(metin).toMatch(/yeniden kurulum yapmayın/i)
     expect(metin).toContain('veri.db')
     expect(metin).toContain('keystore.json')
+  })
+
+  it('uygulamanin kendi geri yukleme ekranina bir yol acar', async () => {
+    // Bu ekranin en olası kullanicisi elle dosya kopyalamak zorunda
+    // kalmamali: urun artik cifti kendisi yerlestiriyor ve WAL temizligini
+    // kendisi yapiyor. Elle prosedur YEDEK yol olarak duruyor (yukaridaki
+    // testler onu ayrica sabitliyor).
+    const onGeriYukle = vi.fn()
+    kur(onGeriYukle)
+    await userEvent.click(screen.getByRole('button', { name: /yedekten geri yükle/i }))
+    expect(onGeriYukle).toHaveBeenCalled()
   })
 
   it('Turkce eki dogru: "erisiminizi kaybetmenize"', () => {

@@ -29,6 +29,21 @@ pub enum DbError {
          lütfen en son yedekten geri yükleyin. Bu ekranda hiçbir veri değiştirilmedi."
     )]
     DosyaYok,
+    /// `PRAGMA integrity_check` "ok" dönmedi: dosya açıldı, anahtar DOĞRU,
+    /// ama sayfa/indeks yapısı bozuk.
+    ///
+    /// `WrongKey`'den **kesinlikle** ayrı: bu kod tabanında "her hata parola
+    /// hatasıdır" sınıfı dört ayrı katmanda bulundu. Doğru parolasını girmiş
+    /// bir kullanıcıya "parolanız hatalı" demek onu sıfırlamaya/yeniden
+    /// kuruluma iter ve kurtarılabilir veriyi kalıcı olarak yok eder. Mesaj
+    /// bu yüzden parolanın doğru olduğunu **açıkça** söyler ve silmemeyi
+    /// öğütler.
+    #[error(
+        "Kayıt dosyanız açıldı ama içeriği bozuk. Parolanız doğru; sorun \
+         dosyanın kendisinde. Yedekten geri yükleme gerekiyor. Bu klasördeki \
+         hiçbir dosyayı silmeyin ve yeniden kurulum yapmayın."
+    )]
+    Bozuk,
 }
 
 /// Zaten açılmış (yeni oluşturulmuş veya var olan) bir `Connection` üzerinde
@@ -84,6 +99,74 @@ pub fn open_existing(path: &Path, key: &DataKey) -> Result<Connection, DbError> 
     }
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
     anahtar_ayarla_ve_hazirla(conn, key)
+}
+
+/// Açılmış bir bağlantı üzerinde `PRAGMA integrity_check` çalıştırır.
+///
+/// Tasarım §8: *"Veritabanı bozuk → açılışta bütünlük kontrolü; bozuksa geri
+/// yükleme ekranına düşer."* Bu fonksiyon o vaadin çalıştırılabilir hâlidir;
+/// tek çağrı yeri `routes::session::kilit_ac`'tır (yani gerçekten **açılış**
+/// yolu).
+///
+/// # Neden `integrity_check`, `quick_check` değil -- ÖLÇÜLDÜ
+///
+/// `backup::geri_yukle` bir YEDEK dosyasını doğrularken bilerek
+/// `quick_check` kullanır (hız/kapsam dengesi; bkz. oradaki gerekçe).
+/// Burada denge terstir: bu, oturum başına **bir kez** çalışan giriş
+/// kapısıdır ve `quick_check`'in atladığı tek şey -- indeks/tablo çapraz
+/// doğrulaması -- tam olarak sessizce yanlış sonuç üreten bozulma
+/// sınıfıdır: bozuk bir `idx_appointments_baslangic` ya da arama indeksi,
+/// var olan bir seans notunu aramada "yok" gösterir ve kullanıcı bunu bir
+/// bozulma değil, kendi hatası sanar.
+///
+/// **Fark ölçüldü, sonra karar verildi** (`tests::butunluk_kontrolu_maliyet_olcumu`,
+/// `--nocapture`; Windows 11, debug profili -- yani gerçek dağıtımdan
+/// yavaş; ~41 MB'lık veritabanı = iki adet 20 MB'lık ek, üç ardışık koşu):
+///
+/// | Kontrol                  | ölçülen       |
+/// |--------------------------|---------------|
+/// | `PRAGMA integrity_check` | 160-176 ms    |
+/// | `PRAGMA quick_check`     | 161-176 ms    |
+///
+/// İki süre **ölçüm gürültüsünün içinde**: bu veritabanı boyutunda
+/// `quick_check`'in hiçbir kazancı yok, dolayısıyla kapsamı feda etmek
+/// için hiçbir sebep de yok. Kilit açma zaten Argon2id türetmesiyle
+/// ~2 saniye sürüyor (bkz. `playwright.config.ts`'teki ölçüm); 0,17 sn
+/// onun %8'i ve oturumda **bir kez** ödeniyor.
+///
+/// Bu karar yeniden gözden geçirilmelidir eğer: veritabanı, eklerin uyarı
+/// eşiğine (500 MB) yaklaşırsa -- doğrusal ölçeklemeyle ~2 sn -- ya da
+/// kontrol her istekte çalıştırılmak istenirse (aşağıya bakınız). Ölçüm
+/// BLOB boyutunu `attachments::AZAMI_DOSYA_BOYUTU`'ndan alıyor: dosya
+/// başına sınır büyürse ölçüm de kendiliğinden büyür.
+///
+/// # Veri uç noktalarında ÇALIŞTIRILMAZ
+///
+/// `guard::acik_baglanti` her istekte taze bağlantı açıyor; bütünlük
+/// kontrolünü oraya koymak her randevu yüklemesinde tüm veritabanını
+/// okumak olurdu.
+pub fn butunluk_kontrol(conn: &Connection) -> Result<(), DbError> {
+    // `integrity_check` bozukluk bulursa BİRDEN ÇOK satır döndürür; ilk
+    // satır "ok" değilse dosya bozuktur. Hata metinlerinin kendisi
+    // (sayfa numaraları, indeks adları) kullanıcıya GÖSTERİLMEZ ve buradan
+    // dışarı taşınmaz -- `DbError::Bozuk` hiçbir alan taşımaz.
+    match conn.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0)) {
+        Ok(ilk) if ilk == "ok" => Ok(()),
+        Ok(_) => Err(DbError::Bozuk),
+        // Bozulma sayfa okuma sırasında da yüzeye çıkabilir (SQLCipher, HMAC
+        // tutmayan bir sayfayı okurken hata verir ve `integrity_check` hiç
+        // satır döndüremez). `SQLITE_CORRUPT` bu yüzden `Bozuk`'a eşlenir.
+        // Diğer her hata (`SQLITE_BUSY`, disk G/Ç) `Sqlite` olarak geçer --
+        // geçici bir soruna "dosyanız bozuk" demek, kullanıcıyı sağlam bir
+        // veritabanını silmeye itebilir (`siniflandir_anahtar_hatasi` ile
+        // aynı gerekçe).
+        Err(rusqlite::Error::SqliteFailure(ref ffi_hata, _))
+            if ffi_hata.code == ErrorCode::DatabaseCorrupt =>
+        {
+            Err(DbError::Bozuk)
+        }
+        Err(e) => Err(DbError::Sqlite(e)),
+    }
 }
 
 /// SQLite/SQLCipher hatasını sınıflandırır.
@@ -284,6 +367,149 @@ mod tests {
         }
         let hata = open_existing(&yol, &generate_data_key()).unwrap_err();
         assert!(matches!(hata, DbError::WrongKey), "beklenen WrongKey, gelen: {hata:?}");
+    }
+
+    // --- Tasarim §8: acilista butunluk kontrolu -------------------------
+
+    #[test]
+    fn saglam_veritabani_butunluk_kontrolunden_gecer() {
+        // ARTI YON: "her zaman Bozuk don" mutasyonu burada kirilir.
+        let dir = tempfile::tempdir().unwrap();
+        let yol = dir.path().join("veri.db");
+        let key = generate_data_key();
+        let c = open_encrypted(&yol, &key).unwrap();
+        crate::store::schema::migrate(&c).unwrap();
+        butunluk_kontrol(&c).expect("saglam veritabani gecmeli");
+    }
+
+    #[test]
+    fn veri_sayfasi_bozuk_veritabani_butunluk_kontrolunde_yakalanir() {
+        // ASIL BULGU: bu dosya `open_existing`/`open_encrypted`'ten SORUNSUZ
+        // gecer -- anahtar dogrudur ve sema sayfasi saglamdir. Yani bugune
+        // kadar bu bozulma sinifi hicbir yerde tespit EDILMIYORDU.
+        let dir = tempfile::tempdir().unwrap();
+        let yol = dir.path().join("veri.db");
+        let key = generate_data_key();
+        {
+            let c = open_encrypted(&yol, &key).unwrap();
+            crate::store::schema::migrate(&c).unwrap();
+            c.execute_batch("CREATE TABLE t(ad TEXT);").unwrap();
+            let mut stmt = c.prepare("INSERT INTO t VALUES (?1)").unwrap();
+            for i in 0..500 {
+                stmt.execute([format!("satir-{i}-{}", "x".repeat(50))]).unwrap();
+            }
+        }
+
+        let mut bytes = std::fs::read(&yol).unwrap();
+        let uzunluk = bytes.len();
+        assert!(uzunluk > 8192, "test icin en az iki sayfalik veri gerekiyor: {uzunluk}");
+        // Sema (ilk sayfa) saglam kalsin, son veri sayfalari bozulsun.
+        for b in bytes.iter_mut().skip(uzunluk - 200) {
+            *b ^= 0xFF;
+        }
+        std::fs::write(&yol, &bytes).unwrap();
+
+        // ON KOSUL -- kontrolun VAROLUS SEBEBI: acilis basarili oluyor.
+        let c = open_existing(&yol, &key).expect(
+            "on kosul: bozuk dosya ACILABILIYOR olmali -- butunluk kontrolu \
+             tam da bu yuzden gerekli",
+        );
+
+        let hata = butunluk_kontrol(&c).unwrap_err();
+        assert!(
+            matches!(hata, DbError::Bozuk),
+            "bozuk sayfa `Bozuk` olarak raporlanmali, gelen: {hata:?}"
+        );
+    }
+
+    /// **`integrity_check` mi `quick_check` mi** -- kararın ÖLÇÜMÜ.
+    ///
+    /// `guard::baglanti_omru_olcumu` ile aynı yöntem ve aynı gerekçe: bu bir
+    /// eşik testi DEĞİL, bir ölçümdür. Makineye ve diske bağlı bir süreyi
+    /// assert etmek bu kod tabanında zaten bir kez "ortama bağlı
+    /// etkisizleşen test" olarak geri tepti; bunun yerine iki seçenek aynı
+    /// koşullarda ölçülür, süreler `--nocapture` ile yazdırılır ve **kararın
+    /// kendisi** `butunluk_kontrol`'ün belgesinde yazılıdır.
+    ///
+    /// Neden BLOB'lu: bu ürünün en büyük veritabanı senaryosu ekli
+    /// dosyalardır (dosya başına 20 MB, uyarı eşiği 500 MB). Küçük bir
+    /// veritabanıyla yapılan ölçüm "kilit açmayı yavaşlatır mı" sorusunu
+    /// yanıtlamazdı -- `guard::baglanti_omru_olcumu`'nun BLOB senaryosunu
+    /// eklemesiyle aynı ders.
+    ///
+    /// Assertion yalnızca ölçümün gerçekten yapıldığını (BLOB'ların diske
+    /// TAM boyutunda yazıldığını ve kontrolün sağlam dosyada geçtiğini)
+    /// doğrular -- yoksa boş bir veritabanını ölçüyor olabilirdik.
+    #[test]
+    fn butunluk_kontrolu_maliyet_olcumu() {
+        use std::time::Instant;
+        // Sinira BAGLI: dosya basina azami boyut buyurse olcum de buyur.
+        // Sabit bir `20 * 1024 * 1024` yazmak, sinir degistiginde olcumu
+        // sessizce bayatlatirdi (`guard::baglanti_omru_olcumu` ile ayni
+        // gerekce).
+        const BLOB_BOYUTU: usize = crate::store::attachments::AZAMI_DOSYA_BOYUTU;
+        const BLOB_ADEDI: usize = 2;
+
+        let dir = tempfile::tempdir().unwrap();
+        let yol = dir.path().join("veri.db");
+        let key = generate_data_key();
+        {
+            let c = open_encrypted(&yol, &key).unwrap();
+            crate::store::schema::migrate(&c).unwrap();
+            c.execute_batch("CREATE TABLE ekler(icerik BLOB);").unwrap();
+            let icerik = vec![0x41u8; BLOB_BOYUTU];
+            let mut stmt = c.prepare("INSERT INTO ekler VALUES (?1)").unwrap();
+            for _ in 0..BLOB_ADEDI {
+                stmt.execute([&icerik]).unwrap();
+            }
+        }
+        let dosya_boyutu = std::fs::metadata(&yol).unwrap().len();
+
+        let c = open_existing(&yol, &key).unwrap();
+
+        let t0 = Instant::now();
+        butunluk_kontrol(&c).expect("saglam veritabani gecmeli");
+        let tam: std::time::Duration = t0.elapsed();
+
+        let t1 = Instant::now();
+        let hizli_sonuc: String = c.query_row("PRAGMA quick_check", [], |r| r.get(0)).unwrap();
+        let hizli: std::time::Duration = t1.elapsed();
+
+        println!(
+            "--- butunluk kontrolu olcumu ({BLOB_ADEDI} x {:.0} MB ek) ---",
+            BLOB_BOYUTU as f64 / (1024.0 * 1024.0)
+        );
+        println!("veritabani boyutu           : {:.1} MB", dosya_boyutu as f64 / (1024.0 * 1024.0));
+        println!("PRAGMA integrity_check      : {tam:>10.2?}");
+        println!("PRAGMA quick_check          : {hizli:>10.2?}");
+        println!(
+            "fark (capraz dogrulamanin bedeli): {:>10.2?} -- kilit acma oturumda BIR KEZ",
+            tam.saturating_sub(hizli)
+        );
+
+        // Olcumun gercekten ~40 MB'lik bir dosyayi taradigini kanitlar.
+        assert!(
+            dosya_boyutu as usize >= BLOB_BOYUTU * BLOB_ADEDI,
+            "olculen veritabani beklenenden kucuk: {dosya_boyutu}"
+        );
+        assert_eq!(hizli_sonuc, "ok", "on kosul: dosya saglam olmali");
+    }
+
+    #[test]
+    fn bozuk_mesaji_parolayi_suclamaz_ve_silmeyi_onermez() {
+        // "Her hata parola hatasidir" sinifinin bu katmandaki karsiligi.
+        // Kullanici bu metni panik anında okuyor: parolasinin DOGRU oldugunu
+        // soylemeyen bir mesaj onu sifirlamaya/yeniden kuruluma iter.
+        let metin = DbError::Bozuk.to_string().to_lowercase();
+        assert!(metin.contains("parolanız doğru"), "mesaj parolanin dogru oldugunu soylemeli: {metin}");
+        assert!(metin.contains("yedek"), "mesaj geri yuklemeye yonlendirmeli: {metin}");
+        assert!(metin.contains("silmeyin"), "mesaj silmemeyi ogutlemeli: {metin}");
+        assert!(
+            metin.contains("yeniden kurulum yapmayın"),
+            "mesaj yeniden kurulumu yasaklamali (yeni kurulum anahtari ezer): {metin}"
+        );
+        // `WrongKey` ile AYNI metin olmamali; ikisi ayri hatalardir.
+        assert_ne!(DbError::Bozuk.to_string(), DbError::WrongKey.to_string());
     }
 
     #[test]

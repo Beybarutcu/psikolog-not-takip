@@ -13,8 +13,38 @@ export type Randevu = {
   seri_id: string | null
 }
 
+/**
+ * Izgaranın kapsadığı saat aralığı — **bir varsayım**, ölçülmüş bir kural
+ * değil (planın "Açık Sorular" bölümü bunu böyle yazıyor).
+ *
+ * Varsayım olduğu için aralığın DIŞINA düşen randevular gerçekten oluyor:
+ * 07:30'a alınmış bir acil görüşme ya da 21:30'a kayan bir seans. Bugüne
+ * kadar o randevular sunucudan **çekiliyor ama hiç render edilmiyordu** ve
+ * ekranda hiçbir iz bırakmıyorlardı: takvimde olmayan bir randevu, olmayan
+ * bir randevudur. Aşağıdaki `gizliRandevular` bölümü bunu kapatıyor.
+ */
 const CALISMA_BASLANGIC = 8
 const CALISMA_BITIS = 21
+
+/** `2026-09-07T14:00` -> `07.09 14:00`. Parçalar olduğu gibi doğru;
+ * `Date`'e çevrilmiyor (bkz. `hafta.ts::zamandanDate` ve duvar saati
+ * sözleşmesi). */
+function kisaZaman(zaman: string): string {
+  const [tarih, saat] = zaman.split('T')
+  const [, ay, gun] = (tarih ?? '').split('-')
+  if (!ay || !gun) return zaman
+  return saat ? `${gun}.${ay} ${saat.slice(0, 5)}` : `${gun}.${ay}`
+}
+
+/** Izgara hücresinin kimliği: yıl-ay-gün-saat. */
+function hucreAnahtari(tarih: Date): string {
+  return [
+    tarih.getFullYear(),
+    tarih.getMonth(),
+    tarih.getDate(),
+    tarih.getHours(),
+  ].join('-')
+}
 
 type Props = {
   randevular: Randevu[]
@@ -33,17 +63,47 @@ export function HaftalikTakvim({
     (_, i) => CALISMA_BASLANGIC + i,
   )
 
-  function hucreRandevulari(gun: Date, saat: number): Randevu[] {
-    return randevular.filter((r) => {
-      const b = zamandanDate(r.baslangic)
-      return (
-        b.getFullYear() === gun.getFullYear() &&
-        b.getMonth() === gun.getMonth() &&
-        b.getDate() === gun.getDate() &&
-        b.getHours() === saat
-      )
-    })
+  // Randevular ÖNCE hücre kimliğine göre gruplanıyor, sonra ızgara o
+  // gruplardan doldurulyor. Bu bir hız iyileştirmesi değil, bir DOĞRULUK
+  // kararı: "hangi randevular görünüyor" ile "hangi randevular gizli"
+  // aynı tek kaynaktan türüyor.
+  //
+  // Ayrı iki süzgeç yazılsaydı (biri hücre için, biri uyarı için) ikisi
+  // sessizce ayrışabilirdi ve uyarıdaki sayı **tahmin** olurdu -- oysa o
+  // sayının gerçek olması bu bölümün bütün değeri.
+  const hucreler = new Map<string, Randevu[]>()
+  for (const r of randevular) {
+    const anahtar = hucreAnahtari(zamandanDate(r.baslangic))
+    const mevcut = hucreler.get(anahtar)
+    if (mevcut) mevcut.push(r)
+    else hucreler.set(anahtar, [r])
   }
+
+  const izgaraAnahtarlari = new Set<string>()
+  for (const gun of gunler) {
+    for (const saat of saatler) {
+      izgaraAnahtarlari.add(
+        hucreAnahtari(new Date(gun.getFullYear(), gun.getMonth(), gun.getDate(), saat)),
+      )
+    }
+  }
+
+  // Bir randevu, ancak hücre kimliği ızgarada VARSA görünür. Dolayısıyla
+  // aşağıdaki liste tam olarak "ekranda olmayanlar"dır -- saat aralığının
+  // dışındakiler kadar (ileride mümkün olursa) haftanın dışındakiler de.
+  const gizliRandevular = randevular.filter(
+    (r) => !izgaraAnahtarlari.has(hucreAnahtari(zamandanDate(r.baslangic))),
+  )
+
+  function hucreRandevulari(gun: Date, saat: number): Randevu[] {
+    return (
+      hucreler.get(
+        hucreAnahtari(new Date(gun.getFullYear(), gun.getMonth(), gun.getDate(), saat)),
+      ) ?? []
+    )
+  }
+
+  const bicimliAralik = (saat: number) => `${saat.toString().padStart(2, '0')}:00`
 
   return (
     <div className="p-4">
@@ -62,6 +122,39 @@ export function HaftalikTakvim({
           Sonraki hafta
         </button>
       </div>
+
+      {/* GÖRÜNEN ARALIK DIŞINDAKİ RANDEVULAR.
+          Bu randevular sunucudan çekiliyor ama ızgarada hiçbir hücreye
+          düşmüyor; uyarı olmadan "randevu var, ekranda yok" durumu
+          oluşuyordu. Sayı TAHMİN DEĞİL: yukarıdaki `gizliRandevular`
+          ızgaranın kendi hücre kimliklerinden türüyor.
+          Her satır tıklanabilir -- görünür kılmak yetmez, ULAŞILABİLİR de
+          olmalı (randevu paneli açılır, düzenlenip ızgaraya taşınabilir). */}
+      {gizliRandevular.length > 0 && (
+        <section
+          aria-label="Görünen aralık dışındaki randevular"
+          className="mb-4 rounded border border-amber-400 bg-amber-50 p-3"
+        >
+          <h3 className="text-sm font-semibold text-amber-900">
+            Bu haftanın görünen aralığı ({bicimliAralik(CALISMA_BASLANGIC)}–
+            {bicimliAralik(CALISMA_BITIS)}) dışında {gizliRandevular.length} randevu var
+          </h3>
+          <ul className="mt-1 flex flex-wrap gap-2 text-sm">
+            {gizliRandevular.map((r) => (
+              <li key={r.id}>
+                <button
+                  type="button"
+                  className="rounded border border-amber-300 bg-white px-2 py-1 underline"
+                  aria-label={`${r.danisan_adi} — ${kisaZaman(r.baslangic)} (aralık dışı) randevusunu aç`}
+                  onClick={() => onRandevuSec(r)}
+                >
+                  {kisaZaman(r.baslangic)} · {r.danisan_adi}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[720px] table-fixed border-collapse">

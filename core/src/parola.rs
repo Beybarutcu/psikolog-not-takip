@@ -11,12 +11,30 @@
 //! işlemi + denetim kaydı** bir arada, çekirdekte. Rota katmanı ikinci bir
 //! denetim satırı yazmaz (`notlar_api.rs::rota_modulleri_audit_kaydet_cagirmaz`).
 //!
-//! # KRİTİK: mevcut parola DOĞRULANIR
+//! # KRİTİK: mevcut parola DOĞRULANIR — ve bu YAPISALDIR
 //!
 //! Yalnızca yeni parola istemek yetmez. Oturum açıkken bilgisayarın başına
 //! geçen biri parolayı değiştirip terapisti kendi verisinden kilitleyebilir
-//! (ve yeni parolayla erişimi sürdürebilirdi). `parolayi_degistir` bu
-//! yüzden **önce** mevcut parolayı `unlock_with_password` ile sınar.
+//! (ve yeni parolayla erişimi sürdürebilirdi).
+//!
+//! **Yükü hangi hat taşıyor:** `keystore::change_password`'un ilk satırı,
+//! `unlock_with_password(ks, old)?`. Veri anahtarını yeni parolayla
+//! sarmalayabilmek için önce **açmak** gerekir ve açmanın tek yolu doğru
+//! mevcut paroladır — yani doğrulama bir `if` değil, bir **yapı**dır ve
+//! atlanamaz. Bu ölçüldü: `parolayi_degistir`'in kendi açık kontrolü
+//! (aşağıdaki adım 1) kaldırıldığında **hiçbir test kırılmadı**, çünkü
+//! `change_password` yine `WrongSecret` döndürüyor.
+//!
+//! **Öyleyse adım 1 ne işe yarıyor?** Yalnızca **sıra** — ve o sıra gerçek
+//! bir şey koruyor. O kontrol olmadan yeni parola kuralları (uzunluk,
+//! "aynı parola") mevcut parola doğrulanmadan ÖNCE çalışır ve uç nokta,
+//! parolayı **bilmeyen** birine parola kurallarını denetleyen bir
+//! **oracle** sunar: yanlış parolayla gelen bir istek "yeni parola çok
+//! kısa" yanıtı alır. Adım 1'in taşıdığı yük budur ve ölçülen de budur
+//! (`tests::yanlis_mevcut_parola_yeni_parola_kurallarini_sizdirmaz`);
+//! "mevcut parola doğrulanıyor mu" iddiasının kanıtı ise
+//! `keystore::tests::yanlis_eski_parolayla_degistirilemez` ve
+//! `parola_api.rs::yanlis_mevcut_parola_401_doner_ve_hicbir_sey_degismez`.
 //!
 //! # KRİTİK: parola hiçbir biçimde loga girmez
 //!
@@ -156,10 +174,12 @@ pub fn parolayi_degistir(
     yeni: &str,
     cihaz: Cihaz,
 ) -> Result<(), ParolaHatasi> {
-    // (1) MEVCUT PAROLA. Once bu: "yeni parola cok kisa" demeden once
-    // cagiranin gercekten parolayi bilip bilmedigi belirlenmeli -- aksi
-    // halde uc nokta, parola bilmeyen birine parola kurallarini denetleyen
-    // bir oracle sunardi.
+    // (1) MEVCUT PAROLA -- ve bu adimin tasidigi yuk SIRADIR, dogrulamanin
+    // kendisi degil. Dogrulama yapisal olarak asagida, (3)'te olusur:
+    // `change_password` anahtari once ACMAK zorunda ve acmanin tek yolu
+    // dogru mevcut paroladir (bkz. modul basligi). Bu satir olmasaydi
+    // "yeni parola cok kisa" yaniti, parolayi BILMEYEN bir cagirana da
+    // giderdi -- uc nokta parola kurallarini denetleyen bir oracle olurdu.
     match keystore::unlock_with_password(ks, mevcut) {
         Ok(_) => {}
         Err(CryptoError::WrongSecret) => return Err(ParolaHatasi::MevcutParolaYanlis),
@@ -338,6 +358,30 @@ mod tests {
         for m in &metinler {
             assert!(m.contains("değişmedi"), "ret mesaji degismedigini soylemeli: {m}");
         }
+    }
+
+    #[test]
+    fn yanlis_mevcut_parola_yeni_parola_kurallarini_sizdirmaz() {
+        // ADIM 1'IN TASIDIGI YUK BUDUR (bkz. modul basligi). "Mevcut parola
+        // dogrulaniyor" iddiasinin kaniti bu test DEGIL --
+        // `keystore::change_password` anahtari acmadan yeniden
+        // sarmalayamaz, yani dogrulama yapisaldir ve atlanamaz. Adim 1'in
+        // kendine ozgu katkisi SIRADIR: parolayi bilmeyen bir cagiran,
+        // yeni parola kurallari hakkinda hicbir sey OGRENEMEMELI.
+        //
+        // MUTASYON: adim 1'i (acik `unlock_with_password` kontrolu) sil ->
+        // asagidaki iddia `YeniParolaKisa` gorur ve test kirilir. OLCULDU:
+        // bu test YAZILMADAN once ayni mutasyon 21/21 yesil birakiyordu.
+        let o = kur();
+        let hata = degistir(&o, "bambaska-parola", "kisa").unwrap_err();
+        assert_eq!(
+            hata,
+            ParolaHatasi::MevcutParolaYanlis,
+            "parolayi bilmeyen cagiran, yeni parola kurallari hakkinda bilgi almamali"
+        );
+        // Ayni cagri, parola DOGRUYKEN gercekten kural hatasi vermeli
+        // (yoksa "her zaman MevcutParolaYanlis don" mutasyonu da gecerdi).
+        assert_eq!(degistir(&o, ESKI, "kisa").unwrap_err(), ParolaHatasi::YeniParolaKisa);
     }
 
     #[test]

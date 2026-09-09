@@ -53,12 +53,27 @@ type Props = {
   bugun: string
   /** Yalnızca **resmî** notlar (`notApi.danisanNotlari`). */
   notlariGetir: () => Promise<SeansNotu[]>
+  /**
+   * `notlariGetir`'in sunucuya gönderdiği üst sınır.
+   *
+   * Yanıt "daha fazlası var" işareti taşımıyor; sayı sınıra dayanmışsa
+   * rapor kırpılmış olabilir ve bunu hem ekranda hem raporun içinde
+   * söylemek gerekiyor (aynı boşluğun arama tarafındaki karşılığı için
+   * bkz. `HizliArama`).
+   */
+  notSiniri: number
   ekYukle: (dosya: File, tur: string) => Promise<void>
   onRizaKaydet: (alan: { riza_tarihi: string; riza_dosya_id: number | null }) => Promise<void>
   onKapat: () => void
 }
 
-type Rapor = { danisanId: number; url: string; dosyaAdi: string; notSayisi: number }
+type Rapor = {
+  danisanId: number
+  url: string
+  dosyaAdi: string
+  notSayisi: number
+  kirpilmisOlabilir: boolean
+}
 
 export function DanisanKarti({
   danisan,
@@ -66,6 +81,7 @@ export function DanisanKarti({
   randevular,
   bugun,
   notlariGetir,
+  notSiniri,
   ekYukle,
   onRizaKaydet,
   onKapat,
@@ -128,7 +144,8 @@ export function DanisanKarti({
     setRaporHatasi(null)
     try {
       const notlar = await notlariGetir()
-      const metin = veriRaporuMetni(danisan, notlar, ekler)
+      const kirpilmisOlabilir = notlar.length >= notSiniri
+      const metin = veriRaporuMetni(danisan, notlar, ekler, kirpilmisOlabilir)
       const url = URL.createObjectURL(new Blob([metin], { type: 'text/plain;charset=utf-8' }))
       setRapor({
         danisanId: danisan.id,
@@ -138,6 +155,7 @@ export function DanisanKarti({
         // paylaşılan klasörlerde, yedeklerde, ekran görüntülerinde görünür.
         dosyaAdi: `danisan-${danisan.id}-veri-raporu-${bugun}.txt`,
         notSayisi: notlar.length,
+        kirpilmisOlabilir,
       })
     } catch (e) {
       // Boş bir rapor indirtmek "bu danışanın notu yok" diye okunurdu.
@@ -338,6 +356,12 @@ export function DanisanKarti({
             >
               Raporu indir ({gorunenRapor.notSayisi} seans notu, {ekler.length} ek)
             </a>
+          </p>
+        )}
+        {gorunenRapor?.kirpilmisOlabilir && (
+          <p className="mt-2 rounded border border-amber-400 bg-amber-50 p-2 text-amber-900">
+            Not sayısı sunucunun üst sınırına ({gorunenRapor.notSayisi}) dayandı; daha eski
+            notlar rapora girmemiş olabilir. Raporun içinde de bu uyarı var.
           </p>
         )}
         {raporHatasi && (

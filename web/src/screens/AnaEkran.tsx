@@ -810,6 +810,7 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
               randevular={kart.randevular}
               bugun={yerelGun(new Date())}
               notlariGetir={raporNotlariGetir}
+              notSiniri={RAPOR_NOT_SINIRI}
               ekYukle={ekYukle}
               onRizaKaydet={rizaKaydet}
               onKapat={danisanKartiKapat}

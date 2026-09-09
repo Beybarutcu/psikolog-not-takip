@@ -97,6 +97,7 @@ function kur(ozel: Partial<React.ComponentProps<typeof DanisanKarti>> = {}) {
     randevular: [randevu({ id: 1, durum: 'geldi', odendi: false, ucret: 45000 })],
     bugun: '2026-09-09',
     notlariGetir: vi.fn().mockResolvedValue(resmiNotlar),
+    notSiniri: 200,
     ekYukle: vi.fn().mockResolvedValue(undefined),
     onRizaKaydet: vi.fn().mockResolvedValue(undefined),
     onKapat: vi.fn(),
@@ -335,6 +336,28 @@ describe('DanisanKarti — veri raporu (KVKK md. 11)', () => {
     expect(metin).not.toContain('pdf-baytlari')
   })
 
+  it('not sayisi sunucu sinirina DAYANDIYSA rapor eksik olabilecegini soyler', async () => {
+    // `GET /api/danisanlar/{id}/notlar` "daha fazlası var" işareti
+    // taşımıyor. Kırpılmış bir erişim raporu, eksik olduğunu söylemeden
+    // eksiktir — KVKK md. 11 belgesinde bu sessiz bir yanlış beyandır.
+    const cok = Array.from({ length: 3 }, (_, i) => ({ ...resmiNotlar[0], appointment_id: i + 1 }))
+    kur({ notlariGetir: vi.fn().mockResolvedValue(cok), notSiniri: 3 })
+    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
+    await screen.findByRole('link', { name: /raporu indir/i })
+
+    expect(screen.getByText(/daha eski\s+notlar rapora girmemiş olabilir/i)).toBeDefined()
+    const metin = await uretilenBloblar[0].text()
+    // Uyarı raporun İÇİNDE de var: ekrandaki uyarı dosyayla birlikte
+    // gitmez, dosyayı okuyan (danışan olabilir) onu göremez.
+    expect(metin).toMatch(/rapora GİRMEMİŞ olabilir/i)
+  })
+
+  it('ARTI YON: sinirin altinda o uyari YOKTUR', () => {
+    // Her zaman uyaran bir rapor uyarıyı anlamsızlaştırır.
+    kur({ notSiniri: 200 })
+    expect(screen.queryByText(/rapora girmemiş olabilir/i)).toBeNull()
+  })
+
   it('rapor hazirlanamazsa baglanti verilmez, hata gosterilir', async () => {
     // Boş bir rapor indirtmek "bu danışanın notu yok" diye okunurdu.
     const notlariGetir = vi.fn().mockRejectedValue(new Error('Notlar alınamadı.'))
@@ -393,6 +416,7 @@ describe('DanisanKarti — danışan değişimi (kiplerin kesişimi)', () => {
       randevular: [randevu({ id: 1 })],
       bugun: '2026-09-09',
       notlariGetir: vi.fn().mockResolvedValue(resmiNotlar),
+      notSiniri: 200,
       ekYukle: vi.fn().mockResolvedValue(undefined),
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),
       onKapat: vi.fn(),
@@ -432,6 +456,7 @@ describe('DanisanKarti — danışan değişimi (kiplerin kesişimi)', () => {
       randevular: [randevu({ id: 1 })],
       bugun: '2026-09-09',
       notlariGetir: vi.fn().mockResolvedValue(resmiNotlar),
+      notSiniri: 200,
       ekYukle,
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),
       onKapat: vi.fn(),
@@ -463,6 +488,7 @@ describe('DanisanKarti — danışan değişimi (kiplerin kesişimi)', () => {
       randevular: [randevu({ id: 1 })],
       bugun: '2026-09-09',
       notlariGetir: vi.fn().mockResolvedValue(resmiNotlar),
+      notSiniri: 200,
       ekYukle: vi.fn().mockResolvedValue(undefined),
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),
       onKapat: vi.fn(),

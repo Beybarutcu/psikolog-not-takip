@@ -96,6 +96,17 @@ describe('veriRaporuMetni', () => {
     expect(metin).toMatch(/içerik dahil değildir/i)
   })
 
+  it('kirpilmis olabilecegini SOYLER, sessizce eksik kalmaz', () => {
+    const metin = veriRaporuMetni(danisan, notlar, ekler, true)
+    expect(metin).toMatch(/rapora GİRMEMİŞ olabilir/i)
+  })
+
+  it('ARTI YON: kirpilmamis raporda o uyari YOKTUR', () => {
+    // Her raporda duran bir uyarı, gerçekten kırpılmış olanı görünmez yapar.
+    const metin = veriRaporuMetni(danisan, notlar, ekler)
+    expect(metin).not.toMatch(/rapora GİRMEMİŞ olabilir/i)
+  })
+
   it('bos dosyada uydurma deger yerine "kayitli degil" yazar', () => {
     const bos: DanisanDosyasi = {
       ...danisan,

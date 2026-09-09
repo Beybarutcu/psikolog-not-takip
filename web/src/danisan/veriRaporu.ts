@@ -35,6 +35,17 @@ export function veriRaporuMetni(
   danisan: DanisanDosyasi,
   notlar: SeansNotu[],
   ekler: EkBilgisi[],
+  /**
+   * Not listesi sunucunun üst sınırına dayanmış olabilir mi?
+   *
+   * `GET /api/danisanlar/{id}/notlar` `?limit=`i `1..=200` aralığına kırpar
+   * ve yanıt "daha fazlası var" işareti **taşımaz** (aynı boşluk `/api/ara`
+   * için de var, bkz. `HizliArama`). Kırpılmış bir erişim raporu, eksik
+   * olduğunu söylemeden eksiktir — KVKK md. 11 kapsamında verilen bir
+   * belgede bu, sessiz bir yanlış beyandır. Rapor bu yüzden kendi
+   * eksikliğini yazar.
+   */
+  kirpilmisOlabilir = false,
 ): string {
   const sablonAdi = (kod: string) => (sablonKodMu(kod) ? SABLON_ADLARI[kod] : kod)
   const satirlar: string[] = [
@@ -55,6 +66,13 @@ export function veriRaporuMetni(
     `SEANS NOTLARI (${notlar.length})`,
     '',
   ]
+  if (kirpilmisOlabilir) {
+    satirlar.push(
+      `UYARI: Bu rapor en fazla ${notlar.length} seans notu içerir ve bu sayıya`,
+      'ulaşıldı; danışanın daha eski notları rapora GİRMEMİŞ olabilir.',
+      '',
+    )
+  }
   for (const not of notlar) {
     satirlar.push(`--- Randevu #${not.appointment_id} · ${sablonAdi(not.sablon)}`)
     satirlar.push(`Son düzenleme: ${not.guncelleme_zamani}`)

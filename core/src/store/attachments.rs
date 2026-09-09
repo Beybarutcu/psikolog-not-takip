@@ -53,6 +53,11 @@
 //! "pencerenin dışındaki eski satır susturmaz". Tek yönlü mutasyon kapsamı
 //! bu kod tabanında bir kez zaten sorun oldu (bkz. `notes.rs` modül başlığı).
 //!
+//! `depolama_durumu`'nun **hiç log yazmaması** da bir karardır ve kendi
+//! testiyle (`depolama_durumu_log_yazmaz`) sabitlenir — emsali
+//! `appointments::cakisma_kontrolu_log_yazmaz`. Kararı yorumda taşıyıp testini
+//! taşımamak, bu modülde bir kez "yeşil ama korumuyor" üretti.
+//!
 //! # Sınırlar: biri REDDEDER, diğeri UYARIR
 //!
 //! - Dosya başına `AZAMI_DOSYA_BOYUTU` (**20 MB**) — **reddeder**. Sınırı
@@ -69,8 +74,11 @@
 //! Her reddin mesajı **ne olduğunu** söyler: hangi sınır, ne kadar aşıldı,
 //! hangi alan. Bu kod tabanında "her hata parola hatasıdır" sınıfından bir
 //! bulgu **dört katmanda** ayrı ayrı çıktı; buradaki hâli her başarısızlığa
-//! "dosya eklenemedi" demek olurdu. Mesajlar `mesajlar_birbirinden_ayirt_edilebilir`
-//! testiyle korunur.
+//! "dosya eklenemedi" demek olurdu. `ekle`nin **on üç** red yolunun her biri
+//! `mesajlar_birbirinden_ayirt_edilebilir` testinde kendi anahtar kelimesiyle
+//! pinlenir; test ayrıca vaka sayısını da sabitler, çünkü kapsam dışı kalan
+//! bir yol sessizce "Dosya eklenemedi."ye dönüşebilir (bu bir kez oldu: yedi
+//! yol pinliydi, on bir yol vardı).
 //!
 //! **Mesajlara dosya adı konmaz.** Hata metinleri sunucu günlüğüne, bir
 //! hata izleme aracına veya kullanıcı ekranının dışındaki bir yere düşebilir;
@@ -195,6 +203,16 @@ impl std::fmt::Debug for EkBilgisi {
 /// Kullanım açısından fark yoktur: `Deref<Target = [u8]>` sayesinde `&*ek`,
 /// `ek.len()`, `ek.baytlar()` çalışır ve `PartialEq` ile bayt dizileriyle
 /// doğrudan karşılaştırılabilir.
+///
+/// # UYARI: koruma yalnızca KAZAYLA olan yolu kapatır
+/// `&*icerik`, `&icerik[..]`, `baytlar()` ve `into_inner()` ham `&[u8]` /
+/// `Vec<u8>` verir; bunların `Debug`'ı **yine** bütün dosyayı ondalık bayt
+/// dizisi olarak basar. Newtype'ın kapattığı şey, sarmalayan bir tipin
+/// (`Result`, `Option`, `Vec`) türetilmiş `Debug`'ının içeriği kendiliğinden
+/// dökmesidir — bilerek ham baytlara inen bir çağrıyı kapatmaz. Dosya
+/// içeriğini rotaya/diske taşımak için `into_inner()` kullanan kod, o
+/// `Vec<u8>`'i **asla** `{:?}` ile biçimlendirmemelidir (tek bir
+/// `tracing::debug!("{:?}", baytlar)` 20 MB'lık tek satırı geri getirir).
 #[derive(Clone, PartialEq, Eq)]
 pub struct EkIcerigi(Vec<u8>);
 
@@ -291,12 +309,39 @@ fn danisan_var_mi(conn: &Connection, client_id: i64) -> Result<(), DepoHatasi> {
     Ok(())
 }
 
+/// Görünmez ya da metin yönünü değiştiren karakter mi?
+///
+/// İkisi de aynı saldırıyı besler: **ad sahteciliği**. `annexe\u{202E}fdp.exe`
+/// listede "annexe exe.pdf" gibi görünür (U+202E sonrasını sağdan sola
+/// çevirir); sıfır genişlikli karakterler ise iki farklı adı ekranda birebir
+/// aynı gösterir. Bu, dosya diske hiç yazılmasa bile bugün geçerli bir
+/// zarardır: terapist listede gördüğü uzantıya güvenerek tıklar.
+///
+/// `is_control()` bunların **hiçbirini** yakalamaz — hepsi `Cf` (format)
+/// sınıfındadır, `Cc` (control) değil.
+fn ad_sahteciligi_karakteri(c: char) -> bool {
+    matches!(c,
+        // Sifir genislikli (ZWSP/ZWNJ/ZWJ/ZWNBSP-BOM)
+        '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{FEFF}'
+        // Yon isaretleri (LRM/RLM/ALM)
+        | '\u{200E}' | '\u{200F}' | '\u{061C}'
+        // Gomme ve gecersiz kilma (LRE/RLE/PDF/LRO/RLO)
+        | '\u{202A}'..='\u{202E}'
+        // Yalitma (LRI/RLI/FSI/PDI)
+        | '\u{2066}'..='\u{2069}'
+    )
+}
+
 /// Dosya adını doğrular ve `trim`'lenmiş hâlini döndürür.
 ///
 /// Ad kullanıcıdan gelir ve ileride iki tehlikeli yere gider: HTTP
 /// `Content-Disposition` başlığı (Görev 6'nın indirme rotası) ve olası bir
 /// diske yazma. Bu yüzden yol ayıracı ve denetim karakteri burada, tek kapıda
 /// reddedilir — her reddin kendi mesajı vardır.
+///
+/// Ayrıca **görünen ad ile gerçek ad** arasında fark yaratan karakterler de
+/// reddedilir (bkz. `ad_sahteciligi_karakteri`): bu red diske yazmaya değil,
+/// bugün ekranda gösterilen listeye dayanır.
 fn dosya_adi_dogrula(ham: &str) -> Result<String, DepoHatasi> {
     let ad = ham.trim();
     if ad.is_empty() {
@@ -321,9 +366,26 @@ fn dosya_adi_dogrula(ham: &str) -> Result<String, DepoHatasi> {
             "Dosya adı denetim karakteri veya tırnak içeremez.".into(),
         ));
     }
+    if ad.chars().any(ad_sahteciligi_karakteri) {
+        return Err(DepoHatasi::GecersizVeri(
+            "Dosya adı görünmez veya metin yönünü değiştiren karakter içeremez.".into(),
+        ));
+    }
     Ok(ad.to_string())
 }
 
+/// MIME tipini doğrular ve `trim`'lenmiş hâlini döndürür.
+///
+/// Üç red yolu da ileride `Content-Type` başlığına konulacak bir değeri
+/// hedefler:
+/// - **Uzunluk**: alanın çöp veriyle şişmesini engeller; bir MIME tipi 128
+///   karakteri aşmaz.
+/// - **Denetim karakteri**: `Content-Type` başlığına **CRLF enjeksiyonunu**
+///   engelleyen tek kontrol budur (`application/pdf\r\nX-Baska: ...` başlık
+///   bölmesi demektir). Görev 7'nin indirme rotası bu değeri doğrudan başlığa
+///   koyacak.
+/// - **Biçim**: `tip/alttip`. Bu olmadan `x` gibi anlamsız bir değer geçer ve
+///   tarayıcıya bozuk bir `Content-Type` gider.
 fn mime_dogrula(ham: &str) -> Result<String, DepoHatasi> {
     let m = ham.trim();
     if m.is_empty() {
@@ -337,6 +399,18 @@ fn mime_dogrula(ham: &str) -> Result<String, DepoHatasi> {
     }
     if m.chars().any(|c| c.is_control()) {
         return Err(DepoHatasi::GecersizVeri("MIME tipi denetim karakteri içeremez.".into()));
+    }
+    // `charset` gibi parametreler (`text/plain; charset=utf-8`) mesru MIME
+    // sozdizimidir ve elenmez; elenen sey ayirac tasimayan ya da bos parcali
+    // degerlerdir.
+    let bicimli = match m.split_once('/') {
+        Some((tip, alttip)) => !tip.is_empty() && !alttip.is_empty() && !alttip.contains('/'),
+        None => false,
+    };
+    if !bicimli {
+        return Err(DepoHatasi::GecersizVeri(
+            "MIME tipi 'tip/alttip' biçiminde olmalı.".into(),
+        ));
     }
     Ok(m.to_string())
 }
@@ -617,6 +691,27 @@ mod tests {
         .unwrap();
     }
 
+    /// Belirtilen `dosya_adi` ve `eklenme_zamani` ile DOGRUDAN satir yazar.
+    ///
+    /// `ekle` zaman damgasini `simdi()`'den alir ve `simdi()` saniyeye
+    /// yuvarlar: ayni testte arka arkaya yapilan iki `ekle` cagrisi cogu zaman
+    /// AYNI `eklenme_zamani`'ni uretir. Siralamanin BIRINCIL anahtarini olcen
+    /// bir testin bunu kullanmasi, testi fiilen ikincil anahtara
+    /// (`id DESC`) indirger -- bkz. `listele_en_yeniden_eskiye_siralar`.
+    fn sahte_zamanli_satir(
+        c: &rusqlite::Connection,
+        client_id: i64,
+        dosya_adi: &str,
+        eklenme_zamani: &str,
+    ) {
+        c.execute(
+            "INSERT INTO attachments (client_id, dosya_adi, mime, tur, boyut, icerik, eklenme_zamani)
+             VALUES (?1, ?2, 'application/pdf', 'diger', 1, X'00', ?3)",
+            rusqlite::params![client_id, dosya_adi, eklenme_zamani],
+        )
+        .unwrap();
+    }
+
     // --- Brief'in yedi testi ---------------------------------------------
 
     #[test]
@@ -777,7 +872,14 @@ mod tests {
     #[test]
     fn mesajlar_birbirinden_ayirt_edilebilir() {
         // "Her hata dosya eklenemedi" sinifi bu kod tabaninda DORT katmanda
-        // bulundu. Yedi ayri red yolunun yedi ayri mesaji olmali.
+        // bulundu. `ekle`nin ON UC ayri red yolunun on uc ayri mesaji olmali.
+        //
+        // Bu testin onceki hali yalnizca YEDI yolu pinliyordu (yorumu da
+        // "yedi" diyordu, oysa o gun bile on bir yol vardi). Kapsanmayan
+        // dortunu -- nokta adi, addaki denetim karakteri, uzun MIME, MIME'daki
+        // denetim karakteri -- hep birden "Dosya eklenemedi. (A/B/C/D)" yapan
+        // mutasyon paketi YESIL biraktiriyordu; `guard::depo_hatasi` bu metni
+        // dogrudan HTTP govdesine koydugu icin kullanici etkisi gercek.
         //
         // YALNIZCA ikili farklilik yetmez: bu testin ilk halinde tek bir
         // mesaji "Dosya eklenemedi." yapan mutasyon HAYATTA KALDI -- cunku o
@@ -787,6 +889,8 @@ mod tests {
         let (_d, c, cid) = kurulum();
         let buyuk = vec![0u8; AZAMI_DOSYA_BOYUTU + 1];
         let uzun_ad = format!("{}.pdf", "a".repeat(AZAMI_DOSYA_ADI_UZUNLUGU));
+        // Bicim gecerli kalsin ki uzunluk yolu olculsun, bicim yolu degil.
+        let uzun_mime = format!("application/{}", "a".repeat(AZAMI_MIME_UZUNLUGU));
         // (vaka adi, hata, mesajda GECMESI gereken anahtar kelimeler)
         let denemeler: Vec<(&str, DepoHatasi, Vec<&str>)> = vec![
             (
@@ -807,9 +911,50 @@ mod tests {
                 vec!["Dosya adı", "yol ayıracı"],
             ),
             (
+                "nokta adi",
+                ekle(&c, cid, "..", "application/pdf", "onam", b"x", Cihaz::Masaustu).unwrap_err(),
+                vec!["Dosya adı", "geçerli"],
+            ),
+            (
+                "addaki denetim karakteri",
+                ekle(&c, cid, "a\nb.pdf", "application/pdf", "onam", b"x", Cihaz::Masaustu)
+                    .unwrap_err(),
+                vec!["Dosya adı", "denetim karakteri"],
+            ),
+            (
+                "addaki yon degistiren karakter",
+                ekle(&c, cid, "annexe\u{202E}fdp.exe", "application/pdf", "onam", b"x", Cihaz::Masaustu)
+                    .unwrap_err(),
+                vec!["Dosya adı", "yön"],
+            ),
+            (
                 "bos mime",
                 ekle(&c, cid, "a.pdf", "  ", "onam", b"x", Cihaz::Masaustu).unwrap_err(),
                 vec!["MIME", "boş"],
+            ),
+            (
+                "uzun mime",
+                ekle(&c, cid, "a.pdf", &uzun_mime, "onam", b"x", Cihaz::Masaustu).unwrap_err(),
+                vec!["MIME", "uzun", "128"],
+            ),
+            (
+                "mime denetim karakteri",
+                ekle(
+                    &c,
+                    cid,
+                    "a.pdf",
+                    "application/pdf\r\nX-Enjekte: 1",
+                    "onam",
+                    b"x",
+                    Cihaz::Masaustu,
+                )
+                .unwrap_err(),
+                vec!["MIME", "denetim karakteri"],
+            ),
+            (
+                "bicimsiz mime",
+                ekle(&c, cid, "a.pdf", "x", "onam", b"x", Cihaz::Masaustu).unwrap_err(),
+                vec!["MIME", "tip/alttip"],
             ),
             (
                 "gecersiz tur",
@@ -830,6 +975,14 @@ mod tests {
                 vec!["büyük", "20971521", "20971520"],
             ),
         ];
+
+        assert_eq!(
+            denemeler.len(),
+            13,
+            "`ekle`nin HER red yolu burada olmali: yeni bir red eklendiginde bu \
+             sayi da, vaka da guncellenmeli (kapsam disi kalan yol sessizce \
+             'Dosya eklenemedi.'ye donusebilir)"
+        );
 
         for (vaka, hata, anahtarlar) in &denemeler {
             let mesaj = hata.to_string();
@@ -873,6 +1026,83 @@ mod tests {
         assert_eq!(ek.dosya_adi, "Onam Formu (imzalı).pdf", "ad trim edilmeli");
     }
 
+    #[test]
+    fn ad_sahteciligi_karakterleri_reddedilir() {
+        // Klasik ad sahteciligi: U+202E (RLO) sonrasini sagdan sola cevirir,
+        // "annexe<RLO>fdp.exe" listede "annexe exe.pdf" gibi gorunur.
+        // Sifir genislikli karakterler ise iki farkli adi ekranda birebir ayni
+        // gosterir. Ikisi de `is_control()` ile YAKALANMAZ (`Cf`, `Cc` degil):
+        // bu yuzden ayri bir dogrulayici var.
+        //
+        // Zarar dosyanin diske yazilmasini beklemez -- terapist bugun listede
+        // gordugu uzantiya guvenerek tiklar.
+        let (_d, c, cid) = kurulum();
+        for kotu in [
+            "annexe\u{202E}fdp.exe", // RLO
+            "rapor\u{202D}.pdf",     // LRO
+            "rapor\u{202B}.pdf",     // RLE
+            "rapor\u{2067}.pdf",     // RLI
+            "onam\u{200B}.pdf",      // ZWSP
+            "onam\u{200D}.pdf",      // ZWJ
+            "\u{FEFF}onam.pdf",      // BOM / ZWNBSP
+            "onam\u{200F}.pdf",      // RLM
+        ] {
+            let hata =
+                ekle(&c, cid, kotu, "application/pdf", "onam", b"x", Cihaz::Masaustu).unwrap_err();
+            assert!(
+                matches!(hata, DepoHatasi::GecersizVeri(_)),
+                "{kotu:?} ad sahteciligi olarak reddedilmeliydi"
+            );
+        }
+
+        // Ve dogrulayici asiri genis degil: Turkce harfler, emoji ve tire
+        // tasiyan olagan adlar hala kabul edilir.
+        for iyi in ["Onam Formu şĞİı.pdf", "2026-mahkeme-raporu.pdf", "özet 📄.pdf"] {
+            ekle(&c, cid, iyi, "application/pdf", "onam", b"x", Cihaz::Masaustu)
+                .unwrap_or_else(|e| panic!("{iyi:?} kabul edilmeliydi: {e}"));
+        }
+    }
+
+    #[test]
+    fn mime_uzunluk_denetim_karakteri_ve_bicim_dogrulanir() {
+        // Bu uc dogrulayicinin UCU DE hicbir testte calismiyordu: uzunluk ve
+        // denetim karakteri bloklari TAMAMEN silinince paket yesil kaliyordu.
+        // Denetim karakteri kontrolu, Gorev 7'nin indirme rotasinda
+        // `Content-Type` basligina CRLF ENJEKSIYONUNU engelleyen tek seydir.
+        let (_d, c, cid) = kurulum();
+        let uzun = format!("application/{}", "a".repeat(AZAMI_MIME_UZUNLUGU));
+        assert!(uzun.chars().count() > AZAMI_MIME_UZUNLUGU, "on kosul: gercekten sinir asilmali");
+
+        for kotu in [
+            uzun.as_str(),
+            "application/pdf\r\nX-Enjekte: 1", // baslik bolmesi
+            "application/pdf\nSet-Cookie: a=b",
+            "application/\u{0}pdf",
+            "x",                // bicimsiz
+            "application",      // alttip yok
+            "application/",     // bos alttip
+            "/pdf",             // bos tip
+            "application/a/b",  // fazla ayirac
+        ] {
+            let hata = ekle(&c, cid, "a.pdf", kotu, "onam", b"x", Cihaz::Masaustu).unwrap_err();
+            assert!(matches!(hata, DepoHatasi::GecersizVeri(_)), "{kotu:?} reddedilmeliydi");
+        }
+
+        // Sinirin TAM uzerindeki MIME kabul edilir -- "her seyi reddet"
+        // mutasyonuna karsi ikinci yon.
+        let tam = format!("application/{}", "a".repeat(AZAMI_MIME_UZUNLUGU - "application/".len()));
+        assert_eq!(tam.chars().count(), AZAMI_MIME_UZUNLUGU, "on kosul");
+        let ek = ekle(&c, cid, "tam.bin", &tam, "diger", b"x", Cihaz::Masaustu)
+            .unwrap_or_else(|e| panic!("sinirin TAM uzerindeki MIME kabul edilmeliydi: {e}"));
+        assert_eq!(ek.mime, tam);
+
+        // Ve olagan MIME tipleri de gecer.
+        for iyi in ["application/pdf", "image/png", "text/plain"] {
+            ekle(&c, cid, "b.bin", iyi, "diger", b"x", Cihaz::Masaustu)
+                .unwrap_or_else(|e| panic!("{iyi} kabul edilmeliydi: {e}"));
+        }
+    }
+
     // --- Toplam uyari esigi: UYARIR, ENGELLEMEZ ---------------------------
 
     #[test]
@@ -911,6 +1141,28 @@ mod tests {
 
         sahte_boyutlu_satir(&c, cid, 1);
         assert!(depolama_durumu(&c).unwrap().uyari, "bir bayt ustunde uyari olmali");
+    }
+
+    #[test]
+    fn depolama_durumu_log_yazmaz() {
+        // Emsal: `appointments::cakisma_kontrolu_log_yazmaz`. Karar modul
+        // basliginda yaziliydi ("Erisim logu YAZMAZ") ama testi yoktu;
+        // `depolama_durumu`'na bir `kaydet(...)` ekleyen mutasyon tum paketi
+        // yesil biraktiriyordu. Bu, her ekran yenilemesinde calisabilecek bir
+        // durum sorgusudur: buraya dusen bir log satiri SILINEMEZ gurultudur.
+        let (_d, c, cid) = kurulum();
+        ekle(&c, cid, "a.pdf", "application/pdf", "onam", b"x", Cihaz::Masaustu).unwrap();
+
+        let once: i64 = c.query_row("SELECT COUNT(*) FROM audit_log", [], |r| r.get(0)).unwrap();
+        assert!(once > 0, "on kosul: sayilacak bir log tablosu olmali");
+        // Tek cagri degil BES: `OturumBasi` ile birlestiren bir mutasyon bile
+        // ilk cagrida bir satir yazardi ve burada yakalanir.
+        for _ in 0..5 {
+            depolama_durumu(&c).unwrap();
+        }
+        let sonra: i64 = c.query_row("SELECT COUNT(*) FROM audit_log", [], |r| r.get(0)).unwrap();
+
+        assert_eq!(once, sonra, "depolama_durumu audit_log'a kayit yazmamali");
     }
 
     #[test]
@@ -1250,6 +1502,53 @@ mod tests {
 
     #[test]
     fn listele_en_yeniden_eskiye_siralar() {
+        // BIRINCIL siralama anahtari: `eklenme_zamani DESC`.
+        //
+        // Bu testin ilk hali iki eki `ekle` ile, ayni saniye icinde
+        // yaziyordu; `simdi()` saniyeye yuvarladigi icin iki satirin
+        // `eklenme_zamani`'si ESIT oluyordu ve test fiilen yalnizca ikincil
+        // anahtari (`id DESC`) olcuyordu -- `DESC` -> `ASC` mutasyonu
+        // hayatta kaliyordu. Simdi satirlar DOGRUDAN, AYRIK zamanlarla
+        // yaziliyor ve zaman sirasi ile kimlik sirasi KASTEN ters: eski
+        // dosya BUYUK kimlige sahip, boylece `id DESC` tek basina dogru
+        // cevabi veremiyor.
+        //
+        // Somut zarar: mutasyon altinda liste ["2019-onam.pdf",
+        // "2026-mahkeme.pdf"] doner -- danisan dosyasi ekraninda 2019 onam
+        // formu bugunku mahkeme raporunun ustunde gorunur.
+        let (_d, c, cid) = kurulum();
+        sahte_zamanli_satir(&c, cid, "2026-mahkeme.pdf", "2026-09-07T10:00:00Z");
+        sahte_zamanli_satir(&c, cid, "2019-onam.pdf", "2019-03-01T08:00:00Z");
+
+        let liste = listele(&c, cid, Cihaz::Masaustu).unwrap();
+        let adlar: Vec<&str> = liste.iter().map(|e| e.dosya_adi.as_str()).collect();
+        assert_eq!(
+            adlar,
+            ["2026-mahkeme.pdf", "2019-onam.pdf"],
+            "en YENI eklenen once gelmeli; kimlik sirasi bunu belirlememeli"
+        );
+    }
+
+    #[test]
+    fn ayni_anda_eklenen_ekler_kimlige_gore_siralanir() {
+        // IKINCIL anahtar: `id DESC`. `eklenme_zamani` saniyeye yuvarlandigi
+        // icin ayni saniyede eklenen iki dosya gercekten esit zamana sahiptir;
+        // sira o zaman kimlikten gelmeli, yoksa liste ayni veriyle her
+        // yenilemede farkli gorunebilir.
+        let (_d, c, cid) = kurulum();
+        sahte_zamanli_satir(&c, cid, "once.pdf", "2026-09-07T10:00:00Z");
+        sahte_zamanli_satir(&c, cid, "sonra.pdf", "2026-09-07T10:00:00Z");
+
+        let liste = listele(&c, cid, Cihaz::Masaustu).unwrap();
+        let adlar: Vec<&str> = liste.iter().map(|e| e.dosya_adi.as_str()).collect();
+        assert_eq!(adlar, ["sonra.pdf", "once.pdf"], "esit zamanda buyuk kimlik once gelmeli");
+    }
+
+    #[test]
+    fn ekle_ile_yazilan_ekler_de_en_yeniden_eskiye_gelir() {
+        // Uctan uca yon: gercek `ekle` yolu da dogru sirayi uretmeli.
+        // (Zamanlar esit oldugundan burayi belirleyen ikincil anahtardir --
+        // birincil anahtari olcen test yukaridadir.)
         let (_d, c, cid) = kurulum();
         ekle(&c, cid, "eski.pdf", "application/pdf", "onam", b"1", Cihaz::Masaustu).unwrap();
         ekle(&c, cid, "yeni.pdf", "application/pdf", "onam", b"2", Cihaz::Masaustu).unwrap();

@@ -478,6 +478,7 @@ mod tests {
         notes::{not_kaydet, ozel_not_kaydet},
         schema::migrate,
     };
+    use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
     fn kurulum() -> (tempfile::TempDir, rusqlite::Connection, i64, i64) {
         let dir = tempfile::tempdir().unwrap();
@@ -1117,6 +1118,57 @@ mod tests {
         // yanitlar (bkz. audit::son_kayit_yakin_mi).
         ara(&c, "kaygi", 20, Cihaz::Telefon).unwrap();
         assert_eq!(arama_log_sayisi(&c), 2, "telefon ayri bir satir yazmali");
+    }
+
+    /// Pencerenin DISINDA duran bir `audit_log` satirini bastan eski
+    /// zamanla yazar (`notes::tests::eski_satir_ekle` ile ayni desen).
+    /// `audit_log`'a INSERT serbesttir; yasak olan UPDATE/DELETE'tir --
+    /// var olan bir satirin zamanini geri almak tetikleyici tarafindan
+    /// (dogru olarak) reddedilir, bu yuzden satir bastan eski yazilir.
+    fn eski_arama_satiri_ekle(c: &rusqlite::Connection, dk_once: i64) {
+        let zaman = (OffsetDateTime::now_utc() - time::Duration::minutes(dk_once))
+            .replace_nanosecond(0)
+            .unwrap()
+            .format(&Rfc3339)
+            .unwrap();
+        c.execute(
+            "INSERT INTO audit_log (olay_zamani, eylem, varlik, varlik_id, cihaz, ayrinti)
+             VALUES (?1, 'goruntuleme', ?2, ?3, 'masaustu', NULL)",
+            rusqlite::params![zaman, VARLIK_ARAMA, VARLIK_ID_ARAMA],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn pencere_disindaki_satir_yeni_arama_kaydini_susturmaz() {
+        // LOGUN SUSTURULMA YONU. Yukaridaki test dort cagriyi da TEK
+        // pencere icinde yapiyor ve pencerenin UZUNLUGUNU hic sabitlemiyor:
+        // `OturumBasi(BIRLESTIRME_PENCERESI_DK)` -> `OturumBasi(525_600)`
+        // (bir yil) mutasyonu 25/25 YESIL birakiyordu. O mutasyon altinda
+        // denetim kaydi -- KVKK 2018/10'un istedigi kayit -- fiilen yok
+        // olurdu: cihaz basina yilda bir satir.
+        //
+        // Emsal: `notes::tests::pencere_disindaki_satir_bes_log_yolunun
+        // _hicbirini_susturmaz`.
+        let (_d, c, _cid, rid) = kurulum();
+        not_kaydet(&c, rid, "dap", "PENCERE notu", Cihaz::Masaustu).unwrap();
+
+        // Pencere 5 dk; 10 dk oncesine bir satir koy.
+        eski_arama_satiri_ekle(&c, 10);
+        assert_eq!(arama_log_sayisi(&c), 1, "on kosul: tek eski satir olmali");
+
+        ara(&c, "PENCERE", 20, Cihaz::Masaustu).unwrap();
+        assert_eq!(
+            arama_log_sayisi(&c),
+            2,
+            "pencere DISINDAKI eski satir yeni aramayi susturmamali -- \
+             birlestirme penceresi ZAMANA BAGLI olmali"
+        );
+
+        // Pencere ICINDEKI satir ise susturur: ayni cagri hemen tekrar
+        // edilince yeni satir YAZILMAZ. (Iki yon ayni testte.)
+        ara(&c, "PENCERE", 20, Cihaz::Masaustu).unwrap();
+        assert_eq!(arama_log_sayisi(&c), 2, "pencere icinde tek satir kalmali");
     }
 
     #[test]

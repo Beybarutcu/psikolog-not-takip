@@ -1584,6 +1584,18 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
 
   const cip = (ad: string) => screen.getByRole('button', { name: `${ad} dosyasını aç` })
 
+  /**
+   * Risk notunu AÇAR ve kanaryanın ekranda olduğunu doğrular.
+   *
+   * Risk notu artık katlanmış geliyor (danışan odada olabilir). "Kanarya
+   * ekrandan gitti" diyen testlerin önce onu AÇMASI şart: kapalıyken metin
+   * zaten DOM'da değil ve iddia hiçbir şeyi sınamayan bir yeşile dönerdi.
+   */
+  async function riskNotunuAc() {
+    await userEvent.click(await screen.findByRole('button', { name: 'Risk notunu göster' }))
+    await screen.findByText('RISK-NOTU-KANARYA')
+  }
+
   async function aramayiAc() {
     await userEvent.click(screen.getByRole('button', { name: 'Hızlı arama (Ctrl+K)' }))
   }
@@ -1603,7 +1615,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   it('baska danisana gecince onceki kartin verisi EKRANDA KALMAZ', async () => {
     render(<AnaEkran kilitle={vi.fn()} />)
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
-    await screen.findByText('RISK-NOTU-KANARYA')
+    await riskNotunuAc()
 
     // Mehmet'in dosyası UÇUŞTA kalsın: sıfırlama bir efekte bırakılsaydı,
     // o efekt çalışana kadar Ayşe'nin risk notu Mehmet'in kartında dururdu.
@@ -1632,7 +1644,9 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     // bir limit, eksik olduğunu SÖYLEMEDEN eksik bir rapor üretirdi.
     render(<AnaEkran kilitle={vi.fn()} />)
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
-    await screen.findByText('RISK-NOTU-KANARYA')
+    // Kartın açıldığını gösteren dayanak telefon: risk notu katlanmış ve
+    // burada onu açmanın bir gerekçesi yok.
+    await screen.findByText('0555 111 22 33')
 
     await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
     await waitFor(() =>
@@ -1797,13 +1811,13 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
       await screen.findByRole('button', { name: /Ayşe Yılmaz — danışan dosyasını aç/ }),
     )
 
-    expect(await screen.findByText('RISK-NOTU-KANARYA')).toBeDefined()
+    await riskNotunuAc()
   })
 
   it('kart acikken 401 gelirse kart KAPANIR ve icerigi ekranda kalmaz', async () => {
     render(<AnaEkran kilitle={vi.fn()} />)
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
-    await screen.findByText('RISK-NOTU-KANARYA')
+    await riskNotunuAc()
 
     // Oturum kilitlendi; sonraki her istek 401. Haftayı değiştirmek
     // `yukle`'yi tetikler.
@@ -1822,7 +1836,13 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     yetkisiz = true
     await userEvent.click(cip('Ayşe Yılmaz'))
 
-    await waitFor(() => expect(document.body.textContent).not.toContain('RISK-NOTU-KANARYA'))
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Risk notunu göster' })).toBeNull(),
+    )
+    // Kartın HİÇBİR alanı gelmedi: risk notu katlanmış olduğu için tek
+    // başına kanaryanın yokluğu bu testte hiçbir şey söylemezdi.
+    expect(document.body.textContent).not.toContain('RISK-NOTU-KANARYA')
+    expect(document.body.textContent).not.toContain('0555 111 22 33')
     expect(
       screen.queryAllByRole('alert').some((u) => /açık rıza kaydı yok/i.test(u.textContent ?? '')),
     ).toBe(false)
@@ -1832,7 +1852,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     // Kiplerin kesişimi: kart + arama + seans paneli aynı ekranda.
     render(<AnaEkran kilitle={vi.fn()} />)
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
-    await screen.findByText('RISK-NOTU-KANARYA')
+    await riskNotunuAc()
 
     await aramayiAc()
     await userEvent.type(

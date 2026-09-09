@@ -36,6 +36,14 @@ import { veriRaporuMetni } from './veriRaporu'
  * söylemeyen bir "Bakiye: 0,00 ₺", ücreti hiç girilmemiş bir dosyada
  * "borcu yok" diye okunur.
  *
+ * # Risk notu KATLANMIŞ gösterilir
+ *
+ * `GecmisNotlar`'ın katlama kararı burada da geçerli ve daha güçlü: risk
+ * notu bu ekrandaki en hassas tek alan, kart danışanın adının hemen altında
+ * duruyor ve terapist kartı danışan odadayken açıyor (telefon, rıza, ek
+ * dosya işleri için). Notun var olduğu görünür kalır — bağlam bu —, içeriği
+ * yalnızca istenince basılır.
+ *
  * # Kartın danışanı ÜRETİMDE DEĞİŞMEZ
  *
  * `AnaEkran` kartı `kart = kartVerisi.id === seciliDanisanId ? kartVerisi :
@@ -85,6 +93,8 @@ type Props = {
   onKapat: () => void
 }
 
+const RISK_GOVDE_ID = 'danisan-risk-notu-govde'
+
 type Rapor = {
   danisanId: number
   url: string
@@ -108,6 +118,14 @@ export function DanisanKarti({
   const [raporHatasi, setRaporHatasi] = useState<string | null>(null)
   const [raporSuruyor, setRaporSuruyor] = useState(false)
   const [ekSuruyor, setEkSuruyor] = useState(false)
+  // Risk notu KAPALI açılır (gerekçe modül başlığında). State, HANGİ
+  // danışan için açıldığını taşıyor ve ekrana giden hâli render sırasında
+  // türetiliyor — `ekFormu` ile aynı desen. Düz bir `boolean` olsaydı,
+  // A'nın notunu açtıktan sonra B'ye geçmek B'nin risk notunu SORULMADAN
+  // ekrana basardı. (İkincil hat: kart bugün zaten unmount ediliyor,
+  // bkz. modül başlığı.)
+  const [riskAcikOlan, setRiskAcikOlan] = useState<number | null>(null)
+  const riskAcik = riskAcikOlan === danisan.id
   // Yükleme formu HANGİ danışan için doldurulduğunu taşıyor ve ekrana giden
   // hâli render sırasında türetiliyor (aşağıda). A için seçilmiş bir dosya
   // B'nin kartında durursa, "Yükle"ye basmak o dosyayı B'nin dosyasına
@@ -237,7 +255,36 @@ export function DanisanKarti({
         <dt className="font-medium text-slate-600">Başvuru nedeni</dt>
         <dd>{danisan.basvuru_nedeni ?? 'Kayıtlı değil'}</dd>
         <dt className="font-medium text-slate-600">Risk notu</dt>
-        <dd>{danisan.risk_notu ?? 'Kayıtlı değil'}</dd>
+        {/* KATLANMIŞ — `GecmisNotlar` ile aynı gerekçe, oradan daha
+            güçlüsüyle: risk notu ("geçmişte bir kez kendine zarar verme")
+            bu ekrandaki en hassas tek alan ve kart, danışanın adının hemen
+            altında duruyor. Danışan odada olabilir ve terapist kartı onun
+            önünde açar (telefon, rıza, ek dosya işleri için). Kendiliğinden
+            basılan bir risk notu, omzun üstünden okunabilir hâle gelir.
+            Notun VAR OLDUĞU görünür kalıyor (bağlam bu), içeriği ancak
+            istenince açılıyor. */}
+        <dd>
+          {danisan.risk_notu === null ? (
+            'Kayıtlı değil'
+          ) : (
+            <>
+              <button
+                type="button"
+                className="rounded border px-2 py-0.5 text-xs"
+                aria-expanded={riskAcik}
+                aria-controls={RISK_GOVDE_ID}
+                onClick={() => setRiskAcikOlan(riskAcik ? null : danisan.id)}
+              >
+                {riskAcik ? 'Risk notunu gizle' : 'Risk notunu göster'}
+              </button>
+              {riskAcik && (
+                <p id={RISK_GOVDE_ID} className="mt-1 whitespace-pre-wrap">
+                  {danisan.risk_notu}
+                </p>
+              )}
+            </>
+          )}
+        </dd>
         {/* Etiket kapsamı yazıyor; çıplak "Bakiye" yanıltıcı olurdu. */}
         <dt className="font-medium text-slate-600">Bakiye (gelinmiş ve ödenmemiş seanslar)</dt>
         <dd>{tlBicimle(bakiyeKurus)}</dd>

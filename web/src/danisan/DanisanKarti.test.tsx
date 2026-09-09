@@ -123,9 +123,34 @@ describe('DanisanKarti — kimlik ve bağlam', () => {
     expect(screen.getAllByText(/kayıtlı değil/i).length).toBeGreaterThan(0)
   })
 
-  it('risk notu gorunur', () => {
+  it('risk notu KENDILIGINDEN basilmaz, katlanmis gelir', () => {
+    // Kart danışanın adının hemen altında ve terapist onu danışan odadayken
+    // açıyor. Kendiliğinden basılan bir risk notu omzun üstünden okunur.
     kur()
+    expect(document.body.textContent).not.toContain('Geçmişte bir kez kendine zarar verme')
+    // Notun VAR OLDUĞU görünür kalıyor: bağlam bu.
+    expect(screen.getByRole('button', { name: 'Risk notunu göster' })).toBeDefined()
+  })
+
+  it('istenince acilir ve tekrar kapanir', async () => {
+    kur()
+    const dugme = screen.getByRole('button', { name: 'Risk notunu göster' })
+    expect(dugme.getAttribute('aria-expanded')).toBe('false')
+
+    await userEvent.click(dugme)
     expect(screen.getByText(/Geçmişte bir kez kendine zarar verme/)).toBeDefined()
+
+    // Geri kapanabiliyor: açılıp bir daha kapanmayan bir alan, katlamayı
+    // kartın ömrü boyunca tek seferlik bir gecikmeye indirger.
+    await userEvent.click(screen.getByRole('button', { name: 'Risk notunu gizle' }))
+    expect(document.body.textContent).not.toContain('Geçmişte bir kez kendine zarar verme')
+  })
+
+  it('risk notu yoksa katlama dugmesi de YOKTUR', () => {
+    // Boş bir notu açtırmak için düğme koymak, "bir şey gizleniyor"
+    // izlenimi verirdi.
+    kur({ danisan: { ...danisan, risk_notu: null } })
+    expect(screen.queryByRole('button', { name: /risk notunu/i })).toBeNull()
   })
 })
 
@@ -482,6 +507,11 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
 
     await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
     await screen.findByRole('link', { name: /raporu indir/i })
+    // Risk notu AÇILIYOR: katlanmış hâlde metin zaten DOM'da olmaz ve
+    // aşağıdaki "sızmadı" iddiası hiçbir şeyi sınamayan bir yeşile
+    // dönerdi.
+    await userEvent.click(screen.getByRole('button', { name: 'Risk notunu göster' }))
+    expect(screen.getByText(/Geçmişte bir kez kendine zarar verme/)).toBeDefined()
 
     rerender(<DanisanKarti danisan={digeri} {...ortak} />)
 
@@ -528,6 +558,38 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
 
     expect(ekYukle).not.toHaveBeenCalled()
     expect(screen.getByText(/önce bir dosya seçin/i)).toBeDefined()
+  })
+
+  it('A icin acilan risk notu B nin kartini SORULMADAN acmaz', async () => {
+    // `riskAcik` düz bir `boolean` olsaydı, A'nın notunu açtıktan sonra
+    // B'ye geçmek B'nin risk notunu kendiliğinden ekrana basardı — hem de
+    // ekrandaki en hassas alanı.
+    const digeri: DanisanDosyasi = {
+      ...danisan,
+      id: 13,
+      ad_soyad: 'Mehmet Demir',
+      risk_notu: 'B-NIN-RISK-NOTU',
+    }
+    const ortak = {
+      ekler,
+      randevular: [randevu({ id: 1 })],
+      bugun: '2026-09-09',
+      notlariGetir: vi.fn().mockResolvedValue(resmiNotlar),
+      notSiniri: 200,
+      ekYukle: vi.fn().mockResolvedValue(undefined),
+      onRizaKaydet: vi.fn().mockResolvedValue(undefined),
+      onKapat: vi.fn(),
+    }
+    const { rerender } = render(<DanisanKarti danisan={danisan} {...ortak} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Risk notunu göster' }))
+    expect(screen.getByText(/Geçmişte bir kez kendine zarar verme/)).toBeDefined()
+
+    rerender(<DanisanKarti danisan={digeri} {...ortak} />)
+    expect(document.body.textContent).not.toContain('B-NIN-RISK-NOTU')
+    // ARTI YÖN: B'nin notu gerçekten var ve istenince açılıyor (notu hiç
+    // göstermeyen bir sürüm de üstteki iddiayı geçerdi).
+    await userEvent.click(screen.getByRole('button', { name: 'Risk notunu göster' }))
+    expect(screen.getByText('B-NIN-RISK-NOTU')).toBeDefined()
   })
 
   it('A nin riza tarihi B nin formunda KALMAZ', async () => {

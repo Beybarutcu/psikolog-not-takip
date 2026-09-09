@@ -17,11 +17,12 @@ import { kurulumYap } from './yardimcilar'
  *
  * # Paylaşılan sunucu durumu — saat seçimi
  *
- * `playwright.config.ts` `workers: 1` kullanıyor ve tüm dosyalar TEK bir
- * sunucu sürecini paylaşıyor. Bu dosya 13:00–18:00 satırlarını kullanıyor;
- * `takvim.spec.ts` 10:00–12:00 kullanıyor. Saatler ayrık olmasaydı bir
- * dosyanın "ilk boş 10:00 hücresi" seçimi diğerinin randevusuna denk gelir
- * ve çakışma uyarısı ile testler birbirini bozardı.
+ * Bu dosya artık KENDİ sunucusunda ve kendi veri dizininde koşuyor (bkz.
+ * `playwright.config.ts` SUNUCULAR), yani `takvim.spec.ts` ile hiçbir şey
+ * paylaşmıyor. Ama dosya İÇİNDEKİ testler aynı sunucuyu paylaşmaya devam
+ * ediyor: her test kendi saatini (13:00–18:00) kullanıyor ki bir testin
+ * "ilk boş hücre" seçimi bir öncekinin randevusuna denk gelip çakışma
+ * uyarısı doğurmasın.
  *
  * # `exact: true` ve sabit bekleme yok
  *

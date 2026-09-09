@@ -77,8 +77,9 @@ test('mevcut randevunun ucreti guncellenir, kopya olusmaz', async ({ page }) => 
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
   await expect(page.getByText('Elif Şahin')).toBeVisible()
 
-  // Diger testlerin kullandigi 10:00 satirindan farkli bir saat secilir ki
-  // paylasilan sunucu durumundaki kayitlar birbirine karismasin.
+  // Bu dosyadaki diger testlerin kullandigi 10:00 satirindan farkli bir saat
+  // secilir: dosyalar arasi yalitim var (her spec kendi sunucusunda), ama
+  // dosya ICINDEKI testler ayni sunucuyu paylasiyor.
   await page.locator('button[aria-label$="11:00 boş"]').first().click()
   await page.getByLabel('Danışan', { exact: true }).selectOption({ label: 'Elif Şahin' })
   await page.getByLabel('Ücret (TL)').fill('450')

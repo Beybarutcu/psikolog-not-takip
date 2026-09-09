@@ -2,13 +2,20 @@ import { expect, type Page } from '@playwright/test'
 
 const PAROLA = 'gizliparola'
 
-// Kurulum akışı hem kurulum.spec.ts hem de takvim.spec.ts tarafından
-// kullanılıyor. Sunucu süreci (bkz. playwright.config.ts webServer) test
-// dosyaları arasında paylaşılıyor ve kurulum en fazla bir kez yapılabilir —
-// bu yüzden yardımcı, sayfanın hangi ekranda olduğunu (kurulum sihirbazı,
-// kilit ekranı ya da zaten açık ana ekran) tanıyıp ona göre davranır.
-// playwright.config.ts'teki workers: 1 ayarı, birden fazla test dosyasının
-// aynı anda kurulum uç noktasına yarışarak gitmesini engeller.
+// Bu yardımcı hem notlar.spec.ts hem de takvim.spec.ts tarafından
+// kullanılıyor. Her spec dosyası artık KENDİ sunucusunda ve kendi veri
+// dizininde koşuyor (bkz. playwright.config.ts SUNUCULAR), yani dosyalar
+// arası durum sızıntısı yok. Dosya İÇİNDE ise durum bilerek paylaşılıyor:
+// ilk test kurulumu yapar, sonrakiler ya doğrudan ana ekranı bulur ya da
+// (bir önceki test "Kilitle"ye bastıysa) kilit ekranını görüp parolayla
+// açar. Üç ekranın da tanınması bu yüzden gerekli.
+//
+// ZAMANLAMA. Kilit açma ucuz DEĞİL ve öyle olması amaçlanıyor: Argon2id,
+// 64 MiB / t=3 (`KdfParams::default`). e2e sunucusu debug profilinde
+// derlendiği için ölçülen süre kilit açmada ~2,1 sn, kurulumda (iki
+// sarmalama) ~4,3 sn. Playwright'ın varsayılan 5 sn'lik iddia bütçesi
+// buna dar geliyordu; bütçe playwright.config.ts'te `expect.timeout` ile
+// büyütüldü (gerekçesi orada).
 export async function kurulumYap(page: Page) {
   await page.goto('/')
 

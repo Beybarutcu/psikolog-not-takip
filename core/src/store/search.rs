@@ -680,18 +680,11 @@ mod tests {
     #[test]
     fn kaynak_kodda_private_notes_gecmez() {
         // Davranissal testin yaninda YAPISAL kanit: uretim kodu (test blogu
-        // ve yorum satirlari haric) `private_notes` tablosunu adiyla hic
-        // anmaz ve hicbir `UNION` icermez. Ozel notun disarida kalmasi bir
-        // filtrenin degil, sorgunun hangi tabloya baktiginin sonucudur --
-        // bu test tam olarak onu sabitler.
-        let uretim: String = include_str!("search.rs")
-            .split("#[cfg(test)]")
-            .next()
-            .expect("kaynak bos olamaz")
-            .lines()
-            .filter(|satir| !satir.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n");
+        // ve yorumlar haric) `private_notes` tablosunu adiyla hic anmaz ve
+        // hicbir `UNION` icermez. Ozel notun disarida kalmasi bir filtrenin
+        // degil, sorgunun hangi tabloya baktiginin sonucudur -- bu test tam
+        // olarak onu sabitler.
+        let uretim = uretim_kodu();
 
         assert!(
             !uretim.contains("private_notes"),
@@ -701,6 +694,59 @@ mod tests {
             !uretim.to_uppercase().contains("UNION"),
             "arama sorgularinda UNION olmamali"
         );
+        // PARCALANMIS DIZGI de gorunur olmali: `"private_" "notes"` ya da
+        // `concat!("private_", "notes")` bicimindeki bir kacamak, duz
+        // `contains` ile gorunmez kalirdi.
+        let birlesik = dizgi_parcalari_birlestir(&uretim);
+        assert!(
+            !birlesik.contains("private_notes"),
+            "parcalanmis dizgiyle de olsa private_notes gecmemeli"
+        );
+    }
+
+    /// Uretim kodu: test blogu ve YORUMLAR cikarilmis kaynak.
+    ///
+    /// Yorum filtresi hem `//` satirlarini hem `/* ... */` bloklarini atar.
+    /// Yalnizca `starts_with("//")`'e bakan onceki filtre, kurali bir blok
+    /// yorumunun icine tasiyan mutasyonu goremezdi: modul basligindaki
+    /// `private_notes` gecisleri zaten `//!` ile basliyor, ama bir blok
+    /// yorumu icine yazilan bir SQL parcasi filtreden kacardi.
+    fn uretim_kodu() -> String {
+        let ham = include_str!("search.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .expect("kaynak bos olamaz");
+
+        let mut bloksuz = String::with_capacity(ham.len());
+        let mut kalan = ham;
+        while let Some(bas) = kalan.find("/*") {
+            bloksuz.push_str(&kalan[..bas]);
+            match kalan[bas + 2..].find("*/") {
+                Some(son) => kalan = &kalan[bas + 2 + son + 2..],
+                None => {
+                    kalan = "";
+                    break;
+                }
+            }
+        }
+        bloksuz.push_str(kalan);
+
+        bloksuz
+            .lines()
+            .filter(|satir| !satir.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Parcalanmis dizgi kacamagini gorunur kilar: dizgi tirnaklari,
+    /// bosluklar ve birlestirme noktalama isaretleri atilir, boylece
+    /// `"private_" "notes"` ve `concat!("private_", "notes")` tek parcaya
+    /// iner.
+    fn dizgi_parcalari_birlestir(metin: &str) -> String {
+        metin
+            .chars()
+            .filter(|k| !matches!(k, '"' | ',' | '+' | '\\' | '(' | ')') && !k.is_whitespace())
+            .collect()
     }
 
     // --- Turkce katlama: iki tablo, iki yon -------------------------------
@@ -890,12 +936,20 @@ mod tests {
 
     #[test]
     fn sonuc_sayisi_azami_siniri_asmaz() {
+        // SABITIN KENDISINDEN TUREMEYEN IDDIA: asagidaki tek satir olmadan
+        // bu test totolojikti -- `AZAMI_SONUC`'u 50'den 30'a cekmek testi
+        // yesil birakiyordu, cunku hem kurulum hem beklenti ayni sabitten
+        // besleniyordu. Sinir bir SOZLESME (bkz. modul basligi: sinirsiz
+        // arama toplu disa aktarimdir); duz sayiyla da yazilir.
+        assert_eq!(AZAMI_SONUC, 50, "azami sonuc sozlesmesi 50'dir");
+
         let (_d, c, cid, _rid) = kurulum();
         for i in 0..(AZAMI_SONUC as usize + 5) {
             let r = randevu_ekle(&c, cid, &gun(i));
             not_kaydet(&c, r, "dap", "ORTAKKELIME notu", Cihaz::Masaustu).unwrap();
         }
         let sonuclar = ara(&c, "ORTAKKELIME", 10_000, Cihaz::Masaustu).unwrap();
+        assert_eq!(sonuclar.len(), 50);
         assert_eq!(sonuclar.len(), AZAMI_SONUC as usize);
     }
 
@@ -1094,7 +1148,20 @@ mod tests {
             parca.chars().count(),
             PARCA_UZUNLUGU + 2
         );
-        assert!(!parca.contains(&"b".repeat(200)), "notun tamami donmus");
+        // SABITTEN TUREMEYEN IDDIA. Yukaridaki sinir `PARCA_UZUNLUGU`'nun
+        // kendisinden besleniyor: sabiti 80'den 200'e cekmek testi yesil
+        // birakiyordu. Parca not iceriginin bir KESITIDIR; buyumus bir
+        // parca sizintidir (arama sonuclari ekranda gorunur ve ekran
+        // gorunurken danisan odada olabilir -- bkz. modul basligi).
+        // Kirpma isaretleriyle birlikte 82 karakter duz sayiyla yazilir.
+        assert!(
+            parca.chars().count() <= 82,
+            "parca 82 karakteri asmamali, {} karakter: {parca}",
+            parca.chars().count()
+        );
+        // 200'de parca 158 'b' iceriyordu ve `repeat(200)` iddiasinin
+        // altindan geciyordu; esik gercek pencereye gore siki tutuluyor.
+        assert!(!parca.contains(&"b".repeat(50)), "notun tamami donmus: {parca}");
     }
 
     // --- Denetim kaydi -----------------------------------------------------
@@ -1185,17 +1252,13 @@ mod tests {
 
     #[test]
     fn arama_audit_log_uzerinde_update_veya_delete_denemez() {
-        let uretim: String = include_str!("search.rs")
-            .split("#[cfg(test)]")
-            .next()
-            .expect("kaynak bos olamaz")
-            .lines()
-            .filter(|satir| !satir.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n")
-            .to_uppercase();
+        let uretim = uretim_kodu().to_uppercase();
         assert!(!uretim.contains("UPDATE AUDIT_LOG"));
         assert!(!uretim.contains("DELETE FROM AUDIT_LOG"));
+        // Bosluk/parcalanma kacamagi burada da kapali.
+        let birlesik = dizgi_parcalari_birlestir(&uretim);
+        assert!(!birlesik.contains("UPDATEAUDIT_LOG"));
+        assert!(!birlesik.contains("DELETEFROMAUDIT_LOG"));
     }
 
     // --- Yetkili kaynak ----------------------------------------------------

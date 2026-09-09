@@ -219,7 +219,7 @@ pub enum LogHacmi {
     /// hesabı verilmesi gereken işlemler ile seyrek, gerçek kullanıcı
     /// eylemleri (danışan dosyası açmak, giriş/çıkış) buradadır.
     HerCagri,
-    /// Aynı `(eylem, varlik, varlik_id)` üçlüsü için verilen dakika
+    /// Aynı `(eylem, varlik, varlik_id, cihaz)` dörtlüsü için verilen dakika
     /// penceresinde **en fazla bir** satır. Kendi kendini yenileyen ekranlar
     /// ve otomatik kayıt yolları buradadır; pencere için
     /// `BIRLESTIRME_PENCERESI_DK` kullanın.
@@ -274,7 +274,7 @@ pub fn kaydet(
     hacim: LogHacmi,
 ) -> Result<bool, rusqlite::Error> {
     if let LogHacmi::OturumBasi(pencere_dk) = hacim {
-        if son_kayit_yakin_mi(conn, eylem, varlik, varlik_id, pencere_dk)? {
+        if son_kayit_yakin_mi(conn, eylem, varlik, varlik_id, cihaz, pencere_dk)? {
             return Ok(false);
         }
     }
@@ -305,18 +305,26 @@ fn pencere_esigi(pencere_dk: i64) -> String {
         .expect("zaman bicimlendirilemedi")
 }
 
-/// Aynı `(eylem, varlik, varlik_id)` üçlüsü için son `pencere_dk` dakika
-/// içinde YAZILMIŞ bir kayıt var mı?
+/// Aynı `(eylem, varlik, varlik_id, cihaz)` dörtlüsü için son `pencere_dk`
+/// dakika içinde YAZILMIŞ bir kayıt var mı?
 ///
 /// Birleştirme kararını veren **tek** fonksiyon budur. Yalnızca OKUR:
 /// `audit_log` üzerinde hiçbir `UPDATE`/`DELETE` çalıştırmaz, çalıştıramaz
 /// (bkz. modül başlığı — birleştirme "yazma" kararıdır, "üzerine yazma"
 /// değil; tetikleyiciler de bunu zaten reddeder).
 ///
-/// Eşleşme üçlünün TAMAMI üzerinden yapılır: farklı bir not (`varlik_id`),
-/// farklı bir varlık türü (`varlik`) veya farklı bir eylem (`eylem`) asla
-/// birbirini gizlemez — bir notun 30 otomatik kaydı tek satıra inerken aynı
-/// pencerede o notun SİLİNMESİ ayrı bir satır yazar.
+/// Eşleşme dörtlünün TAMAMI üzerinden yapılır: farklı bir not (`varlik_id`),
+/// farklı bir varlık türü (`varlik`), farklı bir eylem (`eylem`) veya farklı
+/// bir CİHAZ asla birbirini gizlemez — bir notun 30 otomatik kaydı tek satıra
+/// inerken aynı pencerede o notun SİLİNMESİ ayrı bir satır yazar.
+///
+/// # Neden `cihaz` da anahtarda
+/// Log satırının dört boyutu var: *kim, ne zaman, hangi kayıt, hangi cihaz*.
+/// `cihaz` anahtarın dışında bırakılırsa aynı notu 14:00'te masaüstünden,
+/// 14:02'de telefondan açmak tek satır üretir ve log yalnızca masaüstü
+/// erişimini taşır — oysa KVKK'nın sorduğu sorulardan biri tam olarak "hangi
+/// cihazdan"dır. Hacme etkisi yok: pencere başına, cihaz başına en fazla 1
+/// satır.
 ///
 /// Karşılaştırma **kesin** (`>`) eşiktir: `pencere_dk = 0` "birleştirme yok"
 /// anlamına gelir (eşik = şimdi; şimdi yazılmış bir satır bile pencerenin
@@ -326,15 +334,17 @@ pub fn son_kayit_yakin_mi(
     eylem: Eylem,
     varlik: &str,
     varlik_id: &str,
+    cihaz: Cihaz,
     pencere_dk: i64,
 ) -> Result<bool, rusqlite::Error> {
     let esik = pencere_esigi(pencere_dk);
     let var: i64 = conn.query_row(
         "SELECT EXISTS(
              SELECT 1 FROM audit_log
-              WHERE eylem = ?1 AND varlik = ?2 AND varlik_id = ?3 AND olay_zamani > ?4
+              WHERE eylem = ?1 AND varlik = ?2 AND varlik_id = ?3 AND cihaz = ?4
+                AND olay_zamani > ?5
          )",
-        rusqlite::params![eylem.as_str(), varlik, varlik_id, esik],
+        rusqlite::params![eylem.as_str(), varlik, varlik_id, cihaz.as_str(), esik],
         |r| r.get(0),
     )?;
     Ok(var != 0)
@@ -494,13 +504,14 @@ mod tests {
         eylem: Eylem,
         varlik: &str,
         varlik_id: &str,
+        cihaz: Cihaz,
         dk_once: i64,
     ) -> String {
         let zaman = pencere_esigi(dk_once);
         c.execute(
             "INSERT INTO audit_log (olay_zamani, eylem, varlik, varlik_id, cihaz, ayrinti)
-             VALUES (?1, ?2, ?3, ?4, 'masaustu', NULL)",
-            rusqlite::params![zaman, eylem.as_str(), varlik, varlik_id],
+             VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+            rusqlite::params![zaman, eylem.as_str(), varlik, varlik_id, cihaz.as_str()],
         )
         .unwrap();
         zaman
@@ -541,7 +552,7 @@ mod tests {
         // cagridan sonra AYAKTA KALAN satir hala ILK yazmanin satiridir:
         // ayni id, ayni olay_zamani.
         let (_d, c) = baglanti();
-        let ilk_zaman = eski_satir_ekle(&c, Eylem::Duzenleme, "note", "5", 2);
+        let ilk_zaman = eski_satir_ekle(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, 2);
         let ilk_id: i64 = c.query_row("SELECT id FROM audit_log", [], |r| r.get(0)).unwrap();
 
         for _ in 0..30 {
@@ -574,15 +585,15 @@ mod tests {
         // yeniden gorunur olur. Aksi halde "denetlenebilir olmayan log"
         // sorununu "hic olmayan log" ile degistirmis olurduk.
         let (_d, c) = baglanti();
-        let eski_zaman = eski_satir_ekle(&c, Eylem::Duzenleme, "note", "5", 10);
+        let eski_zaman = eski_satir_ekle(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, 10);
 
         assert!(
-            !son_kayit_yakin_mi(&c, Eylem::Duzenleme, "note", "5", BIRLESTIRME_PENCERESI_DK)
+            !son_kayit_yakin_mi(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, BIRLESTIRME_PENCERESI_DK)
                 .unwrap(),
             "10 dakika onceki satir 5 dakikalik pencerenin DISINDA olmali"
         );
         assert!(
-            son_kayit_yakin_mi(&c, Eylem::Duzenleme, "note", "5", 15).unwrap(),
+            son_kayit_yakin_mi(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, 15).unwrap(),
             "ayni satir 15 dakikalik pencerenin ICINDE olmali -- esik gercekten zamana bagli"
         );
 
@@ -655,6 +666,81 @@ mod tests {
     }
 
     #[test]
+    fn birlestirme_farkli_bir_cihazi_gizlemez() {
+        // Log satirinin dort boyutundan biri de CIHAZ'dir. Anahtarda
+        // olmasaydi: terapist 14:00'te masaustunden 5 numarali notu acar,
+        // 14:02'de ayni notu telefondan acar -- log yalnizca masaustu
+        // erisimini tasirdi. KVKK'nin sordugu sorulardan biri tam olarak
+        // "hangi cihazdan"dir.
+        let (_d, c) = baglanti();
+        for _ in 0..30 {
+            kaydet(
+                &c,
+                Eylem::Goruntuleme,
+                "note",
+                "5",
+                Cihaz::Masaustu,
+                None,
+                LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK),
+            )
+            .unwrap();
+        }
+        assert_eq!(log_sayisi(&c), 1, "on kosul: ayni cihazdan 30 erisim tek satir");
+
+        // AYNI eylem, AYNI varlik, AYNI id, AYNI pencere -- BASKA cihaz.
+        let yazildi = kaydet(
+            &c,
+            Eylem::Goruntuleme,
+            "note",
+            "5",
+            Cihaz::Telefon,
+            None,
+            LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK),
+        )
+        .unwrap();
+        assert!(yazildi, "farkli cihazdan erisim ayri satir yazmali");
+        assert_eq!(log_sayisi(&c), 2);
+
+        let cihazlar: Vec<String> =
+            son_kayitlar(&c, 10).unwrap().into_iter().map(|k| k.cihaz).collect();
+        assert!(cihazlar.contains(&"masaustu".to_string()));
+        assert!(cihazlar.contains(&"telefon".to_string()), "telefon erisimi loga girmeli");
+    }
+
+    #[test]
+    fn pencere_esigi_cihaz_bazindadir() {
+        // `son_kayit_yakin_mi` dogrudan: masaustunden yazilmis bir satir
+        // TELEFON icin "yakin kayit" sayilmamali.
+        let (_d, c) = baglanti();
+        eski_satir_ekle(&c, Eylem::Goruntuleme, "note", "5", Cihaz::Masaustu, 1);
+
+        assert!(
+            son_kayit_yakin_mi(
+                &c,
+                Eylem::Goruntuleme,
+                "note",
+                "5",
+                Cihaz::Masaustu,
+                BIRLESTIRME_PENCERESI_DK
+            )
+            .unwrap(),
+            "ayni cihaz icin satir pencerenin icinde olmali"
+        );
+        assert!(
+            !son_kayit_yakin_mi(
+                &c,
+                Eylem::Goruntuleme,
+                "note",
+                "5",
+                Cihaz::Telefon,
+                BIRLESTIRME_PENCERESI_DK
+            )
+            .unwrap(),
+            "baska cihazin satiri bu cihazin erisimini gizlememeli"
+        );
+    }
+
+    #[test]
     fn sifir_pencere_hicbir_seyi_birlestirmez() {
         // `pencere_dk = 0` "birlestirme yok" demektir: esik tam olarak
         // SIMDI'dir ve karsilastirma kesin (`>`) oldugu icin ayni saniyede
@@ -675,7 +761,7 @@ mod tests {
     fn bos_logda_ilk_kayit_her_zaman_yazilir() {
         let (_d, c) = baglanti();
         assert!(
-            !son_kayit_yakin_mi(&c, Eylem::Duzenleme, "note", "5", BIRLESTIRME_PENCERESI_DK)
+            !son_kayit_yakin_mi(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, BIRLESTIRME_PENCERESI_DK)
                 .unwrap(),
             "hic kayit yokken 'yakin kayit var' denemez"
         );
@@ -690,7 +776,7 @@ mod tests {
         // kanitlar: eger `LogHacmi::OturumBasi` var olan satiri
         // guncellemeye/silmeye calissaydi cagri Err donerdi.
         let (_d, c) = baglanti();
-        eski_satir_ekle(&c, Eylem::Duzenleme, "note", "5", 1);
+        eski_satir_ekle(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, 1);
 
         // On kosul: tetikleyiciler gercekten aktif.
         assert!(c.execute("UPDATE audit_log SET eylem='silme'", []).is_err());

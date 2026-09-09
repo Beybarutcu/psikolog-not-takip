@@ -64,6 +64,25 @@ type Props = {
    * başka bir seansın editörüne geri yüklenirdi.
    */
   taslakAnahtari: string
+  /**
+   * Metin alanının etiketi. Aynı editör iki farklı not türü için
+   * kullanılıyor ve etiket türü söylemeli: "Seans notu" ile "Özel notum"
+   * ayrı tablolara yazılır ve ikincisi danışana hiç gösterilmez. Sabit tek
+   * bir etiket, kullanıcının hangi nota yazdığını ekrandan okuyamaması
+   * demekti.
+   */
+  etiket?: string
+  /**
+   * Şablon seçici gösterilsin mi.
+   *
+   * Özel notun şablonu **yoktur**: sunucudaki `OzelNot` alanlarında `sablon`
+   * yok ve `PUT .../ozel-not` gövdesi yalnızca `icerik` taşır. Seçici yine
+   * de gösterilseydi iki somut zarar doğardı: (a) seçim hiçbir yere
+   * yazılmadığı hâlde yazılmış gibi görünürdü, (b) boş bir özel notta
+   * şablon seçmek `sablonDegis` üzerinden DAP başlıklarını özel notun
+   * İÇERİĞİNE enjekte ederdi.
+   */
+  sablonSecilebilir?: boolean
 }
 
 const VARSAYILAN_GECIKME_MS = 2000
@@ -93,6 +112,8 @@ export function NotEditoru({
   onKaydet,
   gecikmeMs = VARSAYILAN_GECIKME_MS,
   taslakAnahtari,
+  etiket = 'Seans notu',
+  sablonSecilebilir = true,
 }: Props) {
   // Mount anında taslak deposuna bakılır: kilit (401) yüzünden unmount olmuş
   // bir editörün yazılmamış metni burada durur ve sunucudan gelen
@@ -230,25 +251,29 @@ export function NotEditoru({
   return (
     <div className="flex h-full flex-col">
       <div className="mb-2 flex items-center gap-2">
-        <label className="text-sm" htmlFor={sablonId}>
-          Şablon
-        </label>
-        {/* Kapalı küme: seçenekler `sablon.ts`'teki kayıttan türetiliyor ve
-            "yeni şablon ekle" yolu YOK — `templates.kod` UNIQUE ve kapalı bir
-            CHECK taşıdığı için o tablo yapısal olarak en fazla üç satır
-            tutabilir. Kullanıcı şablonun başlıklarını düzenler, türünü değil. */}
-        <select
-          id={sablonId}
-          className="rounded border p-1 text-sm"
-          value={sablon}
-          onChange={(e) => sablonDegis(e.target.value)}
-        >
-          {SABLON_KODLARI.map((kod) => (
-            <option key={kod} value={kod}>
-              {SABLON_ADLARI[kod]}
-            </option>
-          ))}
-        </select>
+        {sablonSecilebilir && (
+          <>
+            <label className="text-sm" htmlFor={sablonId}>
+              Şablon
+            </label>
+            {/* Kapalı küme: seçenekler `sablon.ts`'teki kayıttan türetiliyor ve
+                "yeni şablon ekle" yolu YOK — `templates.kod` UNIQUE ve kapalı bir
+                CHECK taşıdığı için o tablo yapısal olarak en fazla üç satır
+                tutabilir. Kullanıcı şablonun başlıklarını düzenler, türünü değil. */}
+            <select
+              id={sablonId}
+              className="rounded border p-1 text-sm"
+              value={sablon}
+              onChange={(e) => sablonDegis(e.target.value)}
+            >
+              {SABLON_KODLARI.map((kod) => (
+                <option key={kod} value={kod}>
+                  {SABLON_ADLARI[kod]}
+                </option>
+              ))}
+            </select>
+          </>
+        )}
 
         {/* Kibar (`polite`) canlı bölge: "Kaydedilmemiş değişiklikler var…",
             "Yazılıyor…", "Kaydedildi 14:32". Kullanıcı yazarken kesilmesin
@@ -272,7 +297,7 @@ export function NotEditoru({
       )}
 
       <label className="text-sm" htmlFor={alanId}>
-        Seans notu
+        {etiket}
       </label>
       <textarea
         id={alanId}

@@ -550,3 +550,52 @@ describe('NotEditoru — kisitlar', () => {
     }
   })
 })
+
+// Görev 9: aynı editör iki not türü için kullanılıyor. Özel notun şablonu
+// YOKTUR (sunucudaki `OzelNot`'ta alan yok, `PUT .../ozel-not` gövdesi
+// yalnızca `icerik`). İki yön de ölçülüyor: seçici varsayılan olarak VAR ve
+// kapatılabildiğinde gerçekten YOK.
+describe('NotEditoru — sablon secici ve etiket', () => {
+  it('varsayilan olarak sablon secici VAR ve etiket "Seans notu"', () => {
+    kur()
+    expect(screen.getByLabelText('Şablon')).toBeDefined()
+    expect(screen.getByLabelText('Seans notu')).toBeDefined()
+  })
+
+  it('sablonSecilebilir=false ile secici hic render edilmez', () => {
+    kur({ sablonSecilebilir: false, etiket: 'Özel notum' })
+    expect(screen.queryByLabelText('Şablon')).toBeNull()
+    expect(screen.queryByRole('combobox')).toBeNull()
+    // Etiket türü söylemeli: iki not ayrı tablolara yazılıyor ve ikincisi
+    // danışana hiç gösterilmiyor.
+    expect(screen.getByLabelText('Özel notum')).toBeDefined()
+    expect(screen.queryByLabelText('Seans notu')).toBeNull()
+  })
+
+  it('secici yokken bos icerige sablon basliklari ENJEKTE EDILEMEZ', async () => {
+    // `sablonDegis` boş editöre başlık ekliyor. Özel notta bu yol açık
+    // kalsaydı DAP başlıkları özel notun içeriğine yazılırdı.
+    const props = kur({
+      sablonSecilebilir: false,
+      etiket: 'Özel notum',
+      baslangicSablon: 'dap',
+      baslangicIcerik: '',
+      gecikmeMs: 20,
+    })
+    expect((screen.getByLabelText('Özel notum') as HTMLTextAreaElement).value).toBe('')
+    await new Promise((coz) => setTimeout(coz, 120))
+    expect(props.onKaydet).not.toHaveBeenCalled()
+    expect(screen.queryByText('Veri:')).toBeNull()
+  })
+
+  it('secici yokken de otomatik kayit CALISIR', async () => {
+    // Tek yönlü kapsam kaçağı: yalnızca "seçici yok" iddiaları yazılsaydı,
+    // hiçbir şey render etmeyen bir editör de üsttekileri geçerdi.
+    const props = kur({ sablonSecilebilir: false, etiket: 'Özel notum', gecikmeMs: 20 })
+    await userEvent.type(screen.getByLabelText('Özel notum'), 'ozel metin')
+    await waitFor(() => expect(props.onKaydet).toHaveBeenCalled())
+    expect(props.onKaydet).toHaveBeenCalledWith(
+      expect.objectContaining({ icerik: expect.stringContaining('ozel metin') }),
+    )
+  })
+})

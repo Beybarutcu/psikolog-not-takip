@@ -26,6 +26,62 @@ const randevuB = {
   durum: 'planlandi', ucret: null, odendi: false, seri_id: null,
 }
 
+// --- Görev 9: seans paneli sunucu taklidi ---------------------------------
+//
+// Randevu seçilince panel üç istek daha atıyor: `.../not`, `.../ozel-not` ve
+// `/api/danisanlar/{id}/notlar`. Aşağıdaki yardımcı bunları karşılıyor ve
+// PUT'ları hatırlıyor (sekme değişimi/seans geçişi testleri yazılanın
+// gerçekten sunucuya gittiğini ölçebilsin diye).
+type NotKaydi = { sablon: string; icerik: string }
+let sunucuNotlari: Record<number, NotKaydi>
+let sunucuOzelNotlari: Record<number, string>
+let sunucuGecmisi: {
+  appointment_id: number
+  client_id: number
+  sablon: string
+  icerik: string
+  guncelleme_zamani: string
+}[]
+
+const ZAMAN = '2026-09-07T06:00:00Z'
+
+function jsonYanit(govde: unknown): Response {
+  return { ok: true, json: async () => govde } as unknown as Response
+}
+
+function notYaniti(yol: string, method: string, govde: unknown): Response | null {
+  const ozel = /^\/api\/randevular\/(\d+)\/ozel-not$/.exec(yol)
+  if (ozel) {
+    const id = Number(ozel[1])
+    if (method === 'PUT') sunucuOzelNotlari[id] = (govde as { icerik: string }).icerik
+    return jsonYanit({
+      appointment_id: id,
+      icerik: sunucuOzelNotlari[id] ?? '',
+      guncelleme_zamani: ZAMAN,
+    })
+  }
+  const resmi = /^\/api\/randevular\/(\d+)\/not$/.exec(yol)
+  if (resmi) {
+    const id = Number(resmi[1])
+    if (method === 'PUT') sunucuNotlari[id] = govde as NotKaydi
+    const kayit = sunucuNotlari[id] ?? { sablon: 'dap', icerik: '' }
+    return jsonYanit({
+      appointment_id: id,
+      client_id: id === randevuB.id ? randevuB.client_id : randevuA.client_id,
+      ...kayit,
+      guncelleme_zamani: ZAMAN,
+    })
+  }
+  if (/^\/api\/danisanlar\/\d+\/notlar/.test(yol)) return jsonYanit(sunucuGecmisi)
+  return null
+}
+
+beforeEach(() => {
+  sunucuNotlari = {}
+  sunucuOzelNotlari = {}
+  sunucuGecmisi = []
+})
+
 describe('AnaEkran — panel kimliği (Görev 10 inceleme Bulgu 1)', () => {
   const gercekFetch = globalThis.fetch
 
@@ -36,8 +92,10 @@ describe('AnaEkran — panel kimliği (Görev 10 inceleme Bulgu 1)', () => {
     // 2026-09-09 Çarşamba → hafta başı 2026-09-07 Pazartesi.
     vi.setSystemTime(new Date(2026, 8, 9, 12, 0))
 
-    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL) => {
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      const notlar = notYaniti(yol, secenekler?.method ?? 'GET', null)
+      if (notlar) return notlar
       if (yol.startsWith('/api/danisanlar')) {
         return { ok: true, json: async () => danisanlar } as unknown as Response
       }
@@ -118,11 +176,10 @@ describe('AnaEkran — düzenleme kipi POST değil PUT üretir (C1)', () => {
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
       const method = secenekler?.method ?? 'GET'
-      istekler.push({
-        yol,
-        method,
-        govde: secenekler?.body ? JSON.parse(String(secenekler.body)) : null,
-      })
+      const govde = secenekler?.body ? JSON.parse(String(secenekler.body)) : null
+      istekler.push({ yol, method, govde })
+      const notlar = notYaniti(yol, method, govde)
+      if (notlar) return notlar
       if (yol.startsWith('/api/danisanlar')) {
         return { ok: true, json: async () => danisanlar } as unknown as Response
       }
@@ -217,6 +274,12 @@ describe('AnaEkran — gereksiz yeniden yükleme yapmaz (Plan 3 Görev 2)', () =
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
       const method = secenekler?.method ?? 'GET'
       istekler.push({ yol, method })
+      const notlar = notYaniti(
+        yol,
+        method,
+        secenekler?.body ? JSON.parse(String(secenekler.body)) : null,
+      )
+      if (notlar) return notlar
       if (yol.startsWith('/api/danisanlar')) {
         return { ok: true, json: async () => danisanlar } as unknown as Response
       }
@@ -325,6 +388,8 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
       const method = secenekler?.method ?? 'GET'
       istekler.push({ yol, method })
+      const notYaniti_ = notYaniti(yol, method, null)
+      if (notYaniti_) return notYaniti_
       if (yol.startsWith('/api/danisanlar')) {
         if (method === 'POST' && yol.endsWith('/arsivle')) {
           const id = Number(yol.split('/')[3])
@@ -582,6 +647,9 @@ describe('AnaEkran — seçili randevu yeniden yüklemede bayatlamaz (Plan 2 dev
   let sunucudakiler: typeof randevuA[] = []
   let randevuIstegi = 0
   let randevularYetkisiz = false
+  // Not uç noktalarının 401'i ayrı: kilit takvim isteği sırasında değil, not
+  // yüklenirken de gelebilir ve panel o durumda da kapanmalı.
+  let notYetkisiz = false
 
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] })
@@ -589,9 +657,20 @@ describe('AnaEkran — seçili randevu yeniden yüklemede bayatlamaz (Plan 2 dev
     sunucudakiler = [randevuA]
     randevuIstegi = 0
     randevularYetkisiz = false
+    notYetkisiz = false
 
-    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL) => {
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      const method = secenekler?.method ?? 'GET'
+      if (notYetkisiz && /\/(ozel-)?not$|\/notlar/.test(yol)) {
+        return {
+          ok: false,
+          status: 401,
+          json: async () => ({ hata: 'Oturum zaman aşımına uğradı.' }),
+        } as unknown as Response
+      }
+      const notlar = notYaniti(yol, method, null)
+      if (notlar) return notlar
       if (yol.startsWith('/api/danisanlar')) {
         return { ok: true, json: async () => danisanlar } as unknown as Response
       }
@@ -678,5 +757,422 @@ describe('AnaEkran — seçili randevu yeniden yüklemede bayatlamaz (Plan 2 dev
     // Oturum kilitlendi: takvim listesi zaten temizleniyordu ama panel
     // seçili danışanı ve saatini göstermeye devam ediyordu.
     await waitFor(() => expect(screen.queryByRole('heading', { name: 'Randevu' })).toBeNull())
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Görev 9: seans paneli — bağlam ve iki sekmeli not
+//
+// Testler AnaEkran seviyesinde çünkü ölçülen şeylerin çoğu ÇAĞRI NOKTASINDA:
+// hangi uç noktaya gidildiği, kaç istek atıldığı, seans geçişinde bekleyen
+// metnin HANGİ randevunun notuna yazıldığı. SeansPaneli.test.tsx her zaman
+// temiz bir mount yapar ve bunları göremez.
+// ---------------------------------------------------------------------------
+
+// Özel notun kanaryası: bu dizge resmî sekmede, geçmiş listesinde ve resmî
+// nota giden hiçbir istekte GÖRÜNMEMELİ.
+const GIZLI = 'GIZLI-OZEL-XYZ'
+
+describe('AnaEkran — seans paneli (Görev 9)', () => {
+  const gercekFetch = globalThis.fetch
+  let istekler: { yol: string; method: string; govde: unknown }[] = []
+  let notSunucuHatasi = false
+  let notYetkisiz = false
+  // Yalnızca geçmiş notlar uç noktasını düşüren ayrı bayrak: "geçmiş
+  // isteğinin başarısızlığı yutulmuyor" iddiası ancak diğer iki istek
+  // BAŞARILIYKEN ölçülebilir.
+  let gecmisSunucuHatasi = false
+
+  const notGetSayisi = (id: number) =>
+    istekler.filter((i) => i.yol === `/api/randevular/${id}/not` && i.method === 'GET').length
+  const yazmalar = (yol: string) => istekler.filter((i) => i.yol === yol && i.method === 'PUT')
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 9, 12, 0))
+    istekler = []
+    notSunucuHatasi = false
+    notYetkisiz = false
+    gecmisSunucuHatasi = false
+    sunucuOzelNotlari = { [randevuA.id]: GIZLI }
+
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
+      const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      const method = secenekler?.method ?? 'GET'
+      const govde = secenekler?.body ? JSON.parse(String(secenekler.body)) : null
+      istekler.push({ yol, method, govde })
+
+      const notYolu = /\/(ozel-)?not$/.test(yol) || /\/notlar/.test(yol)
+      if (notYolu && notYetkisiz) {
+        return {
+          ok: false,
+          status: 401,
+          json: async () => ({ hata: 'Oturum zaman aşımına uğradı.' }),
+        } as unknown as Response
+      }
+      if (/\/notlar/.test(yol) && gecmisSunucuHatasi) {
+        return {
+          ok: false,
+          status: 500,
+          json: async () => ({ hata: 'Gecmis notlar okunamadi.' }),
+        } as unknown as Response
+      }
+      if (notYolu && notSunucuHatasi) {
+        return {
+          ok: false,
+          status: 500,
+          json: async () => ({ hata: 'Veritabanı okunamadı.' }),
+        } as unknown as Response
+      }
+      const notlar = notYaniti(yol, method, govde)
+      if (notlar) return notlar
+
+      if (yol.startsWith('/api/danisanlar')) {
+        return { ok: true, json: async () => danisanlar } as unknown as Response
+      }
+      if (yol.startsWith('/api/cakisma')) {
+        return {
+          ok: true,
+          json: async () => ({
+            cakisanlar: [], cakisan_hafta_sayisi: 0, kontrol_edilen_hafta: 1,
+          }),
+        } as unknown as Response
+      }
+      if (yol.startsWith('/api/randevular')) {
+        if (method === 'GET') {
+          return { ok: true, json: async () => [randevuA, randevuB] } as unknown as Response
+        }
+        return { ok: true, json: async () => ({}) } as unknown as Response
+      }
+      throw new Error(`beklenmeyen istek: ${yol}`)
+    }) as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    globalThis.fetch = gercekFetch
+    vi.restoreAllMocks()
+  })
+
+  async function seansAc(ad = 'Ayşe Yılmaz') {
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: ad })
+    await userEvent.click(screen.getByRole('button', { name: ad }))
+    await screen.findByLabelText('Seans notu')
+  }
+
+  it('randevu secilince seans paneli acilir', async () => {
+    await seansAc()
+    expect(screen.getByRole('region', { name: 'Seans' })).toBeDefined()
+    expect(screen.getByRole('tab', { name: 'Seans Notu' })).toBeDefined()
+    expect(screen.getByRole('tab', { name: 'Özel Notlarım' })).toBeDefined()
+  })
+
+  it('bos saat secilince seans paneli ACILMAZ', async () => {
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    const bosSaat = screen.getAllByLabelText(/boş$/).find((el) =>
+      el.getAttribute('aria-label')?.includes('09:00'),
+    )
+    await userEvent.click(bosSaat!)
+
+    // Henüz bir `appointment_id` yok; not ona bağlanır.
+    expect(screen.queryByRole('region', { name: 'Seans' })).toBeNull()
+    expect(istekler.some((i) => /\/not$/.test(i.yol))).toBe(false)
+  })
+
+  it('ozel not resmi sekmede EKRANIN HICBIR YERINDE yoktur', async () => {
+    await seansAc()
+    expect(document.body.textContent).not.toContain(GIZLI)
+  })
+
+  it('ARTI YON: ozel sekmede ozel not GORUNUR ve ayri uc noktadan gelir', async () => {
+    // Bu yarı olmadan "özel notu hiç göstermeyen" bir panel de üstteki testi
+    // geçerdi.
+    await seansAc()
+    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+    expect((screen.getByLabelText('Özel notum') as HTMLTextAreaElement).value).toBe(GIZLI)
+
+    // İçerik AYRI bir uç noktadan geldi; resmî not isteği bir filtre değil.
+    expect(istekler.some((i) => i.yol === `/api/randevular/${randevuA.id}/ozel-not`)).toBe(true)
+  })
+
+  it('resmi not ve gecmis istekleri ozel yoluna HIC gitmez', async () => {
+    await seansAc()
+    const resmiIstekler = istekler.filter((i) => /\/not$/.test(i.yol) || /\/notlar/.test(i.yol))
+    expect(resmiIstekler.length).toBeGreaterThan(0)
+    for (const i of resmiIstekler) expect(i.yol).not.toContain('ozel')
+  })
+
+  it('resmi sekmede yazilan metin YALNIZCA /not adresine PUT edilir', async () => {
+    await seansAc()
+    await userEvent.type(screen.getByLabelText('Seans notu'), 'resmi ek')
+    await userEvent.click(screen.getByRole('button', { name: 'Seansı kapat' }))
+
+    await waitFor(() => expect(yazmalar(`/api/randevular/${randevuA.id}/not`)).toHaveLength(1))
+    expect(yazmalar(`/api/randevular/${randevuA.id}/ozel-not`)).toHaveLength(0)
+    // Resmî uç noktaya giden gövdede özel notun içeriği YOK.
+    expect(JSON.stringify(yazmalar(`/api/randevular/${randevuA.id}/not`))).not.toContain(GIZLI)
+  })
+
+  it('ozel sekmede yazilan metin YALNIZCA /ozel-not adresine PUT edilir', async () => {
+    await seansAc()
+    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+    await userEvent.type(screen.getByLabelText('Özel notum'), '-EK')
+    await userEvent.click(screen.getByRole('button', { name: 'Seansı kapat' }))
+
+    await waitFor(() =>
+      expect(yazmalar(`/api/randevular/${randevuA.id}/ozel-not`)).toHaveLength(1),
+    )
+    expect(yazmalar(`/api/randevular/${randevuA.id}/ozel-not`)[0].govde).toEqual({
+      icerik: `${GIZLI}-EK`,
+    })
+    // En kritik iddia: özel metin resmî uç noktaya HİÇ gitmedi.
+    expect(yazmalar(`/api/randevular/${randevuA.id}/not`)).toHaveLength(0)
+  })
+
+  it('sekme degisince yazilan icerik kaybolmaz (sunucudan tazelenir)', async () => {
+    await seansAc()
+    await userEvent.type(screen.getByLabelText('Seans notu'), 'yazilan metin')
+    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+    await screen.findByLabelText('Özel notum')
+    await userEvent.click(screen.getByRole('tab', { name: 'Seans Notu' }))
+
+    await waitFor(() =>
+      expect((screen.getByLabelText('Seans notu') as HTMLTextAreaElement).value).toContain(
+        'yazilan metin',
+      ),
+    )
+  })
+
+  it('baska seansa gecince bekleyen metin GIDEN seansin notuna yazilir', async () => {
+    await seansAc()
+    await userEvent.type(screen.getByLabelText('Seans notu'), 'A seansinin metni')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+
+    await waitFor(() => expect(yazmalar(`/api/randevular/${randevuA.id}/not`)).toHaveLength(1))
+    // İçerik şablon başlıklarıyla birlikte gidiyor (yeni not); ölçülen şey
+    // yazılan metnin A'nın kaydında olması.
+    expect(
+      (yazmalar(`/api/randevular/${randevuA.id}/not`)[0].govde as { icerik: string }).icerik,
+    ).toContain('A seansinin metni')
+    // Yanlış danışanın dosyasına not: B'nin notuna hiçbir şey yazılmadı.
+    expect(yazmalar(`/api/randevular/${randevuB.id}/not`)).toHaveLength(0)
+  })
+
+  it('gecmis liste bu seansin KENDI notunu icermez ve en fazla ucu gosterir', async () => {
+    sunucuGecmisi = [
+      {
+        appointment_id: randevuA.id, client_id: 1, sablon: 'dap',
+        icerik: 'BU SEANSIN NOTU', guncelleme_zamani: ZAMAN,
+      },
+      {
+        appointment_id: 90, client_id: 1, sablon: 'dap',
+        icerik: 'birinci gecmis', guncelleme_zamani: ZAMAN,
+      },
+      {
+        appointment_id: 89, client_id: 1, sablon: 'soap',
+        icerik: 'ikinci gecmis', guncelleme_zamani: ZAMAN,
+      },
+      {
+        appointment_id: 88, client_id: 1, sablon: 'serbest',
+        icerik: 'ucuncu gecmis', guncelleme_zamani: ZAMAN,
+      },
+    ]
+    await seansAc()
+
+    // Sunucudan bir FAZLASI isteniyor (bu seansın kendi notu düşecek).
+    expect(istekler.some((i) => i.yol === '/api/danisanlar/1/notlar?limit=4')).toBe(true)
+
+    const gecmis = screen.getByRole('region', { name: 'Önceki seans notları' })
+    expect(within(gecmis).getAllByRole('button')).toHaveLength(3)
+    expect(gecmis.textContent).not.toContain('BU SEANSIN NOTU')
+
+    await userEvent.click(within(gecmis).getAllByRole('button')[0])
+    expect(within(gecmis).getByText('birinci gecmis')).toBeDefined()
+  })
+
+  it('"Geldi" isaretlemek not isteklerini YENIDEN ATMAZ', async () => {
+    // Denetim kaydı hacmi: her GET sunucuda SİLİNEMEZ bir `goruntuleme`
+    // satırı bırakır. `durumDegis` seçili randevuyu TAZE bir nesneyle
+    // değiştiriyor; yükleme efekti nesneye bağlansaydı üç istek daha giderdi.
+    await seansAc()
+    expect(notGetSayisi(randevuA.id)).toBe(1)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Geldi' }))
+
+    expect(notGetSayisi(randevuA.id)).toBe(1)
+    expect(istekler.filter((i) => /\/ozel-not$/.test(i.yol) && i.method === 'GET')).toHaveLength(1)
+    expect(istekler.filter((i) => /\/notlar/.test(i.yol))).toHaveLength(1)
+    // İşlem gerçekten yapıldı: "hiçbir şey yapmayan" kod da üsttekileri geçerdi.
+    expect(screen.getByRole('button', { name: 'Ayşe Yılmaz' }).getAttribute('data-durum')).toBe(
+      'geldi',
+    )
+  })
+
+  it('bos notta sablon basliklari gorunur ama HICBIR yazma uretilmez', async () => {
+    await seansAc()
+    const alan = screen.getByLabelText('Seans notu') as HTMLTextAreaElement
+    expect(alan.value).toContain('Veri:')
+    expect(alan.value).toContain('Plan:')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Seansı kapat' }))
+    await new Promise((coz) => setTimeout(coz, 30))
+    expect(yazmalar(`/api/randevular/${randevuA.id}/not`)).toHaveLength(0)
+  })
+
+  it('not yuklenirken 401 gelirse panel kapanir', async () => {
+    notYetkisiz = true
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+
+    // Kilit: ekranda danışan adı ve saati kalmamalı — ne seans paneli ne de
+    // randevu paneli. Yazılmamış metin taslakta korunuyor.
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Randevu' })).toBeNull())
+    expect(screen.queryByRole('region', { name: 'Seans' })).toBeNull()
+  })
+
+  it('not yuklenemezse panel ACILMAZ, hata ve yeniden deneme gosterilir', async () => {
+    notSunucuHatasi = true
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+
+    // "yükleniyor…" yazan bir panel sonsuza kadar öyle kalırdı.
+    const uyari = await screen.findByRole('alert')
+    expect(uyari.textContent).toContain('Seans notu yüklenemedi')
+    expect(uyari.textContent).toContain('Veritabanı okunamadı.')
+    expect(screen.queryByRole('region', { name: 'Seans' })).toBeNull()
+
+    notSunucuHatasi = false
+    await userEvent.click(within(uyari).getByRole('button', { name: 'Yeniden dene' }))
+    expect(await screen.findByLabelText('Seans notu')).toBeDefined()
+  })
+
+  it('gecmis notlar yuklenemezse BOS LISTE gosterilmez', async () => {
+    // Yutulup boş liste gösterilseydi, notu olan bir danışan için ekranda
+    // "önceki seans notu yok" yazardı — sessiz bir yalan.
+    // Not ve özel not BAŞARIYLA geliyor; yalnızca geçmiş isteği düşüyor.
+    gecmisSunucuHatasi = true
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+
+    const uyari = await screen.findByRole('alert')
+    expect(uyari.textContent).toContain('Gecmis notlar okunamadi.')
+    expect(screen.queryByText(/önceki seanslarından kayıtlı not yok/i)).toBeNull()
+    expect(screen.queryByLabelText('Seans notu')).toBeNull()
+  })
+})
+
+// Kiplerin KESİŞİMİ: seans geçişi × henüz tamamlanmamış istek. Tek tek
+// "seans açılır" ve "not kaydedilir" testleri bu iki sınıfı hiç görmez.
+describe('AnaEkran — seans geçişi × uçuştaki istek (Görev 9)', () => {
+  const gercekFetch = globalThis.fetch
+  let gecikmeler: Record<string, Promise<void>>
+
+  function kapi() {
+    let ac!: () => void
+    const bekle = new Promise<void>((coz) => {
+      ac = coz
+    })
+    return { bekle, ac }
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 9, 12, 0))
+    gecikmeler = {}
+
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
+      const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      const method = secenekler?.method ?? 'GET'
+      const govde = secenekler?.body ? JSON.parse(String(secenekler.body)) : null
+      const kapi = gecikmeler[`${method} ${yol}`]
+      if (kapi) await kapi
+
+      const notlar = notYaniti(yol, method, govde)
+      if (notlar) return notlar
+      if (yol.startsWith('/api/danisanlar')) {
+        return { ok: true, json: async () => danisanlar } as unknown as Response
+      }
+      if (yol.startsWith('/api/cakisma')) {
+        return {
+          ok: true,
+          json: async () => ({
+            cakisanlar: [], cakisan_hafta_sayisi: 0, kontrol_edilen_hafta: 1,
+          }),
+        } as unknown as Response
+      }
+      if (yol.startsWith('/api/randevular')) {
+        if (method === 'GET') {
+          return { ok: true, json: async () => [randevuA, randevuB] } as unknown as Response
+        }
+        return { ok: true, json: async () => ({}) } as unknown as Response
+      }
+      throw new Error(`beklenmeyen istek: ${yol}`)
+    }) as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    globalThis.fetch = gercekFetch
+    vi.restoreAllMocks()
+  })
+
+  const alan = () => screen.getByLabelText('Seans notu') as HTMLTextAreaElement
+
+  it('yeni seansin notu YUKLENIRKEN onceki seansin notu ekranda kalmaz', async () => {
+    sunucuNotlari = { [randevuA.id]: { sablon: 'dap', icerik: 'A SEANSININ NOTU' } }
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByLabelText('Seans notu')
+    expect(alan().value).toBe('A SEANSININ NOTU')
+
+    const b = kapi()
+    gecikmeler[`GET /api/randevular/${randevuB.id}/not`] = b.bekle
+
+    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+
+    // B'nin verisi henüz gelmedi. Sıfırlama bir efekte bırakılsaydı, o
+    // efekt çalışana kadar A'nın notu B'nin panelinde durur — yanlış
+    // danışanın notu ekranda.
+    expect(screen.queryByLabelText('Seans notu')).toBeNull()
+    expect(document.body.textContent).not.toContain('A SEANSININ NOTU')
+
+    b.ac()
+    expect(await screen.findByLabelText('Seans notu')).toBeDefined()
+  })
+
+  it('geciken kayit yaniti, o sirada acilmis BASKA seansin notunu ezmez', async () => {
+    sunucuNotlari = {
+      [randevuA.id]: { sablon: 'dap', icerik: 'A metni' },
+      [randevuB.id]: { sablon: 'dap', icerik: 'B METNI' },
+    }
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByLabelText('Seans notu')
+    await userEvent.type(alan(), ' EK')
+
+    // A'nın kaydı uçuşta kalsın: unmount tahliyesi bu isteği atacak.
+    const a = kapi()
+    gecikmeler[`PUT /api/randevular/${randevuA.id}/not`] = a.bekle
+
+    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await waitFor(() => expect(alan().value).toBe('B METNI'))
+
+    a.ac()
+    await new Promise((coz) => setTimeout(coz, 20))
+
+    // Sekme gidip gelince editör yeniden mount olur ve o an geçerli olan
+    // içerikle açılır: A'nın geciken yanıtı B'nin verisine yazılmış olsaydı
+    // burada A'nın metni görünürdü.
+    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Seans Notu' }))
+    expect(alan().value).toBe('B METNI')
   })
 })

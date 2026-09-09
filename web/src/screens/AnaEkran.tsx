@@ -1,8 +1,50 @@
 import { useCallback, useEffect, useState } from 'react'
-import { takvimApi, YetkisizHata, type Danisan } from '../api'
+import {
+  notApi,
+  ozelNotApi,
+  takvimApi,
+  YetkisizHata,
+  type Danisan,
+  type OzelNot,
+  type SeansNotu,
+} from '../api'
+import { SeansPaneli } from '../seans/SeansPaneli'
 import { HaftalikTakvim, type Randevu } from '../takvim/HaftalikTakvim'
 import { haftaGunleri, haftaninBasi, yerelZaman } from '../takvim/hafta'
 import { RandevuPaneli } from '../takvim/RandevuPaneli'
+
+/**
+ * Seans panelinde gösterilecek geçmiş not sayısı.
+ *
+ * Sunucudan bir FAZLASI isteniyor: `danisan_notlari` danışanın TÜM resmî
+ * notlarını seans tarihine göre veriyor ve o listede **bu seansın kendi
+ * notu** da bulunur (kaydedilmişse). Onu düşürdükten sonra elde tam bu kadar
+ * kalsın diye limit bir artırılıyor. Sunucunun varsayılanı (50) burada
+ * kullanılmıyor: "son üç seans" gösteren bir panelin 50 seans notunun tam
+ * içeriğini indirmesi için sebep yok.
+ */
+const GECMIS_SEANS_SAYISI = 3
+
+/**
+ * Açık seansın not verisi. `id`, verinin HANGİ randevuya ait olduğunu
+ * söyler; `null` alanlar "henüz yüklenmedi" demektir (editör içerik gelmeden
+ * mount EDİLMEZ — boş mount, sunucudaki notu ekranda boş göstermek olurdu).
+ */
+type SeansVerisi = {
+  id: number | null
+  not: SeansNotu | null
+  ozelNot: OzelNot | null
+  gecmisNotlar: SeansNotu[]
+  hata: string | null
+}
+
+const BOS_SEANS: SeansVerisi = {
+  id: null,
+  not: null,
+  ozelNot: null,
+  gecmisNotlar: [],
+  hata: null,
+}
 
 export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   const [haftaBasi, setHaftaBasi] = useState(() => haftaninBasi(new Date()))
@@ -26,6 +68,13 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   const [arsivOnayi, setArsivOnayi] = useState<Danisan | null>(null)
   const [arsivBilgisi, setArsivBilgisi] = useState<string | null>(null)
   const [arsivSuruyor, setArsivSuruyor] = useState(false)
+  // Seans paneli verisi, HANGİ SEANSA ait olduğuyla birlikte. `id` alanı
+  // tek başına bir kolaylık değil: seçim değiştiği anda önceki danışanın
+  // notu ekranda kalmamalı ve bunun için bir efektin çalışmasını beklemek
+  // (bir kare boyunca yanlış içerik göstermek) kabul edilebilir değil.
+  // Aşağıda `seansId` ile karşılaştırılarak RENDER SIRASINDA türetiliyor.
+  const [seansVerisi, setSeansVerisi] = useState<SeansVerisi>(BOS_SEANS)
+  const [seansTazeleme, setSeansTazeleme] = useState(0)
 
   const yukle = useCallback(async () => {
     const gunler = haftaGunleri(haftaBasi)
@@ -84,6 +133,96 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
       // görür — sayfanın tamamını kilitlemeye gerek yok.
     })
   }, [])
+
+  // Seans notu verisi RANDEVU KİMLİĞİNE bağlı yükleniyor, `seciliRandevu`
+  // NESNESİNE değil. `yukle()` her çağrıldığında seçili randevu taze bir
+  // nesneyle değiştiriliyor; efekt nesneye bağlı olsaydı her yeniden
+  // yüklemede (hafta değişimi, kayıt, seri silme) üç not isteği daha giderdi
+  // ve her biri sunucuda SİLİNEMEZ bir `goruntuleme` satırı bırakırdı
+  // (bkz. `store::audit` ve aşağıdaki `durumDegis` gerekçesi).
+  const seansId = seciliRandevu?.id ?? null
+  const seansDanisanId = seciliRandevu?.client_id ?? null
+
+  // Ekrana giden veri RENDER SIRASINDA türetiliyor: state başka bir seansa
+  // aitse boş sayılır. Sıfırlamayı efekte bırakmak, seçim değişimiyle
+  // efektin çalışması arasındaki karede ÖNCEKİ danışanın notunu yeni
+  // seansın panelinde göstermek olurdu.
+  const seans = seansVerisi.id === seansId ? seansVerisi : BOS_SEANS
+
+  useEffect(() => {
+    if (seansId === null || seansDanisanId === null) return
+    let iptal = false
+
+    void (async () => {
+      try {
+        // Üçü birlikte: geçmiş notların isteği ayrı yakalanıp yutulsaydı,
+        // başarısızlık "bu danışanın önceki notu yok" diye görünürdü —
+        // notu olan bir danışan için sessiz bir yalan.
+        const [gelenNot, gelenOzel, gelenGecmis] = await Promise.all([
+          notApi.notGetir(seansId),
+          ozelNotApi.getir(seansId),
+          notApi.danisanNotlari(seansDanisanId, GECMIS_SEANS_SAYISI + 1),
+        ])
+        if (iptal) return
+        setSeansVerisi({
+          id: seansId,
+          not: gelenNot,
+          ozelNot: gelenOzel,
+          // Bu seansın KENDİ notu geçmiş listesine girmez: üstte düzenlenen
+          // metnin bayat bir kopyası, "geçen seansta ne konuşulmuştu"
+          // sorusuna cevap değil.
+          gecmisNotlar: gelenGecmis
+            .filter((n) => n.appointment_id !== seansId)
+            .slice(0, GECMIS_SEANS_SAYISI),
+          hata: null,
+        })
+      } catch (e) {
+        if (iptal) return
+        if (e instanceof YetkisizHata) {
+          // Kilit: ekranda danışan adı kalmasın (aynı gerekçe `yukle`'de).
+          // Yazılmamış not metni kaybolmaz — o, bileşen ağacının dışındaki
+          // taslak deposunda.
+          setRandevular([])
+          setSeciliRandevu(null)
+          setSeciliBosSaat(null)
+        }
+        setSeansVerisi({
+          ...BOS_SEANS,
+          id: seansId,
+          hata: e instanceof Error ? e.message : 'Seans notu yüklenemedi.',
+        })
+      }
+    })()
+
+    return () => {
+      iptal = true
+    }
+  }, [seansId, seansDanisanId, seansTazeleme])
+
+  // Kayıt, editörün BAĞLI OLDUĞU randevunun kimliğine gider; `seciliRandevu`
+  // okunmuyor. Unmount tahliyesi (seans değişiminde) bu fonksiyonu çağırdığı
+  // an seçim çoktan başka bir randevuya geçmiş olabilir — o durumda giden
+  // seansın metni YENİ randevunun notuna yazılırdı: yanlış danışanın
+  // dosyasına not.
+  const notKaydet = useCallback(
+    async (kayit: { sablon: string; icerik: string }) => {
+      if (seansId === null) return
+      const yeni = await notApi.notKaydet(seansId, kayit.sablon, kayit.icerik)
+      // Geciken bir yanıt, o sırada açılmış BAŞKA bir seansın notunu
+      // ezmemeli: state hâlâ bu seansa aitse tazelenir, değilse dokunulmaz.
+      setSeansVerisi((onceki) => (onceki.id === seansId ? { ...onceki, not: yeni } : onceki))
+    },
+    [seansId],
+  )
+
+  const ozelNotKaydet = useCallback(
+    async (icerik: string) => {
+      if (seansId === null) return
+      const yeni = await ozelNotApi.kaydet(seansId, icerik)
+      setSeansVerisi((onceki) => (onceki.id === seansId ? { ...onceki, ozelNot: yeni } : onceki))
+    },
+    [seansId],
+  )
 
   function haftaDegis(yon: number) {
     setHaftaBasi((onceki) => {
@@ -436,6 +575,43 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
           />
         )}
       </div>
+
+      {/* Seans paneli YALNIZCA mevcut bir randevu seçiliyken açılır: boş bir
+          saatte henüz bir `appointment_id` yok ve not ona bağlanır. */}
+      {seciliRandevu !== null &&
+        (seans.hata === null ? (
+          <SeansPaneli
+            // Seans değişince panel yeniden mount edilmeli: sekme seçimi
+            // (özellikle "Özel Notlarım") bir seanstan diğerine sızmamalı.
+            key={`seans-${seciliRandevu.id}`}
+            randevu={seciliRandevu}
+            gecmisNotlar={seans.gecmisNotlar}
+            not={seans.not}
+            ozelNot={seans.ozelNot}
+            onNotKaydet={notKaydet}
+            onOzelNotKaydet={ozelNotKaydet}
+            onKapat={panelKapat}
+          />
+        ) : (
+          // Yükleme başarısızsa panel AÇILMAZ: "yükleniyor…" yazan bir panel
+          // sonsuza kadar öyle kalır ve kullanıcı notunun neden gelmediğini
+          // bilemez.
+          <div role="alert" className="mt-4 rounded border border-red-300 bg-red-50 p-3">
+            <p className="text-sm text-red-800">Seans notu yüklenemedi. {seans.hata}</p>
+            <button
+              type="button"
+              className="mt-2 rounded border border-red-300 px-2 py-1 text-sm"
+              onClick={() => {
+                // Hata state'i de temizleniyor: aksi hâlde yeniden deneme
+                // sürerken ekranda hâlâ eski hata durur.
+                setSeansVerisi(BOS_SEANS)
+                setSeansTazeleme((n) => n + 1)
+              }}
+            >
+              Yeniden dene
+            </button>
+          </div>
+        ))}
     </div>
   )
 }

@@ -1678,6 +1678,59 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     expect(istekYollari.some((y) => y.includes('/ozel-not'))).toBe(false)
   })
 
+  // C1 — DAVRANIŞSAL katmanın İKİNCİ durumu: SEANS PANELİ AÇIKKEN.
+  //
+  // Üstteki test doğru şeyi ölçüyor ama ihlalin gerçekleşebileceği duruma
+  // hiç girmiyordu (on birinci biçimin tersi): kartı panel kapalıyken
+  // açıyor, yani `seciliRandevu === null`. `raporNotlariGetir`'e
+  // "özel notu da ekle" biçiminde bir sızıntı yazıldığında o dal
+  // ULAŞILAMAZ kalıyor ve test yeşil geçiyor — mutasyon altında 344 web
+  // testinden yalnızca YAPISAL olan kırılıyordu. Sızıntının mümkün olduğu
+  // tek durum panelin açık (ve özel notun yüklü) olduğu durumdur; e2e onu
+  // bilerek kapsıyor, birim testi kapsamıyordu.
+  //
+  // Üstteki test SİLİNMİYOR: ikisi farklı durumları ölçüyor (panel kapalı /
+  // panel açık) ve panel kapalıyken "özel uç HİÇ çağrılmadı" iddiası
+  // yalnızca orada yazılabilir.
+  it('seans paneli ACIKKEN de uretilen rapor METNI ozel not kanaryasini TASIMAZ, resmi notu TASIR', async () => {
+    render(<AnaEkran kilitle={vi.fn()} />)
+
+    // 1) Seans paneli AÇ: takvimdeki bloğa tıkla (`seciliRandevu` doluyor).
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByLabelText('Seans notu')
+
+    // 2) ÖZEL SEKMEYE geç: özel not panel açılışında değil, yalnızca sekmeye
+    //    geçilince yükleniyor (Görev 9 düzeltmesi — görülmemiş `goruntuleme`
+    //    satırı bırakmamak için). Kanarya gerçekten belleğe alınmadan
+    //    "rapora girmedi" demek hiçbir şey kanıtlamaz.
+    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+    expect(((await screen.findByLabelText('Özel notum')) as HTMLTextAreaElement).value).toBe(
+      OZEL_NOT_KANARYASI,
+    )
+    const ozelIstekleri = istekYollari.filter((y) => y.includes('/ozel-not')).length
+    expect(ozelIstekleri).toBeGreaterThan(0)
+
+    // 3) Danışan kartını aç — panel AÇIK KALIYOR (ikisi bağımsız state).
+    await userEvent.click(cip('Ayşe Yılmaz'))
+    await screen.findByText('0555 111 22 33')
+    // Ön koşul: panel gerçekten hâlâ açık. Kart açılınca panel kapansaydı bu
+    // test yine üstteki (ulaşılamaz dal) duruma düşer, farkında olmadan.
+    expect(screen.getByRole('region', { name: 'Seans' })).toBeDefined()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
+    await screen.findByRole('link', { name: /raporu indir/i })
+
+    expect(uretilenBloblar).toHaveLength(1)
+    const metin = await uretilenBloblar[0].text()
+    // ARTI YÖN önce: hiçbir şey üretmeyen bir rapor eksi yönü de geçerdi.
+    expect(metin).toContain(RESMI_NOT_KANARYASI)
+    expect(metin).not.toContain(OZEL_NOT_KANARYASI)
+    // Dışa aktarım YENİ bir özel not isteği DE atmadı. Burada "hiç çağrılmadı"
+    // denemez (sekme meşru olarak çağırdı); ölçülen şey raporun kendi
+    // isteğidir.
+    expect(istekYollari.filter((y) => y.includes('/ozel-not')).length).toBe(ozelIstekleri)
+  })
+
   // `yerelGun`'ün gerekçesi ("UTC'den türetmek sınırdaki bir dosyayı bir gün
   // kaydırırdı") testsizdi: diğer testler `setSystemTime(… 12:00)` kullanıyor
   // ve o saatte yerel gün ile UTC günü AYNI. `toISOString().slice(0, 10)`'a

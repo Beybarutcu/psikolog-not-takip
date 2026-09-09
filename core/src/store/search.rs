@@ -1319,7 +1319,7 @@ mod tests {
     }
 
     #[test]
-    fn kirpilma_isareti_TAM_sinirdaki_aramada_yanlis_uyarmaz() {
+    fn kirpilma_isareti_tam_sinirdaki_aramada_yanlis_uyarmaz() {
         // ARAYUZUN ESKI SEZGISININ (`sonuc sayisi == sinir`) YANLIS oldugu
         // durum: tam olarak `sinir` kadar eslesme var ve HICBIRI dusmedi.
         // Sezgi burada "daha fazlasi olabilir" derdi; bayrak demez.
@@ -1389,7 +1389,7 @@ mod tests {
     }
 
     #[test]
-    fn kirpilma_isareti_loga_YAZILMAZ() {
+    fn kirpilma_isareti_loga_yazilmaz() {
         // Sonuc sayisi gibi kirpilma bilgisi de `audit_log`a girmez: art
         // arda aramalarla bir terimin varligini sizdirirdi ve satirlar
         // SILINEMEZ. Bu yalnizca govde meselesidir.

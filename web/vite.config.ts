@@ -17,7 +17,10 @@ export default defineConfig({
     // geliştirme/test sunucusunu ilgilendirir — ürün derlemesini Rust
     // sunucusu `dist`'ten sunar, `dist`'e yalnızca içe aktarılan modüller
     // girer ve bu test hiçbir uygulama modülünden erişilebilir değildir.
-    fs: { allow: ['..'] },
+    // İzin verilen kök, ihtiyacın TAM olarak yettiği kadar dar: `..` tüm
+    // depoyu (`server/`, `.superpowers/`, kök dosyaları) `?raw` ile
+    // okunabilir kılıyordu.
+    fs: { allow: ['../core/src/store'] },
   },
   test: {
     environment: 'jsdom',

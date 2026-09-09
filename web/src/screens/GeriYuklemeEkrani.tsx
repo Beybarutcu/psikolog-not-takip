@@ -35,7 +35,7 @@ import { boyutBicimle } from '../danisan/bicim'
  * geçer ve o andan sonra mevcut kayıtlar hiçbir parolayla açılamaz. Bu,
  * panikteki bir kullanıcının yapacağı en olası ve en yıkıcı hamledir.
  */
-export type GeriYuklemeSebebi = 'veritabani-bozuk' | 'anahtar-bozuk' | 'kurulum'
+export type GeriYuklemeSebebi = 'veritabani-bozuk' | 'anahtar-bozuk' | 'kurulum' | 'elle'
 
 type Props = {
   /** `/api/durum`'un `veri_dizini` alanı — gerçek, mutlak yol. */
@@ -65,6 +65,14 @@ const GIRIS_METNI: Record<GeriYuklemeSebebi, string> = {
   kurulum:
     'Daha önce aldığınız bir yedeğiniz varsa, yeni kurulum yapmadan önce onu geri ' +
     'yükleyin. Sıra önemli: kurulum yaparsanız kayıtlarınız açılamaz hâle gelir.',
+  // Tasarım §7: "Uygulama içinden 'geri yükle' ekranı." Her şey çalışırken
+  // de bir yol olmalı — yanlışlıkla silinen bir danışan ya da bozulan bir
+  // not, ancak eski bir yedekten geri gelir. Burada kaybedilecek şey açıkça
+  // söyleniyor: bu, bir felaket kurtarma değil, bilinçli bir geri alma.
+  elle:
+    'Kayıtlarınızı daha eski bir yedekteki hâline döndürmek üzeresiniz. Bu, o yedekten ' +
+    'sonra girdiğiniz her şeyin yerine geçer; sildiğiniz bir kaydı geri getirmek için ' +
+    'yapılır ve geri alınamaz. Devam etmeden önce aşağıdaki kopyayı alın.',
 }
 
 export function GeriYuklemeEkrani({

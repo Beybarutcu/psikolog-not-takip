@@ -69,7 +69,9 @@ export default function App() {
       ? 'veritabani-bozuk'
       : durum.keystore_bozuk
         ? 'anahtar-bozuk'
-        : 'kurulum'
+        : durum.kurulum_gerekli
+          ? 'kurulum'
+          : 'elle'
     const kapat = () => {
       setVeritabaniBozuk(false)
       setGeriYuklemeIstendi(false)
@@ -110,5 +112,13 @@ export default function App() {
     )
   }
   if (durum.kilitli) return <KilitEkrani kilitAc={api.kilitAc} onAcildi={yenile} />
-  return <AnaEkran kilitle={async () => { await api.kilitle(); await yenile() }} />
+  return (
+    <AnaEkran
+      kilitle={async () => {
+        await api.kilitle()
+        await yenile()
+      }}
+      onGeriYukle={() => setGeriYuklemeIstendi(true)}
+    />
+  )
 }

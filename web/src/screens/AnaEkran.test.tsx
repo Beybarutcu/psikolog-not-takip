@@ -232,7 +232,7 @@ describe('AnaEkran — panel kimliği (Görev 10 inceleme Bulgu 1)', () => {
   })
 
   it('A için silme onayı açıkken B seçilince onay B üzerinde sızmaz', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
 
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
 
@@ -250,7 +250,7 @@ describe('AnaEkran — panel kimliği (Görev 10 inceleme Bulgu 1)', () => {
   })
 
   it('A\'da form alanları doldurulup boş bir saate geçilince alanlar temiz gelir', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
 
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
 
@@ -321,7 +321,7 @@ describe('AnaEkran — düzenleme kipi POST değil PUT üretir (C1)', () => {
   })
 
   it('mevcut randevuda Güncelle PUT gönderir, POST göndermez', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
 
     await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
@@ -346,7 +346,7 @@ describe('AnaEkran — düzenleme kipi POST değil PUT üretir (C1)', () => {
   })
 
   it('boş saatte Kaydet hâlâ POST gönderir (yeni kayıt kipi bozulmadı)', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
 
     const bosSaat = screen.getAllByLabelText(/boş$/).find((el) =>
@@ -429,7 +429,7 @@ describe('AnaEkran — gereksiz yeniden yükleme yapmaz (Plan 3 Görev 2)', () =
   })
 
   it('"Geldi" işaretlemek takvimi yeniden çekmez, ekranı yine de günceller', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
     expect(takvimGetSayisi()).toBe(1) // mount'taki tek yükleme
 
@@ -455,7 +455,7 @@ describe('AnaEkran — gereksiz yeniden yükleme yapmaz (Plan 3 Görev 2)', () =
   })
 
   it('silme takvimi yeniden çekmez, randevu ekrandan kalkar', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
     expect(takvimGetSayisi()).toBe(1)
 
@@ -476,7 +476,7 @@ describe('AnaEkran — gereksiz yeniden yükleme yapmaz (Plan 3 Görev 2)', () =
   })
 
   it('mount tek bir takvim isteği atar, hafta değişimi tam olarak bir tane daha', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
     expect(takvimGetSayisi()).toBe(1)
 
@@ -549,7 +549,7 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
     // Yıkıcı bir işlemde "hangi satırdaydım" bilgisi yalnızca GÖRSEL
     // bağlamda kalamaz: ekran okuyucu kullanıcısı listede N tane özdeş
     // "Arşivle" duyuyordu.
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByText('Ayşe Yılmaz')
 
     expect(arsivDugmesi('Ayşe Yılmaz')).toBeDefined()
@@ -565,7 +565,7 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
   it('arşivleme sonucu ekran okuyucuya duyurulur', async () => {
     // `role="status"` olmadan işlem sessizdi: düğmeye basılıyor, danışan
     // listeden düşüyor ama kullanıcı hiçbir şey duymuyordu.
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByText('Ayşe Yılmaz')
 
     // Önce YOK: her `<p>`'ye status vermeyen, gerçekten sonuca bağlı olduğu.
@@ -578,7 +578,7 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
   })
 
   it('arşivleme iki adımlıdır: tek tıkla istek gitmez', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByText('Ayşe Yılmaz')
 
     await userEvent.click(arsivDugmesi('Ayşe Yılmaz'))
@@ -593,7 +593,7 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
   })
 
   it('onay metni arşivlemenin silme OLMADIĞINI söyler', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByText('Ayşe Yılmaz')
     await userEvent.click(arsivDugmesi('Ayşe Yılmaz'))
 
@@ -607,7 +607,7 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
   })
 
   it('onaylanınca arşivlenir, listeden düşer ve ne olduğu yazılır', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByText('Ayşe Yılmaz')
 
     await userEvent.click(arsivDugmesi('Ayşe Yılmaz'))
@@ -628,7 +628,7 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
   it('arşivleme danışan listesini sunucudan yeniden çekmez', async () => {
     // Denetim kaydı hacmi (Plan 3 Görev 2): her GET kalıcı bir
     // `goruntuleme` satırı bırakabilir. Sonuç yerel olarak kesin bilinebilir.
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByText('Ayşe Yılmaz')
     const oncekiGet = istekler.filter(
       (i) => i.yol === '/api/danisanlar' && i.method === 'GET',
@@ -644,7 +644,7 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
   })
 
   it('Vazgeç hiçbir istek atmaz ve danışanı listede bırakır', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByText('Ayşe Yılmaz')
 
     await userEvent.click(arsivDugmesi('Ayşe Yılmaz'))
@@ -658,7 +658,7 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
   it('bir danışan için açılan onay başka danışana sızmaz', async () => {
     // Görev 10 inceleme Bulgu 1 ile aynı sınıf: onay state\'i seçime bağlı
     // olmazsa kullanıcı A için onay açıp B\'yi arşivleyebilir.
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByText('Ayşe Yılmaz')
 
     await userEvent.click(arsivDugmesi('Ayşe Yılmaz'))
@@ -693,7 +693,7 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
       return { ok: true, json: async () => [] } as unknown as Response
     }) as unknown as typeof fetch
 
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByText('Ayşe Yılmaz')
     await userEvent.click(arsivDugmesi('Ayşe Yılmaz'))
     await userEvent.click(screen.getByRole('button', { name: 'Evet, arşivle' }))
@@ -739,7 +739,7 @@ describe('AnaEkran — danışan ekleme doğrulama hatası (Plan 2 devri)', () =
   })
 
   it('sunucunun alan adını içeren mesajını gösterir, genelleştirmez', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByText('Ayşe Yılmaz')
 
     await userEvent.click(screen.getByRole('button', { name: 'Danışan ekle' }))
@@ -830,7 +830,7 @@ describe('AnaEkran — seçili randevu yeniden yüklemede bayatlamaz (Plan 2 dev
   })
 
   async function randevuSec() {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
     await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
     expect(screen.getByRole('heading', { name: 'Randevu' })).toBeDefined()
@@ -994,7 +994,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
   })
 
   async function seansAc(ad = 'Ayşe Yılmaz') {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: ad })
     await userEvent.click(screen.getByRole('button', { name: ad }))
     await screen.findByLabelText('Seans notu')
@@ -1008,7 +1008,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
   })
 
   it('bos saat secilince seans paneli ACILMAZ', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
     const bosSaat = screen.getAllByLabelText(/boş$/).find((el) =>
       el.getAttribute('aria-label')?.includes('09:00'),
@@ -1311,7 +1311,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     const ozelYol = `/api/randevular/${randevuA.id}/ozel-not`
     ozelYazmaYetkisiz = true
 
-    const { unmount } = render(<AnaEkran kilitle={vi.fn()} />)
+    const { unmount } = render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
     await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
     await screen.findByLabelText('Seans notu')
@@ -1334,7 +1334,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
 
     // Kilit açıldı: AnaEkran yeniden mount edildi, kullanıcı aynı seansı
     // ve aynı sekmeyi açtı.
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
     await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
     await screen.findByLabelText('Seans notu')
@@ -1361,7 +1361,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
 
   it('not yuklenirken 401 gelirse panel kapanir', async () => {
     notYetkisiz = true
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
     await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
 
@@ -1373,7 +1373,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
 
   it('not yuklenemezse panel ACILMAZ, hata ve yeniden deneme gosterilir', async () => {
     notSunucuHatasi = true
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
     await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
 
@@ -1393,7 +1393,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     // "önceki seans notu yok" yazardı — sessiz bir yalan.
     // Not ve özel not BAŞARIYLA geliyor; yalnızca geçmiş isteği düşüyor.
     gecmisSunucuHatasi = true
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
     await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
 
@@ -1465,7 +1465,7 @@ describe('AnaEkran — seans geçişi × uçuştaki istek (Görev 9)', () => {
 
   it('yeni seansin notu YUKLENIRKEN onceki seansin notu ekranda kalmaz', async () => {
     sunucuNotlari = { [randevuA.id]: { sablon: 'dap', icerik: 'A SEANSININ NOTU' } }
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
     await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
     await screen.findByLabelText('Seans notu')
@@ -1491,7 +1491,7 @@ describe('AnaEkran — seans geçişi × uçuştaki istek (Görev 9)', () => {
       [randevuA.id]: { sablon: 'dap', icerik: 'A metni' },
       [randevuB.id]: { sablon: 'dap', icerik: 'B METNI' },
     }
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
     await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
     await screen.findByLabelText('Seans notu')
@@ -1741,7 +1741,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   }
 
   it('danisan cipine tiklayinca kart acilir; bakiye YALNIZCA o danisanin seanslarindan', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
 
     expect(await screen.findByText('0555 111 22 33')).toBeDefined()
@@ -1753,7 +1753,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   })
 
   it('baska danisana gecince onceki kartin verisi EKRANDA KALMAZ', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
     await riskNotunuAc()
 
@@ -1782,7 +1782,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   it('veri raporu icin notlar SUNUCUNUN ust siniriyla (200) cekilir', async () => {
     // Rapor KVKK md. 11 kapsamında "elimdeki her şey" demektir. Daha düşük
     // bir limit, eksik olduğunu SÖYLEMEDEN eksik bir rapor üretirdi.
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
     // Kartın açıldığını gösteren dayanak telefon: risk notu katlanmış ve
     // burada onu açmanın bir gerekçesi yok.
@@ -1800,7 +1800,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   // yazıp 5 dakikalık pencerede birleşir (seans paneli aynı danışan için
   // açıldıysa iz SIFIRDIR).
   it('veri raporu disa aktarimi ONCE rapor-kaydi ucunu POST eder', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
     await screen.findByText('0555 111 22 33')
 
@@ -1822,7 +1822,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   it('rapor kaydi REDDEDILIRSE hicbir rapor uretilmez (fail-closed)', async () => {
     // Kilitli oturumda kayıt yazılamaz; o hâlde dosya da diske yazılmamalı.
     // Ölçülen şey ekrandaki mesaj değil, Blob'un HİÇ üretilmemesi.
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
     await screen.findByText('0555 111 22 33')
 
@@ -1847,7 +1847,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   // tablosuna koyup üretilen dosyanın metnini okumak, o kavşağı ölçen tek
   // testtir.
   it('uretilen rapor METNI ozel not kanaryasini TASIMAZ, resmi notu TASIR', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
     await screen.findByText('0555 111 22 33')
 
@@ -1880,7 +1880,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   // panel açık) ve panel kapalıyken "özel uç HİÇ çağrılmadı" iddiası
   // yalnızca orada yazılabilir.
   it('seans paneli ACIKKEN de uretilen rapor METNI ozel not kanaryasini TASIMAZ, resmi notu TASIR', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
 
     // 1) Seans paneli AÇ: takvimdeki bloğa tıkla (`seciliRandevu` doluyor).
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
@@ -1936,7 +1936,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
       // UTC'den türetilseydi `bugun` 2026-09-08 olurdu, `kalanGun` 1 döner
       // ve ekran tam dolum gününde "1 gün kaldı" yazardı — imha kararını
       // veren insana yanlış tarih.
-      render(<AnaEkran kilitle={vi.fn()} />)
+      render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
       await userEvent.click(await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç' }))
       await screen.findByText('0555 999 88 77')
 
@@ -1946,7 +1946,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     })
 
     it('rapor dosya adindaki tarih YEREL gundur', async () => {
-      render(<AnaEkran kilitle={vi.fn()} />)
+      render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
       await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
       await screen.findByText('0555 111 22 33')
 
@@ -2016,7 +2016,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   })
 
   it('Ctrl+K ile acilan aramadan seans secilince O HAFTAYA gidilir ve panel acilir', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
 
     // Görünen hafta 07–13 Eylül: hedef randevu (14 Eylül) ekranda YOK.
@@ -2039,7 +2039,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   })
 
   it('aramadan danisan secilince kart acilir', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
 
     await aramayiAc()
@@ -2055,7 +2055,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   })
 
   it('kart acikken 401 gelirse kart KAPANIR ve icerigi ekranda kalmaz', async () => {
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
     await riskNotunuAc()
 
@@ -2071,7 +2071,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   it('401 kart YUKLENIRKEN gelirse yarim kart acilmaz', async () => {
     // Yarı dolu bir danışan kartı (rıza alanı boş görünen) "rıza alınmamış"
     // diye okunurdu — dosya aslında dolu olabilir.
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
     yetkisiz = true
     await userEvent.click(cip('Ayşe Yılmaz'))
@@ -2090,7 +2090,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
 
   it('kart acikken aramadan seansa gidilince kart KAPANIR', async () => {
     // Kiplerin kesişimi: kart + arama + seans paneli aynı ekranda.
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
     await riskNotunuAc()
 
@@ -2124,7 +2124,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     gecikmeler[haftaYolu('2026-09-07T00:00', '2026-09-13T23:59')] = eski.bekle
     gecikmeler[haftaYolu('2026-09-14T00:00', '2026-09-20T23:59')] = yeni.bekle
 
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await aramayiAc()
     await userEvent.type(
       screen.getByRole('searchbox', { name: 'Danışan adı veya not içeriği' }),
@@ -2147,7 +2147,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     // Sorgu metni sunucuda loga yazılmıyor; arayüz de onu başka bir uç
     // noktaya taşımamalı (ör. "danışanları sorguyla filtrele" gibi bir
     // kolaylık eklenirse sorgu ikinci bir yola daha düşerdi).
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
     await aramayiAc()
     await userEvent.type(
@@ -2171,7 +2171,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     // bir dosyanın süresinin dolduğunu görmek için o dosyayı AÇMAK
     // gerekiyordu, yani soru ekranda hiç sorulmuyordu.
     sunucuSaklamaDolanlar = [{ id: 3, ad_soyad: 'Zeynep Kaya', telefon: null, durum: 'aktif' }]
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
 
     const bolum = await screen.findByRole('region', { name: 'Saklama süresi dolan dosyalar' })
     expect(bolum.textContent).toContain('Zeynep Kaya')
@@ -2192,7 +2192,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
 
   it('EKSI YON: suresi dolan dosya yoksa hatirlatma HIC gorunmez', async () => {
     // Bu olmadan "her zaman bir bant bas" mutasyonu üstteki testi geçerdi.
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
     expect(screen.queryByRole('region', { name: 'Saklama süresi dolan dosyalar' })).toBeNull()
   })
@@ -2203,7 +2203,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     // değişmez; her hafta okunda yeniden sormak, hiçbir kazanç sağlamadan
     // kalıcı satır biriktirmek olurdu (`durumDegis`/`sil` ile aynı karar).
     sunucuSaklamaDolanlar = [{ id: 3, ad_soyad: 'Zeynep Kaya', telefon: null, durum: 'aktif' }]
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('region', { name: 'Saklama süresi dolan dosyalar' })
 
     await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
@@ -2219,7 +2219,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     // ekler 20 MB'a kadar BLOB tutuyor ve terapist veritabanı şişerken
     // hiçbir uyarı almıyordu.
     sunucuDepolama = { toplam_boyut: 600 * 1024 * 1024, esik: 500 * 1024 * 1024, uyari: true }
-    const { unmount } = render(<AnaEkran kilitle={vi.fn()} />)
+    const { unmount } = render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
 
     const uyari = await screen.findByText(/uyarı eşiğini aştı/i)
     // Eşik ve toplam SUNUCUDAN gelen sayılarla basılıyor; istemcide ikinci
@@ -2234,7 +2234,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     // ARTI/EKSI YON: eşik aşılmamışken hiçbir bant yok. Bu olmadan "her
     // zaman uyar" mutasyonu yukarıdaki iddiayı geçerdi.
     sunucuDepolama = { toplam_boyut: 1024, esik: 500 * 1024 * 1024, uyari: false }
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
     expect(screen.queryByText(/uyarı eşiğini aştı/i)).toBeNull()
   })
@@ -2242,7 +2242,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   it('ek silme DELETE atar ve kart YENIDEN cekilir', async () => {
     // Uç nokta Görev 7'de yazılmıştı ama çağrı yeri yoktu: yanlış danışana
     // yüklenen bir onam PDF'i silinemiyordu.
-    render(<AnaEkran kilitle={vi.fn()} />)
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
     // Ad iki yerde birden geciyor (ek listesi + riza belgesi secici):
     // indirme BAGLANTISI uzerinden aranmali.
@@ -2308,10 +2308,23 @@ describe('AnaEkran — yedekleme (tasarim §7)', () => {
     globalThis.fetch = gercekFetch
   })
 
-  async function ekraniAc() {
-    render(<AnaEkran kilitle={vi.fn()} />)
+  async function ekraniAc(onGeriYukle = vi.fn()) {
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={onGeriYukle} />)
     await screen.findByRole('region', { name: 'Yedekleme' })
+    return onGeriYukle
   }
+
+  it('her sey CALISIRKEN de geri yukleme ekranina bir yol var (tasarim §7)', async () => {
+    // Ekranin uc felaket yolu (bozuk veritabani, okunamayan anahtar, yeni
+    // bilgisayar) `App` seviyesinde. Bu DORDUNCU yol: yanlislikla silinen
+    // bir danisan ya da bozulan bir not ancak eski bir yedekten geri gelir
+    // ve o an ortada hicbir felaket yoktur.
+    const onGeriYukle = await ekraniAc()
+    await userEvent.click(screen.getByRole('button', { name: 'Yedekten geri yükle' }))
+    expect(onGeriYukle).toHaveBeenCalled()
+    // Dugme HICBIR istek atmaz: geri yukleme diger ekranda onaylanir.
+    expect(istekler.some((i) => i.yol === '/api/geri-yukleme')).toBe(false)
+  })
 
   it('bugunun yedegi yoksa acilista OTOMATIK alinir ve damga YEREL takvim gunudur', async () => {
     sunucuYedekleri = []

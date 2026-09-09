@@ -139,7 +139,19 @@ function yerelGun(tarih: Date): string {
   return `${tarih.getFullYear()}-${iki(tarih.getMonth() + 1)}-${iki(tarih.getDate())}`
 }
 
-export function AnaEkran({ kilitle }: { kilitle: () => void }) {
+export function AnaEkran({
+  kilitle,
+  onGeriYukle,
+}: {
+  kilitle: () => void
+  /**
+   * Geri yükleme ekranını açar (tasarım §7: "uygulama içinden geri yükle
+   * ekranı"). Ekranın üç felaket yolu (bozuk veritabanı, okunamayan anahtar
+   * dosyası, yeni bilgisayar) `App` tarafından yönetiliyor; bu, her şey
+   * çalışırken kullanılan dördüncü yol.
+   */
+  onGeriYukle: () => void
+}) {
   const [haftaBasi, setHaftaBasi] = useState(() => haftaninBasi(new Date()))
   const [randevular, setRandevular] = useState<Randevu[]>([])
   const [danisanlar, setDanisanlar] = useState<Danisan[]>([])
@@ -1138,6 +1150,21 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
             }}
           >
             Yedek klasörünü değiştir
+          </button>
+          {/* Tasarim §7: "Uygulama icinden 'geri yukle' ekrani; her yedegin
+              tarihi ve boyutu listelenir." Ekran uc felaket yolundan da
+              (bozuk veritabani, okunamayan anahtar, yeni bilgisayar)
+              acilabiliyor; AMA her sey CALISIRKEN de bir yol olmali:
+              yanlislikla silinen bir danisan ya da bozulan bir not, ancak
+              eski bir yedekten geri gelir ve o an ortada hicbir "felaket"
+              yoktur. Ekranin kendisi iki adimli: burada yalnizca aciliyor,
+              geri yukleme orada onaylaniyor. */}
+          <button
+            type="button"
+            className="rounded border px-2 py-1 text-xs"
+            onClick={onGeriYukle}
+          >
+            Yedekten geri yükle
           </button>
         </div>
 

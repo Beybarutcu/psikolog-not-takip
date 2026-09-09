@@ -1,20 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  api,
   aramaApi,
   danisanApi,
   notApi,
   ozelNotApi,
   takvimApi,
-  yedekApi,
   YetkisizHata,
-  type Danisan,
   type DanisanDosyasi,
   type DepolamaDurumu,
   type EkBilgisi,
   type OzelNot,
   type SeansNotu,
-  type YedekListesi,
 } from '../api'
 import { HizliArama } from '../arama/HizliArama'
 import { boyutBicimle } from '../danisan/bicim'
@@ -23,6 +19,10 @@ import { SeansPaneli } from '../seans/SeansPaneli'
 import { HaftalikTakvim, type Randevu } from '../takvim/HaftalikTakvim'
 import { haftaGunleri, haftaninBasi, yerelZaman } from '../takvim/hafta'
 import { RandevuPaneli } from '../takvim/RandevuPaneli'
+import { useDanisanListesi } from './anaEkranKancalari/useDanisanListesi'
+import { useParolaFormu } from './anaEkranKancalari/useParolaFormu'
+import { useYedekleme } from './anaEkranKancalari/useYedekleme'
+import { yerelGun } from './anaEkranKancalari/yerelGun'
 
 /**
  * Seans panelinde gösterilecek geçmiş not sayısı — ve sunucudan istenen
@@ -119,27 +119,6 @@ type KartVerisi = {
 
 const BOS_KART: KartVerisi = { id: null, dosya: null, ekler: [], randevular: [], hata: null }
 
-/**
- * Yerel takvim günü (`YYYY-AA-GG`). Sunucunun `saklama-suresi-dolanlar`
- * uç noktası da `bugun`'ü istemciden alıyor: karşılaştırma duvar saatine
- * göre yapılıyor ve UTC'den türetmek sınırdaki bir dosyayı bir gün
- * kaydırırdı.
- *
- * Somut: Istanbul UTC+3, yani 00:00–03:00 arasında UTC hâlâ dünkü tarihte.
- * `toISOString().slice(0, 10)` kullanan bir sürüm o üç saat boyunca
- * `bugun`'ü bir gün geriye alır; sonuç iki yerde birden görünür — saklama
- * süresi tam dolan bir dosyada ekran "1 gün kaldı" yazar ve veri raporunun
- * dosya adındaki tarih yanlış olur.
- *
- * Testli: `AnaEkran.test.tsx` > "yerel gün: gece yarısı ile 03:00 arası".
- * Diğer testler `setSystemTime(… 12:00)` kullanıyor ve o saatte yerel gün
- * ile UTC günü aynı — bu ayrımı yalnızca o blok görebilir.
- */
-function yerelGun(tarih: Date): string {
-  const iki = (n: number) => String(n).padStart(2, '0')
-  return `${tarih.getFullYear()}-${iki(tarih.getMonth() + 1)}-${iki(tarih.getDate())}`
-}
-
 export function AnaEkran({
   kilitle,
   onGeriYukle,
@@ -155,25 +134,18 @@ export function AnaEkran({
 }) {
   const [haftaBasi, setHaftaBasi] = useState(() => haftaninBasi(new Date()))
   const [randevular, setRandevular] = useState<Randevu[]>([])
-  const [danisanlar, setDanisanlar] = useState<Danisan[]>([])
   const [hata, setHata] = useState<string | null>(null)
   const [seciliRandevu, setSeciliRandevu] = useState<Randevu | null>(null)
   const [seciliBosSaat, setSeciliBosSaat] = useState<string | null>(null)
-  const [danisanFormAcik, setDanisanFormAcik] = useState(false)
-  const [yeniAdSoyad, setYeniAdSoyad] = useState('')
-  const [yeniTelefon, setYeniTelefon] = useState('')
-  const [danisanHata, setDanisanHata] = useState<string | null>(null)
-  // Arşivleme geri alınamaz SANILAN bir işlemdir (aslında değil — kayıtlar
-  // duruyor), bu yüzden randevu silmedeki iki adımlı onay deseni burada da
-  // uygulanıyor. Onay state'i ONAYLANAN DANIŞANIN KENDİSİDİR: Görev 10
-  // inceleme Bulgu 1'de panelin iç state'i bir seçimden diğerine sızıyordu ve
-  // çözüm state'i seçime bağlamaktı (`key` prop'u). Burada aynı ilke, bu kez
-  // state'in kendisi seçimi taşıyacak biçimde: başka bir danışanın
-  // "Arşivle"sine basmak onayı devretmez, tümüyle değiştirir; onay metni de
-  // her zaman state'teki danışanın adını gösterir.
-  const [arsivOnayi, setArsivOnayi] = useState<Danisan | null>(null)
-  const [arsivBilgisi, setArsivBilgisi] = useState<string | null>(null)
-  const [arsivSuruyor, setArsivSuruyor] = useState(false)
+  // Danışan listesi, ekleme formu, arşivleme ve saklama hatırlatması kendi
+  // kancasında: bu ekranın en bağımsız akışı, hiçbir 401 temizliği ona
+  // dokunmuyor.
+  const liste = useDanisanListesi()
+  // Yedekleme (otomatik günlük yedek + elle yedek + KALICI uyarı) ve parola
+  // değiştirme de kendi kancalarında; ikisi de bu ekranın başka hiçbir
+  // state'ini okumuyor.
+  const yedekleme = useYedekleme()
+  const parola = useParolaFormu()
   // Seans paneli verisi, HANGİ SEANSA ait olduğuyla birlikte. `id` alanı
   // tek başına bir kolaylık değil: seçim değiştiği anda önceki danışanın
   // notu ekranda kalmamalı ve bunun için bir efektin çalışmasını beklemek
@@ -198,39 +170,10 @@ export function AnaEkran({
   const [seciliDanisanId, setSeciliDanisanId] = useState<number | null>(null)
   const [kartVerisi, setKartVerisi] = useState<KartVerisi>(BOS_KART)
   const [kartTazeleme, setKartTazeleme] = useState(0)
-  // Saklama süresi dolmuş danışanlar — tasarım §7'nin ana ekran
-  // hatırlatması. Kart içindeki tekil gösterge bunun yerini tutmuyordu: bir
-  // dosyanın süresinin dolduğunu görmek için o dosyayı AÇMAK gerekiyordu,
-  // yani "hangi dosyaların süresi doldu" sorusunun ekranda hiçbir cevabı
-  // yoktu (dal incelemesi, HTTP → arayüz yönü).
-  const [saklamaDolanlar, setSaklamaDolanlar] = useState<Danisan[]>([])
   // Depolama durumu. `null` = henüz gelmedi ya da alınamadı; ikisi de aynı
   // şeyi gerektirir (hiçbir şey gösterme). Bu uç nokta sunucuda LOG YAZMAZ,
   // bu yüzden ek yükleme/silme sonrasında tazelenebiliyor.
   const [depolama, setDepolama] = useState<DepolamaDurumu | null>(null)
-  // Yedekleme durumu. `null` = henüz gelmedi ya da klasör seçilmemiş.
-  const [yedek, setYedek] = useState<YedekListesi | null>(null)
-  // Tasarım §7: "Yedek alınamazsa (disk dolu, klasör erişilemez) ana ekranda
-  // KALICI uyarı çıkar; sessiz geçilmez." Bu state o uyarıdır ve kendi
-  // kendine kaybolmaz — yalnızca başarılı bir yedekle temizlenir.
-  const [yedekUyarisi, setYedekUyarisi] = useState<string | null>(null)
-  const [klasorFormuAcik, setKlasorFormuAcik] = useState(false)
-  const [klasorGirdisi, setKlasorGirdisi] = useState('')
-  const [yedekSuruyor, setYedekSuruyor] = useState(false)
-  // PAROLA DEĞİŞTİRME. `keystore::change_password` Plan 1'den beri yazılı ve
-  // testliydi ama hiçbir çağrı yeri yoktu: kullanıcı parolasını
-  // DEĞİŞTİREMİYORDU (`seriyi_sil`, `clients::arsivle`, `depolama_durumu`
-  // ile aynı "kodda var, üründe yok" sınıfı).
-  //
-  // Alanlar form kapanınca temizleniyor: bir parola, hiç görünmeyen bir
-  // panelin state'inde oturmamalı.
-  const [parolaFormuAcik, setParolaFormuAcik] = useState(false)
-  const [mevcutParola, setMevcutParola] = useState('')
-  const [yeniParola, setYeniParola] = useState('')
-  const [yeniParolaTekrar, setYeniParolaTekrar] = useState('')
-  const [parolaHatasi, setParolaHatasi] = useState<string | null>(null)
-  const [parolaBilgisi, setParolaBilgisi] = useState<string | null>(null)
-  const [parolaSuruyor, setParolaSuruyor] = useState(false)
   // Aramadan gelen "şu seansa git" isteği. Hedef randevu başka bir haftada
   // olabilir; hafta değiştirilir, randevu listesi yeniden yüklenir ve seçim
   // ANCAK O LİSTEDEN yapılır — ekranda görünmeyen bir randevuya bağlı bir
@@ -319,106 +262,14 @@ export function AnaEkran({
 
   useEffect(() => { void yukle() }, [yukle])
 
-  useEffect(() => {
-    void takvimApi.danisanlariGetir().then(setDanisanlar).catch(() => {
-      // Danışan listesi yüklenemezse panel yine açılabilir; danışan seçme
-      // adımı boş listeyle gelir ve kullanıcı "danışan seçin" hatasını
-      // görür — sayfanın tamamını kilitlemeye gerek yok.
-    })
-  }, [])
-
-  // Saklama hatırlatması YALNIZCA ilk yüklemede çekiliyor, hafta
-  // değişiminde ya da her tazelemede DEĞİL: sunucudaki
-  // `clients::saklama_suresi_dolanlar` her çağrıda `LogHacmi::HerCagri` ile
-  // SİLİNEMEZ bir `goruntuleme` satırı yazıyor. Liste gün içinde değişmez
-  // (girdi yerel takvim günü), dolayısıyla tekrar sormanın kazancı yok,
-  // maliyeti kalıcı.
-  //
-  // Hata YUTULUYOR: hatırlatma ikincil bir bilgi; alınamadığında ana ekranı
-  // hata bandıyla kaplamak, terapistin takvimini görmesini engellerdi.
-  // (Kilit hâli zaten `api.ts`'in merkezî 401 dinleyicisiyle ele alınıyor.)
-  useEffect(() => {
-    void danisanApi
-      .saklamaSuresiDolanlar(yerelGun(new Date()))
-      .then(setSaklamaDolanlar)
-      .catch(() => {})
-  }, [])
-
   // Depolama durumu: ilk yüklemede ve kart her tazelendiğinde (ek yükleme /
   // ek silme) yeniden çekilir. Bu uç nokta denetim kaydına HİÇBİR ŞEY
   // yazmıyor (`depolama_durumu` bir sayı sorgusudur), yani hacim kaygısı
-  // yok — yukarıdaki saklama listesinden farkı tam olarak budur.
+  // yok — `useDanisanListesi`'ndeki saklama listesinden farkı tam olarak
+  // budur.
   useEffect(() => {
     void danisanApi.depolamaDurumu().then(setDepolama).catch(() => {})
   }, [kartTazeleme])
-
-  /**
-   * Bugünün yedeğini alır ve listeyi tazeler.
-   *
-   * `hedefDizin` verilirse sunucu onu önce **ayar olarak kaydeder**, sonra
-   * yedeği oraya alır (bkz. `yedekApi.al`). Klasör seçmekle ilk yedeği
-   * almak tek işlem: ayrı bir "ayarla" adımı olsaydı klasörünü seçip
-   * yedeği almayan bir kullanıcı "yedeğim var" sanırdı.
-   */
-  const yedekAl = useCallback(async (hedefDizin?: string) => {
-    setYedekSuruyor(true)
-    try {
-      await yedekApi.al(yerelGun(new Date()), hedefDizin)
-      setYedek(await yedekApi.listele())
-      setYedekUyarisi(null)
-      setKlasorFormuAcik(false)
-      return true
-    } catch (e) {
-      if (e instanceof YetkisizHata) return false
-      // Sunucudan gelen mesaj OLDUĞU GİBİ gösteriliyor: "klasör bulunamadı",
-      // "bu klasöre yazılamıyor" ve "anahtar dosyası bulunamadı" birbirinden
-      // ayrı sorunlar ve kullanıcı hangisini düzelteceğini bilmeli
-      // (`danisanEkle` ile aynı gerekçe).
-      setYedekUyarisi(e instanceof Error ? e.message : 'Yedek alınamadı.')
-      return false
-    } finally {
-      setYedekSuruyor(false)
-    }
-  }, [])
-
-  // OTOMATİK GÜNLÜK YEDEK — tasarım §7 ("günde bir kez otomatik şifreli
-  // yedek", 7 gün dönüşümlü; dönüşümü çekirdek yapıyor).
-  //
-  // Zamanlayıcı YOK ve olmayacak: uygulama kapalıyken zaten yedek
-  // alınamaz, açıkken de "oturum başına bir kez" bu ürün için "günde bir
-  // kez"in gerçekleşebilir hâlidir. Etki bir kez çalışır (bağımlılık
-  // listesi boş): hafta değişimi, kayıt ya da kart tazelemesi bunu
-  // tetiklemez.
-  //
-  // Damga İSTEMCİNİN yerel takvim günü (`yerelGun`) — duvar saati
-  // sözleşmesi. Sunucudan türetilseydi Istanbul'da 00:00–03:00 arasında
-  // yedek bir gün geriye yazılır ve "bugün alındı mı" yanlış yanıtlanırdı.
-  //
-  // Klasör seçilmemişse sunucu `400` döner ve mesajı kalıcı uyarı olur:
-  // kullanıcı klasörünü seçene kadar hiçbir yedek alınamaz ve bunu ana
-  // ekranda görür. Sessiz geçilmiyor.
-  useEffect(() => {
-    let iptal = false
-    void (async () => {
-      const bugun = yerelGun(new Date())
-      try {
-        const liste = await yedekApi.listele()
-        if (iptal) return
-        setYedek(liste)
-        // Bugünün yedeği zaten varsa ikinci kez alınmaz: her çağrı sunucuda
-        // SİLİNEMEZ bir `disa_aktarma` satırı yazar (bkz. `store::audit`
-        // hacim politikası) ve aynı gün için ikinci satır gürültüdür.
-        if (liste.yedekler.some((y) => y.tarih === bugun)) return
-        await yedekAl()
-      } catch (e) {
-        if (iptal || e instanceof YetkisizHata) return
-        setYedekUyarisi(e instanceof Error ? e.message : 'Yedek durumu okunamadı.')
-      }
-    })()
-    return () => {
-      iptal = true
-    }
-  }, [yedekAl])
 
   // Seans notu verisi RANDEVU KİMLİĞİNE bağlı yükleniyor, `seciliRandevu`
   // NESNESİNE değil. `yukle()` her çağrıldığında seçili randevu taze bir
@@ -439,6 +290,11 @@ export function AnaEkran({
   // efektin çalışması arasındaki karede ÖNCEKİ danışanın notunu yeni
   // seansın panelinde göstermek olurdu.
   const seans = seansVerisi.id === seansId ? seansVerisi : BOS_SEANS
+
+  // Yerel değişkene alınıyor: onay metni ile "Evet, arşivle" düğmesinin AYNI
+  // danışanı görmesini bu satır garanti eder (kancadaki alan üzerinden daralan
+  // tür bir callback'in içine taşınmaz).
+  const { arsivOnayi } = liste
 
   useEffect(() => {
     if (seansId === null || seansDanisanId === null || seansBaslangici === null) return
@@ -616,55 +472,6 @@ export function AnaEkran({
     [seansId],
   )
 
-  /** Parola formunu kapatır ve **girilen parolaları state'ten siler.** */
-  function parolaFormunuKapat() {
-    setParolaFormuAcik(false)
-    setMevcutParola('')
-    setYeniParola('')
-    setYeniParolaTekrar('')
-    setParolaHatasi(null)
-  }
-
-  /**
-   * Parolayı değiştirir.
-   *
-   * # "Yeni parola tekrar" YALNIZCA burada kontrol edilir
-   *
-   * Sunucu iki alanı karşılaştıramaz (ikincisi ona hiç gönderilmiyor) —
-   * yazım hatası yapan bir kullanıcı, yeni parolasını bilmeden
-   * değiştirmiş olurdu. Uzunluk kuralı ise **kopyalanmıyor**: sunucunun
-   * mesajı ("en az 8 karakter olmalı") olduğu gibi gösteriliyor, iki
-   * kopya sessizce ayrışmasın (`AZAMI_EK_BOYUTU`'nun aksine — o, isteği
-   * hiç atmadan reddedebilmek için istemcide de duruyor).
-   *
-   * # Hata mesajı OLDUĞU GİBİ gösterilir
-   *
-   * "Mevcut parolanız hatalı" ile "yeni parola çok kısa" farklı sorunlar
-   * ve kullanıcı hangisini düzelteceğini bilmeli — bu kod tabanında dört
-   * katmanda bulunan "her hata parola hatasıdır" sınıfının tam karşılığı.
-   */
-  async function parolayiDegistir() {
-    if (yeniParola !== yeniParolaTekrar) {
-      setParolaHatasi('Yeni parola ile tekrarı aynı değil. Parolanız değişmedi.')
-      return
-    }
-    setParolaSuruyor(true)
-    try {
-      await api.parolaDegistir(mevcutParola, yeniParola)
-      parolaFormunuKapat()
-      // Kullanıcı "başka ne değişti" sorusunu sormadan yanıtı görmeli:
-      // kurtarma kodu ve eski yedekler hakkındaki iki gerçek burada.
-      setParolaBilgisi(
-        'Parolanız değişti. Kurtarma kodunuz aynı kaldı ve çalışmaya devam ediyor. ' +
-          'Bugünden önce alınmış yedekler ESKİ parolanızla açılır.',
-      )
-    } catch (e) {
-      setParolaHatasi(e instanceof Error ? e.message : 'Parola değiştirilemedi.')
-    } finally {
-      setParolaSuruyor(false)
-    }
-  }
-
   function haftaDegis(yon: number) {
     setHaftaBasi((onceki) => {
       const yeni = new Date(onceki)
@@ -689,7 +496,7 @@ export function AnaEkran({
   }
 
   function danisanKartiAc(clientId: number) {
-    setArsivBilgisi(null)
+    liste.setArsivBilgisi(null)
     setSeciliDanisanId(clientId)
   }
 
@@ -721,61 +528,6 @@ export function AnaEkran({
     setSeciliBosSaat(null)
     danisanKartiKapat()
     setHaftaBasi(hedefHafta)
-  }
-
-  async function danisanEkle() {
-    if (yeniAdSoyad.trim() === '') {
-      setDanisanHata('Lütfen ad soyad girin.')
-      return
-    }
-    try {
-      await takvimApi.danisanEkle(yeniAdSoyad.trim(), yeniTelefon.trim() || undefined)
-      setYeniAdSoyad('')
-      setYeniTelefon('')
-      setDanisanFormAcik(false)
-      setDanisanHata(null)
-      // Burada yeniden yükleme KORUNUYOR: liste sunucuda `ad_soyad COLLATE
-      // NOCASE` ile sıralanıyor ve yeni kaydı istemcide doğru yere sokmak
-      // Türkçe harf sıralamasını burada ikinci kez (farklı) uygulamak
-      // demekti. Danışan ekleme seyrek bir işlem; hacim tarafını sunucudaki
-      // birleştirme (`clients::listele`) zaten kapatıyor.
-      setDanisanlar(await takvimApi.danisanlariGetir())
-    } catch (e) {
-      // Sunucudan gelen mesaj OLDUĞU GİBİ gösteriliyor: doğrulama hataları
-      // hangi alanın (ad mı, telefon mu) neden reddedildiğini söylüyor
-      // (bkz. `store::clients` doğrulayıcıları). Burada onu genel bir
-      // "Danışan eklenemedi." ile değiştirmek, kullanıcıya neyi
-      // düzelteceğini söylememek olurdu — bu kod tabanında tekrar eden
-      // "her hata parola hatasıdır" sınıfının ta kendisi.
-      setDanisanHata(e instanceof Error ? e.message : 'Danışan eklenemedi.')
-    }
-  }
-
-  // Arşivleme SİLME DEĞİLDİR. `clients::arsivle` Plan 2 Görev 3'te yazılmış
-  // ama hiçbir yerden çağrılmıyordu: danışan eklenebiliyor, arşivlenemiyordu
-  // ve hem bu liste hem de randevu panelindeki açılır menü sınırsız
-  // büyüyordu (`seriyi_sil` ile aynı bulgu sınıfı, bkz. dal incelemesi I4a).
-  async function danisanArsivle(danisan: Danisan) {
-    setArsivSuruyor(true)
-    try {
-      await takvimApi.danisanArsivle(danisan.id)
-      setDanisanHata(null)
-      setArsivOnayi(null)
-      // Sunucudan YENİDEN ÇEKİLMİYOR: sonuç yerel olarak kesin biçimde
-      // bilinebilir (tek bir id listeden düşer) ve her `danisanlariGetir`
-      // çağrısı sunucuda kalıcı bir `goruntuleme` satırı üretme riski taşır
-      // (bkz. Plan 3 Görev 2 ve `durumDegis`/`sil` için aynı gerekçe).
-      setDanisanlar((onceki) => onceki.filter((d) => d.id !== danisan.id))
-      // Kullanıcı "hiçbir şey olmadı" da sanmamalı: ad listeden düşüyor VE
-      // ne olduğu açıkça yazılıyor.
-      setArsivBilgisi(
-        `${danisan.ad_soyad} arşivlendi. Kayıtları silinmedi; yalnızca listede görünmüyor.`,
-      )
-    } catch (e) {
-      setDanisanHata(e instanceof Error ? e.message : 'Danışan arşivlenemedi.')
-    } finally {
-      setArsivSuruyor(false)
-    }
   }
 
   // Rıza kaydı ve ek yükleme başarılı olunca kart YENİDEN ÇEKİLİYOR.
@@ -978,13 +730,13 @@ export function AnaEkran({
           <span className="text-sm font-medium text-slate-600">Danışanlar</span>
           <button
             className="rounded border px-3 py-1 text-sm"
-            onClick={() => setDanisanFormAcik((acik) => !acik)}
+            onClick={() => liste.setFormAcik((acik) => !acik)}
           >
             Danışan ekle
           </button>
         </div>
 
-        {danisanFormAcik && (
+        {liste.formAcik && (
           <div className="mt-2 flex items-end gap-2">
             <div>
               <label className="block text-sm" htmlFor="yeni-danisan-ad-soyad">
@@ -993,8 +745,8 @@ export function AnaEkran({
               <input
                 id="yeni-danisan-ad-soyad"
                 className="mt-1 rounded border p-2"
-                value={yeniAdSoyad}
-                onChange={(e) => setYeniAdSoyad(e.target.value)}
+                value={liste.yeniAdSoyad}
+                onChange={(e) => liste.setYeniAdSoyad(e.target.value)}
               />
             </div>
             <div>
@@ -1004,34 +756,34 @@ export function AnaEkran({
               <input
                 id="yeni-danisan-telefon"
                 className="mt-1 rounded border p-2"
-                value={yeniTelefon}
-                onChange={(e) => setYeniTelefon(e.target.value)}
+                value={liste.yeniTelefon}
+                onChange={(e) => liste.setYeniTelefon(e.target.value)}
               />
             </div>
             <button
               className="rounded bg-slate-900 px-3 py-2 text-sm text-white"
-              onClick={() => void danisanEkle()}
+              onClick={() => void liste.ekle()}
             >
               Ekle
             </button>
           </div>
         )}
 
-        {danisanHata && <p className="mt-1 text-sm text-red-600">{danisanHata}</p>}
+        {liste.hata && <p className="mt-1 text-sm text-red-600">{liste.hata}</p>}
         {/* `role="status"`: arşivleme sonucu ekranda sessizce beliriyordu.
             Ekran okuyucu kullanıcısı düğmeye bastıktan sonra hiçbir şey
             duymuyor, danışanın listeden düşmesini de göremiyordu. Kibar
             (`polite`) duyuru, kullanıcının o an yazdığı şeyi kesmeden işlemin
             olduğunu söyler. */}
-        {arsivBilgisi && (
+        {liste.arsivBilgisi && (
           <p role="status" className="mt-1 text-sm text-slate-600">
-            {arsivBilgisi}
+            {liste.arsivBilgisi}
           </p>
         )}
 
-        {danisanlar.length > 0 && (
+        {liste.danisanlar.length > 0 && (
           <ul className="mt-2 flex flex-wrap gap-2 text-sm text-slate-700">
-            {danisanlar.map((d) => (
+            {liste.danisanlar.map((d) => (
               <li
                 key={d.id}
                 className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1"
@@ -1066,10 +818,10 @@ export function AnaEkran({
                   className="text-slate-500 underline disabled:opacity-50"
                   aria-label={`${d.ad_soyad} adlı danışanı arşivle`}
                   title="Danışanı arşivle"
-                  disabled={arsivSuruyor}
+                  disabled={liste.arsivSuruyor}
                   onClick={() => {
-                    setArsivBilgisi(null)
-                    setArsivOnayi(d)
+                    liste.setArsivBilgisi(null)
+                    liste.setArsivOnayi(d)
                   }}
                 >
                   Arşivle
@@ -1092,15 +844,15 @@ export function AnaEkran({
             <div className="mt-2 flex gap-2">
               <button
                 className="rounded bg-amber-700 px-3 py-1 text-sm text-white disabled:opacity-50"
-                disabled={arsivSuruyor}
-                onClick={() => void danisanArsivle(arsivOnayi)}
+                disabled={liste.arsivSuruyor}
+                onClick={() => void liste.arsivle(arsivOnayi)}
               >
                 Evet, arşivle
               </button>
               <button
                 className="rounded border px-3 py-1 text-sm"
-                disabled={arsivSuruyor}
-                onClick={() => setArsivOnayi(null)}
+                disabled={liste.arsivSuruyor}
+                onClick={() => liste.setArsivOnayi(null)}
               >
                 Vazgeç
               </button>
@@ -1120,16 +872,16 @@ export function AnaEkran({
           Adlar burada görünüyor — zaten üstteki danışan listesinde de
           görünüyorlar; bu bölüm yeni bir hassas alan (risk notu, tanı, not
           içeriği) basmıyor. */}
-      {saklamaDolanlar.length > 0 && (
+      {liste.saklamaDolanlar.length > 0 && (
         <section
           aria-label="Saklama süresi dolan dosyalar"
           className="mb-4 rounded border border-amber-400 bg-amber-50 p-3"
         >
           <h2 className="text-sm font-semibold text-amber-900">
-            Saklama süresi dolan dosyalar ({saklamaDolanlar.length})
+            Saklama süresi dolan dosyalar ({liste.saklamaDolanlar.length})
           </h2>
           <ul className="mt-1 flex flex-wrap gap-2 text-sm">
-            {saklamaDolanlar.map((d) => (
+            {liste.saklamaDolanlar.map((d) => (
               <li key={d.id}>
                 <button
                   type="button"
@@ -1181,18 +933,18 @@ export function AnaEkran({
       <section
         aria-label="Yedekleme"
         className={`mb-4 rounded border p-3 text-sm ${
-          yedekUyarisi
+          yedekleme.uyari
             ? 'border-amber-400 bg-amber-50 text-amber-900'
             : 'border-slate-200 bg-slate-50 text-slate-600'
         }`}
       >
         <div className="flex flex-wrap items-center gap-3">
           <span className="font-medium">Yedekleme</span>
-          {yedek !== null && yedek.yedekler.length > 0 ? (
+          {yedekleme.yedek !== null && yedekleme.yedek.yedekler.length > 0 ? (
             <span>
-              Son yedek: <strong>{yedek.yedekler[0].tarih}</strong> (
-              {boyutBicimle(yedek.yedekler[0].boyut)}) · saklanan yedek:{' '}
-              {yedek.yedekler.length}
+              Son yedek: <strong>{yedekleme.yedek.yedekler[0].tarih}</strong> (
+              {boyutBicimle(yedekleme.yedek.yedekler[0].boyut)}) · saklanan yedek:{' '}
+              {yedekleme.yedek.yedekler.length}
             </span>
           ) : (
             <span>Henüz alınmış bir yedek yok.</span>
@@ -1200,17 +952,17 @@ export function AnaEkran({
           <button
             type="button"
             className="rounded border px-2 py-1 text-xs disabled:opacity-50"
-            disabled={yedekSuruyor}
-            onClick={() => void yedekAl()}
+            disabled={yedekleme.suruyor}
+            onClick={() => void yedekleme.al()}
           >
-            {yedekSuruyor ? 'Yedek alınıyor…' : 'Şimdi yedek al'}
+            {yedekleme.suruyor ? 'Yedek alınıyor…' : 'Şimdi yedek al'}
           </button>
           <button
             type="button"
             className="rounded border px-2 py-1 text-xs"
             onClick={() => {
-              setKlasorGirdisi(yedek?.hedef_dizin ?? '')
-              setKlasorFormuAcik((acik) => !acik)
+              yedekleme.setKlasorGirdisi(yedekleme.yedek?.hedef_dizin ?? '')
+              yedekleme.setKlasorFormuAcik((acik) => !acik)
             }}
           >
             Yedek klasörünü değiştir
@@ -1232,20 +984,20 @@ export function AnaEkran({
           </button>
         </div>
 
-        {yedek !== null && (
-          <p className="mt-1 break-all font-mono text-xs">{yedek.hedef_dizin}</p>
+        {yedekleme.yedek !== null && (
+          <p className="mt-1 break-all font-mono text-xs">{yedekleme.yedek.hedef_dizin}</p>
         )}
 
         {/* KALICI UYARI. `role="status"` degil `role="alert"`: bu, gozden
             kacmamasi gereken bir durum -- kullanicinin verisi su an
             yedeklenmiyor. */}
-        {yedekUyarisi && (
+        {yedekleme.uyari && (
           <p role="alert" className="mt-2">
-            {yedekUyarisi}
+            {yedekleme.uyari}
           </p>
         )}
 
-        {klasorFormuAcik && (
+        {yedekleme.klasorFormuAcik && (
           <div className="mt-2">
             <label className="block text-xs" htmlFor="yedek-klasoru-girdisi">
               Yedeklerin yazılacağı klasörün yolu
@@ -1255,14 +1007,14 @@ export function AnaEkran({
                 id="yedek-klasoru-girdisi"
                 className="w-full rounded border p-2 font-mono text-xs"
                 placeholder="/Volumes/YEDEK/terapi-yedek"
-                value={klasorGirdisi}
-                onChange={(e) => setKlasorGirdisi(e.target.value)}
+                value={yedekleme.klasorGirdisi}
+                onChange={(e) => yedekleme.setKlasorGirdisi(e.target.value)}
               />
               <button
                 type="button"
                 className="shrink-0 rounded bg-slate-900 px-3 py-1 text-xs text-white disabled:opacity-50"
-                disabled={yedekSuruyor || klasorGirdisi.trim() === ''}
-                onClick={() => void yedekAl(klasorGirdisi.trim())}
+                disabled={yedekleme.suruyor || yedekleme.klasorGirdisi.trim() === ''}
+                onClick={() => void yedekleme.al(yedekleme.klasorGirdisi.trim())}
               >
                 Kaydet ve yedek al
               </button>
@@ -1293,26 +1045,22 @@ export function AnaEkran({
           <button
             type="button"
             className="rounded border px-2 py-1 text-xs"
-            onClick={() => {
-              setParolaBilgisi(null)
-              if (parolaFormuAcik) parolaFormunuKapat()
-              else setParolaFormuAcik(true)
-            }}
+            onClick={parola.acKapa}
           >
-            {parolaFormuAcik ? 'Vazgeç' : 'Parolayı değiştir'}
+            {parola.acik ? 'Vazgeç' : 'Parolayı değiştir'}
           </button>
         </div>
 
         {/* `role="status"`: değişiklik ekranda sessizce olup bitiyordu.
             Metin ne olduğunu VE ne OLMADIĞINI birlikte söylüyor (arşivleme
             onayıyla aynı ilke). */}
-        {parolaBilgisi && (
+        {parola.bilgi && (
           <p role="status" className="mt-2 text-slate-700">
-            {parolaBilgisi}
+            {parola.bilgi}
           </p>
         )}
 
-        {parolaFormuAcik && (
+        {parola.acik && (
           <div className="mt-2 max-w-md">
             <div>
               <label className="block text-xs" htmlFor="mevcut-parola">
@@ -1323,8 +1071,8 @@ export function AnaEkran({
                 type="password"
                 autoComplete="current-password"
                 className="mt-1 w-full rounded border p-2"
-                value={mevcutParola}
-                onChange={(e) => setMevcutParola(e.target.value)}
+                value={parola.mevcutParola}
+                onChange={(e) => parola.setMevcutParola(e.target.value)}
               />
             </div>
             <div className="mt-2">
@@ -1336,8 +1084,8 @@ export function AnaEkran({
                 type="password"
                 autoComplete="new-password"
                 className="mt-1 w-full rounded border p-2"
-                value={yeniParola}
-                onChange={(e) => setYeniParola(e.target.value)}
+                value={parola.yeniParola}
+                onChange={(e) => parola.setYeniParola(e.target.value)}
               />
             </div>
             <div className="mt-2">
@@ -1349,24 +1097,24 @@ export function AnaEkran({
                 type="password"
                 autoComplete="new-password"
                 className="mt-1 w-full rounded border p-2"
-                value={yeniParolaTekrar}
-                onChange={(e) => setYeniParolaTekrar(e.target.value)}
+                value={parola.yeniParolaTekrar}
+                onChange={(e) => parola.setYeniParolaTekrar(e.target.value)}
               />
             </div>
 
-            {parolaHatasi && (
+            {parola.hata && (
               <p role="alert" className="mt-2 text-red-600">
-                {parolaHatasi}
+                {parola.hata}
               </p>
             )}
 
             <button
               type="button"
               className="mt-2 rounded bg-slate-900 px-3 py-2 text-xs text-white disabled:opacity-50"
-              disabled={parolaSuruyor}
-              onClick={() => void parolayiDegistir()}
+              disabled={parola.suruyor}
+              onClick={() => void parola.degistir()}
             >
-              {parolaSuruyor ? 'Değiştiriliyor…' : 'Parolayı değiştir'}
+              {parola.suruyor ? 'Değiştiriliyor…' : 'Parolayı değiştir'}
             </button>
 
             {/* İKİ GERÇEĞİ ÖNCEDEN söyler; kullanıcı bunları ancak
@@ -1415,7 +1163,7 @@ export function AnaEkran({
             key={seciliRandevu ? `randevu-${seciliRandevu.id}` : `bos-${seciliBosSaat}`}
             zaman={seciliBosSaat ?? seciliRandevu?.baslangic ?? ''}
             randevu={seciliRandevu}
-            danisanlar={danisanlar}
+            danisanlar={liste.danisanlar}
             onKaydet={kaydet}
             onDurumDegis={durumDegis}
             onSil={sil}

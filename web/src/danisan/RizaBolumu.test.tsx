@@ -84,6 +84,71 @@ describe('RizaBolumu — imzalı onam dosyası', () => {
     expect(metinler.some((m) => m.includes('beck-envanteri.pdf'))).toBe(false)
   })
 
+  // --- Dal incelemesi I3: onam bağlantısı da SPA'yı yıkmaz -------------
+  //
+  // İki bağlantı vardı (`DanisanKarti` ek listesi ve buradaki onam
+  // bağlantısı) ve ikisi de aynı hataya sahipti. Yalnızca birini
+  // düzeltmek, kod tabanındaki tanıdık hata sınıfı olurdu ("kilit_ac
+  // düzeltildi, kilitle unutuldu").
+
+  it('I3: onam baglantisi GEZINMEYI IPTAL eder ve fetchten gecer', async () => {
+    const gercekFetch = globalThis.fetch
+    const gercekOlustur = URL.createObjectURL
+    const gercekSerbest = URL.revokeObjectURL
+    const yollar: string[] = []
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL) => {
+      yollar.push(String(girdi))
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        blob: async () => new Blob(['PDF']),
+      } as unknown as Response
+    }) as unknown as typeof fetch
+    URL.createObjectURL = vi.fn(() => 'blob:onam') as unknown as typeof URL.createObjectURL
+    URL.revokeObjectURL = vi.fn() as unknown as typeof URL.revokeObjectURL
+    try {
+      kur({ rizaTarihi: '2026-03-01', rizaDosyaId: 5 })
+      const bag = screen.getByRole('link', { name: /onam-formu\.pdf/ })
+      // Dinleyici DOCUMENT uzerinde (gerekce icin bkz. DanisanKarti.test).
+      let iptalEdildi = false
+      document.addEventListener('click', (e) => {
+        iptalEdildi = e.defaultPrevented
+      })
+
+      await userEvent.click(bag)
+
+      expect(iptalEdildi, 'tikla gezinme iptal edilmeli').toBe(true)
+      await waitFor(() => expect(yollar).toContain('/api/ekler/5'))
+    } finally {
+      globalThis.fetch = gercekFetch
+      URL.createObjectURL = gercekOlustur
+      URL.revokeObjectURL = gercekSerbest
+    }
+  })
+
+  it('I3: 401de bolum EKRANDA KALIR, hata gosterilir', async () => {
+    const gercekFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 401,
+      json: async () => ({ hata: 'Oturum kilitli. Lütfen parolanızı girin.' }),
+      blob: async () => new Blob([]),
+    })) as unknown as typeof fetch
+    try {
+      kur({ rizaTarihi: '2026-03-01', rizaDosyaId: 5 })
+      await userEvent.click(screen.getByRole('link', { name: /onam-formu\.pdf/ }))
+
+      await waitFor(() =>
+        expect(screen.getByText('Oturum kilitli. Lütfen parolanızı girin.')).toBeDefined(),
+      )
+      // Bölüm hâlâ ekranda: "sayfa gezinmedi"nin birim testi karşılığı.
+      expect(screen.getByRole('region', { name: 'Aydınlatma ve açık rıza' })).toBeDefined()
+    } finally {
+      globalThis.fetch = gercekFetch
+    }
+  })
+
   it('bagli dosya listede yoksa baglanti YERINE aciklama gosterilir', () => {
     // `attachments::sil` sarkan `riza_dosya_id`'yi temizliyor; yine de
     // ekranda "indir" diyen ölü bir bağlantı bırakmak, tıklayınca 404 veren

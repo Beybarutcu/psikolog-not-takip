@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
+  ekIndir,
   ekIndirmeYolu,
   EK_TURLERI,
   type DanisanDosyasi,
@@ -150,6 +151,10 @@ export function DanisanKarti({
   const [raporHatasi, setRaporHatasi] = useState<string | null>(null)
   const [raporSuruyor, setRaporSuruyor] = useState(false)
   const [ekSuruyor, setEkSuruyor] = useState(false)
+  // Ek indirme hatası. İndirme artık `fetch`'ten geçtiği için (bkz.
+  // `api.ekIndir`) hata sessizce yutulamaz: eskiden tarayıcı gezinip ham
+  // JSON'u ekrana basıyordu, artık kullanıcıya burada söyleniyor.
+  const [indirmeHatasi, setIndirmeHatasi] = useState<string | null>(null)
   // Risk notu KAPALI açılır (gerekçe modül başlığında). State, HANGİ
   // danışan için açıldığını taşıyor ve ekrana giden hâli render sırasında
   // türetiliyor — `ekFormu` ile aynı desen. Düz bir `boolean` olsaydı,
@@ -395,9 +400,23 @@ export function DanisanKarti({
           <ul className="mt-1 space-y-1">
             {ekler.map((ek) => (
               <li key={ek.id}>
-                {/* İçerik gömülü GÖSTERİLMEZ: sunucu `Content-Disposition:
-                    attachment` gönderiyor ve bağlantı dosyayı indirir. */}
-                <a className="text-slate-700 underline" href={ekIndirmeYolu(ek.id)}>
+                {/* İçerik gömülü GÖSTERİLMEZ; dosya diske indirilir.
+                    `href` duruyor (bağlam menüsü gerçek bir adres görsün)
+                    ama tıklama `ekIndir`'den geçiyor: düz gezinme kilitli
+                    oturumda 401 gövdesine giderek SPA'yı yıkıyor ve
+                    yazılmamış not taslağını götürüyordu (bkz.
+                    `api.ekIndir`, dal incelemesi I3). */}
+                <a
+                  className="text-slate-700 underline"
+                  href={ekIndirmeYolu(ek.id)}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    setIndirmeHatasi(null)
+                    void ekIndir(ek).catch((x) =>
+                      setIndirmeHatasi(x instanceof Error ? x.message : 'Dosya indirilemedi.'),
+                    )
+                  }}
+                >
                   {ek.dosya_adi}
                 </a>{' '}
                 <span className="text-slate-500">
@@ -455,6 +474,11 @@ export function DanisanKarti({
         {ekForm.hata && (
           <p role="alert" className="mt-1 text-red-600">
             {ekForm.hata}
+          </p>
+        )}
+        {indirmeHatasi && (
+          <p role="alert" className="mt-1 text-red-600">
+            {indirmeHatasi}
           </p>
         )}
       </section>

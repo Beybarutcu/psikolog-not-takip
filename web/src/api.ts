@@ -28,21 +28,34 @@ export function yetkisizOlunca(dinleyici: YetkisizDinleyici): () => void {
   }
 }
 
+/**
+ * Başarısız bir yanıtı bu API'nin **tek** hata sözleşmesine çevirir.
+ *
+ * `istek`'ten ayrı bir fonksiyon olmasının nedeni `ekIndir`: o yol JSON
+ * değil **ham bayt** okuyor, ama 401 davranışı birebir aynı olmak zorunda.
+ * Kural tek yerde durmazsa ikinci yol onu er geç kaybeder (bu kod tabanında
+ * "kilit_ac düzeltildi, kilitle unutuldu" ile aynı hata sınıfı).
+ *
+ * 401'de dinleyiciler **throw'dan ÖNCE ve senkron** tetiklenir: `App` kilit
+ * ekranına dönmeyi buradan öğreniyor (`api.test.ts` sırayı ölçüyor).
+ */
+async function basarisizYanitiFirlat(yanit: Response): Promise<never> {
+  const govde: { hata?: string } = await yanit.json().catch(() => ({}))
+  const mesaj = govde.hata ?? 'Beklenmeyen bir hata oluştu.'
+  if (yanit.status === 401) {
+    for (const dinleyici of yetkisizDinleyiciler) dinleyici()
+    throw new YetkisizHata(mesaj)
+  }
+  throw new Error(mesaj)
+}
+
 async function istek<T>(yol: string, secenekler?: RequestInit): Promise<T> {
   const yanit = await fetch(yol, {
     headers: { 'content-type': 'application/json' },
     ...secenekler,
   })
-  const govde = await yanit.json().catch(() => ({}))
-  if (!yanit.ok) {
-    const mesaj = govde.hata ?? 'Beklenmeyen bir hata oluştu.'
-    if (yanit.status === 401) {
-      for (const dinleyici of yetkisizDinleyiciler) dinleyici()
-      throw new YetkisizHata(mesaj)
-    }
-    throw new Error(mesaj)
-  }
-  return govde as T
+  if (!yanit.ok) await basarisizYanitiFirlat(yanit)
+  return (await yanit.json().catch(() => ({}))) as T
 }
 
 export type Danisan = { id: number; ad_soyad: string; telefon: string | null; durum: string }
@@ -122,13 +135,77 @@ export const ARAMA_SINIRI = 50
 /**
  * Ek dosyanın indirme adresi.
  *
- * İçerik `fetch` ile belleğe **alınmaz**: sunucu `Content-Disposition:
- * attachment` + `X-Content-Type-Options: nosniff` gönderiyor, yani dosya
- * gömülü açılmıyor, indiriliyor. İçeriği JS'e çekmek o kararı arayüzde geri
- * alır ve danışan belgesini ekrana basılabilir hâle getirirdi.
+ * Bağlantının `href`'i olarak **duruyor** (bağlam menüsü, "bağlantıyı farklı
+ * kaydet", orta tıklama gerçek bir kaynak adresi görsün) ama tıklama
+ * `ekIndir`'e yönlendiriliyor — gerekçe orada.
  */
 export function ekIndirmeYolu(ekId: number): string {
   return `/api/ekler/${ekId}`
+}
+
+/**
+ * Ek dosyayı indirir — **düz gezinme yapmadan** (dal incelemesi I3).
+ *
+ * # Bulgu: kilitli oturumda bağlantı SPA'yı yıkıyordu
+ *
+ * Bağlantı düz bir `<a href="/api/ekler/{id}">` idi ve `download`
+ * özniteliği bilerek yoktu: başarı yolunda tarayıcı sunucunun
+ * `Content-Disposition: attachment` başlığını görüp indiriyor, sayfa
+ * gezinmiyordu. Ama **401 yolunda** o başlık yok (`guard::acik_baglanti`
+ * JSON gövde döner), dolayısıyla tarayıcı düz gezinme yapıyordu: SPA
+ * belgesi ham JSON ile değişiyor, React ağacı yok oluyor ve Görev 8'in
+ * bütün 401 tasarımı devre dışı kalıyordu. Taslak deposu bileşen ağacının
+ * dışında ama **aynı JS bağlamında**; o da gidiyordu.
+ *
+ * Somut senaryo: not yazılıyor → kart açılıp onam PDF'ine bakılıyor →
+ * 5 dk boşta kalma kilidi → bağlantıya tıklanıyor → uygulama gider,
+ * yazılmamış taslak metin gider.
+ *
+ * # Neden `istek()` yolu seçildi, "401'i de gezinmez yapmak" değil
+ *
+ * İki seçenek vardı. (a) Sunucunun 401 yanıtına da `Content-Disposition`
+ * koymak (ya da bağlantıya `download` özniteliği eklemek): gezinmeyi
+ * durdurur ama kullanıcıya **anlamsız bir JSON dosyası indirtir** ve SPA
+ * kilit ekranına HİÇ dönmez — oturumun kilitli olduğunu bir sonraki istek
+ * 401 alana kadar hiçbir yerden öğrenmez. (b) İndirmeyi `fetch`'ten
+ * geçirmek: 401 tam olarak diğer 25 uçla aynı mekanizmadan geçer,
+ * dinleyiciler senkron tetiklenir, `App` kilit ekranına döner ve taslak
+ * **bellekte kalır**. (b) seçildi.
+ *
+ * # "İçerik JS'e çekilmez" kararı ne oldu
+ *
+ * Eski gerekçe "içeriği JS'e çekmek dosyayı ekrana basılabilir hâle
+ * getirirdi" diyordu. Korunması gereken değişmez bu değil, onun sonucuydu:
+ * **danışan belgesi SPA içinde gömülü GÖSTERİLMEZ.** Bu burada da
+ * korunuyor: bayt dizisi hiçbir bileşene geçmiyor, hiçbir state'e
+ * yazılmıyor, `<img>/<iframe>/<object>` hedefi olmuyor; yalnızca geçici bir
+ * `blob:` URL'e sarılıp `download` özniteliğiyle diske yazdırılıyor ve URL
+ * hemen serbest bırakılıyor. Sunucunun `Content-Disposition: attachment` +
+ * `X-Content-Type-Options: nosniff` başlıkları **kaldırılmadı**; hâlâ
+ * gönderiliyor ve sunucu testleriyle sabitleniyor (bir gün bu dosya
+ * `window.open`'a dönerse tek savunma onlar olur).
+ *
+ * Dosya adı `download` özniteliğine konuyor: sunucunun RFC 5987 kodlu
+ * `filename*`'i `fetch` yolunda tarayıcıya ulaşmıyor.
+ */
+export async function ekIndir(ek: { id: number; dosya_adi: string }): Promise<void> {
+  const yanit = await fetch(ekIndirmeYolu(ek.id))
+  if (!yanit.ok) await basarisizYanitiFirlat(yanit)
+
+  const url = URL.createObjectURL(await yanit.blob())
+  try {
+    const bag = document.createElement('a')
+    bag.href = url
+    bag.download = ek.dosya_adi
+    bag.click()
+  } finally {
+    // Kişisel veri taşıyan bir blob URL'i sayfa ömrü boyunca canlı
+    // bırakmak, onu adresi bilen her koda açık tutardı (`DanisanKarti`'nin
+    // rapor blob'u için verilen kararın aynısı). Bir sonraki makro
+    // görevde serbest bırakılıyor: aynı karede iptal etmek bazı
+    // tarayıcılarda indirmeyi yarıda keser.
+    setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
 }
 
 export const takvimApi = {

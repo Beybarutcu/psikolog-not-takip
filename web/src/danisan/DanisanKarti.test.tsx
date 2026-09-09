@@ -282,6 +282,78 @@ describe('DanisanKarti — ekli dosyalar', () => {
     expect(bolum.querySelector('img')).toBeNull()
   })
 
+  // --- Dal incelemesi I3: bağlantı SPA'yı yıkmaz ----------------------
+  //
+  // Düz `<a href>` iken 401 yolunda (sunucu `Content-Disposition`
+  // göndermiyor) tarayıcı ham JSON'a GEZİNİYOR, React ağacı ve aynı JS
+  // bağlamındaki taslak deposu yok oluyordu.
+
+  it('I3: ek baglantisina tiklamak GEZINMEYI IPTAL eder ve fetchten gecer', async () => {
+    const cagrilanYollar: string[] = []
+    const gercekFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL) => {
+      cagrilanYollar.push(String(girdi))
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({}),
+        blob: async () => new Blob(['PDF']),
+      } as unknown as Response
+    }) as unknown as typeof fetch
+    try {
+      kur()
+      const bolum = screen.getByRole('region', { name: 'Ekli dosyalar' })
+      const onam = within(bolum).getByRole('link', { name: /onam-formu\.pdf/ })
+      // `href` DURUYOR: bağlam menüsü / "bağlantıyı farklı kaydet" gerçek
+      // bir kaynak adresi görmeli.
+      expect(onam.getAttribute('href')).toBe('/api/ekler/5')
+
+      // Tıklamanın varsayılan davranışı (gezinme) iptal ediliyor mu?
+      // Dinleyici DOCUMENT uzerinde: React 18 olaylari kok kapsayicida
+      // (RTL'in `div`i) dinliyor, yani ogeye takilan bir dinleyici
+      // React'in `preventDefault`undan ONCE calisir ve her zaman `false`
+      // gorurdu. `document` kokten sonradir.
+      let iptalEdildi = false
+      document.addEventListener('click', (e) => {
+        iptalEdildi = e.defaultPrevented
+      })
+      await userEvent.click(onam)
+
+      expect(iptalEdildi, 'tikla gezinme iptal edilmeli').toBe(true)
+      await waitFor(() => expect(cagrilanYollar).toContain('/api/ekler/5'))
+    } finally {
+      globalThis.fetch = gercekFetch
+    }
+  })
+
+  it('I3: 401de kart EKRANDAN SILINMEZ, hata gosterilir', async () => {
+    // Kilitli oturum senaryosu: eskiden burada SPA belgesi ham JSON ile
+    // değişiyordu. Artık kart yerinde ve kullanıcıya ne olduğu söyleniyor.
+    const gercekFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 401,
+      json: async () => ({ hata: 'Oturum kilitli. Lütfen parolanızı girin.' }),
+      blob: async () => new Blob([]),
+    })) as unknown as typeof fetch
+    try {
+      kur()
+      const bolum = screen.getByRole('region', { name: 'Ekli dosyalar' })
+      await userEvent.click(within(bolum).getByRole('link', { name: /onam-formu\.pdf/ }))
+
+      await waitFor(() =>
+        expect(screen.getByText('Oturum kilitli. Lütfen parolanızı girin.')).toBeDefined(),
+      )
+      // Kart hâlâ ekranda — "sayfa gezinmedi"nin birim testi karşılığı.
+      expect(screen.getByText('Ayşe Yılmaz')).toBeDefined()
+      expect(screen.getByRole('region', { name: 'Ekli dosyalar' })).toBeDefined()
+      // 401 gövdesi dosya olarak DA yazılmadı.
+      expect(uretilenBloblar).toHaveLength(0)
+    } finally {
+      globalThis.fetch = gercekFetch
+    }
+  })
+
   it('hic ek yoksa bilgilendirici bos durum gosterir', () => {
     kur({ ekler: [] })
     const bolum = screen.getByRole('region', { name: 'Ekli dosyalar' })

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ekIndirmeYolu, type EkBilgisi } from '../api'
+import { ekIndir, ekIndirmeYolu, type EkBilgisi } from '../api'
 import { tarihBicimle } from './bicim'
 
 /**
@@ -92,7 +92,21 @@ export function RizaBolumu({ rizaTarihi, rizaDosyaId, ekler, onKaydet }: Props) 
       {rizaDosyaId !== null &&
         (bagliEk ? (
           <p className="mt-1 text-sm">
-            <a className="text-slate-700 underline" href={ekIndirmeYolu(bagliEk.id)}>
+            {/* `href` duruyor (bağlam menüsü gerçek bir adres görsün) ama
+                tıklama `ekIndir`'den geçiyor: kilitli oturumda düz gezinme
+                SPA'yı yıkıyor ve yazılmamış not taslağını götürüyordu
+                (bkz. `api.ekIndir`, dal incelemesi I3). */}
+            <a
+              className="text-slate-700 underline"
+              href={ekIndirmeYolu(bagliEk.id)}
+              onClick={(e) => {
+                e.preventDefault()
+                setHata(null)
+                void ekIndir(bagliEk).catch((x) =>
+                  setHata(x instanceof Error ? x.message : 'Dosya indirilemedi.'),
+                )
+              }}
+            >
               İmzalı onam belgesi: {bagliEk.dosya_adi}
             </a>
           </p>

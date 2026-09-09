@@ -20,7 +20,7 @@ import { kurulumYap } from './yardimcilar'
  * Bu dosya artık KENDİ sunucusunda ve kendi veri dizininde koşuyor (bkz.
  * `playwright.config.ts` SUNUCULAR), yani `takvim.spec.ts` ile hiçbir şey
  * paylaşmıyor. Ama dosya İÇİNDEKİ testler aynı sunucuyu paylaşmaya devam
- * ediyor: her test kendi saatini (13:00–19:00) kullanıyor ki bir testin
+ * ediyor: her test kendi saatini (13:00–20:00) kullanıyor ki bir testin
  * "ilk boş hücre" seçimi bir öncekinin randevusuna denk gelip çakışma
  * uyarısı doğurmasın.
  *
@@ -369,10 +369,12 @@ test('danisan dosyasi: ek dosya, riza ve saklama suresi', async ({ page }) => {
   const ekBaglantisi = page.getByRole('link', { name: ekAdi, exact: true })
   await expect(ekBaglantisi).toBeVisible()
 
-  // İçerik GÖMÜLÜ AÇILMIYOR, indiriliyor: sunucu `Content-Disposition:
-  // attachment` gönderiyor. Bağlantıda `download` özniteliği YOK — indirme
-  // olayı yalnızca sunucunun başlığı sayesinde doğuyor, yani bu iddia o
-  // başlığı ölçüyor.
+  // İçerik GÖMÜLÜ AÇILMIYOR, indiriliyor. Tıklama `api.ekIndir`'den
+  // geçiyor (dal incelemesi I3): `fetch` + geçici `blob:` URL + `download`
+  // özniteliği. Ölçülen şey değişmedi — indirme gerçekleşiyor, dosya adı ve
+  // içeriği doğru, SAYFA GEZİNMİYOR. Sunucunun
+  // `Content-Disposition: attachment` + `nosniff` başlıkları kaldırılmadı;
+  // onlar `server/tests/notlar_api.rs`'te ayrıca sabitleniyor.
   const [ekIndirme] = await Promise.all([
     page.waitForEvent('download'),
     ekBaglantisi.click(),
@@ -435,11 +437,15 @@ test('randevu silme onayi, gidecek NOTLARI da soyler (dal incelemesi I2)', async
   // Sayı SUNUCUDAN geliyor: arayüz notların varlığını başka hiçbir yerden
   // bilmiyor (özel not yalnızca sekmeye geçilince yükleniyor ve panel
   // kapanınca gidiyor).
-  await expect(page.getByText(/2 not .*da kalıcı olarak silinecek/)).toBeVisible()
-  await expect(page.getByText(/geri getirilemez/)).toBeVisible()
-  // Uyarı NOT İÇERİĞİNİ taşımıyor: onay kutusu bir sayı gösterir, metin değil.
-  await expect(page.getByText('CASCADEKANARYA19')).toHaveCount(0)
-  await expect(page.getByText('CASCADEOZEL19')).toHaveCount(0)
+  const uyari = page.getByText(/2 not .*da kalıcı olarak silinecek/)
+  await expect(uyari).toBeVisible()
+  await expect(uyari).toContainText(/geri getirilemez/)
+  // Uyarı NOT İÇERİĞİNİ taşımıyor: onay kutusu bir SAYI gösterir, metin
+  // değil. İddia uyarı paragrafına KAPSANMIŞ: seans paneli hâlâ açık ve
+  // notların metni editör alanlarında meşru olarak duruyor; sayfa geneli
+  // bir sayım yanlış şeyi ölçerdi.
+  await expect(uyari).not.toContainText('CASCADEKANARYA19')
+  await expect(uyari).not.toContainText('CASCADEOZEL19')
 
   // Vazgeçmek gerçekten vazgeçiyor: randevu ve notu yerinde.
   await page.getByRole('button', { name: 'Vazgeç', exact: true }).click()
@@ -456,4 +462,60 @@ test('randevu silme onayi, gidecek NOTLARI da soyler (dal incelemesi I2)', async
   // "Sonuç bulunamadı." bir SENKRONİZASYON BARİYERİ (bkz. arama testi):
   // sunucu bu sorguyu yanıtladı ve sonuç boştu.
   await expect(page.getByText('Sonuç bulunamadı.')).toBeVisible()
+})
+
+test('KILITLI oturumda ek baglantisi SPA yi yikmaz (dal incelemesi I3)', async ({ page }) => {
+  await kurulumYap(page)
+  const ad = 'Ceren Yalçın'
+  const ekAdi = 'kilit-onami.txt'
+
+  await danisanVeRandevu(page, ad, '20:00')
+  await danisanKartiAc(page, ad)
+  await page.getByLabel('Yüklenecek dosya').setInputFiles({
+    name: ekAdi,
+    mimeType: 'text/plain',
+    buffer: Buffer.from('Onam belgesinin taranmis metni.', 'utf-8'),
+  })
+  await page.getByLabel('Dosya türü').selectOption('onam')
+  await page.getByRole('button', { name: 'Dosyayı yükle' }).click()
+  const ekBaglantisi = page.getByRole('link', { name: ekAdi, exact: true })
+  await expect(ekBaglantisi).toBeVisible()
+
+  // İŞLEM ÖNCESİ DURUM: kart açık ve URL uygulamanın kökü. Aşağıdaki
+  // "gezinmedi" iddiası ancak bu satırla anlamlı.
+  const kokAdres = page.url()
+  expect(kokAdres).not.toContain('/api/')
+
+  // Sunucuyu kilitle ama SPA'yı kilit ekranına DÜŞÜRME: `POST /api/kilitle`
+  // doğrudan çağrılıyor, arayüzdeki "Kilitle" düğmesine basılmıyor. Boşta
+  // kalma kilidinin gerçek hâli tam olarak budur — sunucu kilitli, ekranda
+  // hâlâ kart duruyor, kullanıcı bağlantıya tıklıyor. (Oturum sunucuda
+  // süreç-genelinde tutuluyor; `page.request` ile atılan kilit, sayfanın
+  // isteklerini de kilitler.)
+  const kilit = await page.request.post('/api/kilitle')
+  expect(kilit.status()).toBe(200)
+  // ÖN KOŞUL: ekranda hâlâ kart var (kilit ekranı henüz gelmedi), yani
+  // tıklama gerçekten "kilitli sunucu + açık ekran" durumunda oluyor.
+  await expect(page.getByRole('heading', { name: ad, exact: true })).toBeVisible()
+
+  await ekBaglantisi.click()
+
+  // ASIL İDDİA — SAYFA GEZİNMEDİ. Düz `<a href>` iken 401 yanıtında
+  // `Content-Disposition` olmadığı için tarayıcı ham JSON'a gidiyor, SPA
+  // belgesi değişiyor, React ağacı ve (aynı JS bağlamındaki) not taslağı
+  // deposu yok oluyordu. Adres çubuğu bunu tek başına ölçer.
+  await expect(page).toHaveURL(kokAdres)
+
+  // ...ve 401 merkezi dinleyiciye ulaştığı için uygulama kilit ekranına
+  // DÖNÜYOR. Bu React'in çizdiği bir ekran: gezinme olsaydı belge ham JSON
+  // olurdu ve bu öğelerin hiçbiri bulunamazdı. ("Kilitle" düğmesine hiç
+  // basılmadı — kilit ekranını getiren tek şey bağlantının 401'i.)
+  await expect(page.getByRole('heading', { name: 'Kilitli' })).toBeVisible()
+  await expect(page.getByLabel('Ana parola')).toBeVisible()
+
+  // ARTI YÖN: kilit açılınca uygulama normale dönüyor — yani yukarıdaki
+  // kilit ekranı bir çökme değil, tasarlanmış 401 davranışı.
+  await page.getByLabel('Ana parola').fill('gizliparola')
+  await page.getByRole('button', { name: 'Aç' }).click()
+  await expect(page.getByRole('heading', { name: 'Terapi Notları' })).toBeVisible()
 })

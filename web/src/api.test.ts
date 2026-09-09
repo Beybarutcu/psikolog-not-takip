@@ -4,6 +4,7 @@ import {
   aramaApi,
   ARAMA_SINIRI,
   danisanApi,
+  ekIndir,
   ekIndirmeYolu,
   notApi,
   ozelNotApi,
@@ -279,10 +280,90 @@ describe('danisanApi — danışan dosyası ve ekler', () => {
   })
 
   it('ekIndirmeYolu tam olarak /api/ekler/{id} üretir', () => {
-    // İçerik `fetch` ile belleğe ALINMIYOR: sunucu
-    // `Content-Disposition: attachment` gönderiyor ve tarayıcı dosyayı
-    // indiriyor. İçeriği JS'e çekmek onu ekrana basılabilir hâle getirirdi.
+    // Bağlantının `href`'i bu adres olarak DURUYOR (bağlam menüsü gerçek
+    // bir kaynak görsün); tıklama `ekIndir`'den geçiyor (bkz. I3).
     expect(ekIndirmeYolu(9)).toBe('/api/ekler/9')
+  })
+})
+
+// --- Dal incelemesi I3: ek indirme DÜZ GEZİNME yapmaz ------------------
+//
+// Bağlantı düz bir `<a href>` idi. Başarı yolunda sunucunun
+// `Content-Disposition: attachment` başlığı gezinmeyi engelliyordu; 401
+// yolunda o başlık YOK, dolayısıyla tarayıcı ham JSON'a GEZİNİYOR, SPA
+// belgesi değişiyor, React ağacı ve (aynı JS bağlamındaki) taslak deposu
+// yok oluyordu.
+describe('ekIndir — kilitli oturumda SPA yıkılmaz', () => {
+  const gercekOlustur = URL.createObjectURL
+  const gercekSerbest = URL.revokeObjectURL
+  let uretilenBloblar: Blob[]
+
+  beforeEach(() => {
+    uretilenBloblar = []
+    URL.createObjectURL = vi.fn((b: Blob) => {
+      uretilenBloblar.push(b)
+      return `blob:ek-${uretilenBloblar.length}`
+    }) as unknown as typeof URL.createObjectURL
+    URL.revokeObjectURL = vi.fn() as unknown as typeof URL.revokeObjectURL
+  })
+
+  afterEach(() => {
+    URL.createObjectURL = gercekOlustur
+    URL.revokeObjectURL = gercekSerbest
+  })
+
+  function ikiliSunucu(yanit: { ok: boolean; status?: number; govde?: unknown; bayt?: string }) {
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, s?: RequestInit) => {
+      cagrilar.push({ yol: String(girdi), method: s?.method ?? 'GET', govde: null })
+      return {
+        ok: yanit.ok,
+        status: yanit.status ?? (yanit.ok ? 200 : 500),
+        json: async () => yanit.govde ?? {},
+        blob: async () => new Blob([yanit.bayt ?? '']),
+      } as unknown as Response
+    }) as unknown as typeof fetch
+  }
+
+  it('ARTI YON: basarili indirme GET /api/ekler/{id} yapar ve dosya adini verir', async () => {
+    ikiliSunucu({ ok: true, bayt: 'PDF-BAYTLARI' })
+
+    await ekIndir({ id: 9, dosya_adi: 'onam.pdf' })
+
+    expect(cagrilar).toEqual([{ yol: '/api/ekler/9', method: 'GET', govde: null }])
+    expect(uretilenBloblar).toHaveLength(1)
+    expect(await uretilenBloblar[0].text()).toBe('PDF-BAYTLARI')
+  })
+
+  it('401de dinleyiciyi throwdan ONCE tetikler ve YetkisizHata firlatir', async () => {
+    // Kilit mekanizmasının TAM OLARAK diğer 25 uçla aynı olması gereken
+    // yer burası: `App` kilit ekranına dönmeyi bu dinleyiciden öğreniyor.
+    ikiliSunucu({ ok: false, status: 401, govde: { hata: 'Oturum kilitli.' } })
+    const sira: string[] = []
+    const birak = yetkisizOlunca(() => sira.push('dinleyici'))
+
+    await expect(
+      ekIndir({ id: 9, dosya_adi: 'onam.pdf' }).catch((e) => {
+        sira.push('throw')
+        throw e
+      }),
+    ).rejects.toBeInstanceOf(YetkisizHata)
+
+    expect(sira).toEqual(['dinleyici', 'throw'])
+    birak()
+  })
+
+  it('401de HICBIR blob uretilmez', async () => {
+    // Gezinme yerine hata: 401 gövdesi (JSON) diske ya da ekrana bir dosya
+    // olarak DA gitmemeli.
+    ikiliSunucu({ ok: false, status: 401, govde: { hata: 'Oturum kilitli.' } })
+    await expect(ekIndir({ id: 9, dosya_adi: 'onam.pdf' })).rejects.toThrow('Oturum kilitli.')
+    expect(uretilenBloblar).toHaveLength(0)
+  })
+
+  it('404te de firlatir, gezinmez', async () => {
+    ikiliSunucu({ ok: false, status: 404, govde: { hata: 'Kayıt bulunamadı.' } })
+    await expect(ekIndir({ id: 9, dosya_adi: 'onam.pdf' })).rejects.toThrow('Kayıt bulunamadı.')
+    expect(uretilenBloblar).toHaveLength(0)
   })
 })
 

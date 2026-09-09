@@ -59,6 +59,8 @@ const resmiNotlar: SeansNotu[] = [
   {
     appointment_id: 1,
     client_id: 12,
+    // `SeansNotu` alanı (Görev 9 incelemesi I3): randevunun başlangıcı.
+    seans_zamani: '2026-09-07T10:00',
     sablon: 'dap',
     icerik: 'RESMI-NOT-ICERIGI',
     guncelleme_zamani: '2026-09-07T12:00:00Z',

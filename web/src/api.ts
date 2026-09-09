@@ -217,10 +217,19 @@ export type SeriCakismasi = {
   kontrol_edilen_hafta: number
 }
 
-/** `GET/PUT /api/randevular/{id}/not` yanıtı (sunucudaki `SeansNotu`). */
+/**
+ * `GET/PUT /api/randevular/{id}/not` yanıtı (sunucudaki `SeansNotu`).
+ *
+ * `seans_zamani` ile `guncelleme_zamani` AYNI ŞEY DEĞİLDİR ve karıştırmak
+ * ekranda sessiz bir yalan üretir: birincisi randevunun başlangıcı
+ * (`appointments.baslangic`, listenin sıralama anahtarı), ikincisi notun son
+ * düzenlenme anı. Geçen ayki bir seansın notu bugün düzeltilmiş olabilir.
+ */
 export type SeansNotu = {
   appointment_id: number
   client_id: number
+  /** Randevunun başlangıcı — yerel naive biçim (`2026-09-07T10:00`). */
+  seans_zamani: string
   sablon: string
   icerik: string
   guncelleme_zamani: string
@@ -270,8 +279,18 @@ export const notApi = {
   // `limit` çağıranın kararı ve zorunlu: sunucu `?limit=`i 1..=200 aralığına
   // kırpıyor, ama varsayılanı 50. "Son üç seans" gösteren bir panelin 50
   // seans notunun TAM İÇERİĞİNİ indirmesi için hiçbir sebep yok.
-  danisanNotlari: (danisanId: number, limit: number) =>
-    istek<SeansNotu[]>(`/api/danisanlar/${danisanId}/notlar?limit=${limit}`),
+  //
+  // `once` ("bu seans başlamadan önce") OPSİYONEL: verilmezse kesme yok.
+  // "Önceki seans notları" paneli bunu geçmek ZORUNDADIR — geçmeyen bir
+  // çağrı, açık seanstan SONRAKİ seansların notlarını "önceki" diye
+  // gösterir (bkz. `store::notes::danisan_notlari` belgesindeki `once`
+  // başlığı). Veri raporu ise bilerek geçmez: KVKK md. 11 "elimdeki her
+  // şey" demektir.
+  danisanNotlari: (danisanId: number, limit: number, once?: string) =>
+    istek<SeansNotu[]>(
+      `/api/danisanlar/${danisanId}/notlar?limit=${limit}` +
+        (once === undefined ? '' : `&once=${encodeURIComponent(once)}`),
+    ),
 }
 
 /**

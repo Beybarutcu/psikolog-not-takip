@@ -601,6 +601,100 @@ async fn not_listesi_limiti_rota_katmaninda_kirpilir() {
     assert_eq!(say(&buyuk), 3);
 }
 
+/// İnceleme I2: `?once=` ile "bu seanstan önce" kesmesi.
+///
+/// Kesme olmadan "Önceki seans notları" paneli, terapist geçmiş bir seansı
+/// açtığında o seanstan SONRAKİ notları gösteriyordu.
+#[tokio::test]
+async fn not_listesi_once_ile_sonraki_seanslari_kesmeli() {
+    let (_d, s) = kurulu_state().await;
+    let cid = danisan_ekle(&s, "Ayse Yilmaz").await;
+    let mut kimlikler = Vec::new();
+    for gun in ["2026-06-01", "2026-07-01", "2026-08-01"] {
+        let rid = randevu_ekle(&s, cid, gun).await;
+        cagir(
+            &s,
+            "PUT",
+            &format!("/api/randevular/{rid}/not"),
+            Some(json!({"sablon":"dap","icerik": format!("not {gun}")})),
+        )
+        .await;
+        kimlikler.push(rid);
+    }
+
+    // ON KOSUL / ARTI YON: `once` verilmeyince kesme YOK -- veri raporu
+    // (KVKK md. 11) tum notlari almaya devam ediyor.
+    let (kod, hepsi) = cagir(&s, "GET", &format!("/api/danisanlar/{cid}/notlar"), None).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(hepsi.as_array().unwrap().len(), 3, "once yoksa hepsi donmeli");
+
+    // Ortadaki seans aciliyor: SONRAKI (agustos) listeye giremez.
+    let (kod, kesmeli) = cagir(
+        &s,
+        "GET",
+        &format!("/api/danisanlar/{cid}/notlar?limit=50&once=2026-07-01T14:00"),
+        None,
+    )
+    .await;
+    assert_eq!(kod, StatusCode::OK);
+    let icerikler: Vec<&str> =
+        kesmeli.as_array().unwrap().iter().map(|n| n["icerik"].as_str().unwrap()).collect();
+    assert_eq!(
+        icerikler,
+        vec!["not 2026-06-01"],
+        "yalnizca ONCEKI seansin notu donmeli: {icerikler:?}"
+    );
+
+    // Bicimi tutmayan bir `once` enjeksiyon degil, bos liste uretir.
+    let (kod, sacma) = cagir(
+        &s,
+        "GET",
+        &format!("/api/danisanlar/{cid}/notlar?once=0000-00-00T00:00'%20OR%20'1'='1"),
+        None,
+    )
+    .await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(sacma.as_array().unwrap().len(), 0, "anlamsiz kesme bos liste vermeli");
+}
+
+/// İnceleme I3: sıralama anahtarı (`a.baslangic`) yanıtta görünür olmalı.
+/// Ekrandaki tek tarih `guncelleme_zamani` iken liste sık sık sırasız
+/// görünüyordu — ikisi farklı niceliklerdir.
+#[tokio::test]
+async fn not_yanitlari_seans_zamanini_tasir() {
+    let (_d, s) = kurulu_state().await;
+    let cid = danisan_ekle(&s, "Ayse Yilmaz").await;
+    let haziran = randevu_ekle(&s, cid, "2026-06-01").await;
+    let agustos = randevu_ekle(&s, cid, "2026-08-01").await;
+    for rid in [haziran, agustos] {
+        cagir(
+            &s,
+            "PUT",
+            &format!("/api/randevular/{rid}/not"),
+            Some(json!({"sablon":"dap","icerik":"metin"})),
+        )
+        .await;
+    }
+
+    let (_, liste) = cagir(&s, "GET", &format!("/api/danisanlar/{cid}/notlar"), None).await;
+    let zamanlar: Vec<&str> =
+        liste.as_array().unwrap().iter().map(|n| n["seans_zamani"].as_str().unwrap()).collect();
+    assert_eq!(
+        zamanlar,
+        vec!["2026-08-01T14:00", "2026-06-01T14:00"],
+        "liste `a.baslangic DESC` ile geliyor; o anahtar yanitta gorunmeli"
+    );
+
+    // Tek not ucu da tasir (editor basliginin ve raporun ayni kaynagi).
+    let (_, tek) = cagir(&s, "GET", &format!("/api/randevular/{haziran}/not"), None).await;
+    assert_eq!(tek["seans_zamani"].as_str().unwrap(), "2026-06-01T14:00");
+    // Notu OLMAYAN randevu da: bos not donerken de alan dolu gelmeli.
+    let bos = randevu_ekle(&s, cid, "2026-09-07").await;
+    let (_, bos_not) = cagir(&s, "GET", &format!("/api/randevular/{bos}/not"), None).await;
+    assert_eq!(bos_not["icerik"].as_str().unwrap(), "");
+    assert_eq!(bos_not["seans_zamani"].as_str().unwrap(), "2026-09-07T14:00");
+}
+
 #[tokio::test]
 async fn arama_limiti_de_kirpilir() {
     // KURULUM AYRIMI TASIMALI. Bu testin onceki hali TEK eslesen kayit

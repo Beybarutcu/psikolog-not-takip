@@ -70,6 +70,14 @@ pub struct NotIstegi {
 #[derive(Deserialize)]
 pub struct ListeSorgusu {
     pub limit: Option<i64>,
+    /// `?once=<baslangic>` — yalnızca bu andan **önce** başlamış seansların
+    /// notları. Biçim doğrulanmaz ve doğrulanmamalı: değer doğrudan bir
+    /// `?` parametresi olarak SQL'e gider (dizge karşılaştırması), yani
+    /// anlamsız bir değer boş liste üretir, enjeksiyon üretmez. Sunucunun
+    /// tarih biçimini burada ikinci kez (farklı) yorumlaması, arayüzün
+    /// gönderdiği `appointments.baslangic` ile sessizce uyuşmayan bir
+    /// kesme riski olurdu.
+    pub once: Option<String>,
 }
 
 /// `?limit=` değerini `1..=AZAMI_NOT_LIMITI` aralığına kırpar.
@@ -115,18 +123,25 @@ pub async fn kaydet(
     Ok(Json(not))
 }
 
-/// `GET /api/danisanlar/{id}/notlar?limit=` — danışanın **resmî** notları.
+/// `GET /api/danisanlar/{id}/notlar?limit=&once=` — danışanın **resmî**
+/// notları.
 ///
 /// Özel not bu listeye giremez: `danisan_notlari` yalnızca `progress_notes`
 /// tablosunu okur ve bu handler başka hiçbir kaynağa bakmaz.
+///
+/// `once` **opsiyoneldir ve varsayılanı yoktur**: verilmediğinde danışanın
+/// tüm notları döner. Zorunlu kılınsaydı veri raporu (KVKK md. 11, "elimde
+/// olan her şey") bir kesme uydurmak zorunda kalırdı. Kesmeyi geçmek
+/// "önceki seans notları" panelinin işidir ve o panel gerçekten geçiyor.
 pub async fn danisan_listesi(
     State(s): State<AppState>,
     Path(id): Path<i64>,
     Sorgu(q): Sorgu<ListeSorgusu>,
 ) -> Result<Json<Vec<SeansNotu>>, ApiHata> {
     let conn = acik_baglanti(&s)?;
-    let liste = danisan_notlari(&conn, id, limiti_kirp(q.limit), Cihaz::Masaustu)
-        .map_err(depo_hatasi)?;
+    let liste =
+        danisan_notlari(&conn, id, limiti_kirp(q.limit), q.once.as_deref(), Cihaz::Masaustu)
+            .map_err(depo_hatasi)?;
     Ok(Json(liste))
 }
 

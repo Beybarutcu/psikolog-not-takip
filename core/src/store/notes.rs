@@ -121,10 +121,26 @@ const VARLIK_OZEL: &str = "private_note";
 /// (`Randevu::Debug` ile aynı muhakeme). İkisi de `<gizli>` basılır.
 /// `Serialize` ise arayüz için **tüm** alanları içerir — ayrım kasıtlıdır:
 /// arayüzün veriye ihtiyacı var, panik mesajının yok.
+///
+/// # `seans_zamani` neden var
+///
+/// `danisan_notlari` listeyi `a.baslangic DESC` ile sıralıyor, yani sıralama
+/// anahtarı **seansın tarihi**. Bu alan eklenmeden önce yanıtta o tarih
+/// YOKTU: arayüzün elindeki tek tarih `guncelleme_zamani` idi ("son
+/// düzenleme") ve ikisi aynı şey değildir — geçen ayki bir seansın notu
+/// bugün düzeltilmiş olabilir. Sonuç, ekranda **sırasız görünen** bir
+/// listeydi ve panelin var oluş sebebi olan "hangisi son seanstı" sorusu
+/// panelden cevaplanamıyordu.
+///
+/// Değer YETKİLİ KAYNAKTAN okunur: `appointments.baslangic`. Not tablosunda
+/// kopyası tutulmaz — randevu başka bir saate taşınırsa kopya bayatlardı.
 #[derive(Clone, Serialize)]
 pub struct SeansNotu {
     pub appointment_id: i64,
     pub client_id: i64,
+    /// Notun bağlı olduğu randevunun başlangıcı (`appointments.baslangic`,
+    /// yerel naive biçim). Sıralama anahtarının ekrandaki karşılığı.
+    pub seans_zamani: String,
     pub sablon: String,
     pub icerik: String,
     pub guncelleme_zamani: String,
@@ -135,6 +151,11 @@ impl std::fmt::Debug for SeansNotu {
         f.debug_struct("SeansNotu")
             .field("appointment_id", &self.appointment_id)
             .field("client_id", &"<gizli>")
+            // Seans zamani da `<gizli>`: `client_id` ile ayni muhakeme --
+            // "su kisi su saatte terapideydi" bilgisi, notun varligiyla
+            // birlesince tek basina bir sizintidir (`Randevu::Debug` de
+            // `baslangic`i basmaz).
+            .field("seans_zamani", &"<gizli>")
             .field("sablon", &self.sablon)
             .field("icerik", &"<gizli>")
             .field("guncelleme_zamani", &self.guncelleme_zamani)
@@ -172,11 +193,20 @@ fn simdi() -> String {
         .expect("zaman bicimlendirilemedi")
 }
 
-/// Randevunun danışanını bulur; randevu yoksa `Bulunamadi`.
-fn randevunun_danisani(conn: &Connection, appointment_id: i64) -> Result<i64, DepoHatasi> {
-    conn.query_row("SELECT client_id FROM appointments WHERE id = ?1", [appointment_id], |r| {
-        r.get(0)
-    })
+/// Randevunun danışanını ve başlangıcını bulur; randevu yoksa `Bulunamadi`.
+///
+/// İkisi TEK sorguda okunuyor: `SeansNotu::seans_zamani` yetkili kaynaktan
+/// (`appointments.baslangic`) gelmeli ve zaten yapılan varlık kontrolü o
+/// satırı okuduğu için ikinci bir sorguya gerek yok.
+fn randevunun_danisani(
+    conn: &Connection,
+    appointment_id: i64,
+) -> Result<(i64, String), DepoHatasi> {
+    conn.query_row(
+        "SELECT client_id, baslangic FROM appointments WHERE id = ?1",
+        [appointment_id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )
     .optional()?
     .ok_or(DepoHatasi::Bulunamadi)
 }
@@ -191,7 +221,7 @@ pub fn not_getir(
     appointment_id: i64,
     cihaz: Cihaz,
 ) -> Result<SeansNotu, DepoHatasi> {
-    let client_id = randevunun_danisani(conn, appointment_id)?;
+    let (client_id, seans_zamani) = randevunun_danisani(conn, appointment_id)?;
 
     let mevcut = conn
         .query_row(
@@ -213,12 +243,18 @@ pub fn not_getir(
     )?;
 
     Ok(match mevcut {
-        Some((sablon, icerik, zaman)) => {
-            SeansNotu { appointment_id, client_id, sablon, icerik, guncelleme_zamani: zaman }
-        }
+        Some((sablon, icerik, zaman)) => SeansNotu {
+            appointment_id,
+            client_id,
+            seans_zamani,
+            sablon,
+            icerik,
+            guncelleme_zamani: zaman,
+        },
         None => SeansNotu {
             appointment_id,
             client_id,
+            seans_zamani,
             sablon: VARSAYILAN_SABLON.to_string(),
             icerik: String::new(),
             guncelleme_zamani: simdi(),
@@ -245,7 +281,7 @@ pub fn not_kaydet(
         // Sablon adi loga girmez; yalnizca cagirana donen hata mesajinda yer alir.
         return Err(DepoHatasi::GecersizVeri(format!("Geçersiz not şablonu: {sablon}")));
     }
-    let client_id = randevunun_danisani(conn, appointment_id)?;
+    let (client_id, seans_zamani) = randevunun_danisani(conn, appointment_id)?;
     let zaman = simdi();
 
     let tx = conn.unchecked_transaction()?;
@@ -276,6 +312,7 @@ pub fn not_kaydet(
     Ok(SeansNotu {
         appointment_id,
         client_id,
+        seans_zamani,
         sablon: sablon.to_string(),
         icerik: icerik.to_string(),
         guncelleme_zamani: zaman,
@@ -330,7 +367,7 @@ pub fn ozel_not_kaydet(
     icerik: &str,
     cihaz: Cihaz,
 ) -> Result<OzelNot, DepoHatasi> {
-    let client_id = randevunun_danisani(conn, appointment_id)?;
+    let (client_id, _) = randevunun_danisani(conn, appointment_id)?;
     let zaman = simdi();
 
     let tx = conn.unchecked_transaction()?;
@@ -399,15 +436,40 @@ pub fn ozel_not_kaydet(
 /// olur. Bu bilinçli: depo katmanı çağıranın limitine karışmaz. Sınırı
 /// koymak rotanın işidir (Görev 7).
 ///
+/// # `once`: "bu seanstan ÖNCE" kesmesi
+/// `Some(baslangic)` verildiğinde yalnızca **o andan önce başlamış**
+/// seansların notları döner (`a.baslangic < ?`). Bu, arayüzdeki "Önceki
+/// seans notları" panelinin doğru olabilmesinin tek yoludur: kesme
+/// olmadan sorgu danışanın TÜM notlarını en yeniden eskiye veriyordu ve
+/// terapist üç ay önceki bir seansı açtığında (takvim hafta hafta geriye
+/// gidiyor, olağan bir işlem) sol sütun o seanstan **SONRAKİ** notları
+/// "önceki seans notları" başlığı altında gösteriyordu — kullanıcı not
+/// yazarken henüz yaşanmamış seansların içeriğini "geçen seansta
+/// konuşulan" diye okuyordu.
+///
+/// Kesme **kesin küçüktür**: aynı `baslangic`'e sahip bir randevu "önce"
+/// sayılmaz, dolayısıyla seansın kendi notu bu listeye giremez. Aynı
+/// dakikaya denk gelen ikinci bir randevu da düşer; çağıran taraf bunu
+/// telafi etmek için bir fazlasını isteyip kendi kimliğini eleyebilir
+/// (arayüz öyle yapıyor).
+///
+/// `None` ise kesme uygulanmaz: danışanın tüm notları (veri raporu bunu
+/// istiyor — KVKK md. 11 "elimdeki her şey" demek, "şu tarihe kadarkiler"
+/// değil).
+///
 /// Log: liste görüntülemeleri birleştirilir, ama `varlik_id` **hangi
 /// danışanın** listesi olduğunu taşır (`liste:<client_id>`). Sabit bir
 /// `"liste"` kimliği kullanılsaydı birleştirme, farklı danışanların
 /// dosyalarına erişimi tek satırın arkasına saklardı — `audit`'in
 /// "birleştirme farklı bir kaydı gizlemez" kuralının ihlali olurdu.
+/// `once` birleştirme anahtarına GİRMEZ: aynı danışanın dosyasına iki
+/// farklı kesmeyle bakmak yine aynı dosyaya bakmaktır ve farklı bir kaydı
+/// gizlemez.
 pub fn danisan_notlari(
     conn: &Connection,
     client_id: i64,
     limit: i64,
+    once: Option<&str>,
     cihaz: Cihaz,
 ) -> Result<Vec<SeansNotu>, DepoHatasi> {
     // Once varlik kontrolu, SONRA log: olmayan bir danisan silinemez bir
@@ -419,22 +481,28 @@ pub fn danisan_notlari(
         return Err(DepoHatasi::Bulunamadi);
     }
 
+    // `once` NULL ise kesme yok: `?3 IS NULL OR a.baslangic < ?3` tek bir
+    // hazir ifadeyle iki durumu da karsilar. Iki ayri SQL dizgesi
+    // tutulsaydi, birine eklenen bir duzeltme (ornegin `client_id`'nin
+    // `a.` uzerinden okunmasi kurali) otekinde unutulabilirdi.
     let mut stmt = conn.prepare(
-        "SELECT p.appointment_id, a.client_id, p.sablon, p.icerik, p.guncelleme_zamani
+        "SELECT p.appointment_id, a.client_id, a.baslangic, p.sablon, p.icerik,
+                p.guncelleme_zamani
          FROM progress_notes p
          JOIN appointments a ON a.id = p.appointment_id
-         WHERE a.client_id = ?1
+         WHERE a.client_id = ?1 AND (?3 IS NULL OR a.baslangic < ?3)
          ORDER BY a.baslangic DESC, p.appointment_id DESC
          LIMIT ?2",
     )?;
     let notlar = stmt
-        .query_map(rusqlite::params![client_id, limit], |r| {
+        .query_map(rusqlite::params![client_id, limit, once], |r| {
             Ok(SeansNotu {
                 appointment_id: r.get(0)?,
                 client_id: r.get(1)?,
-                sablon: r.get(2)?,
-                icerik: r.get(3)?,
-                guncelleme_zamani: r.get(4)?,
+                seans_zamani: r.get(2)?,
+                sablon: r.get(3)?,
+                icerik: r.get(4)?,
+                guncelleme_zamani: r.get(5)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -572,7 +640,7 @@ mod tests {
         not_kaydet(&c, rid, "dap", "resmi icerik", Cihaz::Masaustu).unwrap();
         ozel_not_kaydet(&c, rid, "GIZLI_HIPOTEZ", Cihaz::Masaustu).unwrap();
 
-        let notlar = danisan_notlari(&c, cid, 50, Cihaz::Masaustu).unwrap();
+        let notlar = danisan_notlari(&c, cid, 50, None, Cihaz::Masaustu).unwrap();
         assert_eq!(notlar.len(), 1);
         // len == 1 iddiasinin bos vektorle tatmin edilmesi mumkun degil; ustelik
         // donen TEK satirin resmi not oldugunu da acikca dogruluyoruz. Bu ikisi
@@ -603,10 +671,119 @@ mod tests {
         not_kaydet(&c, rid1, "dap", "eski", Cihaz::Masaustu).unwrap();
         not_kaydet(&c, r2.id, "dap", "yeni", Cihaz::Masaustu).unwrap();
 
-        let notlar = danisan_notlari(&c, cid, 50, Cihaz::Masaustu).unwrap();
+        let notlar = danisan_notlari(&c, cid, 50, None, Cihaz::Masaustu).unwrap();
         assert_eq!(notlar.len(), 2, "iki notun ikisi de donmeli");
         assert_eq!(notlar[0].icerik, "yeni");
         assert_eq!(notlar[1].icerik, "eski");
+    }
+
+    /// Ayni danisana, verilen baslangicla bir randevu ve ona bir not acar.
+    fn seansli_not(c: &rusqlite::Connection, cid: i64, baslangic: &str, icerik: &str) -> i64 {
+        let saat: i32 = baslangic[11..13].parse().unwrap();
+        let r = randevu_olustur(
+            c,
+            &YeniRandevu {
+                client_id: cid,
+                baslangic: baslangic.into(),
+                bitis: format!("{}{:02}{}", &baslangic[..11], saat + 1, &baslangic[13..]),
+                ucret: None,
+            },
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+        not_kaydet(c, r.id, "dap", icerik, Cihaz::Masaustu).unwrap();
+        r.id
+    }
+
+    #[test]
+    fn danisan_notlari_once_verilince_sonraki_seanslari_dondurmez() {
+        // Inceleme I2: kesme yokken terapist uc ay onceki bir seansi
+        // actiginda sol sutun o seanstan SONRAKI notlari "Onceki seans
+        // notlari" basligi altinda gosteriyordu -- kullanici henuz
+        // yasanmamis seanslarin icerigini "gecen seansta konusulan" diye
+        // okuyordu.
+        let (_d, c, cid, _rid) = kurulum();
+        seansli_not(&c, cid, "2026-06-01T10:00", "COK ESKI");
+        let orta = seansli_not(&c, cid, "2026-07-01T10:00", "ACIK OLAN SEANS");
+        seansli_not(&c, cid, "2026-08-01T10:00", "HENUZ YASANMAMIS");
+
+        // On kosul: kesmesiz cagri gercekten SONRAKI notu da veriyor.
+        let kesmesiz = danisan_notlari(&c, cid, 50, None, Cihaz::Masaustu).unwrap();
+        assert!(
+            kesmesiz.iter().any(|n| n.icerik == "HENUZ YASANMAMIS"),
+            "on kosul: kesme olmadan sonraki seans da donuyor"
+        );
+
+        let kesmeli =
+            danisan_notlari(&c, cid, 50, Some("2026-07-01T10:00"), Cihaz::Masaustu).unwrap();
+        let icerikler: Vec<&str> = kesmeli.iter().map(|n| n.icerik.as_str()).collect();
+        assert!(
+            !icerikler.contains(&"HENUZ YASANMAMIS"),
+            "kesme sonrasi seanslar listeye giremez: {icerikler:?}"
+        );
+        // ARTI YON: kesme "her seyi eleyen" bir filtre degil -- gercekten
+        // onceki seans donuyor. Bu iddia olmadan `LIMIT 0` de testi gecerdi.
+        assert_eq!(icerikler, vec!["COK ESKI"], "onceki seans donmeli");
+        // Ve seansin KENDI notu da disarida: kesme `<` (kesin kucuk).
+        assert!(!kesmeli.iter().any(|n| n.appointment_id == orta));
+    }
+
+    #[test]
+    fn danisan_notlari_seans_zamanini_yetkili_kaynaktan_dondurur() {
+        // Inceleme I3: liste `a.baslangic DESC` ile geliyordu ama ekranda
+        // gorunen tek tarih `guncelleme_zamani` idi ("Son duzenleme").
+        // Ikisi farkli nicelikler oldugu icin ekrandaki tarihler sirasiz
+        // gorunuyordu; siralama anahtari yanitta YOKTU.
+        let (_d, c, cid, _rid) = kurulum();
+        let eski = seansli_not(&c, cid, "2026-06-01T10:00", "haziran");
+        seansli_not(&c, cid, "2026-08-01T10:00", "agustos");
+
+        let notlar = danisan_notlari(&c, cid, 50, None, Cihaz::Masaustu).unwrap();
+        let siralama: Vec<&str> = notlar.iter().map(|n| n.seans_zamani.as_str()).collect();
+        assert_eq!(
+            siralama,
+            // `kurulum()`un randevusunun notu yok, listeye girmez.
+            vec!["2026-08-01T10:00", "2026-06-01T10:00"],
+            "donen `seans_zamani` listenin gercek siralama anahtari olmali"
+        );
+
+        // Yetkili kaynak `appointments.baslangic`: randevu tasininca deger
+        // TASINIR. Notta bir kopyasi tutulsaydi bayatlardi.
+        // `bitis > baslangic` CHECK'i var; ikisi birlikte tasiniyor.
+        c.execute(
+            "UPDATE appointments SET baslangic = ?1, bitis = ?2 WHERE id = ?3",
+            rusqlite::params!["2026-06-02T09:30", "2026-06-02T10:30", eski],
+        )
+        .unwrap();
+        let sonra = danisan_notlari(&c, cid, 50, None, Cihaz::Masaustu).unwrap();
+        let tasinan = sonra.iter().find(|n| n.appointment_id == eski).unwrap();
+        assert_eq!(tasinan.seans_zamani, "2026-06-02T09:30");
+
+        // `not_getir` de ayni yetkili kaynagi okur.
+        assert_eq!(not_getir(&c, eski, Cihaz::Masaustu).unwrap().seans_zamani, "2026-06-02T09:30");
+        // `not_kaydet`in dondurdugu kayit da.
+        assert_eq!(
+            not_kaydet(&c, eski, "dap", "guncel", Cihaz::Masaustu).unwrap().seans_zamani,
+            "2026-06-02T09:30"
+        );
+    }
+
+    #[test]
+    fn danisan_notlari_once_birlestirme_anahtarini_degistirmez() {
+        // Ayni danisanin dosyasina iki farkli kesmeyle bakmak yine ayni
+        // dosyaya bakmaktir: `once` birlestirme anahtarina girseydi her
+        // farkli kesme ayri bir SILINEMEZ satir birakirdi ve panelde hafta
+        // hafta gezinmek sinirsiz log gurultusu uretirdi.
+        let (_d, c, cid, _rid) = kurulum();
+        danisan_notlari(&c, cid, 50, None, Cihaz::Masaustu).unwrap();
+        danisan_notlari(&c, cid, 50, Some("2026-07-01T10:00"), Cihaz::Masaustu).unwrap();
+        danisan_notlari(&c, cid, 50, Some("2026-08-01T10:00"), Cihaz::Masaustu).unwrap();
+
+        assert_eq!(
+            log_sayisi(&c, "goruntuleme", "progress_note", &format!("liste:{cid}")),
+            1,
+            "farkli kesmeler ayni birlestirme satirinda kalmali"
+        );
     }
 
     #[test]
@@ -617,7 +794,7 @@ mod tests {
         // Okuma yollari da loga yaziyor; onlar da denetlenmeli.
         not_getir(&c, rid, Cihaz::Masaustu).unwrap();
         ozel_not_getir(&c, rid, Cihaz::Masaustu).unwrap();
-        danisan_notlari(&c, cid, 50, Cihaz::Masaustu).unwrap();
+        danisan_notlari(&c, cid, 50, None, Cihaz::Masaustu).unwrap();
 
         let kayitlar = son_kayitlar(&c, 100).unwrap();
         assert!(!kayitlar.is_empty(), "on kosul: denetlenecek log satiri olmali");
@@ -714,7 +891,7 @@ mod tests {
         not_kaydet(&c, rid, "dap", "x", Cihaz::Masaustu).unwrap();
         ozel_not_getir(&c, rid, Cihaz::Masaustu).unwrap();
         ozel_not_kaydet(&c, rid, "y", Cihaz::Masaustu).unwrap();
-        danisan_notlari(&c, cid, 50, Cihaz::Masaustu).unwrap();
+        danisan_notlari(&c, cid, 50, None, Cihaz::Masaustu).unwrap();
 
         for (eylem, varlik, varlik_id) in yollar {
             assert_eq!(
@@ -838,7 +1015,7 @@ mod tests {
         .unwrap();
 
         for _ in 0..30 {
-            danisan_notlari(&c, cid, 50, Cihaz::Masaustu).unwrap();
+            danisan_notlari(&c, cid, 50, None, Cihaz::Masaustu).unwrap();
         }
         assert_eq!(
             log_sayisi(&c, "goruntuleme", VARLIK_RESMI, &format!("liste:{cid}")),
@@ -846,7 +1023,7 @@ mod tests {
             "30 liste yenilemesi tam olarak 1 satir uretmeli"
         );
 
-        danisan_notlari(&c, ikinci.id, 50, Cihaz::Masaustu).unwrap();
+        danisan_notlari(&c, ikinci.id, 50, None, Cihaz::Masaustu).unwrap();
         assert_eq!(
             log_sayisi(&c, "goruntuleme", VARLIK_RESMI, &format!("liste:{}", ikinci.id)),
             1,
@@ -977,7 +1154,7 @@ mod tests {
         let (_d, c, cid, rid) = kurulum();
         ozel_not_kaydet(&c, rid, "GIZLI_HIPOTEZ", Cihaz::Masaustu).unwrap();
 
-        let notlar = danisan_notlari(&c, cid, 50, Cihaz::Masaustu).unwrap();
+        let notlar = danisan_notlari(&c, cid, 50, None, Cihaz::Masaustu).unwrap();
         assert!(notlar.is_empty(), "yalnizca ozel not varken resmi not listesi bos olmali");
     }
 
@@ -1003,8 +1180,8 @@ mod tests {
         .unwrap();
 
         // On kosul: not su anda A'nin dosyasinda.
-        assert_eq!(danisan_notlari(&c, a_id, 50, Cihaz::Masaustu).unwrap().len(), 1);
-        assert_eq!(danisan_notlari(&c, b.id, 50, Cihaz::Masaustu).unwrap().len(), 0);
+        assert_eq!(danisan_notlari(&c, a_id, 50, None, Cihaz::Masaustu).unwrap().len(), 1);
+        assert_eq!(danisan_notlari(&c, b.id, 50, None, Cihaz::Masaustu).unwrap().len(), 0);
 
         randevu_guncelle(
             &c,
@@ -1028,13 +1205,13 @@ mod tests {
             .unwrap();
         assert_eq!(kopya, a_id, "on kosul: denormalize kopya eskimis kalmali");
 
-        let a_notlari = danisan_notlari(&c, a_id, 50, Cihaz::Masaustu).unwrap();
+        let a_notlari = danisan_notlari(&c, a_id, 50, None, Cihaz::Masaustu).unwrap();
         assert!(
             a_notlari.is_empty(),
             "randevu tasindiktan sonra not ESKI danisanin dosyasinda gorunmemeli"
         );
 
-        let b_notlari = danisan_notlari(&c, b.id, 50, Cihaz::Masaustu).unwrap();
+        let b_notlari = danisan_notlari(&c, b.id, 50, None, Cihaz::Masaustu).unwrap();
         assert_eq!(b_notlari.len(), 1, "not YENI danisanin dosyasinda gorunmeli");
         assert_eq!(b_notlari[0].icerik, "COK_GIZLI_SEANS_ICERIGI");
         assert_eq!(
@@ -1055,7 +1232,7 @@ mod tests {
 
         for yok in [90001, 90002, 90003] {
             assert!(matches!(
-                danisan_notlari(&c, yok, 50, Cihaz::Masaustu).unwrap_err(),
+                danisan_notlari(&c, yok, 50, None, Cihaz::Masaustu).unwrap_err(),
                 DepoHatasi::Bulunamadi
             ));
         }
@@ -1089,7 +1266,7 @@ mod tests {
         .unwrap();
         not_kaydet(&c, r2.id, "dap", "ikinci danisan", Cihaz::Masaustu).unwrap();
 
-        let notlar = danisan_notlari(&c, cid, 50, Cihaz::Masaustu).unwrap();
+        let notlar = danisan_notlari(&c, cid, 50, None, Cihaz::Masaustu).unwrap();
         assert_eq!(notlar.len(), 1);
         assert_eq!(notlar[0].icerik, "birinci danisan");
     }
@@ -1113,8 +1290,8 @@ mod tests {
         for rid in [rid1, rid1 + 1, rid1 + 2] {
             not_kaydet(&c, rid, "dap", &format!("not {rid}"), Cihaz::Masaustu).unwrap();
         }
-        assert_eq!(danisan_notlari(&c, cid, 50, Cihaz::Masaustu).unwrap().len(), 3);
-        assert_eq!(danisan_notlari(&c, cid, 2, Cihaz::Masaustu).unwrap().len(), 2);
+        assert_eq!(danisan_notlari(&c, cid, 50, None, Cihaz::Masaustu).unwrap().len(), 3);
+        assert_eq!(danisan_notlari(&c, cid, 2, None, Cihaz::Masaustu).unwrap().len(), 2);
     }
 
     // --- Sablon kapali kumesi -------------------------------------------
@@ -1188,6 +1365,9 @@ mod tests {
         let not = SeansNotu {
             appointment_id: 481_516,
             client_id: 42,
+            // Seans zamani da hassas: "su kisi su saatte terapideydi".
+            // Yil rakamlari `appointment_id` ile karismasin diye 1999.
+            seans_zamani: "1999-03-23T19:30".into(),
             sablon: "dap".into(),
             icerik: "COK_GIZLI_SEANS_ICERIGI".into(),
             guncelleme_zamani: "2026-09-07T10:00:00Z".into(),
@@ -1195,6 +1375,7 @@ mod tests {
         let metin = format!("{not:?}");
         assert!(!metin.contains("COK_GIZLI_SEANS_ICERIGI"), "Debug icerigi basmamali: {metin}");
         assert!(!metin.contains("42"), "Debug client_id'yi basmamali: {metin}");
+        assert!(!metin.contains("1999"), "Debug seans zamanini basmamali: {metin}");
         assert!(metin.contains("<gizli>"));
         assert!(
             metin.contains("appointment_id: 481516"),
@@ -1204,6 +1385,10 @@ mod tests {
         // Serialize ise TUM alanlari icerir -- ayrim kasitli.
         let json = serde_json::to_string(&not).unwrap();
         assert!(json.contains("COK_GIZLI_SEANS_ICERIGI"), "arayuzun veriye ihtiyaci var");
+        assert!(
+            json.contains("\"seans_zamani\":\"1999-03-23T19:30\""),
+            "arayuz siralama anahtarini ekranda gosterebilmeli: {json}"
+        );
     }
 
     #[test]
@@ -1234,7 +1419,7 @@ mod tests {
         let metin = format!("{ozel:?}");
         assert!(!metin.contains("COK_GIZLI_OZEL_NOT"), "Result Debug'i icerigi basmamali: {metin}");
 
-        let liste = danisan_notlari(&c, _cid, 50, Cihaz::Masaustu);
+        let liste = danisan_notlari(&c, _cid, 50, None, Cihaz::Masaustu);
         let metin = format!("{liste:?}");
         assert!(!metin.contains("COK_GIZLI_SEANS_ICERIGI"), "Vec<SeansNotu> Debug'i icerigi basmamali: {metin}");
     }

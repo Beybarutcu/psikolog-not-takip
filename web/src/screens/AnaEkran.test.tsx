@@ -39,6 +39,7 @@ let sunucuOzelNotlari: Record<number, string>
 let sunucuGecmisi: {
   appointment_id: number
   client_id: number
+  seans_zamani: string
   sablon: string
   icerik: string
   guncelleme_zamani: string
@@ -66,14 +67,25 @@ function notYaniti(yol: string, method: string, govde: unknown): Response | null
     const id = Number(resmi[1])
     if (method === 'PUT') sunucuNotlari[id] = govde as NotKaydi
     const kayit = sunucuNotlari[id] ?? { sablon: 'dap', icerik: '' }
+    const randevu = id === randevuB.id ? randevuB : randevuA
     return jsonYanit({
       appointment_id: id,
-      client_id: id === randevuB.id ? randevuB.client_id : randevuA.client_id,
+      client_id: randevu.client_id,
+      seans_zamani: randevu.baslangic,
       ...kayit,
       guncelleme_zamani: ZAMAN,
     })
   }
-  if (/^\/api\/danisanlar\/\d+\/notlar/.test(yol)) return jsonYanit(sunucuGecmisi)
+  if (/^\/api\/danisanlar\/\d+\/notlar/.test(yol)) {
+    // Sunucudaki `?once=` kesmesi taklit ediliyor: kesme UYGULANMAZSA
+    // "Önceki seans notları" başlığı altında SONRAKİ seansların notları
+    // gösterilir (inceleme I2). Taklit bunu uygulamasaydı, çağıran tarafın
+    // `once` geçmemesi testlerde hiçbir fark yaratmazdı.
+    const once = new URL(yol, 'http://x').searchParams.get('once')
+    return jsonYanit(
+      once === null ? sunucuGecmisi : sunucuGecmisi.filter((n) => n.seans_zamani < once),
+    )
+  }
   return null
 }
 
@@ -1025,26 +1037,31 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
   it('gecmis liste bu seansin KENDI notunu icermez ve en fazla ucu gosterir', async () => {
     sunucuGecmisi = [
       {
-        appointment_id: randevuA.id, client_id: 1, sablon: 'dap',
-        icerik: 'BU SEANSIN NOTU', guncelleme_zamani: ZAMAN,
+        appointment_id: randevuA.id, client_id: 1, seans_zamani: randevuA.baslangic,
+        sablon: 'dap', icerik: 'BU SEANSIN NOTU', guncelleme_zamani: ZAMAN,
       },
       {
-        appointment_id: 90, client_id: 1, sablon: 'dap',
-        icerik: 'birinci gecmis', guncelleme_zamani: ZAMAN,
+        appointment_id: 90, client_id: 1, seans_zamani: '2026-08-31T10:00',
+        sablon: 'dap', icerik: 'birinci gecmis', guncelleme_zamani: ZAMAN,
       },
       {
-        appointment_id: 89, client_id: 1, sablon: 'soap',
-        icerik: 'ikinci gecmis', guncelleme_zamani: ZAMAN,
+        appointment_id: 89, client_id: 1, seans_zamani: '2026-08-24T10:00',
+        sablon: 'soap', icerik: 'ikinci gecmis', guncelleme_zamani: ZAMAN,
       },
       {
-        appointment_id: 88, client_id: 1, sablon: 'serbest',
-        icerik: 'ucuncu gecmis', guncelleme_zamani: ZAMAN,
+        appointment_id: 88, client_id: 1, seans_zamani: '2026-08-17T10:00',
+        sablon: 'serbest', icerik: 'ucuncu gecmis', guncelleme_zamani: ZAMAN,
       },
     ]
     await seansAc()
 
-    // Sunucudan bir FAZLASI isteniyor (bu seansın kendi notu düşecek).
-    expect(istekler.some((i) => i.yol === '/api/danisanlar/1/notlar?limit=4')).toBe(true)
+    // Sunucudan bir FAZLASI isteniyor (aynı dakikaya denk gelen ikinci bir
+    // randevu `once` kesmesine takılıp da liste ikiye düşmesin diye).
+    expect(
+      istekler.some((i) =>
+        i.yol.startsWith('/api/danisanlar/1/notlar?limit=4'),
+      ),
+    ).toBe(true)
 
     const gecmis = screen.getByRole('region', { name: 'Önceki seans notları' })
     expect(within(gecmis).getAllByRole('button')).toHaveLength(3)
@@ -1052,6 +1069,38 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
 
     await userEvent.click(within(gecmis).getAllByRole('button')[0])
     expect(within(gecmis).getByText('birinci gecmis')).toBeDefined()
+  })
+
+  // İnceleme I2: "Önceki seans notları" SONRAKİ seansları listeliyordu.
+  // Hiçbir test EN YENİ OLMAYAN bir randevuyu açmadığı için yakalanmamıştı;
+  // bu test tam olarak onu yapıyor (takvimde geriye gitmek olağan bir iş).
+  it('gecmiste bir seans acilinca SONRAKI seanslarin notlari listelenmez', async () => {
+    sunucuGecmisi = [
+      {
+        appointment_id: 88, client_id: 1, seans_zamani: '2026-08-17T10:00',
+        sablon: 'dap', icerik: 'GERCEKTEN ONCEKI', guncelleme_zamani: ZAMAN,
+      },
+      {
+        appointment_id: 300, client_id: 1, seans_zamani: '2026-11-02T10:00',
+        sablon: 'dap', icerik: 'HENUZ YASANMAMIS', guncelleme_zamani: ZAMAN,
+      },
+    ]
+    await seansAc()
+
+    // İstek kesmeyi TAŞIMALI; kesme sunucunun işi, ama geçmek çağıranın.
+    const gecmisIstegi = istekler.find((i) => i.yol.includes('/notlar'))
+    expect(gecmisIstegi).toBeDefined()
+    expect(gecmisIstegi!.yol).toContain(`once=${encodeURIComponent(randevuA.baslangic)}`)
+
+    const gecmis = screen.getByRole('region', { name: 'Önceki seans notları' })
+    // Başlık "Önceki seans notları" ve gösterilen tek not gerçekten önceki.
+    expect(within(gecmis).getAllByRole('button')).toHaveLength(1)
+    expect(gecmis.textContent).toContain('17.08.2026')
+    // Bu seanstan SONRAKİ seansın notu ekranın hiçbir yerinde yok — açılınca
+    // içeriği de görünmemeli.
+    await userEvent.click(within(gecmis).getAllByRole('button')[0])
+    expect(within(gecmis).getByText('GERCEKTEN ONCEKI')).toBeDefined()
+    expect(document.body.textContent).not.toContain('HENUZ YASANMAMIS')
   })
 
   it('"Geldi" isaretlemek not isteklerini YENIDEN ATMAZ', async () => {

@@ -22,6 +22,7 @@ const randevu: Randevu = {
 const resmiNot: SeansNotu = {
   appointment_id: 101,
   client_id: 1,
+  seans_zamani: '2026-09-07T10:00',
   sablon: 'dap',
   icerik: 'bu seansin resmi notu',
   guncelleme_zamani: '2026-09-07T06:00:00Z',
@@ -37,23 +38,26 @@ const ozelNot: OzelNot = {
   guncelleme_zamani: '2026-09-07T06:00:00Z',
 }
 
-// Sunucu `ORDER BY a.baslangic DESC` uyguluyor ama yanıtta seans tarihi
-// YOK; yalnızca `guncelleme_zamani` var (geçen ayki bir seansın notu bugün
-// düzeltilmiş olabilir). Bileşen listeyi o alana göre yeniden sıralarsa
-// sunucunun bildiği gerçek seans sırası sessizce bozulur.
+// Sunucu `ORDER BY a.baslangic DESC` uyguluyor. Bileşen listeyi
+// `guncelleme_zamani`'na göre yeniden sıralarsa sunucunun bildiği gerçek
+// seans sırası sessizce bozulur.
 //
 // Kurulum bilerek şöyle: geliş sırası `guncelleme_zamani`'na göre NE ARTAN
 // NE AZALAN sıraya denk geliyor. Tek bir yöne göre kurulsaydı, ters yöndeki
 // sıralama mutasyonu testi yeşil bırakırdı — sıralama anahtarının testte
 // görünmez kalması (sekizinci biçim) tam olarak budur.
 //
-//   geliş:  DAP(05.09) · SOAP(31.08) · Serbest(20.09)
-//   artan:  SOAP · DAP · Serbest
-//   azalan: Serbest · DAP · SOAP
+//   geliş (seans):  31.08 · 24.08 · 17.08   (a.baslangic DESC — doğru sıra)
+//   son düzenleme:  05.09 · 31.08 · 20.09   (ne artan ne azalan)
+//
+// İnceleme I3'ün ölçtüğü şey de bu kurulumda görünür: son düzenleme
+// tarihleri sırasız, seans tarihleri sıralı. Ekranda YALNIZCA son düzenleme
+// gösterilseydi (eski hâl) kullanıcı sırasız bir liste görürdü.
 const gecmisNotlar: SeansNotu[] = [
   {
     appointment_id: 90,
     client_id: 1,
+    seans_zamani: '2026-08-31T10:00',
     sablon: 'dap',
     icerik: 'gecen hafta konusulanlar',
     guncelleme_zamani: '2026-09-05T06:00:00Z',
@@ -61,6 +65,7 @@ const gecmisNotlar: SeansNotu[] = [
   {
     appointment_id: 80,
     client_id: 1,
+    seans_zamani: '2026-08-24T10:00',
     sablon: 'soap',
     icerik: 'iki hafta onceki seans',
     guncelleme_zamani: '2026-08-31T06:00:00Z',
@@ -68,6 +73,7 @@ const gecmisNotlar: SeansNotu[] = [
   {
     appointment_id: 70,
     client_id: 1,
+    seans_zamani: '2026-08-17T10:00',
     sablon: 'serbest',
     icerik: 'uc hafta onceki seans',
     guncelleme_zamani: '2026-09-20T06:00:00Z',
@@ -103,10 +109,44 @@ afterEach(() => {
 describe('SeansPaneli — geçmiş bağlam', () => {
   it('sol tarafta son seanslarin notlari gorunur', () => {
     kur()
-    // Başlık (şablon adı) + tarih listesi.
-    expect(screen.getByRole('button', { name: /DAP.*05\.09\.2026/ })).toBeDefined()
-    expect(screen.getByRole('button', { name: /SOAP.*31\.08\.2026/ })).toBeDefined()
-    expect(screen.getByRole('button', { name: /Serbest.*20\.09\.2026/ })).toBeDefined()
+    // Başlık: seans tarihi + şablon adı + son düzenleme.
+    expect(screen.getByRole('button', { name: /31\.08\.2026 10:00.*DAP.*05\.09\.2026/ })).toBeDefined()
+    expect(screen.getByRole('button', { name: /24\.08\.2026 10:00.*SOAP.*31\.08\.2026/ })).toBeDefined()
+    expect(
+      screen.getByRole('button', { name: /17\.08\.2026 10:00.*Serbest.*20\.09\.2026/ }),
+    ).toBeDefined()
+  })
+
+  // İnceleme I3: sıralama anahtarı ekranda görünmüyordu. Liste
+  // `a.baslangic DESC` ile geliyor ama ekrandaki tek tarih "Son düzenleme"
+  // idi ve o alan sıralı DEĞİL — terapist "hangisi son seanstı" sorusuna
+  // panelden cevap alamıyordu.
+  it('her satirda SEANS TARIHI gorunur ve o tarihler ekranda sirali', () => {
+    kur()
+    const gecmis = screen.getByRole('region', { name: 'Önceki seans notları' })
+    const metinler = within(gecmis)
+      .getAllByRole('button')
+      .map((d) => d.textContent ?? '')
+
+    // Seans tarihleri ekranda, ve azalan sırada.
+    const seansTarihleri = metinler.map((m) => /Seans: (\d{2}\.\d{2}\.\d{4})/.exec(m)?.[1])
+    expect(seansTarihleri).toEqual(['31.08.2026', '24.08.2026', '17.08.2026'])
+
+    // "Son düzenleme" hâlâ var ama SIRALI DEĞİL: ekrandaki tek tarih o
+    // olsaydı liste sırasız görünürdü. Bu iddia olmadan üstteki, seans
+    // tarihinin gerçekten sıralama anahtarı olduğunu göstermezdi.
+    const duzenlemeler = metinler.map((m) => /Son düzenleme: (\d{2}\.\d{2}\.\d{4})/.exec(m)?.[1])
+    expect(duzenlemeler).toEqual(['05.09.2026', '31.08.2026', '20.09.2026'])
+  })
+
+  it('seans tarihi zaman dilimine gore KAYMAZ (Date kullanilmiyor)', () => {
+    // Gece yarısına yakın bir seans: `new Date('2026-08-31T00:30')` yerel
+    // saate göre yorumlanır ve UTC'ye çevrilirse tarih bir gün kayar.
+    // Kayan şey listenin sıralama anahtarı olurdu.
+    kur({
+      gecmisNotlar: [{ ...gecmisNotlar[0], seans_zamani: '2026-08-31T00:30' }],
+    })
+    expect(screen.getByRole('button', { name: /Seans: 31\.08\.2026 00:30/ })).toBeDefined()
   })
 
   it('liste SUNUCUDAN geldigi sirada basilir, guncelleme zamanina gore yeniden siralanmaz', () => {

@@ -71,6 +71,18 @@ describe('notApi — resmî seans notu', () => {
     expect(cagrilar[0].yol).toBe('/api/danisanlar/3/notlar?limit=4')
     expect(cagrilar[0].method).toBe('GET')
   })
+
+  it('danisanNotlari `once` verilince kesmeyi sorguya koyar, verilmeyince KOYMAZ', async () => {
+    // `once` opsiyonel ve varsayılanı YOK: veri raporu (KVKK md. 11) tüm
+    // notları istiyor, "önceki seans notları" paneli ise kesmeyi geçmek
+    // zorunda (bkz. `store::notes::danisan_notlari` belgesi).
+    await notApi.danisanNotlari(3, 4, '2026-09-07T10:00')
+    expect(cagrilar[0].yol).toBe('/api/danisanlar/3/notlar?limit=4&once=2026-09-07T10%3A00')
+
+    await notApi.danisanNotlari(3, 200)
+    expect(cagrilar[1].yol).toBe('/api/danisanlar/3/notlar?limit=200')
+    expect(cagrilar[1].yol).not.toContain('once')
+  })
 })
 
 describe('ozelNotApi — özel not', () => {

@@ -24,6 +24,7 @@ const notlar: SeansNotu[] = [
   {
     appointment_id: 101,
     client_id: 12,
+    seans_zamani: '2026-09-07T10:00',
     sablon: 'dap',
     icerik: 'BIRINCI-SEANS-METNI',
     guncelleme_zamani: '2026-09-07T12:00:00Z',
@@ -31,6 +32,7 @@ const notlar: SeansNotu[] = [
   {
     appointment_id: 102,
     client_id: 12,
+    seans_zamani: '2026-09-14T10:00',
     sablon: 'soap',
     icerik: 'IKINCI-SEANS-METNI',
     guncelleme_zamani: '2026-09-14T12:00:00Z',

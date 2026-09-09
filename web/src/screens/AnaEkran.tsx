@@ -22,12 +22,14 @@ import { RandevuPaneli } from '../takvim/RandevuPaneli'
 /**
  * Seans panelinde gösterilecek geçmiş not sayısı.
  *
- * Sunucudan bir FAZLASI isteniyor: `danisan_notlari` danışanın TÜM resmî
- * notlarını seans tarihine göre veriyor ve o listede **bu seansın kendi
- * notu** da bulunur (kaydedilmişse). Onu düşürdükten sonra elde tam bu kadar
- * kalsın diye limit bir artırılıyor. Sunucunun varsayılanı (50) burada
- * kullanılmıyor: "son üç seans" gösteren bir panelin 50 seans notunun tam
- * içeriğini indirmesi için sebep yok.
+ * Sunucudan bir FAZLASI isteniyor. Liste `?once=<bu seansın başlangıcı>`
+ * kesmesiyle geliyor ve o kesme KESİN küçüktür, yani seansın kendi notu
+ * zaten dışarıda. Fazlalık **aynı dakikaya denk gelen ikinci bir randevu**
+ * için: o randevu da kesmeye takılır ve istemcideki `appointment_id`
+ * süzgeci de onu düşüremez; bir fazlası olmadan liste sessizce ikiye
+ * inerdi. Sunucunun varsayılanı (50) burada kullanılmıyor: "son üç seans"
+ * gösteren bir panelin 50 seans notunun tam içeriğini indirmesi için
+ * sebep yok.
  */
 const GECMIS_SEANS_SAYISI = 3
 
@@ -219,6 +221,11 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   // (bkz. `store::audit` ve aşağıdaki `durumDegis` gerekçesi).
   const seansId = seciliRandevu?.id ?? null
   const seansDanisanId = seciliRandevu?.client_id ?? null
+  // Geçmiş listesinin kesmesi: "bu seans BAŞLAMADAN önce". Efektin
+  // bağımlılığı olduğu için kimlikler gibi ilkel bir değer olarak
+  // türetiliyor (nesneye bağlanmak her yeniden yüklemede üç istek daha
+  // demekti — bkz. yukarıdaki gerekçe).
+  const seansBaslangici = seciliRandevu?.baslangic ?? null
 
   // Ekrana giden veri RENDER SIRASINDA türetiliyor: state başka bir seansa
   // aitse boş sayılır. Sıfırlamayı efekte bırakmak, seçim değişimiyle
@@ -227,7 +234,7 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   const seans = seansVerisi.id === seansId ? seansVerisi : BOS_SEANS
 
   useEffect(() => {
-    if (seansId === null || seansDanisanId === null) return
+    if (seansId === null || seansDanisanId === null || seansBaslangici === null) return
     let iptal = false
 
     void (async () => {
@@ -238,7 +245,13 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
         const [gelenNot, gelenOzel, gelenGecmis] = await Promise.all([
           notApi.notGetir(seansId),
           ozelNotApi.getir(seansId),
-          notApi.danisanNotlari(seansDanisanId, GECMIS_SEANS_SAYISI + 1),
+          // `once` ZORUNLU: bu panelin başlığı "Önceki seans notları" ve
+          // kesme olmadan liste, açık seanstan SONRAKİ seansların notlarını
+          // da içeriyordu. Terapist takvimde hafta hafta geriye gidip eski
+          // bir seansı açtığında (olağan bir işlem) sol sütun henüz
+          // yaşanmamış seansların içeriğini "geçen seansta konuşulan" diye
+          // gösteriyordu.
+          notApi.danisanNotlari(seansDanisanId, GECMIS_SEANS_SAYISI + 1, seansBaslangici),
         ])
         if (iptal) return
         setSeansVerisi({
@@ -247,7 +260,10 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
           ozelNot: gelenOzel,
           // Bu seansın KENDİ notu geçmiş listesine girmez: üstte düzenlenen
           // metnin bayat bir kopyası, "geçen seansta ne konuşulmuştu"
-          // sorusuna cevap değil.
+          // sorusuna cevap değil. Sunucudaki `once` kesmesi (KESİN küçük)
+          // bunu zaten sağlıyor; buradaki süzgeç AYNI DAKİKAYA denk gelen
+          // ikinci bir randevu için duruyor ve `GECMIS_SEANS_SAYISI + 1`
+          // tam o düşme ihtimalini karşılıyor.
           gecmisNotlar: gelenGecmis
             .filter((n) => n.appointment_id !== seansId)
             .slice(0, GECMIS_SEANS_SAYISI),
@@ -274,7 +290,7 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
     return () => {
       iptal = true
     }
-  }, [seansId, seansDanisanId, seansTazeleme])
+  }, [seansId, seansDanisanId, seansBaslangici, seansTazeleme])
 
   // Kayıt, editörün BAĞLI OLDUĞU randevunun kimliğine gider; `seciliRandevu`
   // okunmuyor. Unmount tahliyesi (seans değişiminde) bu fonksiyonu çağırdığı

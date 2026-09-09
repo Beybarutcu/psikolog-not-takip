@@ -23,13 +23,27 @@ import { SABLON_ADLARI, sablonKodMu } from './sablon'
  * # Sıralama SUNUCUDAN gelir, burada yeniden sıralanmaz
  *
  * Sunucu `ORDER BY a.baslangic DESC` uyguluyor — yani sıralama anahtarı
- * **seansın tarihi**. Ama yanıtta o alan YOK: `SeansNotu` yalnızca notun
- * `guncelleme_zamani`'nı taşıyor. İkisi aynı şey değildir (geçen ayki bir
- * seansın notu bugün düzeltilmiş olabilir). Burada `guncelleme_zamani`'na
- * göre yeniden sıralamak, sunucunun bildiği gerçek seans sırasını sessizce
- * bozardı; liste bu yüzden GELDİĞİ SIRADA basılıyor ve gösterilen tarih
- * ne olduğunu söyleyen bir etiketle ("Son düzenleme") veriliyor — "seans
- * tarihi" diye sunulsaydı yanlış bilgi olurdu.
+ * **seansın tarihi**. Liste bu yüzden GELDİĞİ SIRADA basılıyor;
+ * `guncelleme_zamani`'na göre yeniden sıralamak sunucunun bildiği gerçek
+ * seans sırasını sessizce bozardı.
+ *
+ * # Sıralama anahtarı EKRANDA görünür
+ *
+ * Önceden yanıtta seans tarihi yoktu ve ekrandaki tek tarih
+ * `guncelleme_zamani` idi ("Son düzenleme"). İkisi farklı nicelikler
+ * olduğu için ekrandaki tarihler sık sık **sırasız görünüyordu** ve
+ * panelin var oluş sebebi olan "hangisi son seanstı" sorusu panelden
+ * cevaplanamıyordu. Artık başlıkta **seans tarihi** duruyor (sıralamanın
+ * dayandığı alan) ve son düzenleme ikincil satırda, ne olduğunu söyleyen
+ * etiketiyle kalıyor — ikisinden birini diğerinin yerine sunmak yanlış
+ * bilgi olurdu.
+ *
+ * # Liste gerçekten "önceki" seanslardır
+ *
+ * Kesme sunucuda: çağıran taraf `?once=<bu seansın başlangıcı>` geçer
+ * (bkz. `api.ts::notApi.danisanNotlari`). Bu bileşen kesme yapmaz —
+ * yapsaydı, sunucudan gelen `limit` kadar satırın bir kısmını atıp
+ * "son üç seans" yerine daha azını gösterirdi.
  */
 type Props = {
   notlar: SeansNotu[]
@@ -40,6 +54,27 @@ function tarihBicimle(iso: string): string {
   if (Number.isNaN(d.getTime())) return iso
   const iki = (n: number) => String(n).padStart(2, '0')
   return `${iki(d.getDate())}.${iki(d.getMonth() + 1)}.${d.getFullYear()}`
+}
+
+/**
+ * `"2026-09-05T10:00"` -> `"05.09.2026 10:00"`.
+ *
+ * `seans_zamani` sunucuda yerel naive biçimde duruyor; `Date`'e
+ * ÇEVİRMİYORUZ — dizgeyi parçalamak burada tek doğru yol (aynı gerekçe
+ * `takvim/hafta.ts` ve `SeansPaneli::seansZamani`'nda). `Date` kullanmak,
+ * saat farkına göre tarihi bir gün kaydırabilirdi ve kaydırılan şey
+ * listenin SIRALAMA ANAHTARI olurdu.
+ *
+ * Biçimi tutmayan bir değer olduğu gibi basılır: uydurulmuş bir tarih
+ * göstermek, ham dizgeyi göstermekten kötüdür.
+ */
+function seansTarihiBicimle(zaman: string): string {
+  const [tarih, saat] = zaman.split('T')
+  const [yil, ay, gun] = (tarih ?? '').split('-')
+  if (yil === undefined || ay === undefined || gun === undefined || saat === undefined) {
+    return zaman
+  }
+  return `${gun}.${ay}.${yil} ${saat.slice(0, 5)}`
 }
 
 function sablonAdi(kod: string): string {
@@ -80,7 +115,7 @@ export function GecmisNotlar({ notlar }: Props) {
               <li key={not.appointment_id} className="rounded border border-slate-200">
                 <button
                   type="button"
-                  className="flex w-full items-center gap-2 px-2 py-1 text-left text-sm"
+                  className="flex w-full flex-wrap items-center gap-x-2 px-2 py-1 text-left text-sm"
                   aria-expanded={acik}
                   aria-controls={govdeId}
                   onClick={() => degistir(not.appointment_id)}
@@ -88,7 +123,12 @@ export function GecmisNotlar({ notlar }: Props) {
                   <span aria-hidden="true" className="text-slate-400">
                     {acik ? '−' : '+'}
                   </span>
-                  <span className="font-medium">{sablonAdi(not.sablon)}</span>
+                  {/* Seans tarihi ÖNCE: listenin sıralandığı alan bu ve
+                      kullanıcının sorduğu soru "hangisi son seanstı". */}
+                  <span className="font-medium">
+                    Seans: {seansTarihiBicimle(not.seans_zamani)}
+                  </span>
+                  <span className="text-slate-600">{sablonAdi(not.sablon)}</span>
                   <span className="text-slate-500">
                     Son düzenleme: {tarihBicimle(not.guncelleme_zamani)}
                   </span>

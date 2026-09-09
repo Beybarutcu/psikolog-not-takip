@@ -8,3 +8,4 @@
 
 # Tauri build.rs tarafından her derlemede yeniden uretilir (Task 1 kesfi, brief'te yoktu)
 /src-tauri/gen/schemas
+.claude/worktrees/

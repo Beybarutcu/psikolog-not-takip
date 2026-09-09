@@ -69,6 +69,23 @@ describe('veriRaporuMetni', () => {
     expect(metin).toContain('SEANS NOTLARI (2)')
   })
 
+  it('M7: her notun SEANS TARIHINI de yazar, yalniz son duzenlemeyi degil', () => {
+    // `seans_zamani` Görev 9'da TAM BU AYRIM için eklendi: birincisi
+    // randevunun başlangıcı, ikincisi notun son düzenlenme anı. Rapor
+    // alanı taşıyordu ama BASMIYORDU — danışana verilen belgede görüşmenin
+    // tarihi hiç yoktu ve "Son düzenleme" onun yerine okunurdu (geçen
+    // ayki bir seansın notu bugün düzeltilmiş olabilir).
+    const metin = veriRaporuMetni(danisan, notlar, ekler)
+    expect(metin).toContain('Seans: 2026-09-07T10:00')
+    expect(metin).toContain('Seans: 2026-09-14T10:00')
+    // ARTI YON: son düzenleme de duruyor; biri diğerinin yerine geçmedi.
+    expect(metin).toContain('Son düzenleme: 2026-09-07T12:00:00Z')
+    // Sıra: seans tarihi ÖNCE (okuyanın sorduğu soru "hangi görüşme").
+    expect(metin.indexOf('Seans: 2026-09-07T10:00')).toBeLessThan(
+      metin.indexOf('Son düzenleme: 2026-09-07T12:00:00Z'),
+    )
+  })
+
   it('sablon kodunu okunur ada cevirir', () => {
     const metin = veriRaporuMetni(danisan, notlar, ekler)
     expect(metin).toContain('DAP')

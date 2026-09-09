@@ -75,6 +75,14 @@ export function veriRaporuMetni(
   }
   for (const not of notlar) {
     satirlar.push(`--- Randevu #${not.appointment_id} · ${sablonAdi(not.sablon)}`)
+    // SEANS TARİHİ önce: danışanın sorduğu soru "hangi görüşmede ne
+    // konuşuldu" ve bunun cevabı `seans_zamani`. `guncelleme_zamani` notun
+    // son düzenlenme anıdır -- geçen ayki bir seansın notu bugün düzeltilmiş
+    // olabilir (bkz. `api.ts::SeansNotu`). Alan Görev 9'da TAM BU AYRIM için
+    // eklendi ve `GecmisNotlar` ekranda "Seans: …" gösteriyor; buradaki
+    // eksikliği (dal incelemesi M7) danışana verilen belgede seans tarihinin
+    // hiç bulunmaması demekti.
+    satirlar.push(`Seans: ${not.seans_zamani}`)
     satirlar.push(`Son düzenleme: ${not.guncelleme_zamani}`)
     satirlar.push(not.icerik)
     satirlar.push('')

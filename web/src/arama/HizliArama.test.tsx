@@ -1,5 +1,5 @@
 import aramaKaynagi from './HizliArama.tsx?raw'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AramaSonucu } from '../api'
@@ -190,11 +190,39 @@ describe('HizliArama — sorgu eşiği ve geciktirme', () => {
     // Her tuş vuruşu bir istek olsaydı 5 harflik bir sorgu 4 gereksiz
     // istek atardı; her biri sunucuda not içeriği okur ve (birleştirilse
     // bile) silinemez bir denetim satırı üretme riski taşır.
-    const { ara } = kur()
+    //
+    // # Neden `userEvent.type` DEĞİL (dal incelemesi M6)
+    //
+    // Bu test yüke duyarlıydı: testte `gecikmeMs` 5 ms ve `userEvent.type`
+    // tuşlar arasında gerçek zamanda **await ediyor**. Yüklü bir makinede
+    // iki tuş arasındaki duraklama 5 ms'yi aşabiliyor, debounce doluyor ve
+    // **ürün doğru çalıştığı hâlde** ikinci bir istek çıkıyordu. Tam paket
+    // koşusunda ara sıra kırılıyor, tek başına 4/4 geçiyordu.
+    //
+    // Beş değişiklik olayı burada TEK BİR SENKRON BLOKTA gönderiliyor:
+    // aralarında hiçbir `await` yok, dolayısıyla JS tek iş parçacığında
+    // hiçbir zamanlayıcı geri çağrısı araya giremez. "Hızlı yazma" artık
+    // bir zamanlama yarışı değil, bir olgu.
+    //
+    // İddia ZAYIFLAMADI, güçlendi: yazma sırasında HİÇBİR isteğin
+    // atılmadığı da artık ölçülüyor. Debounce'suz bir sürüm (her tuşta
+    // `ara()`) burada beş çağrıyla, `setTimeout`u tümüyle kaldıran bir
+    // sürüm de ilk iddiada kırılır.
+    const { ara, gecikmeMs } = kur()
     await ac()
-    await userEvent.type(kutu(), 'kaygi')
+
+    const alan = kutu() as HTMLInputElement
+    for (const parca of ['k', 'ka', 'kay', 'kayg', 'kaygi']) {
+      fireEvent.change(alan, { target: { value: parca } })
+    }
+    expect(alan.value).toBe('kaygi')
+    // Tuşlar arasında hiçbir istek atılmadı.
+    expect(ara).not.toHaveBeenCalled()
+
     await waitFor(() => expect(ara).toHaveBeenCalled())
-    await new Promise((coz) => setTimeout(coz, 40))
+    // Bekleyen başka bir zamanlayıcı yok; yine de gecikmenin birkaç katı
+    // beklenip ikinci bir isteğin BELİRMEDİĞİ doğrulanıyor.
+    await new Promise((coz) => setTimeout(coz, gecikmeMs * 8))
     expect(ara).toHaveBeenCalledTimes(1)
     expect(ara).toHaveBeenCalledWith('kaygi')
   })

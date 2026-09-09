@@ -449,21 +449,58 @@ async fn eksik_ciftli_yedek_ne_listelenir_ne_geri_yuklenir() {
 
 #[tokio::test]
 async fn yedek_adi_veri_dizininin_disina_cikamaz() {
-    // Istemciden gelen ad `..`/`/` icerebilir ve `Path::join` mutlak bir yol
-    // verildiginde tabani TUMUYLE atar. Dogrulama olmadan geri yukleme
-    // kaynagi olarak baska dosyalar gosterilebilirdi.
+    // Istemciden gelen ad `..` ya da MUTLAK bir yol icerebilir ve
+    // `Path::join` mutlak bir yol verildiginde tabani TUMUYLE atar --
+    // yani `{"dosya_adi": "<veri dizini>/veri.db"}` gibi bir istek, geri
+    // yukleme KAYNAGI olarak uygulamanin kendi dosyalarini gosterebilirdi.
+    //
+    // # Bu test bir kez TOTOLOJIYDI (mutasyon M3 hayatta kaldi)
+    //
+    // Ilk hali yedek klasoru HIC AYARLANMADAN kotu adlar gonderiyordu:
+    // istek `dizini_coz`'da "Yedek klasoru belli degil" ile 400 aliyor ve
+    // `yedek_yolunu_coz`'a HIC ULASMIYORDU. Ad dogrulamasi tumuyle
+    // kaldirildiginda bile test geciyordu -- iddia, kisitladigi kodun
+    // disindaki bir davranisla tatmin oluyordu.
+    //
+    // Iki duzeltme: (1) klasor gercekten ayarlaniyor (on kosul asagida
+    // olculuyor), (2) yalnizca durum kodu degil, REDDIN KENDISI (mesaj)
+    // iddia ediliyor -- boylece "baska bir sebeple 400/404 dondu" ile
+    // "ad reddedildi" ayirt ediliyor.
     let o = ortam();
     kur(&o).await;
+    let (kod, _) = yedek_al(&o, DAMGA).await;
+    assert_eq!(kod, StatusCode::OK, "on kosul: klasor ayarlanmis ve gercek bir yedek var");
+
+    // ON KOSUL: GECERLI bir ad bu noktada dogrulamayi GECIYOR (yanlis
+    // parolayla 401 aliyor, "gecersiz ad" ile 400 degil). Bu olmadan
+    // asagidaki redler "her sey reddediliyor" ile de saglanirdi.
+    let (kod, json) = cagir(
+        &o.s,
+        "POST",
+        "/api/geri-yukleme",
+        Some(serde_json::json!({ "dosya_adi": format!("yedek-{DAMGA}.db"), "parola": "yanlis" })),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED, "on kosul: gecerli ad dogrulamadan gecmeli");
+    assert!(!json["hata"].as_str().unwrap().contains("Geçersiz yedek adı"));
+
+    let db_once = std::fs::read(o.s.db_yolu()).unwrap();
     let ks_once = std::fs::read(o.s.keystore_yolu()).unwrap();
+    let veri_dizini = o.s.veri_dizini.display().to_string();
 
     for kotu in [
-        "../keystore.json",
-        "..\\keystore.json",
-        "yedek-2026-09-07.db/../../keystore.json",
-        "/etc/passwd",
-        "keystore.json",
+        "../keystore.json".to_string(),
+        "..\\keystore.json".to_string(),
+        "yedek-2026-09-07.db/../../keystore.json".to_string(),
+        "keystore.json".to_string(),
+        // MUTLAK yol: `join` tabani tumuyle atar -- gercek tehlike bu.
+        format!("{veri_dizini}/veri.db"),
+        format!("{veri_dizini}/keystore.json"),
+        // Uzunlugu DOGRU ama bicimi bozuk (damga cikarma yolunun panik
+        // yuzeyi): ad dogrulamasi kaldirilirsa burasi da patlar.
+        "yedek-..%2f..%2fa.db".to_string(),
     ] {
-        let (kod, _) = cagir(
+        let (kod, json) = cagir(
             &o.s,
             "POST",
             "/api/geri-yukleme",
@@ -471,7 +508,14 @@ async fn yedek_adi_veri_dizininin_disina_cikamaz() {
         )
         .await;
         assert_eq!(kod, StatusCode::BAD_REQUEST, "reddedilmeli: {kotu}");
+        assert_eq!(
+            json["hata"].as_str().unwrap(),
+            "Geçersiz yedek adı. Listeden bir yedek seçin.",
+            "red ADIN KENDISI yuzunden olmali, baska bir sebeple degil: {kotu}"
+        );
     }
+
+    assert_eq!(std::fs::read(o.s.db_yolu()).unwrap(), db_once, "veritabani degismemeli");
     assert_eq!(
         std::fs::read(o.s.keystore_yolu()).unwrap(),
         ks_once,

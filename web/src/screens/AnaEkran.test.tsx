@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { taslaklariUnut } from '../seans/taslak'
 import { AnaEkran } from './AnaEkran'
 
 // Görev 10 inceleme Bulgu 1: RandevuPaneli, seçili randevu/boş saat değişince
@@ -80,6 +81,12 @@ beforeEach(() => {
   sunucuNotlari = {}
   sunucuOzelNotlari = {}
   sunucuGecmisi = []
+  // Taslak deposu MODÜL DÜZEYİNDE (bileşen ağacının dışında) yaşıyor ve
+  // kendi belgesi "testler arası sızar" diyor. `SeansPaneli.test.tsx` ile
+  // `NotEditoru.test.tsx` temizliyordu, bu dosya temizlemiyordu: bugün
+  // yeşil ama SIRA BAĞIMLI — bir testin bıraktığı bekleyen metin, sonraki
+  // testte "geri yüklendi" olarak editöre dolar.
+  taslaklariUnut()
 })
 
 describe('AnaEkran — panel kimliği (Görev 10 inceleme Bulgu 1)', () => {
@@ -895,6 +902,60 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
 
     // İçerik AYRI bir uç noktadan geldi; resmî not isteği bir filtre değil.
     expect(istekler.some((i) => i.yol === `/api/randevular/${randevuA.id}/ozel-not`)).toBe(true)
+  })
+
+  // İnceleme I1: `AnaEkran.tsx`'teki `key={seans-${id}}` SİLİNDİĞİNDE 313
+  // testin hiçbiri kırılmıyordu — çağrı noktasındaki YÜK TAŞIYAN TEK `key`
+  // ölçülmemişti. Somut zarar: A'nın seansında "Özel Notlarım"a geçen
+  // terapist takvimden B'ye tıkladığında panel doğrudan ÖZEL sekmede açılır;
+  // kullanıcı varsayılanın resmî sekme olduğunu bildiği için seans notunu
+  // özel nota yazar ve o metin dışa aktarımlara, danışan raporuna HİÇ
+  // girmez — resmî not sessizce boş kalır.
+  //
+  // `SeansPaneli.test.tsx`'teki `key` testleri bu hattı ölçemez: onlar aynı
+  // örneği farklı `randevu.id` ile `rerender` ediyor, yani üretimde var
+  // olmayan bir durumu (on birinci biçim). O testler meşru bir İKİNCİ
+  // savunma hattını ölçüyor; birincil hat burada ölçülüyor.
+  it('A ozel sekmedeyken B secilince panel RESMI sekmede acilir', async () => {
+    await seansAc()
+    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+    expect(await screen.findByLabelText('Özel notum')).toBeDefined()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await screen.findByLabelText('Seans notu')
+
+    expect(screen.getByRole('tab', { name: 'Seans Notu' }).getAttribute('aria-selected')).toBe(
+      'true',
+    )
+    expect(screen.getByRole('tab', { name: 'Özel Notlarım' }).getAttribute('aria-selected')).toBe(
+      'false',
+    )
+    expect(screen.queryByLabelText('Özel notum')).toBeNull()
+  })
+
+  // Birincil hattın ikinci yarısı: `key` yalnızca sekme seçimini değil,
+  // GİDEN seansın bekleyen ÖZEL metnini de taşır. Resmî not için aynı iddia
+  // zaten var ("baska seansa gecince bekleyen metin GIDEN seansin notuna
+  // yazilir"); özel yolun karşılığı yoktu.
+  it('ozel sekmede bekleyen metin, B secilince A NIN ozel notuna yazilir', async () => {
+    await seansAc()
+    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+    await userEvent.type(await screen.findByLabelText('Özel notum'), '-A HIPOTEZI')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+
+    await waitFor(() =>
+      expect(yazmalar(`/api/randevular/${randevuA.id}/ozel-not`)).toHaveLength(1),
+    )
+    expect(
+      (yazmalar(`/api/randevular/${randevuA.id}/ozel-not`)[0].govde as { icerik: string }).icerik,
+    ).toContain('-A HIPOTEZI')
+    // Yanlış danışanın özel notuna yazma yok.
+    expect(yazmalar(`/api/randevular/${randevuB.id}/ozel-not`)).toHaveLength(0)
+    // Ve özel metin resmî uca HİÇ gitmedi.
+    expect(JSON.stringify(yazmalar(`/api/randevular/${randevuA.id}/not`))).not.toContain(
+      'A HIPOTEZI',
+    )
   })
 
   it('resmi not ve gecmis istekleri ozel yoluna HIC gitmez', async () => {

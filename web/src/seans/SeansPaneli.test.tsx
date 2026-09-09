@@ -365,7 +365,19 @@ describe('SeansPaneli — sekme değişimi', () => {
 // Görev 8'in bağlayıcı sözleşmesi: `key` ile prop değişimi EŞDEĞER DEĞİL.
 // `key` verilmezse seans geçişinde unmount tahliyesi hiç çalışmaz ve giden
 // seansın bekleyen metni sunucuya HİÇ yazılmaz.
-describe('SeansPaneli — seans değişimi (`key` yolu)', () => {
+//
+// UYARI — bu blok İKİNCİ savunma hattını ölçer, birincisini değil.
+// Buradaki `rerender`, AYNI `SeansPaneli` örneğine farklı bir `randevu.id`
+// veriyor; üretimde bu durum OLUŞAMAZ, çünkü `AnaEkran` paneli
+// `key={seans-${id}}` ile mount ediyor ve seans değişimi panelin tamamını
+// yeniden mount eder. Yani bu testler "AnaEkran'daki `key` unutulursa
+// SeansPaneli'nin iç `key`'leri ne kadarını kurtarır" sorusunu ölçüyor —
+// derinlemesine savunma olarak meşru, ama birincil hat DEĞİL.
+// Birincil hat (`AnaEkran.tsx`'teki `key={seans-${id}}`)
+// `AnaEkran.test.tsx` içinde ölçülüyor: "A ozel sekmedeyken B secilince
+// panel RESMI sekmede acilir" ve "ozel sekmede bekleyen metin, B secilince
+// A NIN ozel notuna yazilir".
+describe('SeansPaneli — seans değişimi (`key` yolu, ikincil hat)', () => {
   it('baska randevuya gecince giden seansin bekleyen metni O SEANSIN kaydina gider', async () => {
     const kaydetA = vi.fn().mockResolvedValue(undefined)
     const kaydetB = vi.fn().mockResolvedValue(undefined)

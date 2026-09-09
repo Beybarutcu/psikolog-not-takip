@@ -47,6 +47,90 @@ async function istek<T>(yol: string, secenekler?: RequestInit): Promise<T> {
 
 export type Danisan = { id: number; ad_soyad: string; telefon: string | null; durum: string }
 
+/**
+ * Danışanın **tam** dosyası (`GET /api/danisanlar/{id}`).
+ *
+ * `Danisan` bilerek dar bırakıldı ve bu tip ondan TÜRETİLDİ: liste uç
+ * noktası sunucuda aynı JSON'u döndürüyor (`clients::Danisan`'ın tamamı),
+ * ama listeyi kullanan yerler (danışan çipleri, randevu açılır menüsü) risk
+ * notunu ve rıza bilgisini **görmemeli**. Tek geniş bir tip kullanılsaydı,
+ * "elimde zaten `Danisan` var" diyen bir bileşen risk notunu ekrana basmak
+ * için hiçbir engelle karşılaşmazdı.
+ *
+ * Alanların hepsi `null` olabilir: dosya, danışan eklendikten sonra zamanla
+ * doldurulur (`clients::guncelle` kısmi güncelleme yapar).
+ */
+export type DanisanDosyasi = Danisan & {
+  dogum_tarihi: string | null
+  basvuru_nedeni: string | null
+  risk_notu: string | null
+  riza_tarihi: string | null
+  riza_dosya_id: number | null
+  son_temas: string | null
+  saklama_bitis: string | null
+}
+
+/** `GET /api/danisanlar/{id}/ekler` yanıtı (sunucudaki `EkBilgisi`). */
+export type EkBilgisi = {
+  id: number
+  client_id: number
+  dosya_adi: string
+  mime: string
+  tur: string
+  boyut: number
+  eklenme_zamani: string
+}
+
+/** Ek dosya türlerinin kapalı kümesi (`store::attachments::GECERLI_TURLER`). */
+export const EK_TURLERI = ['onam', 'test', 'diger'] as const
+
+/**
+ * Dosya başına üst sınır — sunucudaki `AZAMI_DOSYA_BOYUTU` ile **aynı**.
+ *
+ * İstemci tarafında da kontrol ediliyor çünkü sunucu sınırı `axum`'un
+ * `DefaultBodyLimit`'i ile uyguluyor ve o `413`'ü **JSON gövdesiz** döndürür:
+ * `istek()` orada `govde.hata`yı bulamaz ve kullanıcıya "Beklenmeyen bir
+ * hata oluştu." der. Yani 20 MB yüklendikten sonra nedeni öğrenilemeyen bir
+ * ret. Buradaki kontrol isteği hiç atmadan nedenini söyler.
+ */
+export const AZAMI_EK_BOYUTU = 20 * 1024 * 1024
+
+/** Tek bir arama sonucu (`GET /api/ara` yanıtı; sunucudaki `AramaSonucu`). */
+export type AramaSonucu = {
+  /** `"danisan"` veya `"not"`. */
+  tur: string
+  client_id: number
+  danisan_adi: string
+  appointment_id: number | null
+  tarih: string | null
+  /** Eşleşmenin çevresinden alınan bağlam parçası. */
+  parca: string
+}
+
+/**
+ * Bir aramanın döndürebileceği en fazla sonuç — sunucudaki `AZAMI_SONUC`.
+ *
+ * Sunucu `limit`i `1..=50` aralığına kırpıyor; daha büyük bir sayı göndermek
+ * sessizce 50'ye düşerdi. Değerin burada da yazılı olmasının nedeni yalnızca
+ * istek kurmak değil: `/api/ara` yanıtı **"daha fazla sonuç var" işareti
+ * taşımıyor** (Görev 6'nın bilinen boşluğu; bütçe paylaştırması sessiz kaybı
+ * hafifletti, kaldırmadı). Arayüzün "sonuç sayısı == sınır" durumunu
+ * ölçebilmesi için sınırı bilmesi gerekiyor.
+ */
+export const ARAMA_SINIRI = 50
+
+/**
+ * Ek dosyanın indirme adresi.
+ *
+ * İçerik `fetch` ile belleğe **alınmaz**: sunucu `Content-Disposition:
+ * attachment` + `X-Content-Type-Options: nosniff` gönderiyor, yani dosya
+ * gömülü açılmıyor, indiriliyor. İçeriği JS'e çekmek o kararı arayüzde geri
+ * alır ve danışan belgesini ekrana basılabilir hâle getirirdi.
+ */
+export function ekIndirmeYolu(ekId: number): string {
+  return `/api/ekler/${ekId}`
+}
+
 export const takvimApi = {
   danisanlariGetir: () => istek<Danisan[]>('/api/danisanlar'),
   danisanEkle: (ad_soyad: string, telefon?: string) =>
@@ -207,6 +291,97 @@ export const ozelNotApi = {
       method: 'PUT',
       body: JSON.stringify({ icerik }),
     }),
+}
+
+/**
+ * Danışan **dosyası** istemcisi: tek danışanın tam kaydı, rıza alanları ve
+ * ekli dosyaları.
+ *
+ * # Burada da özel nota giden bir yol YOKTUR
+ *
+ * `notApi`/`ozelNotApi` ayrımıyla aynı gerekçe (bkz. `notApi` başlığı): bir
+ * "danışan veri raporu" ekranı doğal olarak "danışanın her şeyini getiren
+ * istemciyi" arar. Bu nesne danışanın kimlik/rıza/saklama alanlarını ve ek
+ * dosya ÜSTVERİSİNİ verir; not içeriği için tek yol `notApi.danisanNotlari`,
+ * yani yalnızca **resmî** notlara giden fonksiyondur.
+ */
+export const danisanApi = {
+  dosyaGetir: (id: number) => istek<DanisanDosyasi>(`/api/danisanlar/${id}`),
+  /**
+   * Rıza alanlarını günceller (`PATCH /api/danisanlar/{id}`).
+   *
+   * Gövde YALNIZCA rıza alanlarını taşır. `son_temas`/`saklama_bitis`
+   * sunucudaki `DanisanGuncelleme`'de bilerek yok (ikisi birbirine bağlı ve
+   * tek yazma yolu `son_temasi_tazele`); `durum` da yok (arşivlemenin tek
+   * yolu `arsivle`). Onları buraya koymak sunucuda sessizce yok sayılır ve
+   * arayüzde "yazabiliyorum" yanılsaması yaratırdı.
+   *
+   * `riza_dosya_id` **açıkça** gönderilir — `null` dâhil. Sunucu "alan yok"
+   * ile "alan null"u ayırt ediyor (`acik_null_ayirt_et`): alanı hiç
+   * göndermemek "dokunma" demektir ve yanlış dosya bağlayan kullanıcı bağı
+   * koparamazdı.
+   */
+  rizaKaydet: (id: number, alan: { riza_tarihi: string; riza_dosya_id: number | null }) =>
+    istek<DanisanDosyasi>(`/api/danisanlar/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        riza_tarihi: alan.riza_tarihi,
+        riza_dosya_id: alan.riza_dosya_id,
+      }),
+    }),
+  ekleriGetir: (id: number) => istek<EkBilgisi[]>(`/api/danisanlar/${id}/ekler`),
+  /**
+   * Ek dosya yükler (`POST /api/danisanlar/{id}/ekler`).
+   *
+   * # Sözleşme standart DEĞİL ve bilerek öyle
+   *
+   * Üstveri **başlıklarda**, içerik **ham gövdede** (Görev 7 kararı):
+   * - `multipart/form-data` kullanılmadı çünkü sınır kontrolü gövde
+   *   boyutuna bakıyor (`AZAMI_GOVDE_BOYUTU == AZAMI_DOSYA_BOYUTU`) ve
+   *   multipart, 20 MB'lık **geçerli** bir dosyayı sınırı aşan bir gövdeye
+   *   çevirirdi. `<form enctype="multipart/form-data">` bu uç noktada
+   *   ÇALIŞMAZ.
+   * - Sorgu dizgisi kullanılmadı çünkü **dosya adı sağlık verisidir**
+   *   ("HIV-raporu.pdf") ve URL'ler sunucu günlüklerine düşer.
+   *
+   * Dosya adı yüzde kodlanır: HTTP başlık değerleri ASCII'dir, Türkçe bir ad
+   * doğrudan konulamaz (sunucu `yuzde_coz` ile çözüyor).
+   */
+  ekYukle: (danisanId: number, dosya: File, tur: string) => {
+    if (dosya.size > AZAMI_EK_BOYUTU) {
+      // Dosya ADI mesaja KONMAZ: sağlık verisidir ve hata metinleri ekranın
+      // dışına düşebilir (sunucu da aynı kararı veriyor).
+      return Promise.reject(
+        new Error(
+          `Dosya en fazla 20 MB olabilir; seçilen dosya ${(dosya.size / (1024 * 1024)).toFixed(1)} MB.`,
+        ),
+      )
+    }
+    return istek<EkBilgisi>(`/api/danisanlar/${danisanId}/ekler`, {
+      method: 'POST',
+      headers: {
+        // Tarayıcı bazı dosyalar için `type`'ı boş verir; boş bir başlık
+        // sunucuda "`content-type` eksik" hatasına dönerdi.
+        'content-type': dosya.type || 'application/octet-stream',
+        'x-dosya-adi': encodeURIComponent(dosya.name),
+        'x-ek-turu': tur,
+      },
+      body: dosya,
+    })
+  },
+}
+
+/**
+ * Hızlı arama istemcisi (`GET /api/ara`).
+ *
+ * Tek fonksiyonlu: sunucudaki `store::search` `private_notes` tablosunu hiç
+ * tanımıyor ve istemcide de aramaya **ikinci bir kaynak** eklenemesin diye
+ * nesne bilerek dar. Sorgu metni sunucuda erişim loguna yazılmıyor; arayüz
+ * de onu hiçbir yere (konsol dâhil) düşürmez.
+ */
+export const aramaApi = {
+  ara: (sorgu: string) =>
+    istek<AramaSonucu[]>(`/api/ara?q=${encodeURIComponent(sorgu)}&limit=${ARAMA_SINIRI}`),
 }
 
 export const api = {

@@ -1,9 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { notApi, ozelNotApi, YetkisizHata, yetkisizOlunca } from './api'
+import {
+  AZAMI_EK_BOYUTU,
+  aramaApi,
+  ARAMA_SINIRI,
+  danisanApi,
+  ekIndirmeYolu,
+  notApi,
+  ozelNotApi,
+  YetkisizHata,
+  yetkisizOlunca,
+} from './api'
 
 type Cagri = { yol: string; method: string; govde: unknown }
 
 let cagrilar: Cagri[] = []
+// Başlıklar AYRI bir dizide: `cagrilar` üzerinde tam nesne eşitliği
+// (`toEqual`) kuran testler var ve oraya bir alan eklemek onları
+// ilgisiz biçimde kırardı.
+let basliklar: (HeadersInit | undefined)[] = []
 const gercekFetch = globalThis.fetch
 
 function sunucu(yanit: (yol: string) => { ok: boolean; status?: number; govde: unknown }) {
@@ -12,8 +26,15 @@ function sunucu(yanit: (yol: string) => { ok: boolean; status?: number; govde: u
     cagrilar.push({
       yol,
       method: secenekler?.method ?? 'GET',
-      govde: secenekler?.body ? JSON.parse(String(secenekler.body)) : null,
+      // Gövde her zaman JSON DEĞİL: ek dosya yükleme ham `File` gönderiyor
+      // (bkz. `danisanApi.ekYukle`). `JSON.parse` orada patlardı ve testin
+      // gövdeyi hiç göremediği bir hataya dönerdi.
+      govde:
+        typeof secenekler?.body === 'string'
+          ? JSON.parse(secenekler.body)
+          : (secenekler?.body ?? null),
     })
+    basliklar.push(secenekler?.headers)
     const y = yanit(yol)
     return { ok: y.ok, status: y.status ?? (y.ok ? 200 : 500), json: async () => y.govde } as
       unknown as Response
@@ -22,6 +43,7 @@ function sunucu(yanit: (yol: string) => { ok: boolean; status?: number; govde: u
 
 beforeEach(() => {
   cagrilar = []
+  basliklar = []
   sunucu(() => ({ ok: true, govde: {} }))
 })
 
@@ -130,6 +152,173 @@ describe('not uç noktalarında 401', () => {
     const birak = yetkisizOlunca(dinleyici)
 
     await expect(ozelNotApi.kaydet(7, 'gizli')).rejects.toBeInstanceOf(YetkisizHata)
+    expect(dinleyici).toHaveBeenCalledTimes(1)
+    birak()
+  })
+})
+
+// --- Görev 10: danışan dosyası, ekler ve arama ---------------------------
+
+describe('danisanApi — danışan dosyası ve ekler', () => {
+  it('dosyaGetir tek danışanın dosyasına gider', async () => {
+    await danisanApi.dosyaGetir(12)
+    expect(cagrilar).toEqual([{ yol: '/api/danisanlar/12', method: 'GET', govde: null }])
+  })
+
+  it('rizaKaydet PATCH ile YALNIZCA rıza alanlarını gönderir', async () => {
+    // `DanisanGuncelleme`'de `son_temas`, `saklama_bitis` ve `durum` BİLEREK
+    // yok (bkz. `store::clients`); istemci de onları göndermemeli. Fazladan
+    // alan sunucuda sessizce yok sayılır ve "arayüz saklama tarihini
+    // yazabiliyor" yanılsaması yaratırdı.
+    await danisanApi.rizaKaydet(12, { riza_tarihi: '2026-03-01', riza_dosya_id: 5 })
+    expect(cagrilar[0].yol).toBe('/api/danisanlar/12')
+    expect(cagrilar[0].method).toBe('PATCH')
+    expect(cagrilar[0].govde).toEqual({ riza_tarihi: '2026-03-01', riza_dosya_id: 5 })
+  })
+
+  it('rizaKaydet bağı koparmak için açık null gönderir', async () => {
+    // Sunucu "alan yok" ile "alan null"u AYIRT EDİYOR (`acik_null_ayirt_et`):
+    // alanı hiç göndermemek "dokunma" demek olurdu ve yanlış dosya seçen
+    // kullanıcı bağı KOPARAMAZDI.
+    await danisanApi.rizaKaydet(12, { riza_tarihi: '2026-03-01', riza_dosya_id: null })
+    expect(cagrilar[0].govde).toEqual({ riza_tarihi: '2026-03-01', riza_dosya_id: null })
+    expect(JSON.stringify(cagrilar[0].govde)).toContain('null')
+  })
+
+  it('ekleriGetir danışanın ek listesine gider', async () => {
+    await danisanApi.ekleriGetir(12)
+    expect(cagrilar).toEqual([{ yol: '/api/danisanlar/12/ekler', method: 'GET', govde: null }])
+  })
+
+  // Görev 7 sözleşmesi: üstveri BAŞLIKLARDA, içerik HAM GÖVDEDE.
+  // `multipart/form-data` 20 MB'lık GEÇERLİ bir dosyayı 20 MB'ı aşan bir
+  // gövdeye çevirir (sınır `AZAMI_GOVDE_BOYUTU == AZAMI_DOSYA_BOYUTU`);
+  // sorgu dizgisi reddedildi çünkü dosya adı sağlık verisidir.
+  it('ekYukle ham gövde + başlık sözleşmesini kullanır, multipart DEĞİL', async () => {
+    const dosya = new File(['icerik'], 'onam.pdf', { type: 'application/pdf' })
+    await danisanApi.ekYukle(12, dosya, 'onam')
+
+    expect(cagrilar[0].yol).toBe('/api/danisanlar/12/ekler')
+    expect(cagrilar[0].method).toBe('POST')
+    // Gövde dosyanın KENDİSİ — `FormData` değil.
+    expect(cagrilar[0].govde).toBe(dosya)
+    expect(cagrilar[0].govde).not.toBeInstanceOf(FormData)
+
+    const b = basliklar[0] as Record<string, string>
+    expect(b['content-type']).toBe('application/pdf')
+    expect(b['x-dosya-adi']).toBe('onam.pdf')
+    expect(b['x-ek-turu']).toBe('onam')
+  })
+
+  it('ekYukle Türkçe dosya adını yüzde kodlar (HTTP başlıkları ASCII)', async () => {
+    const dosya = new File(['x'], 'değerlendirme.pdf', { type: 'application/pdf' })
+    await danisanApi.ekYukle(12, dosya, 'test')
+    const b = basliklar[0] as Record<string, string>
+    expect(b['x-dosya-adi']).toBe(encodeURIComponent('değerlendirme.pdf'))
+    // Ham ad başlığa KONMAZ: `HeaderValue::from_str` ASCII dışını reddeder,
+    // istek sessizce başarısız olurdu.
+    expect(b['x-dosya-adi']).not.toContain('ğ')
+  })
+
+  it('ekYukle boş MIME değerinde güvenli türe düşer', async () => {
+    // Tarayıcı bazı dosyalar için `type`i boş verir; boş bir `content-type`
+    // başlığı sunucuda "başlık eksik" hatasına dönerdi.
+    const dosya = new File(['x'], 'a.bin', { type: '' })
+    await danisanApi.ekYukle(12, dosya, 'diger')
+    expect((basliklar[0] as Record<string, string>)['content-type']).toBe(
+      'application/octet-stream',
+    )
+  })
+
+  it('ekYukle sınırı aşan dosyayı SUNUCUYA HİÇ GÖNDERMEZ', async () => {
+    // Sunucu 413 döner ama gövdesi JSON değildir; `istek()` orada
+    // "Beklenmeyen bir hata oluştu." gösterirdi — kullanıcı 20 MB'ı
+    // yükledikten sonra neden reddedildiğini öğrenemezdi.
+    const buyuk = new File([new Uint8Array(AZAMI_EK_BOYUTU + 1)], 'buyuk.bin', {
+      type: 'application/octet-stream',
+    })
+    await expect(danisanApi.ekYukle(12, buyuk, 'diger')).rejects.toThrow(/20 MB/)
+    expect(cagrilar).toHaveLength(0)
+  })
+
+  it('ekYukle hata mesajına dosya adını KOYMAZ', async () => {
+    // Dosya adı sağlık verisidir (sunucu da aynı kararı veriyor: ham değer
+    // hiçbir hata mesajına konmaz). Hata metni ekranın dışına düşebilir.
+    const buyuk = new File([new Uint8Array(AZAMI_EK_BOYUTU + 1)], 'HIV-raporu.pdf', {
+      type: 'application/pdf',
+    })
+    await expect(danisanApi.ekYukle(12, buyuk, 'diger')).rejects.toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining('HIV') }),
+    )
+  })
+
+  it('tam sınırdaki dosya REDDEDİLMEZ', async () => {
+    // Ters yön: "her dosyayı reddet" de üstteki testleri geçerdi.
+    const tam = new File([new Uint8Array(AZAMI_EK_BOYUTU)], 'tam.bin', {
+      type: 'application/octet-stream',
+    })
+    await danisanApi.ekYukle(12, tam, 'diger')
+    expect(cagrilar).toHaveLength(1)
+  })
+
+  it('AZAMI_EK_BOYUTU sunucudaki 20 MB sınırıyla aynıdır', () => {
+    // İki sabit iki ayrı dilde; ayrışmaları sessiz olurdu.
+    expect(AZAMI_EK_BOYUTU).toBe(20 * 1024 * 1024)
+  })
+
+  it('ekIndirmeYolu tam olarak /api/ekler/{id} üretir', () => {
+    // İçerik `fetch` ile belleğe ALINMIYOR: sunucu
+    // `Content-Disposition: attachment` gönderiyor ve tarayıcı dosyayı
+    // indiriyor. İçeriği JS'e çekmek onu ekrana basılabilir hâle getirirdi.
+    expect(ekIndirmeYolu(9)).toBe('/api/ekler/9')
+  })
+})
+
+describe('aramaApi — hızlı arama', () => {
+  it('sorguyu kodlar ve limiti sunucunun üst sınırına sabitler', async () => {
+    await aramaApi.ara('kaygı & panik')
+    expect(cagrilar[0].method).toBe('GET')
+    expect(cagrilar[0].yol).toBe(
+      `/api/ara?q=${encodeURIComponent('kaygı & panik')}&limit=${ARAMA_SINIRI}`,
+    )
+  })
+
+  it('ARAMA_SINIRI sunucunun AZAMI_SONUC degeriyle aynıdır', () => {
+    // Sunucu `limit`i `1..=50` aralığına kırpıyor. İstemci daha büyük bir
+    // sayı gönderirse sessizce 50'ye düşer ve "sonuç sayısı == sınır"
+    // uyarısı (sonuçlar kırpıldı) HİÇ tetiklenmezdi.
+    expect(ARAMA_SINIRI).toBe(50)
+  })
+
+  it('arama istemcisinde özel nota giden hiçbir yol yoktur', () => {
+    // Sunucudaki `store::search` `private_notes`u hiç tanımıyor; istemcide
+    // de aramaya ikinci bir kaynak eklenemesin diye nesne tek fonksiyonlu.
+    expect(Object.keys(aramaApi)).toEqual(['ara'])
+  })
+})
+
+describe('danışan dosyası uç noktalarında 401', () => {
+  it('dosyaGetir 401de dinleyiciyi throwdan ÖNCE tetikler', async () => {
+    sunucu(() => ({ ok: false, status: 401, govde: { hata: 'Oturum kilitli.' } }))
+    const sira: string[] = []
+    const birak = yetkisizOlunca(() => sira.push('dinleyici'))
+
+    await expect(
+      danisanApi.dosyaGetir(12).catch((e) => {
+        sira.push('throw')
+        throw e
+      }),
+    ).rejects.toBeInstanceOf(YetkisizHata)
+
+    expect(sira).toEqual(['dinleyici', 'throw'])
+    birak()
+  })
+
+  it('arama 401de de aynı mekanizmayı çalıştırır', async () => {
+    sunucu(() => ({ ok: false, status: 401, govde: { hata: 'Oturum kilitli.' } }))
+    const dinleyici = vi.fn()
+    const birak = yetkisizOlunca(dinleyici)
+    await expect(aramaApi.ara('kaygi')).rejects.toBeInstanceOf(YetkisizHata)
     expect(dinleyici).toHaveBeenCalledTimes(1)
     birak()
   })

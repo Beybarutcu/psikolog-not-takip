@@ -64,7 +64,7 @@
 //! Gerekçe için bkz. o fonksiyonun dokümantasyonu.
 
 use crate::store::audit::{
-    kaydet, kaydet_birlestirerek, Ayrinti, Cihaz, Eylem, BIRLESTIRME_PENCERESI_DK,
+    kaydet, Ayrinti, Cihaz, Eylem, LogHacmi, BIRLESTIRME_PENCERESI_DK,
 };
 use crate::store::zaman::{tarih_coz, tarih_gecerli_mi};
 use rusqlite::types::Value;
@@ -331,7 +331,7 @@ pub fn ekle(conn: &Connection, yeni: &YeniDanisan, cihaz: Cihaz) -> Result<Danis
         rusqlite::params![ad, telefon, simdi()],
     )?;
     let id = tx.last_insert_rowid();
-    kaydet(&tx, Eylem::Ekleme, "client", &id.to_string(), cihaz, None)?;
+    kaydet(&tx, Eylem::Ekleme, "client", &id.to_string(), cihaz, None, LogHacmi::HerCagri)?;
 
     tx.commit()?;
 
@@ -356,7 +356,7 @@ pub fn ekle(conn: &Connection, yeni: &YeniDanisan, cihaz: Cihaz) -> Result<Danis
 /// # Log: birleştirilmez
 /// Bu bir **veriyi değiştiren** işlemdir, dolayısıyla hacim politikasının
 /// (bkz. `store::audit` modül başlığı) LOGLANIR tarafındadır. Birleştirme
-/// (`kaydet_birlestirerek`) burada kullanılmaz: danışan kartı bir "Kaydet"
+/// (`LogHacmi::OturumBasi`) burada kullanılmaz: danışan kartı bir "Kaydet"
 /// düğmesiyle çalışan form, not editörünün 2 saniyelik otomatik kaydı değil;
 /// her çağrı gerçek ve ayrı bir kullanıcı kararıdır. Danışan kartı ileride
 /// otomatik kayda dönüşürse bu karar o görevde yeniden verilmeli --
@@ -429,7 +429,7 @@ pub fn guncelle(
         // yazılmaz.
         return Err(DepoHatasi::Bulunamadi);
     }
-    kaydet(&tx, Eylem::Duzenleme, "client", &id.to_string(), cihaz, None)?;
+    kaydet(&tx, Eylem::Duzenleme, "client", &id.to_string(), cihaz, None, LogHacmi::HerCagri)?;
 
     let guncel =
         tx.query_row(&format!("SELECT {SUTUNLAR} FROM clients WHERE id = ?1"), [id], satirdan)?;
@@ -447,14 +447,14 @@ pub fn guncelle(
 /// dosyasını açmak) karşılık gelir -- `listele` gibi gezinmenin yan etkisi
 /// olarak tekrar tekrar çalışan bir yol değildir. Plan 3'te danışan dosyası
 /// ekranı kendi kendini yenileyen bir yola dönüşürse bu karar o görevde
-/// yeniden verilmeli; mekanizma (`audit::kaydet_birlestirerek`) hazır.
+/// yeniden verilmeli; mekanizma (`LogHacmi::OturumBasi`) hazır.
 pub fn getir(conn: &Connection, id: i64, cihaz: Cihaz) -> Result<Danisan, DepoHatasi> {
     let danisan = conn
         .query_row(&format!("SELECT {SUTUNLAR} FROM clients WHERE id = ?1"), [id], satirdan)
         .optional()?
         .ok_or(DepoHatasi::Bulunamadi)?;
 
-    kaydet(conn, Eylem::Goruntuleme, "client", &id.to_string(), cihaz, None)?;
+    kaydet(conn, Eylem::Goruntuleme, "client", &id.to_string(), cihaz, None, LogHacmi::HerCagri)?;
     Ok(danisan)
 }
 
@@ -487,14 +487,14 @@ pub fn listele(
 
     // Liste tek bir goruntuleme kaydi uretir, satir basina degil -- ve o tek
     // kayit da pencere boyunca birlestirilir. Var olan satira DOKUNULMAZ.
-    kaydet_birlestirerek(
+    kaydet(
         conn,
         Eylem::Goruntuleme,
         "client",
         "liste",
         cihaz,
         None,
-        BIRLESTIRME_PENCERESI_DK,
+        LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK),
     )?;
     Ok(liste)
 }
@@ -512,7 +512,15 @@ pub fn arsivle(conn: &Connection, id: i64, cihaz: Cihaz) -> Result<(), DepoHatas
     if etkilenen == 0 {
         return Err(DepoHatasi::Bulunamadi);
     }
-    kaydet(&tx, Eylem::Duzenleme, "client", &id.to_string(), cihaz, Some(Ayrinti::Arsivlendi))?;
+    kaydet(
+        &tx,
+        Eylem::Duzenleme,
+        "client",
+        &id.to_string(),
+        cihaz,
+        Some(Ayrinti::Arsivlendi),
+        LogHacmi::HerCagri,
+    )?;
 
     tx.commit()?;
     Ok(())
@@ -591,7 +599,7 @@ fn yil_ekle(tarih: &str, yil: i64) -> Result<String, DepoHatasi> {
 /// ve KVKK açısından sorulan sorunun ta kendisidir -- kimin ne zaman bu
 /// listeye baktığı loglanması gereken bilgidir. Bu ekran ileride kendi
 /// kendini yenileyen bir yola dönüşürse karar yeniden verilmeli; mekanizma
-/// (`audit::kaydet_birlestirerek`) hazır -- `getir` için de aynı not var.
+/// (`LogHacmi::OturumBasi`) hazır -- `getir` için de aynı not var.
 pub fn saklama_suresi_dolanlar(
     conn: &Connection,
     bugun: &str,
@@ -605,7 +613,7 @@ pub fn saklama_suresi_dolanlar(
     let liste = stmt.query_map([bugun], satirdan)?.collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
 
-    kaydet(conn, Eylem::Goruntuleme, "client", "saklama_listesi", cihaz, None)?;
+    kaydet(conn, Eylem::Goruntuleme, "client", "saklama_listesi", cihaz, None, LogHacmi::HerCagri)?;
     Ok(liste)
 }
 

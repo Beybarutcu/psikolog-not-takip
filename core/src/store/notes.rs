@@ -29,19 +29,19 @@
 //! loga girmez — log yalnızca "hangi notu, ne zaman, hangi cihazdan"
 //! sorusunu yanıtlar (bkz. `store::audit` modül başlığı).
 //!
-//! # KRİTİK: Hacim politikası — `kaydet` DEĞİL, `kaydet_birlestirerek`
+//! # KRİTİK: Hacim politikası — `HerCagri` DEĞİL, `OturumBasi`
 //!
-//! Not editörü **2 saniyede bir** otomatik kaydeder. `audit::kaydet`
-//! (birleştirmeyen) kullanılsaydı bir saatlik seans ~1800 **silinemez** log
-//! satırı üretirdi ve denetim kaydı okunamaz hâle gelirdi. Kural
-//! (`store::audit` modül başlığı): *not başına, düzenleme oturumu başına bir
-//! satır — otomatik kayıt başına değil.*
+//! Not editörü **2 saniyede bir** otomatik kaydeder. `LogHacmi::HerCagri`
+//! kullanılsaydı bir saatlik seans ~1800 **silinemez** log satırı üretirdi ve
+//! denetim kaydı okunamaz hâle gelirdi. Kural (`store::audit` modül başlığı):
+//! *not başına, düzenleme oturumu başına bir satır — otomatik kayıt başına
+//! değil.*
 //!
-//! Bu modül `audit::kaydet`'i **hiç içe aktarmaz**; tek log yolu
-//! `kaydet_birlestirerek(..., BIRLESTIRME_PENCERESI_DK)`'dır. Derleyici bunu
-//! zorlamıyor (`kaydet` hâlâ `pub`), bu yüzden kural testlerle sabitlenir:
-//! 30 ardışık kayıt **tam olarak 1** log satırı üretir (eşitlik, "en az 1"
-//! değil).
+//! Bu modüldeki **beş** log çağrısının hepsi
+//! `LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK)` kullanır; seçim artık
+//! yazılı bir kural değil, derleyicinin zorladığı bir parametredir (bkz.
+//! `audit::LogHacmi`). Kural ayrıca testlerle sabitlenir: 30 ardışık kayıt
+//! **tam olarak 1** log satırı üretir (eşitlik, "en az 1" değil).
 //!
 //! Görüntüleme de birleştirilir. `clients::getir` bilerek birleştirilmiyor
 //! (her çağrı bir danışan dosyasının açılmasıdır) ama not editörü **kendi
@@ -77,7 +77,7 @@
 //! `rusqlite::Error` olarak dönen gürültülü bir hatadır — ama derleyici
 //! yakalamaz.
 
-use crate::store::audit::{kaydet_birlestirerek, Cihaz, Eylem, BIRLESTIRME_PENCERESI_DK};
+use crate::store::audit::{kaydet, Cihaz, Eylem, LogHacmi, BIRLESTIRME_PENCERESI_DK};
 use crate::store::clients::DepoHatasi;
 use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
@@ -196,14 +196,14 @@ pub fn not_getir(
         .optional()?;
 
     // Log yalnizca HANGI notun goruntulendigini tutar; icerik ASLA loglanmaz.
-    kaydet_birlestirerek(
+    kaydet(
         conn,
         Eylem::Goruntuleme,
         VARLIK_RESMI,
         &appointment_id.to_string(),
         cihaz,
         None,
-        BIRLESTIRME_PENCERESI_DK,
+        LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK),
     )?;
 
     Ok(match mevcut {
@@ -255,14 +255,14 @@ pub fn not_kaydet(
     )?;
 
     // Otomatik kayit basina DEGIL, duzenleme oturumu basina bir satir.
-    kaydet_birlestirerek(
+    kaydet(
         &tx,
         Eylem::Duzenleme,
         VARLIK_RESMI,
         &appointment_id.to_string(),
         cihaz,
         None,
-        BIRLESTIRME_PENCERESI_DK,
+        LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK),
     )?;
 
     tx.commit()?;
@@ -295,14 +295,14 @@ pub fn ozel_not_getir(
         )
         .optional()?;
 
-    kaydet_birlestirerek(
+    kaydet(
         conn,
         Eylem::Goruntuleme,
         VARLIK_OZEL,
         &appointment_id.to_string(),
         cihaz,
         None,
-        BIRLESTIRME_PENCERESI_DK,
+        LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK),
     )?;
 
     Ok(match mevcut {
@@ -338,14 +338,14 @@ pub fn ozel_not_kaydet(
         rusqlite::params![appointment_id, client_id, icerik, zaman],
     )?;
 
-    kaydet_birlestirerek(
+    kaydet(
         &tx,
         Eylem::Duzenleme,
         VARLIK_OZEL,
         &appointment_id.to_string(),
         cihaz,
         None,
-        BIRLESTIRME_PENCERESI_DK,
+        LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK),
     )?;
 
     tx.commit()?;
@@ -393,14 +393,14 @@ pub fn danisan_notlari(
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
 
-    kaydet_birlestirerek(
+    kaydet(
         conn,
         Eylem::Goruntuleme,
         VARLIK_RESMI,
         &format!("liste:{client_id}"),
         cihaz,
         None,
-        BIRLESTIRME_PENCERESI_DK,
+        LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK),
     )?;
     Ok(notlar)
 }
@@ -594,9 +594,8 @@ mod tests {
     // --- Hacim politikasi (Plan 3 Gorev 2 kurali) -----------------------
     //
     // Bu testler SAYAR ve TAM ESITLIK iddia eder ("en az 1" degil). Sebep:
-    // `kaydet_birlestirerek` yerine `kaydet` kullanilsaydi (Gorev 2'nin
-    // uygulayicisinin devrettigi endise: derleyici bunu zorlamiyor)
-    // "en az 1" testi yine gecerdi.
+    // `LogHacmi::OturumBasi` yerine `HerCagri` secilseydi "en az 1" testi
+    // yine gecerdi.
 
     #[test]
     fn otuz_otomatik_kayit_tam_olarak_bir_log_satiri_uretir() {

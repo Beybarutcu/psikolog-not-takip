@@ -38,7 +38,7 @@
 //! hatadır -- ama derleyici yakalamaz.
 
 use crate::store::audit::{
-    kaydet, kaydet_birlestirerek, Ayrinti, Cihaz, Eylem, BIRLESTIRME_PENCERESI_DK,
+    kaydet, Ayrinti, Cihaz, Eylem, LogHacmi, BIRLESTIRME_PENCERESI_DK,
 };
 use crate::store::clients::{son_temasi_tazele, DepoHatasi, VARSAYILAN_SAKLAMA_YILI};
 use crate::store::zaman::zaman_gecerli_mi;
@@ -183,7 +183,7 @@ pub fn olustur(
         rusqlite::params![yeni.client_id, yeni.baslangic, yeni.bitis, yeni.ucret, z],
     )?;
     let id = tx.last_insert_rowid();
-    kaydet(&tx, Eylem::Ekleme, "appointment", &id.to_string(), cihaz, None)?;
+    kaydet(&tx, Eylem::Ekleme, "appointment", &id.to_string(), cihaz, None, LogHacmi::HerCagri)?;
 
     let randevu = tx.query_row(&format!("{SECIM} WHERE a.id = ?1"), [id], satirdan)?;
 
@@ -233,14 +233,14 @@ pub fn aralik_getir(
     // Liste tek bir goruntuleme kaydi uretir, satir basina degil -- ve o tek
     // kayit da pencere boyunca birlestirilir (bkz. fonksiyon dokumantasyonu).
     // Var olan satira DOKUNULMAZ; yalnizca "yazma" karari verilir.
-    kaydet_birlestirerek(
+    kaydet(
         conn,
         Eylem::Goruntuleme,
         "appointment",
         "liste",
         cihaz,
         Some(Ayrinti::AralikBaslangici(baslangic.to_string())),
-        BIRLESTIRME_PENCERESI_DK,
+        LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK),
     )?;
     Ok(liste)
 }
@@ -283,6 +283,7 @@ pub fn durum_guncelle(
         &id.to_string(),
         cihaz,
         Some(Ayrinti::Durum(sabit_durum)),
+        LogHacmi::HerCagri,
     )?;
 
     if sabit_durum == "geldi" {
@@ -421,7 +422,7 @@ pub fn guncelle(
     if etkilenen == 0 {
         return Err(DepoHatasi::Bulunamadi);
     }
-    kaydet(&tx, Eylem::Duzenleme, "appointment", &id.to_string(), cihaz, None)?;
+    kaydet(&tx, Eylem::Duzenleme, "appointment", &id.to_string(), cihaz, None, LogHacmi::HerCagri)?;
 
     let randevu = tx.query_row(&format!("{SECIM} WHERE a.id = ?1"), [id], satirdan)?;
 
@@ -441,7 +442,7 @@ pub fn sil(conn: &Connection, id: i64, cihaz: Cihaz) -> Result<(), DepoHatasi> {
     if etkilenen == 0 {
         return Err(DepoHatasi::Bulunamadi);
     }
-    kaydet(&tx, Eylem::Silme, "appointment", &id.to_string(), cihaz, None)?;
+    kaydet(&tx, Eylem::Silme, "appointment", &id.to_string(), cihaz, None, LogHacmi::HerCagri)?;
 
     tx.commit()?;
     Ok(())
@@ -670,7 +671,7 @@ pub fn seri_olustur(
             rusqlite::params![yeni.client_id, baslangic, bitis, yeni.ucret, seri_id, z],
         )?;
         let id = tx.last_insert_rowid();
-        kaydet(&tx, Eylem::Ekleme, "appointment", &id.to_string(), cihaz, None)?;
+        kaydet(&tx, Eylem::Ekleme, "appointment", &id.to_string(), cihaz, None, LogHacmi::HerCagri)?;
 
         let randevu = tx.query_row(&format!("{SECIM} WHERE a.id = ?1"), [id], satirdan)?;
         uretilenler.push(randevu);
@@ -772,6 +773,7 @@ pub fn seriyi_sil(
         seri_id,
         cihaz,
         Some(Ayrinti::SeriSilme { adet: silinen, tarihten: bu_tarihten_itibaren.to_string() }),
+        LogHacmi::HerCagri,
     )?;
 
     tx.commit()?;

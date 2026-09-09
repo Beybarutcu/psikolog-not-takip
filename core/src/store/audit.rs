@@ -63,7 +63,19 @@
 //!
 //! ## Not kayıtları
 //! Not başına, **düzenleme oturumu başına bir** satır — otomatik kayıt
-//! başına değil. Bunu sağlayan mekanizma `kaydet_birlestirerek`'tir.
+//! başına değil. Bunu sağlayan mekanizma `LogHacmi::OturumBasi`'dır.
+//!
+//! # KRİTİK: Hacim kararı DERLEME ZAMANINDA verilir — `LogHacmi`
+//!
+//! Bu modülün tek yazma kapısı `kaydet`'tir ve son parametresi
+//! `hacim: LogHacmi`'dir. Enum'un `Default`'u **yoktur**, `Option` da
+//! değildir: her çağıran, o yazma yolunun hacim politikasının hangi tarafında
+//! olduğunu (`HerCagri` mi, `OturumBasi(pencere)` mi) **açıkça** söylemek
+//! zorundadır. Daha önce `kaydet` (birleştirmeyen) ve `kaydet_birlestirerek`
+//! yan yana `pub` duruyordu; hangisinin kullanılacağı yalnızca **yazılı bir
+//! kuraldı** ve yeni bir depo modülü (ekler, arama) yanlışını seçse hiçbir
+//! şey uyarmazdı. Artık unutmak mümkün değil, `HerCagri` yazan bir satır ise
+//! kod incelemesinde göze görünür.
 //!
 //! # KRİTİK: Birleştirme bir "yazma" kararıdır, "üzerine yazma" değil
 //!
@@ -196,15 +208,27 @@ fn simdi_utc() -> String {
         .expect("zaman bicimlendirilemedi")
 }
 
-/// Erişim logu tablosuna bir olay yazar.
+/// Bir yazma yolunun hacim politikası — bkz. modül başlığı.
 ///
-/// # Hassas veri kuralı
-/// `varlik`, `varlik_id` yalnızca kayıt tipini ve kimliğini taşımalı (ör.
-/// "client", "42"); `ayrinti` kapalı `Ayrinti` enum'udur — serbest metin
-/// kabul edilmez. Seans notu içeriği, danışan adı, arama sorgusu gibi
-/// hassas/özel nitelikli veriler bu fonksiyona **asla** parametre olarak
-/// geçirilmemelidir.
-pub fn kaydet(
+/// `kaydet`'in son parametresidir ve **atlanamaz**: `Default` uygulanmaz,
+/// `Option` değildir. Amaç, "birleştirmeli mi birleştirmesiz mi" kararını
+/// yazılı bir kuraldan derleyicinin zorladığı bir seçime taşımaktır.
+#[derive(Debug, Clone, Copy)]
+pub enum LogHacmi {
+    /// Her çağrı ayrı bir satır yazar. Veriyi **değiştiren** ve sonradan
+    /// hesabı verilmesi gereken işlemler ile seyrek, gerçek kullanıcı
+    /// eylemleri (danışan dosyası açmak, giriş/çıkış) buradadır.
+    HerCagri,
+    /// Aynı `(eylem, varlik, varlik_id)` üçlüsü için verilen dakika
+    /// penceresinde **en fazla bir** satır. Kendi kendini yenileyen ekranlar
+    /// ve otomatik kayıt yolları buradadır; pencere için
+    /// `BIRLESTIRME_PENCERESI_DK` kullanın.
+    OturumBasi(i64),
+}
+
+/// `audit_log`'a satırı fiilen yazan tek yer. `kaydet` dışından
+/// çağrılamaz — hacim kararını atlayan bir yazma yolu olmamalı.
+fn yaz(
     conn: &Connection,
     eylem: Eylem,
     varlik: &str,
@@ -219,6 +243,43 @@ pub fn kaydet(
         rusqlite::params![simdi_utc(), eylem.as_str(), varlik, varlik_id, cihaz.as_str(), ayrinti],
     )?;
     Ok(())
+}
+
+/// Erişim logu tablosuna bir olay yazar. Hacim politikası `hacim` ile
+/// **açıkça** seçilir (bkz. `LogHacmi` ve modül başlığı).
+///
+/// Dönen `bool`, satırın gerçekten yazılıp yazılmadığını söyler:
+/// `LogHacmi::HerCagri` her zaman `true` döner, `OturumBasi` ise pencere
+/// içinde zaten bir satır varsa `false`.
+///
+/// # Var olan satıra dokunulmaz
+/// `OturumBasi`'nın "birleştirme" dediği şey, ikinci yazmadan VAZGEÇMEKtir.
+/// Var olan satırın `olay_zamani`'si ilk yazımdaki değerde kalır, `id`'si
+/// değişmez. Bu bilinçlidir: log değiştirilemez olduğu için değerlidir
+/// (bkz. modül başlığı ve `birlestirme_var_olan_satiri_degistirmez` testi).
+///
+/// # Hassas veri kuralı
+/// `varlik`, `varlik_id` yalnızca kayıt tipini ve kimliğini taşımalı (ör.
+/// "client", "42"); `ayrinti` kapalı `Ayrinti` enum'udur — serbest metin
+/// kabul edilmez. Seans notu içeriği, danışan adı, arama sorgusu gibi
+/// hassas/özel nitelikli veriler bu fonksiyona **asla** parametre olarak
+/// geçirilmemelidir.
+pub fn kaydet(
+    conn: &Connection,
+    eylem: Eylem,
+    varlik: &str,
+    varlik_id: &str,
+    cihaz: Cihaz,
+    ayrinti: Option<Ayrinti>,
+    hacim: LogHacmi,
+) -> Result<bool, rusqlite::Error> {
+    if let LogHacmi::OturumBasi(pencere_dk) = hacim {
+        if son_kayit_yakin_mi(conn, eylem, varlik, varlik_id, pencere_dk)? {
+            return Ok(false);
+        }
+    }
+    yaz(conn, eylem, varlik, varlik_id, cihaz, ayrinti)?;
+    Ok(true)
 }
 
 /// Birleştirme penceresinin varsayılan uzunluğu (dakika).
@@ -279,33 +340,6 @@ pub fn son_kayit_yakin_mi(
     Ok(var != 0)
 }
 
-/// `kaydet`'in birleştiren hâli: aynı üçlü için pencere içinde zaten bir
-/// satır varsa **hiçbir şey yapmaz**; yoksa yeni bir satır YAZAR.
-///
-/// Dönen `bool`, satırın gerçekten yazılıp yazılmadığını söyler (çağıran
-/// taraf istatistik/test için kullanabilir).
-///
-/// # Var olan satıra dokunulmaz
-/// Bu fonksiyonun "birleştirme" dediği şey, ikinci yazmadan VAZGEÇMEKtir.
-/// Var olan satırın `olay_zamani`'si ilk yazımdaki değerde kalır, `id`'si
-/// değişmez. Bu bilinçlidir: log değiştirilemez olduğu için değerlidir
-/// (bkz. modül başlığı ve `birlestirme_var_olan_satiri_degistirmez` testi).
-pub fn kaydet_birlestirerek(
-    conn: &Connection,
-    eylem: Eylem,
-    varlik: &str,
-    varlik_id: &str,
-    cihaz: Cihaz,
-    ayrinti: Option<Ayrinti>,
-    pencere_dk: i64,
-) -> Result<bool, rusqlite::Error> {
-    if son_kayit_yakin_mi(conn, eylem, varlik, varlik_id, pencere_dk)? {
-        return Ok(false);
-    }
-    kaydet(conn, eylem, varlik, varlik_id, cihaz, ayrinti)?;
-    Ok(true)
-}
-
 /// En yeni kayıttan en eskiye doğru sıralanmış son `limit` audit kaydını döner.
 ///
 /// Sıralama `id DESC` ile yapılır (`olay_zamani DESC` ile değil), böylece
@@ -346,7 +380,7 @@ mod tests {
     #[test]
     fn kaydedilen_olay_geri_okunur() {
         let (_d, c) = baglanti();
-        kaydet(&c, Eylem::Goruntuleme, "client", "42", Cihaz::Masaustu, None).unwrap();
+        kaydet(&c, Eylem::Goruntuleme, "client", "42", Cihaz::Masaustu, None, LogHacmi::HerCagri).unwrap();
 
         let kayitlar = son_kayitlar(&c, 10).unwrap();
         assert_eq!(kayitlar.len(), 1);
@@ -359,7 +393,7 @@ mod tests {
     #[test]
     fn olay_zamani_iso8601_utc_biciminde() {
         let (_d, c) = baglanti();
-        kaydet(&c, Eylem::Giris, "session", "-", Cihaz::Masaustu, None).unwrap();
+        kaydet(&c, Eylem::Giris, "session", "-", Cihaz::Masaustu, None, LogHacmi::HerCagri).unwrap();
         let z = &son_kayitlar(&c, 1).unwrap()[0].olay_zamani;
         assert!(z.ends_with('Z'), "zaman UTC olmali: {z}");
         assert_eq!(z.len(), 20, "ornek: 2026-09-07T10:00:00Z");
@@ -368,8 +402,8 @@ mod tests {
     #[test]
     fn kayitlar_en_yeniden_eskiye_siralanir() {
         let (_d, c) = baglanti();
-        kaydet(&c, Eylem::Giris, "session", "1", Cihaz::Masaustu, None).unwrap();
-        kaydet(&c, Eylem::Cikis, "session", "2", Cihaz::Masaustu, None).unwrap();
+        kaydet(&c, Eylem::Giris, "session", "1", Cihaz::Masaustu, None, LogHacmi::HerCagri).unwrap();
+        kaydet(&c, Eylem::Cikis, "session", "2", Cihaz::Masaustu, None, LogHacmi::HerCagri).unwrap();
         let k = son_kayitlar(&c, 10).unwrap();
         assert_eq!(k[0].varlik_id, "2");
     }
@@ -426,7 +460,7 @@ mod tests {
     #[test]
     fn ayrintili_kayit_geri_okunur() {
         let (_d, c) = baglanti();
-        kaydet(&c, Eylem::Duzenleme, "client", "7", Cihaz::Masaustu, Some(Ayrinti::Arsivlendi))
+        kaydet(&c, Eylem::Duzenleme, "client", "7", Cihaz::Masaustu, Some(Ayrinti::Arsivlendi), LogHacmi::HerCagri)
             .unwrap();
         assert_eq!(son_kayitlar(&c, 1).unwrap()[0].ayrinti.as_deref(), Some("arsivlendi"));
     }
@@ -434,7 +468,7 @@ mod tests {
     #[test]
     fn ayrintisiz_kayit_null_saklar() {
         let (_d, c) = baglanti();
-        kaydet(&c, Eylem::Giris, "session", "-", Cihaz::Masaustu, None).unwrap();
+        kaydet(&c, Eylem::Giris, "session", "-", Cihaz::Masaustu, None, LogHacmi::HerCagri).unwrap();
         assert_eq!(son_kayitlar(&c, 1).unwrap()[0].ayrinti, None);
     }
 
@@ -455,7 +489,13 @@ mod tests {
     /// UPDATE/DELETE'tir. Pencerenin gercekten ZAMANA bagli oldugunu
     /// kanitlamak icin gerekiyor: var olan bir satirin zamanini geri almak
     /// (UPDATE) tetikleyici tarafindan -- dogru olarak -- reddedilir.
-    fn eski_satir_ekle(c: &rusqlite::Connection, eylem: Eylem, varlik: &str, varlik_id: &str, dk_once: i64) -> String {
+    fn eski_satir_ekle(
+        c: &rusqlite::Connection,
+        eylem: Eylem,
+        varlik: &str,
+        varlik_id: &str,
+        dk_once: i64,
+    ) -> String {
         let zaman = pencere_esigi(dk_once);
         c.execute(
             "INSERT INTO audit_log (olay_zamani, eylem, varlik, varlik_id, cihaz, ayrinti)
@@ -475,14 +515,14 @@ mod tests {
 
         let mut yazilan = 0;
         for _ in 0..30 {
-            if kaydet_birlestirerek(
+            if kaydet(
                 &c,
                 Eylem::Duzenleme,
                 "note",
                 "5",
                 Cihaz::Masaustu,
                 None,
-                BIRLESTIRME_PENCERESI_DK,
+                LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK),
             )
             .unwrap()
             {
@@ -505,14 +545,14 @@ mod tests {
         let ilk_id: i64 = c.query_row("SELECT id FROM audit_log", [], |r| r.get(0)).unwrap();
 
         for _ in 0..30 {
-            kaydet_birlestirerek(
+            kaydet(
                 &c,
                 Eylem::Duzenleme,
                 "note",
                 "5",
                 Cihaz::Masaustu,
                 None,
-                BIRLESTIRME_PENCERESI_DK,
+                LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK),
             )
             .unwrap();
         }
@@ -546,14 +586,14 @@ mod tests {
             "ayni satir 15 dakikalik pencerenin ICINDE olmali -- esik gercekten zamana bagli"
         );
 
-        let yazildi = kaydet_birlestirerek(
+        let yazildi = kaydet(
             &c,
             Eylem::Duzenleme,
             "note",
             "5",
             Cihaz::Masaustu,
             None,
-            BIRLESTIRME_PENCERESI_DK,
+            LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK),
         )
         .unwrap();
 
@@ -573,12 +613,12 @@ mod tests {
     fn birlestirme_farkli_bir_notu_gizlemez() {
         let (_d, c) = baglanti();
         for _ in 0..30 {
-            kaydet_birlestirerek(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, None, BIRLESTIRME_PENCERESI_DK).unwrap();
+            kaydet(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, None, LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK)).unwrap();
         }
         assert_eq!(log_sayisi(&c), 1);
 
         // AYNI pencere icinde BASKA bir nota yazmak ayri satir uretmeli.
-        let yazildi = kaydet_birlestirerek(&c, Eylem::Duzenleme, "note", "6", Cihaz::Masaustu, None, BIRLESTIRME_PENCERESI_DK).unwrap();
+        let yazildi = kaydet(&c, Eylem::Duzenleme, "note", "6", Cihaz::Masaustu, None, LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK)).unwrap();
         assert!(yazildi, "farkli bir not ayri satir yazmali");
         assert_eq!(log_sayisi(&c), 2);
     }
@@ -587,13 +627,13 @@ mod tests {
     fn birlestirme_farkli_bir_eylemi_gizlemez() {
         let (_d, c) = baglanti();
         for _ in 0..30 {
-            kaydet_birlestirerek(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, None, BIRLESTIRME_PENCERESI_DK).unwrap();
+            kaydet(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, None, LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK)).unwrap();
         }
         assert_eq!(log_sayisi(&c), 1);
 
         // AYNI notta AYNI pencere icinde SILME ayri satir uretmeli --
         // yoksa birlestirme, hesabi verilmesi gereken bir islemi orterdi.
-        let yazildi = kaydet_birlestirerek(&c, Eylem::Silme, "note", "5", Cihaz::Masaustu, None, BIRLESTIRME_PENCERESI_DK).unwrap();
+        let yazildi = kaydet(&c, Eylem::Silme, "note", "5", Cihaz::Masaustu, None, LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK)).unwrap();
         assert!(yazildi, "ayni notta farkli eylem ayri satir yazmali");
         assert_eq!(log_sayisi(&c), 2);
 
@@ -606,10 +646,10 @@ mod tests {
     #[test]
     fn birlestirme_farkli_bir_varligi_gizlemez() {
         let (_d, c) = baglanti();
-        kaydet_birlestirerek(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, None, BIRLESTIRME_PENCERESI_DK).unwrap();
+        kaydet(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, None, LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK)).unwrap();
         // Ayni id, farkli varlik turu: "5 numarali not" ile "5 numarali
         // randevu" ayni sey degildir.
-        let yazildi = kaydet_birlestirerek(&c, Eylem::Duzenleme, "appointment", "5", Cihaz::Masaustu, None, BIRLESTIRME_PENCERESI_DK).unwrap();
+        let yazildi = kaydet(&c, Eylem::Duzenleme, "appointment", "5", Cihaz::Masaustu, None, LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK)).unwrap();
         assert!(yazildi);
         assert_eq!(log_sayisi(&c), 2);
     }
@@ -623,7 +663,7 @@ mod tests {
         let (_d, c) = baglanti();
         for _ in 0..5 {
             assert!(
-                kaydet_birlestirerek(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, None, 0)
+                kaydet(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, None, LogHacmi::OturumBasi(0))
                     .unwrap(),
                 "pencere 0 iken her cagri yazmali"
             );
@@ -639,7 +679,7 @@ mod tests {
                 .unwrap(),
             "hic kayit yokken 'yakin kayit var' denemez"
         );
-        assert!(kaydet_birlestirerek(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, None, BIRLESTIRME_PENCERESI_DK).unwrap());
+        assert!(kaydet(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, None, LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK)).unwrap());
         assert_eq!(log_sayisi(&c), 1);
     }
 
@@ -647,7 +687,7 @@ mod tests {
     fn birlestirme_asla_update_veya_delete_denemez() {
         // Tetikleyiciler her UPDATE/DELETE'i ABORT ile reddeder. Bu test,
         // birlestirmenin bunlara HIC basvurmadigini davranissal olarak
-        // kanitlar: eger `kaydet_birlestirerek` var olan satiri
+        // kanitlar: eger `LogHacmi::OturumBasi` var olan satiri
         // guncellemeye/silmeye calissaydi cagri Err donerdi.
         let (_d, c) = baglanti();
         eski_satir_ekle(&c, Eylem::Duzenleme, "note", "5", 1);
@@ -657,7 +697,7 @@ mod tests {
         assert!(c.execute("DELETE FROM audit_log", []).is_err());
 
         for _ in 0..30 {
-            kaydet_birlestirerek(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, None, BIRLESTIRME_PENCERESI_DK)
+            kaydet(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, None, LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK))
                 .expect("birlestirme hicbir UPDATE/DELETE denememeli");
         }
         assert_eq!(log_sayisi(&c), 1);

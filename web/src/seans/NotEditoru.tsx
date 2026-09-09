@@ -223,11 +223,20 @@ export function NotEditoru({
           ))}
         </select>
 
+        {/* Kibar (`polite`) canlı bölge: "Kaydedilmemiş değişiklikler var…",
+            "Yazılıyor…", "Kaydedildi 14:32". Kullanıcı yazarken kesilmesin
+            diye `status`, `alert` DEĞİL. Bölge metin boşken de DOM'da kalır:
+            sonradan eklenen canlı bölgeler ekran okuyucularda güvenilir
+            biçimde duyurulmaz. Hata kipinde bilerek boşalır — o kipin
+            duyurusunu aşağıdaki `role="alert"` üstlenir. */}
         <span className="ml-auto text-sm text-slate-500" role="status">
           {durumMetni(durum)}
         </span>
       </div>
 
+      {/* Geri yükleme şeridi de bir canlı bölge: kurtarma sessizce olursa,
+          ekran okuyucu kullanıcısı ekrandaki metnin sunucudan mı taslaktan
+          mı geldiğini bilemez — ve o metin henüz KAYDEDİLMEMİŞTİR. */}
       {geriYuklendi && (
         <p role="status" className="mb-2 rounded bg-amber-50 p-2 text-sm text-amber-900">
           Kaydedilmemiş not içeriğiniz geri yüklendi. Oturum kilitlendiğinde henüz
@@ -245,8 +254,15 @@ export function NotEditoru({
         onChange={(e) => setIcerik(e.target.value)}
       />
 
+      {/* `role="alert"` (assertive): kayıt hatası ekran okuyucuya DUYURULMAK
+          zorunda. Önceki hâlinde hata kipi `durumMetni`'ni boş dizgeye
+          çeviriyor, yani kibar bölgeyi BOŞALTIYORDU ve kutunun kendisinin
+          hiçbir `role`'ü yoktu: ekran okuyucu kullanıcısı yazmaya devam
+          ederken "Kaydedilemedi" hiç duyulmuyordu. Burada kesici duyuru
+          doğru olan: kaydet düğmesi yok, kullanıcı kaydın olduğunu
+          varsayarak yazmaya devam ediyor ve bunu ilk fırsatta bilmeli. */}
       {durum.tur === 'hata' && (
-        <div className="mt-2 rounded bg-red-50 p-2 text-sm text-red-800">
+        <div role="alert" className="mt-2 rounded bg-red-50 p-2 text-sm text-red-800">
           <p>
             Kaydedilemedi.{' '}
             {durum.kilit
@@ -295,6 +311,9 @@ function durumMetni(durum: Durum): string {
     case 'kaydedildi':
       return `Kaydedildi ${durum.saat}`
     case 'hata':
+      // Bilerek boş: hata kipinin duyurusunu kibar `status` bölgesi değil,
+      // hata kutusunun `role="alert"`'ü yapar. İkisi birden konuşsaydı aynı
+      // olay ekran okuyucuda iki kez okunurdu.
       return ''
   }
 }

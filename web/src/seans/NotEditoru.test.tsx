@@ -352,6 +352,81 @@ describe('NotEditoru — kapanirken bekleyen icerik', () => {
   })
 })
 
+// Kaydet düğmesi olmayan bir editörde kayıt durumu SADECE GÖRSEL olamaz:
+// kullanıcı kaydın kendiliğinden olduğunu varsayarak yazmaya devam eder.
+// Emsal `AnaEkran`'da: arşivleme sonucu `role="status"` ile duyuruluyor ve
+// testi "önce YOK, sonra VAR" kalıbıyla çiviliyor. Aynı kalıp burada.
+describe('NotEditoru — ekran okuyucuya duyurulanlar', () => {
+  it('kayit durumu kibar canli bolgede duyurulur (once BOS, sonra DOLU)', async () => {
+    kur({ gecikmeMs: 20 })
+
+    // Bölge açılışta DOM'da ama BOŞ. (Sonradan eklenen canlı bölgeler
+    // güvenilir biçimde duyurulmaz; bu yüzden kaldırılmıyor, boşalıyor.)
+    expect(screen.getByRole('status').textContent).toBe('')
+
+    await userEvent.type(alan(), 'x')
+    // İddia bölgenin KENDİSİ üzerinden: sayfanın başka bir yerindeki
+    // "Kaydedildi" metni bunu tatmin edemesin.
+    await waitFor(() => expect(screen.getByRole('status').textContent).toMatch(/kaydedildi/i))
+  })
+
+  it('kayit hatasi assertive olarak duyurulur ve kibar bolge susar', async () => {
+    kur({ onKaydet: vi.fn().mockRejectedValue(new Error('ağ hatası')), gecikmeMs: 20 })
+
+    // Önce YOK: `alert` gerçekten hataya bağlı, her kutuya serpilmiş değil.
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    await userEvent.type(alan(), 'onemli not')
+
+    const uyari = await screen.findByRole('alert')
+    expect(uyari.textContent ?? '').toMatch(/kaydedilemedi/i)
+    // Kurtarma yolu da duyurunun İÇİNDE: kullanıcı ne olduğunu duyduğunda
+    // ne yapabileceğini de duyar.
+    expect(within(uyari).getByRole('button', { name: 'Yeniden dene' })).toBeDefined()
+    // Kibar bölge bilerek susuyor — aynı olay iki kez okunmasın.
+    expect(screen.getByRole('status').textContent).toBe('')
+  })
+
+  it('401 hatasinda da duyuru yapilir ve metnin korundugu SOYLENIR', async () => {
+    kur({
+      onKaydet: vi.fn().mockRejectedValue(new YetkisizHata('Oturum zaman aşımına uğradı.')),
+      gecikmeMs: 20,
+    })
+    await userEvent.type(alan(), 'danisan bugun kaygiliydi')
+
+    const uyari = await screen.findByRole('alert')
+    expect(uyari.textContent ?? '').toMatch(/oturum kilitlendi/i)
+    expect(uyari.textContent ?? '').toMatch(/geri yüklenir/i)
+  })
+
+  it('geri yukleme seridi de canli bolgedir', async () => {
+    const kilitli = vi.fn().mockRejectedValue(new YetkisizHata('Oturum kilitli.'))
+    const ortak = { baslangicIcerik: '', baslangicSablon: 'dap', gecikmeMs: 20 }
+    const { unmount } = render(
+      <NotEditoru {...ortak} onKaydet={kilitli} taslakAnahtari="not-55" />,
+    )
+    await userEvent.type(alan(), 'kaydedilemeyen metin')
+    await waitFor(() => expect(kilitli).toHaveBeenCalled())
+    unmount()
+
+    render(
+      <NotEditoru
+        {...ortak}
+        onKaydet={vi.fn().mockResolvedValue(undefined)}
+        taslakAnahtari="not-55"
+      />,
+    )
+
+    // İddia canlı bölgeler üzerinden: şerit `role="status"` taşımasaydı
+    // kurtarma yalnızca GÖRSEL olurdu.
+    const duyurular = screen
+      .getAllByRole('status')
+      .map((e) => e.textContent ?? '')
+      .join(' ')
+    expect(duyurular).toMatch(/geri yüklendi/i)
+  })
+})
+
 describe('NotEditoru — kisitlar', () => {
   it('sablon listesi kapali kumedir, yeni sablon ekleme yolu yoktur', () => {
     kur()

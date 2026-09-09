@@ -4,7 +4,7 @@
 
 **Goal:** Uygulamanın asıl işi: danışan dosyasının tam hâli, seans notu editörü (otomatik kayıtlı, şablonlu), resmî not ile terapistin özel notunun ayrılması, ekli dosyalar ve not içinde arama.
 
-**Architecture:** Plan 1'in şifreli veritabanı ve Plan 2'nin randevu kaydı üzerine kurulur. `clients` tablosu rıza ve saklama alanlarıyla genişletilir; `progress_notes` ve `private_notes` **ayrı tablolar** olarak eklenir. Seans notu bir randevuya bağlanır — randevu ile seans aynı kayıttır. Arama, SQLite FTS5 yerine düz `LIKE` ile yapılır (gerekçe Task 8'de).
+**Architecture:** Plan 1'in şifreli veritabanı ve Plan 2'nin randevu kaydı üzerine kurulur. `clients` tablosu rıza ve saklama alanlarıyla genişletilir; `progress_notes` ve `private_notes` **ayrı tablolar** olarak eklenir. Seans notu bir randevuya bağlanır — randevu ile seans aynı kayıttır. Arama, SQLite FTS5 yerine düz `LIKE` ile yapılır (gerekçe Arama görevinde).
 
 **Tech Stack:** Plan 1 ve 2 ile aynı — Rust (rusqlite/SQLCipher, axum), React + TypeScript + Tailwind, Vitest, Playwright.
 
@@ -27,6 +27,27 @@ Plan 1 ve Plan 2'nin tüm global kısıtları geçerlidir. Bu plana özgü ek k�
   almaya başlar — bu planın önlemeye çalıştığı not kaybının ta kendisi.
 - **`audit_log.ayrinti` kapalı bir enum'dur** (Plan 2'de dönüştürüldü). Serbest metin yazma;
   log tetikleyicilerle silinemez olduğu için oraya düşen not içeriği kalıcıdır.
+
+**Plan 2'nin dal incelemesinden devredilen bağlayıcı kısıtlar:**
+
+- **Denetim kaydı hacmi bir tasarım kısıtıdır, ayrıntı değil.** `audit_log` tetikleyicilerle
+  silinemez. Not editörü 2 saniyede bir yazacağı için "her yazma bir log satırı" kuralı bir
+  saatlik not yazımında ~1800 silinemez satır üretir. Kural Task 2'de tek yerde yazılır ve
+  bu plandaki **her** yazma yolu ona uyar.
+- **Birleştirme (coalescing) asla var olan bir satırı silerek veya güncelleyerek yapılmaz.**
+  Tetikleyiciler bunu zaten reddeder ve logun tüm değeri değiştirilemezliğidir. Birleştirme
+  "yazma" kararıdır, "üzerine yazma" değil.
+- **Otomatik kayıt sırasında 401 gelirse yazılmamış not içeriği sessizce düşürülemez.**
+  Plan 2'de boşta kalma kilidi ekrana bağlandı; artık oturum yazma sırasında gerçekten
+  kilitlenebilir. Kullanıcının yazdığı metin kaybolursa bu planın önlemeye çalıştığı hatanın
+  ta kendisi olur. Davranış Task 8'de açıkça kararlaştırılır ve testle korunur.
+- **Dışlayıcı `WHERE` desenini kopyalama.** Kod tabanındaki tek örnek `cakisanlari_bul`'daki
+  `durum != 'iptal'`. Özel notların ayrı tabloda tutulması kuralı bu desene kaymamalıdır —
+  Plan 2 Görev 4'ün bulgusu (şablon kopyalandı, arkasındaki muhakeme kopyalanmadı) bu planda
+  en çok burada tekrar etme riski taşıyor.
+- **`Ayrinti`'ye eklenecek hiçbir varyant doğrulanmamış metin taşımaz.** Not içeriği bir yana,
+  **not başlığı, şablon adı ve dosya adı bile** loga girmez. `zaman_gecerli_mi` gibi dar bir
+  doğrulayıcısı olmayan `String` varyantı eklenmez.
 
 ---
 
@@ -309,7 +330,105 @@ git commit -m "feat(veri): sema surum 3 - not tablolari ve danisan dosyasi alanl
 
 ---
 
-### Task 2: Not deposu — resmî not ve özel not
+### Task 2: Denetim kaydı hacim politikası ve bağlantı ömrü
+
+**Not deposundan ÖNCE yapılmalıdır.** Task 3 ve sonrası bu kurala göre yazılacak; sonradan
+uygulanırsa her yazma yolunu tek tek dolaşmak gerekir ve o sırada üretilmiş log satırları
+**silinemez**.
+
+`audit_log` tetikleyicilerle korunuyor: satır güncellenemez, silinemez. Bu, KVKK Karar
+2018/10'un istediği şey. Ama aynı özellik gürültünün de kalıcı olması demek. Bugünkü desen
+"her yazma bir log satırı" ve not editörü **2 saniyede bir** yazacak: bir saatlik seans notu
+~1800 satır üretir. Log okunamaz hâle gelirse var olma amacını yitirir — denetlenebilir
+olmayan bir denetim kaydı, olmayan denetim kaydıyla aynı şeydir.
+
+Plan 2 aynı sınıftan **iki mevcut ihlal** bıraktı; ikisi de burada kapanır:
+- `AnaEkran.yukle()` mount'ta, her hafta değişiminde ve **her mutasyondan sonra** çalışıyor;
+  her çalışma bir `goruntuleme` satırı yazıyor. "Geldi" işaretlemek iki satır üretiyor.
+- `seriyi_sil` 0 satır silse bile log yazıyor (`sil`/`durum_guncelle`'de bu kontrol var).
+  Plan 2 bunu HTTP'ye açtığı için artık dışarıdan tetiklenebilir bir gürültü yolu.
+
+**Files:**
+- Modify: `core/src/store/audit.rs` (kuralın tek yeri + birleştirme yardımcısı)
+- Modify: `core/src/store/appointments.rs` (`seriyi_sil` 0 satır kontrolü, görüntüleme logu)
+- Modify: `web/src/screens/AnaEkran.tsx` (gereksiz yeniden yükleme kaynaklı log)
+- Test: `core/src/store/audit.rs`, `core/src/store/appointments.rs` test blokları
+
+**Interfaces:**
+- Produces: `pub fn son_kayit_yakin_mi(conn, eylem, varlik, varlik_id, pencere_dk: i64) -> Result<bool, rusqlite::Error>`
+  — birleştirme kararını veren tek fonksiyon. **Yazıp yazmamaya** karar verir; var olan
+  satıra asla dokunmaz.
+- `audit.rs` modül başlığına kural yazılır: hangi işlem loglanır, hangisi loglanmaz, gerekçesiyle.
+
+**Kural (modül başlığında yazılacak hâli):**
+
+*Loglanır:* veriyi değiştiren ve sonradan hesabı verilmesi gereken işlemler (oluşturma,
+düzenleme, silme, arşivleme, dışa aktarma) ve **belirli bir danışanın dosyasına erişim**.
+
+*Loglanmaz:* gezinmenin yan etkisi olan tekrarlı okumalar (takvim yenilemesi), doğrulama
+sorguları (çakışma kontrolü — Plan 2 Görev 5'te bu karar verildi ve testle korundu), ve
+**ara otomatik kayıtlar**.
+
+*Not kayıtları:* not başına, düzenleme oturumu başına **bir** satır. Otomatik kayıt başına
+değil.
+
+- [ ] **Step 1: Başarısız testleri yaz**
+
+Testler kuralı kanıtlamalı, varlığını değil:
+
+- Arka arkaya 30 otomatik kayıt **tam olarak 1** log satırı üretir. (Sayan test; "en az 1"
+  değil, **eşitlik**.)
+- Birleştirme penceresi geçtikten sonra yeni bir satır yazılır — yani birleştirme logu
+  tamamen susturmuyor.
+- Birleştirme **farklı bir notu** ya da **farklı bir eylemi** gizlemez: aynı pencere içinde
+  başka bir nota yazınca ayrı satır oluşur, aynı nota silme yapınca ayrı satır oluşur.
+- Birleştirme var olan satırı **değiştirmez**: 30 kayıt sonrası ilk satırın zaman değeri ilk
+  yazımdaki değerle aynıdır.
+- `seriyi_sil` eşleşen kayıt yokken log **yazmaz**.
+- Takvim listesi tekrar tekrar çağrıldığında görüntüleme satırı **birikmez**.
+
+- [ ] **Step 2: Testlerin başarısız olduğunu doğrula**
+
+Run: `cargo test -p psikolog-core audit`
+Expected: `son_kayit_yakin_mi` tanımlı değil; hacim testleri kırmızı.
+
+- [ ] **Step 3: Minimum uygulamayı yaz**
+
+`son_kayit_yakin_mi`'yi yaz ve `seriyi_sil`'e 0 satır kontrolü ekle. Takvim görüntüleme
+logunu kurala uydur. **Var olan satırlara dokunan hiçbir SQL yazma.**
+
+- [ ] **Step 4: Bağlantı ömrü kararını ver ve belgele**
+
+`guard::acik_baglanti` her istekte taze bir SQLCipher bağlantısı açıyor. Bugün doğru (ham
+hex anahtar sayesinde KDF maliyeti yok), ama not editörü 2 saniyede bir yazacak: her 2
+saniyede bir aç + WAL checkpoint + WAL yıkımı.
+
+Bu görevde **ölç, sonra karar ver**: art arda 30 otomatik kayıt simüle eden bir test yaz,
+süreyi ve WAL davranışını gözle. Sonuç ne olursa olsun kararı `guard.rs`'e yorum olarak yaz.
+
+Değiştirmeye karar verirsen, Plan 1'den ertelenmiş şu madde **aynı kararın parçasıdır**,
+ayrı ele alınamaz: `unchecked_transaction` iç içe transaction kontrolü yapmıyor; bugün
+sorun değil çünkü her istek taze bağlantı alıyor. Havuzlanmış bağlantıda bu **artık doğru
+değildir**.
+
+Değiştirmemeye karar verirsen gerekçeyi ve hangi ölçümün bunu desteklediğini yaz. Ölçmeden
+"yeterince hızlı" deme.
+
+- [ ] **Step 5: Testlerin geçtiğini doğrula**
+
+Run: `cargo test --workspace` ve `npm --prefix web run test`
+Expected: hepsi PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add core/src/store web/src/screens server/src/guard.rs
+git commit -m "feat(log): denetim kaydi hacim politikasi ve baglanti omru karari"
+```
+
+---
+
+### Task 3: Not deposu — resmî not ve özel not
 
 **Files:**
 - Create: `core/src/store/notes.rs`
@@ -680,7 +799,23 @@ git commit -m "feat(veri): resmi ve ozel not deposu, ayri tablolarda"
 
 ---
 
-### Task 3: Danışan dosyasının tam hâli
+### Task 4: Danışan dosyasının tam hâli
+
+**Plan 2'den devredilen iki madde bu göreve aittir:**
+
+1. **`ad_soyad` uzunluk sınırı yok, telefon doğrulanmıyor.** Plan 2 Görev 3'te bilerek
+   ertelendi: "danışan dosyasının tam hâli Plan 3'te yazılıyor, doğrulama oraya daha doğal
+   düşüyor." Sınırsız bir ad alanı hem arayüzü bozar hem de arama sorgularını yavaşlatır.
+   Telefon biçimi katı olmasın (yurt dışı numaraları, dahili hatlar) ama boş olmayan çöp
+   veri sessizce kabul edilmesin.
+2. **`clients::arsivle`'nin çağrı yeri yok.** Fonksiyon Plan 2 Görev 3'te yazıldı ve test
+   edildi; rota hiç eklenmedi. Bugün bir danışan eklenebiliyor ama **arşivlenemiyor** —
+   `listele(conn, false, ...)` filtresi doğru çalışıyor ama hiçbir şey `'arsiv'` yazamıyor.
+   Sonuç: danışan listesi ve randevu açılır menüsü sınırsız büyür. Bu görevde rota ve
+   arayüz bağlantısı eklenir.
+   Arşivleme **fiziksel silme değildir** (Plan 2 Görev 3'te doğrulandı) ve arayüz metni bunu
+   doğru anlatmalı: kayıtlar duruyor, yalnızca listede görünmüyor.
+
 
 **Files:**
 - Modify: `core/src/store/clients.rs`
@@ -858,7 +993,7 @@ git commit -m "feat(veri): danisan dosyasinin tam hali, riza ve saklama takibi"
 
 ---
 
-### Task 4: Ekli dosyalar
+### Task 5: Ekli dosyalar
 
 **Files:**
 - Create: `core/src/store/attachments.rs`
@@ -973,7 +1108,7 @@ git commit -m "feat(veri): ekli dosyalar, veritabani icinde BLOB olarak"
 
 ---
 
-### Task 5: Arama
+### Task 6: Arama
 
 **Files:**
 - Create: `core/src/store/search.rs`
@@ -1090,7 +1225,7 @@ git commit -m "feat(veri): danisan ve not aramasi, ozel notlar haric"
 
 ---
 
-### Task 6: HTTP API — notlar, ekler, arama, danışan dosyası
+### Task 7: HTTP API — notlar, ekler, arama, danışan dosyası
 
 **Files:**
 - Create: `server/src/routes/notes.rs`, `server/src/routes/attachments.rs`, `server/src/routes/search.rs`
@@ -1170,7 +1305,23 @@ git commit -m "feat(api): not, ek dosya, arama ve danisan dosyasi uc noktalari"
 
 ---
 
-### Task 7: Not editörü (otomatik kayıtlı)
+### Task 8: Not editörü (otomatik kayıtlı)
+
+**Plan 2'den devredilen iki madde bu göreve aittir:**
+
+1. **401 sırasında yazılmamış içerik.** Global kısıtlarda bağlayıcı kural olarak yazıldı.
+   Plan 2'de boşta kalma kilidi ekrana bağlandı; artık oturum **yazma sırasında** gerçekten
+   kilitlenebilir. Editör 2 saniyede bir yazdığı için bu nadir bir kenar durum değil, olağan
+   bir durumdur: terapist danışanı kapıya geçirir, döner, yazmaya devam eder.
+   Karar açıkça verilmeli ve testle korunmalı. Kabul edilemez olan tek şey: metnin sessizce
+   kaybolması. Kullanıcı ya kilidi açıp kaldığı yerden devam edebilmeli, ya da en azından
+   metni kaybettiği kendisine söylenmeli.
+
+2. **`seciliRandevu` `yukle()` sonrası bayatlıyor.** `AnaEkran.tsx`'te `key` `randevu-${id}`
+   olduğu için panel, mutasyon öncesi nesneyi tutuyor. Plan 2'de görünmezdi (panel `durum`
+   basmıyordu) — **not editörü bu nesneye bağlanacağı için burada görünür hâle gelir.**
+   Editörün yazdığı `appointment_id`'nin bayat bir nesneden gelmediğini testle koru.
+
 
 **Files:**
 - Create: `web/src/seans/NotEditoru.tsx`, `web/src/seans/sablon.ts`
@@ -1282,7 +1433,7 @@ git commit -m "feat(arayuz): otomatik kayitli not editoru ve sablonlar"
 
 ---
 
-### Task 8: Seans paneli — bağlam ve iki sekmeli not
+### Task 9: Seans paneli — bağlam ve iki sekmeli not
 
 **Files:**
 - Create: `web/src/seans/SeansPaneli.tsx`, `web/src/seans/GecmisNotlar.tsx`
@@ -1340,7 +1491,7 @@ git commit -m "feat(arayuz): seans paneli, gecmis baglam ve iki sekmeli not"
 
 ---
 
-### Task 9: Danışan kartı ve hızlı arama
+### Task 10: Danışan kartı ve hızlı arama
 
 **Files:**
 - Create: `web/src/danisan/DanisanKarti.tsx`, `web/src/danisan/RizaBolumu.tsx`, `web/src/arama/HizliArama.tsx`
@@ -1389,7 +1540,7 @@ git commit -m "feat(arayuz): danisan karti, riza bolumu ve hizli arama"
 
 ---
 
-### Task 10: Uçtan uca test
+### Task 11: Uçtan uca test
 
 **Files:**
 - Create: `e2e/notlar.spec.ts`

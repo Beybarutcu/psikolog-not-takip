@@ -361,6 +361,28 @@ pub fn ozel_not_kaydet(
 /// baktığının** sonucudur — dışlayıcı filtre deseni (bkz. modül başlığı)
 /// bilinçli olarak kullanılmaz.
 ///
+/// # KRİTİK: danışan filtresi `appointments`'tan okunur, notun kopyasından değil
+/// `progress_notes.client_id` **denormalize bir kopyadır**; yetkili kaynak
+/// randevunun kendisidir (`appointments.client_id`). `appointments::guncelle`
+/// bir randevuyu başka bir danışana taşıyabilir (arayüzde `RandevuPaneli`
+/// danışan seçimini düzenlenebilir tutar ve `client_id`'yi PUT eder) ve o yol
+/// `progress_notes.client_id`'ye **dokunmaz** — üretim kodunda o sütunu
+/// güncelleyen hiçbir şey yoktur. Filtre kopyadan yapılsaydı "randevuyu
+/// yanlış danışana girmişim, düzelteyim" gibi tamamen olağan bir eylemden
+/// sonra **B'nin seans notunun tam içeriği A'nın dosyasında listelenir**,
+/// B'nin dosyasında kaybolurdu; hem de sessizce. Ayrı tablo garantisi
+/// resmî/özel ekseninde koruyor, bu delik **danışan ekseninde**ydi.
+///
+/// Bu yüzden hem `WHERE` hem dönen `client_id` `a.` (randevu) üzerinden
+/// okunur. Aynı kural özel not listesi eklenirse de geçerlidir. Testle
+/// korunur: `randevu_baska_danisana_tasininca_not_da_tasinir`.
+///
+/// # `limit`
+/// Doğrudan `LIMIT`'e geçer ve burada **doğrulanmaz**: negatif bir değer
+/// (`-1`) SQLite'ta "sınırsız" demektir, yani çağıran taraf sınır koymamış
+/// olur. Bu bilinçli: depo katmanı çağıranın limitine karışmaz. Sınırı
+/// koymak rotanın işidir (Görev 7).
+///
 /// Log: liste görüntülemeleri birleştirilir, ama `varlik_id` **hangi
 /// danışanın** listesi olduğunu taşır (`liste:<client_id>`). Sabit bir
 /// `"liste"` kimliği kullanılsaydı birleştirme, farklı danışanların
@@ -373,11 +395,11 @@ pub fn danisan_notlari(
     cihaz: Cihaz,
 ) -> Result<Vec<SeansNotu>, DepoHatasi> {
     let mut stmt = conn.prepare(
-        "SELECT p.appointment_id, p.client_id, p.sablon, p.icerik, p.guncelleme_zamani
+        "SELECT p.appointment_id, a.client_id, p.sablon, p.icerik, p.guncelleme_zamani
          FROM progress_notes p
          JOIN appointments a ON a.id = p.appointment_id
-         WHERE p.client_id = ?1
-         ORDER BY a.baslangic DESC
+         WHERE a.client_id = ?1
+         ORDER BY a.baslangic DESC, p.appointment_id DESC
          LIMIT ?2",
     )?;
     let notlar = stmt
@@ -410,7 +432,10 @@ mod tests {
     use super::*;
     use crate::crypto::keyring::generate_data_key;
     use crate::store::{
-        appointments::{olustur as randevu_olustur, YeniRandevu},
+        appointments::{
+            guncelle as randevu_guncelle, olustur as randevu_olustur, RandevuGuncelleme,
+            YeniRandevu,
+        },
         audit::son_kayitlar,
         clients::{ekle as danisan_ekle, YeniDanisan},
         db::open_encrypted,
@@ -850,6 +875,68 @@ mod tests {
 
         let notlar = danisan_notlari(&c, cid, 50, Cihaz::Masaustu).unwrap();
         assert!(notlar.is_empty(), "yalnizca ozel not varken resmi not listesi bos olmali");
+    }
+
+    #[test]
+    fn randevu_baska_danisana_tasininca_not_da_tasinir() {
+        // "Randevuyu yanlis danisana girmisim, duzelteyim" -- tamamen
+        // olagan bir eylem; arayuzde `RandevuPaneli` danisan secimini
+        // duzenlenebilir tutuyor ve `client_id`'yi PUT ediyor.
+        //
+        // `progress_notes.client_id` denormalize bir KOPYADIR ve
+        // `appointments::guncelle` ona DOKUNMAZ (uretim kodunda o sutunu
+        // guncelleyen hicbir sey yok). Filtre kopyadan yapilirsa B'nin
+        // seans notunun tam icerigi A'nin dosyasinda listelenir, B'nin
+        // dosyasinda kaybolur -- sessizce.
+        let (_d, c, a_id, rid) = kurulum();
+        not_kaydet(&c, rid, "dap", "COK_GIZLI_SEANS_ICERIGI", Cihaz::Masaustu).unwrap();
+
+        let b = danisan_ekle(
+            &c,
+            &YeniDanisan { ad_soyad: "Mehmet Demir".into(), telefon: None },
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+
+        // On kosul: not su anda A'nin dosyasinda.
+        assert_eq!(danisan_notlari(&c, a_id, 50, Cihaz::Masaustu).unwrap().len(), 1);
+        assert_eq!(danisan_notlari(&c, b.id, 50, Cihaz::Masaustu).unwrap().len(), 0);
+
+        randevu_guncelle(
+            &c,
+            rid,
+            &RandevuGuncelleme {
+                client_id: b.id,
+                baslangic: "2026-09-07T14:00".into(),
+                bitis: "2026-09-07T15:00".into(),
+                ucret: None,
+            },
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+
+        // Denormalize kopya GERCEKTEN eskimis olmali -- yoksa bu test
+        // yetkili kaynagi degil, tesadufen tutan bir kopyayi dogrularrdi.
+        let kopya: i64 = c
+            .query_row("SELECT client_id FROM progress_notes WHERE appointment_id = ?1", [rid], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(kopya, a_id, "on kosul: denormalize kopya eskimis kalmali");
+
+        let a_notlari = danisan_notlari(&c, a_id, 50, Cihaz::Masaustu).unwrap();
+        assert!(
+            a_notlari.is_empty(),
+            "randevu tasindiktan sonra not ESKI danisanin dosyasinda gorunmemeli"
+        );
+
+        let b_notlari = danisan_notlari(&c, b.id, 50, Cihaz::Masaustu).unwrap();
+        assert_eq!(b_notlari.len(), 1, "not YENI danisanin dosyasinda gorunmeli");
+        assert_eq!(b_notlari[0].icerik, "COK_GIZLI_SEANS_ICERIGI");
+        assert_eq!(
+            b_notlari[0].client_id, b.id,
+            "donen client_id de yetkili kaynaktan (randevudan) gelmeli"
+        );
     }
 
     #[test]

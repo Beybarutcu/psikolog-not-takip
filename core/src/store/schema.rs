@@ -77,6 +77,15 @@ CREATE INDEX IF NOT EXISTS ix_app_seri ON appointments(seri_id);
 /// `appointment_id`'nin `UNIQUE` olmasi "bir randevu = bir seans = bir resmi
 /// not" kuralini veritabani seviyesinde uygular; uygulama katmaninda tutulan
 /// bir kural er gec ihlal edilir.
+///
+/// `templates.kod`, `progress_notes.sablon` ile AYNI kapali kumeyi
+/// (`'dap','soap','serbest'`) tasir ve `UNIQUE`'tir. Gerekce: kullanici sablonun
+/// **icerigini** (basliklarini) duzenler, yeni bir **tur** eklemez. Iki tablo
+/// arasinda ortak bir kod olmasaydi -- `templates.ad` serbest metin, `sablon`
+/// kapali enum -- arayuzun sablon acilir listesi `templates`'tan doldurulunca
+/// secilen deger `progress_notes.sablon`'a HIC yazilamazdi; CHECK reddederdi.
+/// `ad` kullanicinin gordugu/duzenledigi isim olarak kalir, `kod` ise iki
+/// tablonun ayrisamamasini yapisal olarak garanti eder.
 const V3: &str = r#"
 CREATE TABLE IF NOT EXISTS progress_notes (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -116,15 +125,17 @@ CREATE INDEX IF NOT EXISTS ix_att_client ON attachments(client_id);
 
 CREATE TABLE IF NOT EXISTS templates (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    kod         TEXT NOT NULL UNIQUE,
     ad          TEXT NOT NULL UNIQUE,
     basliklar   TEXT NOT NULL,
-    yerlesik    INTEGER NOT NULL DEFAULT 0
+    yerlesik    INTEGER NOT NULL DEFAULT 0,
+    CHECK (kod IN ('dap','soap','serbest'))
 );
 
-INSERT OR IGNORE INTO templates (ad, basliklar, yerlesik) VALUES
-    ('DAP',  '["Veri","Değerlendirme","Plan"]', 1),
-    ('SOAP', '["Öznel","Nesnel","Değerlendirme","Plan"]', 1),
-    ('Serbest', '[]', 1);
+INSERT OR IGNORE INTO templates (kod, ad, basliklar, yerlesik) VALUES
+    ('dap',     'DAP',  '["Veri","Değerlendirme","Plan"]', 1),
+    ('soap',    'SOAP', '["Öznel","Nesnel","Değerlendirme","Plan"]', 1),
+    ('serbest', 'Serbest', '[]', 1);
 "#;
 
 /// Surum 3'te `clients` tablosuna eklenen sutunlar.
@@ -657,6 +668,17 @@ mod tests {
     fn ozel_not_ayri_tabloda_ve_randevuya_bagli() {
         let (_d, c) = baglanti();
         danisan_ve_randevu(&c);
+
+        // AYNI randevuya once bir RESMI not yaz. Bu satir olmadan asagidaki
+        // "resmi not tablosunda ozel notun izi yok" iddiasi islem oncesi durum
+        // tarafindan tatmin edilirdi (tablo zaten bostu) -- totoloji.
+        c.execute(
+            "INSERT INTO progress_notes (appointment_id, client_id, sablon, icerik, guncelleme_zamani)
+             VALUES (1,1,'dap','resmi kayit','z')",
+            [],
+        )
+        .unwrap();
+
         c.execute(
             "INSERT INTO private_notes (appointment_id, client_id, icerik, guncelleme_zamani)
              VALUES (1,1,'kendi hipotezim','z')",
@@ -668,9 +690,20 @@ mod tests {
         assert_eq!(sayi, 1);
 
         // Ozel not RESMI not tablosuna DUSMEMELI: ayriligin butun anlami bu.
+        // Resmi tabloda tam olarak bizim yazdigimiz kayit durmali, ozel notun
+        // icerigi orada HIC gecmemeli.
         let resmi: i64 =
             c.query_row("SELECT count(*) FROM progress_notes", [], |r| r.get(0)).unwrap();
-        assert_eq!(resmi, 0, "ozel not resmi not tablosuna yazilmamali");
+        assert_eq!(resmi, 1, "resmi not tablosunda yalnizca resmi not olmali");
+
+        let sizinti: i64 = c
+            .query_row(
+                "SELECT count(*) FROM progress_notes WHERE icerik LIKE '%kendi hipotezim%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sizinti, 0, "ozel not icerigi resmi not tablosuna sizmamali");
     }
 
     #[test]
@@ -832,6 +865,111 @@ mod tests {
         let ad: String =
             c.query_row("SELECT ad_soyad FROM clients WHERE id=1", [], |r| r.get(0)).unwrap();
         assert_eq!(ad, "Eski Danisan", "yukseltme mevcut danisani kaybetmemeli");
+
+        // Damganin 3 olmasi V3'un UYGULANDIGI anlamina GELMEZ. Plan 2 surumunu
+        // kullanan bir psikolog guncellemeyi aldiginda V3'un HER parcasini
+        // almali; aksi halde danisan dosyasi ekrani ilk acilista
+        // "no such column" ile coker. Bu yuzden hem tablolar hem sutunlar
+        // tek tek dogrulanir.
+        for tablo in ["progress_notes", "private_notes", "attachments", "templates"] {
+            let sayi: i64 = c
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [tablo],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(sayi, 1, "v2 -> v3 yukseltme {tablo} tablosunu olusturmali");
+        }
+
+        for (_, tanim) in V3_SUTUNLAR {
+            let sutun = tanim.split_whitespace().next().unwrap();
+            let sayi: i64 = c
+                .query_row(
+                    "SELECT count(*) FROM pragma_table_info('clients') WHERE name=?1",
+                    [sutun],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(sayi, 1, "v2 -> v3 yukseltme clients.{sutun} sutununu eklemeli");
+        }
+
+        // Yerlesik sablonlar da yukseltmeyle gelmeli.
+        let sablon_sayisi: i64 =
+            c.query_row("SELECT count(*) FROM templates WHERE yerlesik=1", [], |r| r.get(0)).unwrap();
+        assert_eq!(sablon_sayisi, 3, "v2 -> v3 yukseltme yerlesik sablonlari yuklemeli");
+    }
+
+    #[test]
+    fn surum_kapisi_uygulanmis_adimi_yeniden_calistirmaz() {
+        // migrate'in "kosulsuz execute_batch zinciri" DEGIL, surum kapili
+        // olmasini korur. Kapilar (`if mevcut < 1/2/3`) dusrse V3 betigi her
+        // acilista yeniden kosar ve `INSERT OR IGNORE INTO templates`
+        // psikologun sildigi "Serbest" sablonunu geri getirir.
+        let (_d, c) = baglanti();
+        c.execute("DELETE FROM templates WHERE ad='Serbest'", []).unwrap();
+
+        migrate(&c).unwrap();
+
+        let geri_geldi: i64 = c
+            .query_row("SELECT count(*) FROM templates WHERE ad='Serbest'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(
+            geri_geldi, 0,
+            "surum kapisi calismali: uygulanmis V3 adimi yeniden kosmamali, silinen sablon geri gelmemeli"
+        );
+    }
+
+    #[test]
+    fn templates_kodlari_progress_notes_sablonuna_yazilabilir() {
+        // templates ile progress_notes.sablon YAPISAL olarak ayrisamaz olmali.
+        // Arayuzun sablon acilir listesi templates'tan doldurulur; oradan gelen
+        // her deger resmi nota yazilabilmelidir. Bu test ayrisma ihtimalini
+        // fiilen dener: her kodu gercekten INSERT eder.
+        let (_d, c) = baglanti();
+        danisan_ve_randevu(&c);
+
+        let mut sorgu = c.prepare("SELECT kod FROM templates ORDER BY id").unwrap();
+        let kodlar: Vec<String> = sorgu
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .map(|k| k.unwrap())
+            .collect();
+        drop(sorgu);
+        assert_eq!(kodlar.len(), 3, "yerlesik sablon kodlari yuklenmeli: {kodlar:?}");
+
+        for kod in &kodlar {
+            let sonuc = c.execute(
+                "INSERT INTO progress_notes (appointment_id, client_id, sablon, icerik, guncelleme_zamani)
+                 VALUES (1,1,?1,'x','z')",
+                [kod],
+            );
+            assert!(
+                sonuc.is_ok(),
+                "templates.kod='{kod}' progress_notes.sablon'a yazilabilmeli (CHECK reddetti): {sonuc:?}"
+            );
+            c.execute("DELETE FROM progress_notes", []).unwrap();
+        }
+    }
+
+    #[test]
+    fn templates_kodu_kapali_kumeden_secilir() {
+        // `kod` sutunu, progress_notes.sablon ile AYNI kapali kumeyi tasir.
+        // Buraya kumenin disindan bir deger girilebilseydi iki tablo yeniden
+        // ayrisabilirdi.
+        let (_d, c) = baglanti();
+        let sonuc = c.execute(
+            "INSERT INTO templates (kod, ad, basliklar, yerlesik) VALUES ('uydurma','Uydurma','[]',0)",
+            [],
+        );
+        assert!(sonuc.is_err(), "templates.kod kapali kume disina cikamamali");
+
+        // Ayni kod ikinci kez de eklenememeli (UNIQUE).
+        let cift = c.execute(
+            "INSERT INTO templates (kod, ad, basliklar, yerlesik) VALUES ('dap','DAP Kopya','[]',0)",
+            [],
+        );
+        assert!(cift.is_err(), "ayni kod iki sablon kaydina bolunememeli");
     }
 
     #[test]

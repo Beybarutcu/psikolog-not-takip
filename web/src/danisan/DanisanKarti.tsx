@@ -242,6 +242,15 @@ export function DanisanKarti({
         <dt className="font-medium text-slate-600">Bakiye (gelinmiş ve ödenmemiş seanslar)</dt>
         <dd>{tlBicimle(bakiyeKurus)}</dd>
       </dl>
+      {/* Etiket neyi SAYDIĞINI yazıyordu, neyi SAYMADIĞINI yazmıyordu.
+          "Gelmedi" işaretli bir seansın ücretlendirilip
+          ücretlendirilmeyeceği terapistin politikasına bağlı ve uygulama o
+          politikayı bilmiyor; sayının dışında bırakıldığını söylememek,
+          gelmeyen seansları ücretlendiren bir terapiste sessizce eksik bir
+          bakiye göstermek olurdu. */}
+      <p className="mt-1 text-xs text-slate-500">
+        Gelmedi olarak işaretlenen seanslar bu sayıya girmez; ücretlendirme kararı sizindir.
+      </p>
 
       <div className="mt-3">
         <RizaBolumu

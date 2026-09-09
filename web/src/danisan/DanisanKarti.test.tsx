@@ -183,6 +183,15 @@ describe('DanisanKarti — bakiye ne sayar, ne saymaz', () => {
     kur()
     expect(screen.getByText(/gelinmiş ve ödenmemiş/i)).toBeDefined()
   })
+
+  it('bakiye NEYI SAYMADIGINI da soyler', () => {
+    // Neyi saydığını yazmak yetmiyor: "gelmedi" işaretli seanslar sayının
+    // dışında ve bu, gelmeyen seansları ücretlendiren bir terapist için
+    // sessizce eksik bir bakiyedir. Ekran o dışlamayı açıkça yazmalı.
+    kur()
+    expect(screen.getByText(/gelmedi olarak işaretlenen seanslar bu sayıya girmez/i))
+      .toBeDefined()
+  })
 })
 
 describe('DanisanKarti — rıza ve saklama', () => {

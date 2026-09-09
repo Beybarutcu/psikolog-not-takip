@@ -56,6 +56,17 @@ describe('HizliArama — açılış ve kapanış', () => {
     expect(kutu()).toBeDefined()
   })
 
+  it('modal OLMADIGI icin `aria-modal` DEMEZ', async () => {
+    // Panel satır içi bir `div`: odak tuzağı, backdrop ve `inert` yok,
+    // Tab ile dışarı çıkılabiliyor. `aria-modal="true"` demek ekran
+    // okuyucu kullanıcısına "arkadaki her şey atıl" demektir; yanlış
+    // olduğu için o kullanıcı sayfanın geri kalanını hiç bulamazdı.
+    kur()
+    await ac()
+    const kutucuk = screen.getByRole('dialog', { name: 'Hızlı arama' })
+    expect(kutucuk.getAttribute('aria-modal')).toBeNull()
+  })
+
   it('Cmd+K ile de acilir (macOS)', async () => {
     kur()
     await userEvent.keyboard('{Meta>}k{/Meta}')

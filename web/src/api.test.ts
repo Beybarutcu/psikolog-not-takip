@@ -334,4 +334,18 @@ describe('danışan dosyası uç noktalarında 401', () => {
     expect(dinleyici).toHaveBeenCalledTimes(1)
     birak()
   })
+
+  it('danisanApi tam olarak dosya uc noktalarini tasir, ozel nota giden yol YOKTUR', () => {
+    // `notApi` / `ozelNotApi` / `aramaApi` için bu sabitleme vardı;
+    // `danisanApi` için yoktu ve o, danışan kartını (dolayısıyla veri
+    // raporunu) besleyen nesnedir. Buraya eklenecek bir `ozelNotlar`
+    // fonksiyonu, kartın "özel nota giden bir yolu yok" güvencesini tek
+    // hamlede bozardı — aynı sınıf (C1).
+    expect(Object.keys(danisanApi)).toEqual([
+      'dosyaGetir',
+      'rizaKaydet',
+      'ekleriGetir',
+      'ekYukle',
+    ])
+  })
 })

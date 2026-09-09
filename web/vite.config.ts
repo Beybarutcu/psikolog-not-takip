@@ -31,5 +31,15 @@ export default defineConfig({
     // sınamayan yeşil bir teste dönüşür: new Date(dizgi) regresyonu ancak
     // yerel saat dilimi UTC'den farklıysa saat kaymasına yol açar.
     env: { TZ: 'Europe/Istanbul' },
+    // Varsayılan 5 sn burada YETMİYOR ve yetmemesi bir ürün hatası değil:
+    // `AnaEkran.test.tsx` gerçek bir React ağacını `userEvent` ile sürüyor,
+    // her testte birkaç `fetch` turu dönüyor ve dosya tek başına ~35 sn.
+    // En yavaş testler 5 sn sınırına yakın koşuyordu; CI'da bu paket
+    // `cargo test`le PARALEL çalıştığı için yük altında iki ayrı koşuda
+    // zaman aşımı verdi. Zaman aşımıyla düşen bir test, kırık bir testten
+    // ayırt edilemez ve "flake" diye görmezden gelinmeye başlanır — asıl
+    // zarar bu. Sınır, gerçek bir asılı kalmayı hâlâ yakalayacak kadar
+    // dar tutuldu.
+    testTimeout: 20_000,
   },
 })

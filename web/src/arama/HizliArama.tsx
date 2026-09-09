@@ -160,7 +160,15 @@ export function HizliArama({ ara, onDanisanSec, onSeansSec, gecikmeMs = GECIKME_
   return (
     <div
       role="dialog"
-      aria-modal="true"
+      // `aria-modal` BİLEREK yok. Bu satır içi bir `div`: odak tuzağı yok,
+      // arkada backdrop yok, sayfanın geri kalanı `inert` değil ve Tab ile
+      // gerçekten dışarı çıkılabiliyor. `aria-modal="true"` yazmak ekran
+      // okuyucu kullanıcısına "arkadaki her şey atıl" demektir; yanlış
+      // olduğu için o kullanıcı, gören bir kullanıcının kolayca fark ettiği
+      // içeriği hiç bulamaz hâle gelirdi — erişilebilirlik etiketinin
+      // gerçeği yanlış anlatması, etiketin hiç olmamasından kötüdür.
+      // Gerçek bir modal yapmak (odak tuzağı + `inert`) ayrı bir iştir;
+      // yapılana kadar burada dürüst olan, modal olmayan bir `dialog`.
       aria-label="Hızlı arama"
       className="rounded-lg border border-slate-300 bg-white p-3"
     >

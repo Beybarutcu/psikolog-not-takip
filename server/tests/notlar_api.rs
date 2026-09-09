@@ -1215,7 +1215,132 @@ async fn depolama_durumu_ucu_baglidir_ve_esigi_bildirir() {
 }
 
 // =====================================================================
-// 9. YAPISAL AYRIM -- ozel not rota katmaninda da ayri
+// 9. SORGU PARAMETRESI HATASI DA JSON SOZLESMESINE UYAR
+// =====================================================================
+
+/// Eksik/geçersiz sorgu parametresi de `{"hata": "..."}` döndürür.
+///
+/// Çıplak `axum::extract::Query` başarısız olduğunda `400 text/plain` ve
+/// **İngilizce axum metni** (`Failed to deserialize query string: missing
+/// field 'q'`) döndürüyordu. Arayüzün hata gösterme yolu gövdedeki `hata`
+/// alanını okur; bulamayınca kullanıcıya boş/yanlış bir mesaj gösterirdi --
+/// tam olarak `api_bulunamadi` fallback'inin kapattığı sessiz tutarsızlık
+/// sınıfı (bkz. `lib.rs`).
+///
+/// Kural konulurken **zaten var olan ihlaller de arandı**: Görev 7'nin iki
+/// ucunun yanında Plan 2'nin dört ucu da aynı hatayı veriyordu. Altısı da
+/// burada.
+#[tokio::test]
+async fn eksik_sorgu_parametresi_turkce_json_hata_dondurur() {
+    let (_d, s, cid, _rid) = dolu_state().await;
+
+    let bozuk: Vec<(&str, String)> = vec![
+        // --- Gorev 7 ---
+        ("GET", "/api/ara".into()),                     // `q` yok
+        ("GET", "/api/saklama-suresi-dolanlar".into()), // `bugun` yok
+        // `limit` OPSIYONEL ama tipi i64: harf gonderilince ayristirma coker.
+        ("GET", format!("/api/danisanlar/{cid}/notlar?limit=abc")),
+        // --- Plan 2 (onceden var olan ihlaller) ---
+        ("GET", "/api/randevular".into()), // `baslangic`/`bitis` yok
+        ("GET", "/api/cakisma".into()),
+        ("GET", "/api/randevular/seri/seri-yok".into()), // `bu_tarihten_itibaren` yok
+        ("DELETE", "/api/randevular/seri/seri-yok".into()),
+    ];
+    assert_eq!(bozuk.len(), 7, "sorgu parametresi alan HER uc burada olmali");
+
+    for (metot, yol) in &bozuk {
+        let (kod, basliklar, govde) = cagir_ham(&s, metot, yol, &[], Vec::new()).await;
+        assert_eq!(kod, StatusCode::BAD_REQUEST, "{metot} {yol} 400 donmeli");
+
+        let tur = basliklar.get("content-type").expect("content-type olmali");
+        assert!(
+            tur.to_str().unwrap().starts_with("application/json"),
+            "{metot} {yol}: text/plain degil JSON donmeli: {tur:?}"
+        );
+
+        let json: serde_json::Value = serde_json::from_slice(&govde)
+            .unwrap_or_else(|_| panic!("{metot} {yol}: govde JSON olmali"));
+        let mesaj = json["hata"].as_str().unwrap_or_default();
+        assert_eq!(
+            mesaj, "Sorgu parametreleri eksik veya geçersiz.",
+            "{metot} {yol}: govde sozlesmesi `hata` alani tasimali"
+        );
+        // axum/serde'nin ic metni sizmamali.
+        let ham = String::from_utf8_lossy(&govde);
+        assert!(
+            !ham.contains("Failed to deserialize") && !ham.contains("missing field"),
+            "{metot} {yol}: Ingilizce axum metni sizdi: {ham}"
+        );
+    }
+
+    // ARTI YON. Bu olmadan "her istege 400 don" mutasyonu testi gecerdi.
+    let iyi: Vec<(&str, String, StatusCode)> = vec![
+        ("GET", "/api/ara?q=kaygi".into(), StatusCode::OK),
+        ("GET", "/api/saklama-suresi-dolanlar?bugun=2030-01-01".into(), StatusCode::OK),
+        ("GET", format!("/api/danisanlar/{cid}/notlar?limit=5"), StatusCode::OK),
+        (
+            "GET",
+            "/api/randevular?baslangic=2026-09-01T00:00&bitis=2026-10-01T00:00".into(),
+            StatusCode::OK,
+        ),
+        (
+            "GET",
+            "/api/cakisma?baslangic=2026-09-07T14:00&bitis=2026-09-07T15:00".into(),
+            StatusCode::OK,
+        ),
+        (
+            "GET",
+            "/api/randevular/seri/seri-yok?bu_tarihten_itibaren=2026-09-07T00:00".into(),
+            StatusCode::OK,
+        ),
+        (
+            // Olmayan seri: 404 -- ama 400 DEGIL, yani sorgu ayristirildi.
+            "DELETE",
+            "/api/randevular/seri/seri-yok?bu_tarihten_itibaren=2026-09-07T00:00".into(),
+            StatusCode::NOT_FOUND,
+        ),
+    ];
+    for (metot, yol, beklenen) in &iyi {
+        let (kod, _b, _g) = cagir_ham(&s, metot, yol, &[], Vec::new()).await;
+        assert_eq!(kod, *beklenen, "{metot} {yol}: gecerli sorgu calismali");
+    }
+}
+
+/// Rota katmanında çıplak `Query` kalmamalı: hepsi `guard::Sorgu`'dan geçer.
+///
+/// Davranışsal tablo elle bakımlıdır; yarın eklenecek bir handler oraya
+/// yazılmayı unutabilir. Bu test, kuralın kaynak üzerinde **yapısal**
+/// karşılığıdır.
+#[test]
+fn rota_modulleri_ciplak_query_kullanmaz() {
+    for (ad, kaynak) in [
+        ("notes.rs", include_str!("../src/routes/notes.rs")),
+        ("search.rs", include_str!("../src/routes/search.rs")),
+        ("clients.rs", include_str!("../src/routes/clients.rs")),
+        ("appointments.rs", include_str!("../src/routes/appointments.rs")),
+        ("private_notes.rs", include_str!("../src/routes/private_notes.rs")),
+        ("attachments.rs", include_str!("../src/routes/attachments.rs")),
+        ("session.rs", include_str!("../src/routes/session.rs")),
+        ("setup.rs", include_str!("../src/routes/setup.rs")),
+    ] {
+        // Yorumlar kuralin KENDISINDEN bahsedebilir (kardes yapisal testlerle
+        // ayni eleme).
+        let kod: String = kaynak
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !kod.contains("Query"),
+            "{ad}: ciplak `axum::extract::Query` yerine `guard::Sorgu` kullanilmali; \
+             Query'nin reddi Ingilizce `text/plain` doner ve govde sozlesmesini \
+             (`hata` alani) bozar"
+        );
+    }
+}
+
+// =====================================================================
+// 10. YAPISAL AYRIM -- ozel not rota katmaninda da ayri
 // =====================================================================
 
 /// Özel notun korunması bugüne kadar yalnızca depo katmanındaydı. Rota

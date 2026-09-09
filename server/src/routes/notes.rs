@@ -33,10 +33,10 @@
 //! şablon adı ve arama terimi hiçbir biçimde loga ya da sunucu günlüğüne
 //! yazılmaz.
 
-use crate::guard::{acik_baglanti, depo_hatasi, ApiHata};
+use crate::guard::{acik_baglanti, depo_hatasi, ApiHata, Sorgu};
 use crate::state::AppState;
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, State},
     Json,
 };
 use psikolog_core::store::audit::Cihaz;
@@ -122,7 +122,7 @@ pub async fn kaydet(
 pub async fn danisan_listesi(
     State(s): State<AppState>,
     Path(id): Path<i64>,
-    Query(q): Query<ListeSorgusu>,
+    Sorgu(q): Sorgu<ListeSorgusu>,
 ) -> Result<Json<Vec<SeansNotu>>, ApiHata> {
     let conn = acik_baglanti(&s)?;
     let liste = danisan_notlari(&conn, id, limiti_kirp(q.limit), Cihaz::Masaustu)
@@ -156,7 +156,6 @@ mod tests {
     fn limit_sabitleri_duz_sayiyla_pinlenir() {
         assert_eq!(AZAMI_NOT_LIMITI, 200, "azami not limiti sozlesmesi 200'dur");
         assert_eq!(VARSAYILAN_NOT_LIMITI, 50, "varsayilan not limiti sozlesmesi 50'dir");
-        assert!(VARSAYILAN_NOT_LIMITI < AZAMI_NOT_LIMITI);
     }
 
     #[test]

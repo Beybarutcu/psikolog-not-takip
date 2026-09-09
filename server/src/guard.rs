@@ -78,13 +78,72 @@
 //! 100 ms'yi aşarsa.
 
 use crate::state::AppState;
-use axum::{http::StatusCode, Json};
+use axum::{
+    extract::{FromRequestParts, Query},
+    http::{request::Parts, StatusCode},
+    Json,
+};
 use psikolog_core::store::db::{open_existing, DbError};
 use rusqlite::Connection;
+use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use std::time::Instant;
 
 pub type ApiHata = (StatusCode, Json<Value>);
+
+/// Sorgu dizesi ayrıştırıcısı — `axum::extract::Query`'nin, hatayı **bu
+/// API'nin gövde sözleşmesiyle** döndüren sarmalayıcısı.
+///
+/// # Neden var
+/// Çıplak `Query` başarısız olduğunda `400 text/plain` ve **İngilizce axum
+/// metni** döner (`Failed to deserialize query string: missing field 'q'`).
+/// Bu, bu API'nin her yerde tuttuğu `{"hata": "..."}` sözleşmesini sessizce
+/// bozar: arayüzün hata gösterme yolu gövdedeki `hata` alanını okur, bulamaz
+/// ve kullanıcıya boş/yanlış bir mesaj gösterir. Aynı sessiz tutarsızlık
+/// sınıfı için `api_bulunamadi` fallback'i zaten eklenmişti (bkz. `lib.rs`);
+/// bu, o kuralın sorgu parametrelerindeki karşılığıdır.
+///
+/// # Kural: rota katmanında çıplak `Query` yok
+/// Kural konulurken **zaten var olan ihlaller de arandı**: `/api/ara` ve
+/// `/api/saklama-suresi-dolanlar` (Görev 7) ile `/api/randevular`,
+/// `/api/cakisma`, `/api/randevular/seri/{id}` (Plan 2) ve
+/// `/api/danisanlar/{id}/notlar` aynı hatayı veriyordu. Altısı da bu
+/// sarmalayıcıya geçti; `tests/notlar_api.rs::rota_modulleri_ciplak_query_...`
+/// bunu yapısal olarak sabitler.
+///
+/// # Neden alan adı mesaja konmuyor
+/// Reddin ayrıntısı (`missing field 'q'`) axum/serde'nin iç metnidir; onu
+/// gövdeye taşımak İngilizce sızıntısını kalıcılaştırırdı. Kullanıcı için
+/// anlamlı olan, isteğin **hangi sınıf** hata olduğudur; alanın kendisi
+/// zaten arayüzün kodunda sabittir.
+pub struct Sorgu<T>(pub T);
+
+impl<T, S> FromRequestParts<S> for Sorgu<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = ApiHata;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        match Query::<T>::from_request_parts(parts, state).await {
+            Ok(Query(deger)) => Ok(Sorgu(deger)),
+            // Reddin ic metni (`e.body_text()`) BILEREK kullanilmiyor:
+            // Ingilizce ve axum surumune bagli.
+            Err(_) => Err(istek_sorgusu_hatasi()),
+        }
+    }
+}
+
+/// `Sorgu`'nun tek red mesajı. Metin
+/// `tests/notlar_api.rs::eksik_sorgu_parametresi_turkce_json_hata_dondurur`
+/// tarafından HTTP seviyesinde pinlenir.
+fn istek_sorgusu_hatasi() -> ApiHata {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({ "hata": "Sorgu parametreleri eksik veya geçersiz." })),
+    )
+}
 
 /// Açık oturumun anahtarıyla veritabanı bağlantısı verir; kilitliyse `401`.
 /// Başarılı her çağrı `Oturum::dokun()`'u tetikler (bkz. modül dokümantasyonu).

@@ -1,7 +1,7 @@
-use crate::guard::{acik_baglanti, depo_hatasi, ApiHata};
+use crate::guard::{acik_baglanti, depo_hatasi, ApiHata, Sorgu};
 use crate::state::AppState;
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::StatusCode,
     Json,
 };
@@ -56,7 +56,7 @@ pub struct GuncellemeIstegi {
 
 pub async fn liste(
     State(s): State<AppState>,
-    Query(q): Query<AralikSorgusu>,
+    Sorgu(q): Sorgu<AralikSorgusu>,
 ) -> Result<Json<Vec<Randevu>>, ApiHata> {
     let conn = acik_baglanti(&s)?;
     let liste =
@@ -151,7 +151,7 @@ pub struct SeriSorgusu {
 pub async fn seri_adedi(
     State(s): State<AppState>,
     Path(seri_id): Path<String>,
-    Query(q): Query<SeriSorgusu>,
+    Sorgu(q): Sorgu<SeriSorgusu>,
 ) -> Result<Json<Value>, ApiHata> {
     let conn = acik_baglanti(&s)?;
     let adet = seri_sayisi(&conn, &seri_id, &q.bu_tarihten_itibaren).map_err(depo_hatasi)?;
@@ -170,7 +170,7 @@ pub async fn seri_adedi(
 pub async fn seri_kaldir(
     State(s): State<AppState>,
     Path(seri_id): Path<String>,
-    Query(q): Query<SeriSorgusu>,
+    Sorgu(q): Sorgu<SeriSorgusu>,
 ) -> Result<Json<Value>, ApiHata> {
     let conn = acik_baglanti(&s)?;
     let silinen = seriyi_sil(&conn, &seri_id, &q.bu_tarihten_itibaren, Cihaz::Masaustu)
@@ -201,7 +201,7 @@ pub async fn seri_kaldir(
 /// (Görev 5 kararı) -- bu uç nokta form doğrulaması sırasında sık çağrılır.
 pub async fn cakisma(
     State(s): State<AppState>,
-    Query(q): Query<CakismaSorgusu>,
+    Sorgu(q): Sorgu<CakismaSorgusu>,
 ) -> Result<Json<SeriCakismasi>, ApiHata> {
     let conn = acik_baglanti(&s)?;
     let sonuc = match q.tekrar_sayisi {

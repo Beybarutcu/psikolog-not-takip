@@ -25,10 +25,10 @@
 //! o yüzden oradaki kırpma rota katmanında (`routes::notes::limiti_kirp`)
 //! durur. İki farklı yer, iki farklı bilinçli karar.
 
-use crate::guard::{acik_baglanti, depo_hatasi, ApiHata};
+use crate::guard::{acik_baglanti, depo_hatasi, ApiHata, Sorgu};
 use crate::state::AppState;
 use axum::{
-    extract::{Query, State},
+    extract::State,
     Json,
 };
 use psikolog_core::store::audit::Cihaz;
@@ -48,7 +48,7 @@ pub struct AramaSorgusu {
 /// tuşta çağırır, "sorgu çok kısa" hatası göstermek doğru davranış değildir.
 pub async fn ara_uc(
     State(s): State<AppState>,
-    Query(q): Query<AramaSorgusu>,
+    Sorgu(q): Sorgu<AramaSorgusu>,
 ) -> Result<Json<Vec<AramaSonucu>>, ApiHata> {
     let conn = acik_baglanti(&s)?;
     let sonuclar =

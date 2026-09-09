@@ -16,10 +16,10 @@
 //! vermiştir (`getir` ve `saklama_suresi_dolanlar` -> `HerCagri`, `listele`
 //! -> `OturumBasi`).
 
-use crate::guard::{acik_baglanti, depo_hatasi, ApiHata};
+use crate::guard::{acik_baglanti, depo_hatasi, ApiHata, Sorgu};
 use crate::state::AppState;
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, State},
     http::StatusCode,
     Json,
 };
@@ -136,7 +136,7 @@ pub struct SaklamaSorgusu {
 /// geçersiz değer `GecersizVeri` -> `400` olur ve mesaj biçimi söyler.
 pub async fn saklama_listesi(
     State(s): State<AppState>,
-    Query(q): Query<SaklamaSorgusu>,
+    Sorgu(q): Sorgu<SaklamaSorgusu>,
 ) -> Result<Json<Vec<Danisan>>, ApiHata> {
     let conn = acik_baglanti(&s)?;
     let liste = saklama_suresi_dolanlar(&conn, &q.bugun, Cihaz::Masaustu).map_err(depo_hatasi)?;

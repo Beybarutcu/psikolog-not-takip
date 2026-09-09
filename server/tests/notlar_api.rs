@@ -603,23 +603,50 @@ async fn not_listesi_limiti_rota_katmaninda_kirpilir() {
 
 #[tokio::test]
 async fn arama_limiti_de_kirpilir() {
-    let (_d, s, _cid, rid) = dolu_state().await;
-    cagir(
-        &s,
-        "PUT",
-        &format!("/api/randevular/{rid}/not"),
-        Some(json!({"sablon":"dap","icerik":"kaygi duzeyi"})),
-    )
-    .await;
+    // KURULUM AYRIMI TASIMALI. Bu testin onceki hali TEK eslesen kayit
+    // yaratiyordu; `limit=-1` (SQLite'ta sinirsiz), 50 ve 1 ayni tek sonucu
+    // verdigi icin `store::search::ara`'daki `clamp(1, AZAMI_SONUC)` silinince
+    // test YESIL kaliyordu -- kurulum, olculen anahtari gorunmez kiliyordu.
+    // Kardes `not_listesi_limiti_rota_katmaninda_kirpilir` bu yuzden UC kayit
+    // kurar; burada da oyle yapiliyor.
+    let (_d, s) = kurulu_state().await;
+    let cid = danisan_ekle(&s, "Ayse Yilmaz").await;
+    for gun in ["2026-09-07", "2026-09-14", "2026-09-21"] {
+        let rid = randevu_ekle(&s, cid, gun).await;
+        cagir(
+            &s,
+            "PUT",
+            &format!("/api/randevular/{rid}/not"),
+            Some(json!({"sablon":"dap","icerik": format!("kaygi duzeyi {gun}")})),
+        )
+        .await;
+    }
 
-    // ARTI YON.
-    let (_, varsayilan) = cagir(&s, "GET", "/api/ara?q=kaygi", None).await;
-    assert_eq!(varsayilan.as_array().unwrap().len(), 1);
+    let say = |v: &serde_json::Value| v.as_array().unwrap().len();
 
-    // EKSI YON: -1 sinirsiz olmamali (`store::search::ara` icinde kirpiliyor).
+    // ON KOSUL + ARTI YON: uc not da gercekten eslesiyor, yani asagidaki
+    // sayilar limitin FARKINI olcuyor, kurulumun darligini degil.
+    let (kod, varsayilan) = cagir(&s, "GET", "/api/ara?q=kaygi", None).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(say(&varsayilan), 3, "varsayilan limit (AZAMI_SONUC) ucunu de vermeli");
+
+    let (_, ikisi) = cagir(&s, "GET", "/api/ara?q=kaygi&limit=2", None).await;
+    assert_eq!(say(&ikisi), 2, "gecerli limit oldugu gibi uygulanmali");
+
+    // EKSI YON: -1 SQLite'ta SINIRSIZ demektir; alt uctan 1'e kirpilmali.
+    // Kirpma silinirse burada 3 doner ve test kirilir.
     let (kod, eksi) = cagir(&s, "GET", "/api/ara?q=kaygi&limit=-1", None).await;
     assert_eq!(kod, StatusCode::OK);
-    assert_eq!(eksi.as_array().unwrap().len(), 1);
+    assert_eq!(say(&eksi), 1, "limit=-1 sinirsiz olmamali, 1'e kirpilmali");
+
+    let (_, sifir) = cagir(&s, "GET", "/api/ara?q=kaygi&limit=0", None).await;
+    assert_eq!(say(&sifir), 1, "limit=0 sessizce bos liste vermemeli");
+
+    // UST UC: cok buyuk deger `AZAMI_SONUC`'a kirpilir. Sinirin KENDISI
+    // (50) cekirdegin `azami_sonuc_asilmaz` testinde 55 kayitla olculuyor;
+    // burada olculen, HTTP'den gelen devasa degerin yutulmasi.
+    let (_, buyuk) = cagir(&s, "GET", "/api/ara?q=kaygi&limit=9223372036854775807", None).await;
+    assert_eq!(say(&buyuk), 3);
 }
 
 #[tokio::test]

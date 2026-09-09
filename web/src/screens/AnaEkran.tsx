@@ -83,6 +83,11 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
       setYeniTelefon('')
       setDanisanFormAcik(false)
       setDanisanHata(null)
+      // Burada yeniden yükleme KORUNUYOR: liste sunucuda `ad_soyad COLLATE
+      // NOCASE` ile sıralanıyor ve yeni kaydı istemcide doğru yere sokmak
+      // Türkçe harf sıralamasını burada ikinci kez (farklı) uygulamak
+      // demekti. Danışan ekleme seyrek bir işlem; hacim tarafını sunucudaki
+      // birleştirme (`clients::listele`) zaten kapatıyor.
       setDanisanlar(await takvimApi.danisanlariGetir())
     } catch (e) {
       setDanisanHata(e instanceof Error ? e.message : 'Danışan eklenemedi.')
@@ -131,11 +136,28 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
     }
   }
 
+  // Durum değişikliği ve silme, sunucudan YENİDEN YÜKLEMEDEN yerel listeye
+  // uygulanır. Gerekçe hız değil, denetim kaydı hacmi (bkz. Plan 3 Görev 2
+  // ve `store::audit` modül başlığı): `yukle()` her çağrıldığında sunucuda
+  // bir `goruntuleme` satırı üretiyordu ve `audit_log` satırları SİLİNEMEZ.
+  // "Geldi" işaretlemek tek bir kullanıcı eylemi olduğu hâlde iki satır
+  // bırakıyordu. Sunucu tarafında da birleştirme var (aynı görev) — bu iki
+  // önlem birbirinin yedeği: burada gereksiz isteği hiç atmıyoruz, orada
+  // atılırsa bile satır birikmiyor.
+  //
+  // Bu iki işlemin sonucu yerel olarak KESİN BİÇİMDE bilinebilir: durum
+  // sunucuda doğrulanmış sabit bir değer, silinen kayıt da tek bir id.
+  // `kaydet` ve `seriSil` için AYNI ŞEY YAPILMADI — orada sonuç birden çok
+  // satırı (ve görünen haftanın dışını) etkileyebilir, dolayısıyla yeniden
+  // yükleme doğru olanı.
   async function durumDegis(id: number, durum: string) {
     try {
       await takvimApi.randevuDurumu(id, durum)
       setHata(null)
-      await yukle()
+      setRandevular((onceki) => onceki.map((r) => (r.id === id ? { ...r, durum } : r)))
+      // Panel açık kalır; içindeki kopya da güncellenmezse kullanıcı
+      // işaretlediği durumu panelde göremez.
+      setSeciliRandevu((secili) => (secili && secili.id === id ? { ...secili, durum } : secili))
     } catch (e) {
       setHata(e instanceof Error ? e.message : 'Randevu güncellenemedi.')
       throw e
@@ -147,7 +169,7 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
       await takvimApi.randevuSil(id)
       setHata(null)
       panelKapat()
-      await yukle()
+      setRandevular((onceki) => onceki.filter((r) => r.id !== id))
     } catch (e) {
       setHata(e instanceof Error ? e.message : 'Randevu silinemedi.')
       throw e

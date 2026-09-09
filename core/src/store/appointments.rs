@@ -37,7 +37,9 @@
 //! bir veri bozulması değil, `rusqlite::Error` olarak dönen gürültülü bir
 //! hatadır -- ama derleyici yakalamaz.
 
-use crate::store::audit::{kaydet, Ayrinti, Cihaz, Eylem};
+use crate::store::audit::{
+    kaydet, kaydet_birlestirerek, Ayrinti, Cihaz, Eylem, BIRLESTIRME_PENCERESI_DK,
+};
 use crate::store::clients::DepoHatasi;
 use crate::store::zaman::zaman_gecerli_mi;
 use rusqlite::{Connection, OptionalExtension};
@@ -191,8 +193,23 @@ pub fn olustur(
 
 /// `baslangic` (dahil) ile `bitis` (hariç) arasındaki randevuları zamana
 /// göre sıralı listeler. Salt okunur olduğundan transaction gerektirmez.
-/// Kaç satır dönerse dönsün tek bir "goruntuleme" kaydı üretir -- satır
-/// başına ayrı log gürültü üretir.
+///
+/// # Log: birleştirilir (Plan 3 Görev 2)
+/// Kaç satır dönerse dönsün satır başına log yazılmaz; dahası, `goruntuleme`
+/// kaydı `BIRLESTIRME_PENCERESI_DK` boyunca **birleştirilir**. Gerekçe:
+/// bu fonksiyon takvim ekranının yenileme yoludur ve arayüzde mount'ta, her
+/// hafta değişiminde ve **her mutasyondan sonra** çalışır -- "Geldi"
+/// işaretlemek tek bir kullanıcı eylemi olduğu hâlde bir `duzenleme` + bir
+/// `goruntuleme` satırı üretiyordu. `audit_log` satırları silinemediği için
+/// bu kirlilik kalıcıdır ve logu okunamaz hâle getirir (bkz.
+/// `store::audit` modül başlığındaki hacim politikası).
+///
+/// Birleştirme anahtarı `(goruntuleme, "appointment", "liste")`'dir: aynı
+/// pencerede farklı bir haftaya gitmek de tek satır sayılır. Bu bilinçlidir
+/// -- takvimde gezinmek kuralın "loglanmaz" tarafındadır; ayakta kalan satır
+/// o gezinme oturumunun İLK erişimini (ve `Ayrinti` ile onun hafta
+/// başlangıcını) taşır. Randevu verisini DEĞİŞTİREN her işlem elbette kendi
+/// satırını yazmaya devam eder.
 pub fn aralik_getir(
     conn: &Connection,
     baslangic: &str,
@@ -213,14 +230,17 @@ pub fn aralik_getir(
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
 
-    // Liste tek bir goruntuleme kaydi uretir, satir basina degil.
-    kaydet(
+    // Liste tek bir goruntuleme kaydi uretir, satir basina degil -- ve o tek
+    // kayit da pencere boyunca birlestirilir (bkz. fonksiyon dokumantasyonu).
+    // Var olan satira DOKUNULMAZ; yalnizca "yazma" karari verilir.
+    kaydet_birlestirerek(
         conn,
         Eylem::Goruntuleme,
         "appointment",
         "liste",
         cihaz,
         Some(Ayrinti::AralikBaslangici(baslangic.to_string())),
+        BIRLESTIRME_PENCERESI_DK,
     )?;
     Ok(liste)
 }
@@ -657,6 +677,16 @@ pub fn seri_sayisi(
 /// ile sınırlıdır; geçmişteki üyeler asla silinmez (bkz.
 /// `seri_silme_yalnizca_verilen_tarihten_sonrasini_siler` testi).
 ///
+/// # Hiçbir satır silinmediyse `Bulunamadi` -- ve LOG YAZILMAZ
+/// `sil` ve `durum_guncelle` bu kontrolü zaten yapıyordu; burada eksikti.
+/// 0 satır silen bir `DELETE` olmamış bir işlemdir. Plan 2 bu fonksiyonu
+/// HTTP'ye açtığı için (`DELETE /randevular/seri/{seri_id}`) eksik kontrol
+/// **dışarıdan tetiklenebilir bir gürültü yolu** hâline gelmişti: var
+/// olmayan bir `seri_id` ile atılan her istek, `audit_log`'a silinemeyen bir
+/// satır düşürüyordu. Dönüş tipi `sil`/`durum_guncelle` ile aynı hizaya
+/// getirildi (404), böylece "sildim" diyen bir yanıtın arkasında gerçekten
+/// bir silme olduğu garanti edilir.
+///
 /// UYARI: Kendi `unchecked_transaction()`'ını içeride açar -- bunu zaten
 /// açık bir transaction'ın içinden çağırmayın.
 pub fn seriyi_sil(
@@ -677,6 +707,12 @@ pub fn seriyi_sil(
         "DELETE FROM appointments WHERE seri_id = ?1 AND baslangic >= ?2",
         rusqlite::params![seri_id, bu_tarihten_itibaren],
     )?;
+    // 0 satir silindiyse ortada bir islem yok: ne veri degisti ne de
+    // loglanacak bir sey var (bkz. fonksiyon dokumantasyonu). `tx` burada
+    // commit edilmeden dusuyor.
+    if silinen == 0 {
+        return Err(DepoHatasi::Bulunamadi);
+    }
     kaydet(
         &tx,
         Eylem::Silme,
@@ -1576,5 +1612,136 @@ mod tests {
         assert!(!hepsi.contains("Ayse Yilmaz"), "danisan adi loga yazilmamali: {hepsi}");
         assert!(!hepsi.contains("50000"), "ucret loga yazilmamali: {hepsi}");
         assert!(!hepsi.contains("16:00"), "saat loga yazilmamali: {hepsi}");
+    }
+
+    // --- Plan 3 Gorev 2: denetim kaydi hacim politikasi ------------------
+
+    fn goruntuleme_sayisi(c: &rusqlite::Connection) -> i64 {
+        c.query_row(
+            "SELECT COUNT(*) FROM audit_log WHERE eylem='goruntuleme' AND varlik='appointment'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn takvim_listesi_tekrar_cagrilinca_goruntuleme_satiri_birikmez() {
+        // Plan 2'nin biraktigi ihlal: `AnaEkran.yukle()` mount'ta, her hafta
+        // degisiminde ve HER MUTASYONDAN SONRA calisiyor; her calisma bir
+        // `goruntuleme` satiri yaziyordu. Sayan test: 30 cagri TAM OLARAK 1
+        // satir uretmeli ("en az 1" degil -- birlestirme hic calismasa da
+        // "en az 1" gecerdi).
+        let (_d, c, cid) = kurulum();
+        olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+        assert_eq!(goruntuleme_sayisi(&c), 0, "on kosul: henuz liste cagrilmadi");
+
+        for _ in 0..30 {
+            let liste =
+                aralik_getir(&c, "2026-09-07T00:00", "2026-09-08T00:00", Cihaz::Masaustu).unwrap();
+            assert_eq!(liste.len(), 1, "birlestirme donen VERIYI etkilememeli");
+        }
+
+        assert_eq!(
+            goruntuleme_sayisi(&c),
+            1,
+            "30 takvim yenilemesi tam olarak 1 goruntuleme satiri uretmeli"
+        );
+    }
+
+    #[test]
+    fn durum_isaretlemek_tek_mutasyon_satiri_birakir() {
+        // "Geldi" isaretlemek TEK kullanici eylemidir; arayuz bunun ardindan
+        // takvimi yeniden yukler. Once: 2 satir (duzenleme + goruntuleme).
+        // Simdi: mutasyon satiri KALIR (hesabi verilmeli), yeniden yukleme
+        // satiri birlestirilir.
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        // Arayuzun mount'taki ilk yuklemesi:
+        aralik_getir(&c, "2026-09-07T00:00", "2026-09-08T00:00", Cihaz::Masaustu).unwrap();
+        let once = crate::store::audit::son_kayitlar(&c, 200).unwrap().len();
+
+        durum_guncelle(&c, r.id, "geldi", Cihaz::Masaustu).unwrap();
+        aralik_getir(&c, "2026-09-07T00:00", "2026-09-08T00:00", Cihaz::Masaustu).unwrap();
+
+        let sonra = crate::store::audit::son_kayitlar(&c, 200).unwrap().len();
+        assert_eq!(
+            sonra - once,
+            1,
+            "isaretleme + yeniden yukleme yalnizca mutasyon satirini birakmali"
+        );
+        let son = &crate::store::audit::son_kayitlar(&c, 1).unwrap()[0];
+        assert_eq!(son.eylem, "duzenleme", "kalan satir mutasyon satiri olmali");
+        assert_eq!(son.varlik_id, r.id.to_string());
+    }
+
+    #[test]
+    fn seriyi_sil_eslesen_kayit_yokken_log_yazmaz() {
+        // Plan 2 bu fonksiyonu HTTP'ye acti: var olmayan bir seri_id ile
+        // atilan her istek silinemeyen bir log satiri dusuruyordu.
+        let (_d, c, cid) = kurulum();
+        seri_olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), 3, Cihaz::Masaustu)
+            .unwrap();
+        let once = crate::store::audit::son_kayitlar(&c, 200).unwrap().len();
+        let once_satir = appointments_satir_sayisi(&c);
+
+        for _ in 0..10 {
+            let hata = seriyi_sil(&c, "boyle-bir-seri-yok", "2026-09-07T00:00", Cihaz::Masaustu)
+                .unwrap_err();
+            assert!(matches!(hata, DepoHatasi::Bulunamadi), "0 satir silen cagri Bulunamadi donmeli");
+        }
+
+        assert_eq!(
+            crate::store::audit::son_kayitlar(&c, 200).unwrap().len(),
+            once,
+            "eslesen kayit yokken seriyi_sil log yazmamali"
+        );
+        assert_eq!(appointments_satir_sayisi(&c), once_satir, "hicbir randevu silinmemeli");
+    }
+
+    #[test]
+    fn seriyi_sil_tumu_gecmiste_kalan_tarihte_de_log_yazmaz() {
+        // Ayni ihlalin ikinci yolu: seri VAR ama verilen tarihten sonra
+        // uyesi yok. Gecmisi koruma kurali geregi 0 satir silinir.
+        let (_d, c, cid) = kurulum();
+        let seri = seri_olustur(
+            &c,
+            &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"),
+            3,
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+        let sid = seri[0].seri_id.clone().unwrap();
+        let once = crate::store::audit::son_kayitlar(&c, 200).unwrap().len();
+
+        let hata = seriyi_sil(&c, &sid, "2027-01-01T00:00", Cihaz::Masaustu).unwrap_err();
+        assert!(matches!(hata, DepoHatasi::Bulunamadi));
+
+        assert_eq!(crate::store::audit::son_kayitlar(&c, 200).unwrap().len(), once);
+        assert_eq!(appointments_satir_sayisi(&c), 3, "gecmis korunmali");
+    }
+
+    #[test]
+    fn gercek_seri_silme_hala_loglanir() {
+        // Birlestirme/sifir-satir kontrolu logu TAMAMEN susturmuyor:
+        // gercekten silen bir cagri hala kendi satirini yaziyor.
+        let (_d, c, cid) = kurulum();
+        let seri = seri_olustur(
+            &c,
+            &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"),
+            3,
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+        let sid = seri[0].seri_id.clone().unwrap();
+        let once = crate::store::audit::son_kayitlar(&c, 200).unwrap().len();
+
+        assert_eq!(seriyi_sil(&c, &sid, "2026-09-07T00:00", Cihaz::Masaustu).unwrap(), 3);
+
+        let kayitlar = crate::store::audit::son_kayitlar(&c, 200).unwrap();
+        assert_eq!(kayitlar.len() - once, 1, "gercek silme tam olarak 1 satir yazmali");
+        assert_eq!(kayitlar[0].eylem, "silme");
+        assert_eq!(kayitlar[0].varlik, "appointment_seri");
     }
 }

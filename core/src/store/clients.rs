@@ -37,7 +37,9 @@
 //! akış tek transaction altında toplanmak istenirse, bu fonksiyonlar yerine
 //! ham SQL ifadeleri doğrudan o dış transaction üzerinde çalıştırılmalı.
 
-use crate::store::audit::{kaydet, Ayrinti, Cihaz, Eylem};
+use crate::store::audit::{
+    kaydet, kaydet_birlestirerek, Ayrinti, Cihaz, Eylem, BIRLESTIRME_PENCERESI_DK,
+};
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -126,6 +128,15 @@ pub fn ekle(conn: &Connection, yeni: &YeniDanisan, cihaz: Cihaz) -> Result<Danis
 }
 
 /// Tek bir danışanı kimliğiyle okur; bu bir "goruntuleme" olayı olarak loglanır.
+///
+/// # Neden burada birleştirme YOK (Plan 3 Görev 2)
+/// "Belirli bir danışanın dosyasına erişim" hacim politikasının **loglanır**
+/// tarafındadır (bkz. `store::audit` modül başlığı): KVKK'nın sorduğu asıl
+/// soru budur ve her çağrı gerçek bir kullanıcı eylemine (bir danışan
+/// dosyasını açmak) karşılık gelir -- `listele` gibi gezinmenin yan etkisi
+/// olarak tekrar tekrar çalışan bir yol değildir. Plan 3'te danışan dosyası
+/// ekranı kendi kendini yenileyen bir yola dönüşürse bu karar o görevde
+/// yeniden verilmeli; mekanizma (`audit::kaydet_birlestirerek`) hazır.
 pub fn getir(conn: &Connection, id: i64, cihaz: Cihaz) -> Result<Danisan, DepoHatasi> {
     let danisan = conn
         .query_row(
@@ -143,6 +154,15 @@ pub fn getir(conn: &Connection, id: i64, cihaz: Cihaz) -> Result<Danisan, DepoHa
 /// Danışanları ada göre sıralı listeler. `arsiv_dahil` false ise yalnızca
 /// aktif danışanlar döner. Kaç satır dönerse dönsün tek bir "goruntuleme"
 /// kaydı üretir -- satır başına ayrı log KVKK amacına aykırı gürültü üretir.
+///
+/// # Log: birleştirilir (Plan 3 Görev 2 -- ÜÇÜNCÜ ihlal)
+/// Bu, `appointments::aralik_getir` ile **aynı sınıftan** bir yoldur:
+/// gezinmenin yan etkisi olan tekrarlı okuma. Arayüzde mount'ta ve her
+/// danışan eklemesinden sonra çalışıyor; hangi KAYDA erişildiğini değil,
+/// hangi ekranda olunduğunu söylüyor. Görev 2 yalnızca takvimi düzeltip
+/// burayı bıraksaydı, kural konur konmaz komşu yol tarafından delinirdi
+/// (Plan 2 Görev 7'de `kilit_ac` düzeltilip `kilitle` unutulmuştu -- aynı
+/// hata sınıfı). Bkz. `store::audit` modül başlığındaki hacim politikası.
 pub fn listele(
     conn: &Connection,
     arsiv_dahil: bool,
@@ -158,8 +178,17 @@ pub fn listele(
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
 
-    // Liste tek bir goruntuleme kaydi uretir, satir basina degil.
-    kaydet(conn, Eylem::Goruntuleme, "client", "liste", cihaz, None)?;
+    // Liste tek bir goruntuleme kaydi uretir, satir basina degil -- ve o tek
+    // kayit da pencere boyunca birlestirilir. Var olan satira DOKUNULMAZ.
+    kaydet_birlestirerek(
+        conn,
+        Eylem::Goruntuleme,
+        "client",
+        "liste",
+        cihaz,
+        None,
+        BIRLESTIRME_PENCERESI_DK,
+    )?;
     Ok(liste)
 }
 
@@ -270,6 +299,60 @@ mod tests {
         listele(&c, false, Cihaz::Masaustu).unwrap();
         let sonra = son_kayitlar(&c, 100).unwrap().len();
         assert_eq!(sonra - once, 1, "liste, satir basina log uretmemeli");
+    }
+
+    #[test]
+    fn danisan_listesi_tekrar_cagrilinca_goruntuleme_satiri_birikmez() {
+        // Plan 3 Gorev 2'de bulunan UCUNCU ihlal: `listele` de
+        // `aralik_getir` ile ayni sinifta (gezinmenin yan etkisi olan
+        // tekrarli okuma). Sayan test: 30 cagri TAM OLARAK 1 satir.
+        let (_d, c) = baglanti();
+        ekle(&c, &yeni("Ayse"), Cihaz::Masaustu).unwrap();
+
+        let goruntuleme = |c: &rusqlite::Connection| -> i64 {
+            c.query_row(
+                "SELECT COUNT(*) FROM audit_log WHERE eylem='goruntuleme' AND varlik='client'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(goruntuleme(&c), 0, "on kosul: henuz liste cagrilmadi");
+
+        for _ in 0..30 {
+            assert_eq!(listele(&c, false, Cihaz::Masaustu).unwrap().len(), 1);
+        }
+
+        assert_eq!(
+            goruntuleme(&c),
+            1,
+            "30 danisan listesi yenilemesi tam olarak 1 goruntuleme satiri uretmeli"
+        );
+    }
+
+    #[test]
+    fn danisan_dosyasina_erisim_birlestirilmez() {
+        // `getir` kuralin LOGLANIR tarafinda: her cagri bir danisan
+        // dosyasinin acilmasidir. `listele` birlestirilirken bunun
+        // birlestirilmedigini acikca kanitla -- aksi halde "liste
+        // birlestirildi, dosya erisimi de sessizce birlestirildi" gibi bir
+        // yan etki fark edilmeden gecebilirdi.
+        let (_d, c) = baglanti();
+        let d = ekle(&c, &yeni("Ayse"), Cihaz::Masaustu).unwrap();
+
+        for _ in 0..3 {
+            getir(&c, d.id, Cihaz::Masaustu).unwrap();
+        }
+
+        let sayi: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM audit_log
+                  WHERE eylem='goruntuleme' AND varlik='client' AND varlik_id=?1",
+                [d.id.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sayi, 3, "danisan dosyasina her erisim ayri satir yazmali");
     }
 
     fn clients_satir_sayisi(c: &rusqlite::Connection) -> i64 {

@@ -194,3 +194,111 @@ describe('AnaEkran — düzenleme kipi POST değil PUT üretir (C1)', () => {
     expect(yazmalar[0].yol).toBe('/api/randevular')
   })
 })
+
+// Plan 3 Görev 2: denetim kaydı hacmi. `audit_log` satırları SİLİNEMEZ, bu
+// yüzden gereksiz her GET kalıcı bir `goruntuleme` satırı bırakır. Bu
+// testler SAYAR ve TAM EŞİTLİK iddia eder ("en fazla" değil): bir kullanıcı
+// eyleminden sonra takvimin kaç kez yeniden çekildiği tam olarak bilinmeli.
+describe('AnaEkran — gereksiz yeniden yükleme yapmaz (Plan 3 Görev 2)', () => {
+  const gercekFetch = globalThis.fetch
+  let istekler: { yol: string; method: string }[] = []
+  let randevuDurumu: Record<number, string>
+
+  const takvimGetSayisi = () =>
+    istekler.filter((i) => i.yol.startsWith('/api/randevular?') && i.method === 'GET').length
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 9, 12, 0))
+    istekler = []
+    randevuDurumu = { [randevuA.id]: 'planlandi', [randevuB.id]: 'planlandi' }
+
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
+      const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      const method = secenekler?.method ?? 'GET'
+      istekler.push({ yol, method })
+      if (yol.startsWith('/api/danisanlar')) {
+        return { ok: true, json: async () => danisanlar } as unknown as Response
+      }
+      if (yol.startsWith('/api/cakisma')) {
+        return {
+          ok: true,
+          json: async () => ({
+            cakisanlar: [], cakisan_hafta_sayisi: 0, kontrol_edilen_hafta: 1,
+          }),
+        } as unknown as Response
+      }
+      if (yol.startsWith('/api/randevular')) {
+        if (method === 'GET') {
+          return {
+            ok: true,
+            json: async () => [
+              { ...randevuA, durum: randevuDurumu[randevuA.id] },
+              { ...randevuB, durum: randevuDurumu[randevuB.id] },
+            ],
+          } as unknown as Response
+        }
+        return { ok: true, json: async () => ({}) } as unknown as Response
+      }
+      throw new Error(`beklenmeyen istek: ${yol}`)
+    }) as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    globalThis.fetch = gercekFetch
+    vi.restoreAllMocks()
+  })
+
+  it('"Geldi" işaretlemek takvimi yeniden çekmez, ekranı yine de günceller', async () => {
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    expect(takvimGetSayisi()).toBe(1) // mount'taki tek yükleme
+
+    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Geldi' }))
+
+    const yazmalar = istekler.filter(
+      (i) => i.yol.startsWith('/api/randevular') && i.method === 'PATCH',
+    )
+    expect(yazmalar).toHaveLength(1)
+    expect(takvimGetSayisi()).toBe(1)
+
+    // Sunucu isteği atlanmadı, yalnızca YENİDEN YÜKLEME atlandı: yeni durum
+    // ekranda görünmeli. (Bu assertion olmasaydı "hiçbir şey yapmayan"
+    // bir kod da testi geçerdi.) `data-durum` görsel sınıfa değil semantik
+    // duruma bağlıdır (bkz. RandevuBloku).
+    expect(
+      screen.getByRole('button', { name: 'Ayşe Yılmaz' }).getAttribute('data-durum'),
+    ).toBe('geldi')
+    expect(
+      screen.getByRole('button', { name: 'Mehmet Demir' }).getAttribute('data-durum'),
+    ).toBe('planlandi')
+  })
+
+  it('silme takvimi yeniden çekmez, randevu ekrandan kalkar', async () => {
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    expect(takvimGetSayisi()).toBe(1)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Evet, sil' }))
+
+    expect(
+      istekler.filter((i) => i.yol.startsWith('/api/randevular/') && i.method === 'DELETE'),
+    ).toHaveLength(1)
+    expect(takvimGetSayisi()).toBe(1)
+    expect(screen.queryByRole('button', { name: /Ayşe Yılmaz/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Mehmet Demir/ })).toBeDefined()
+  })
+
+  it('mount tek bir takvim isteği atar, hafta değişimi tam olarak bir tane daha', async () => {
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    expect(takvimGetSayisi()).toBe(1)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
+    expect(takvimGetSayisi()).toBe(2)
+  })
+})

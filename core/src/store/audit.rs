@@ -26,6 +26,52 @@
 //! doğrulanmamış serbest metin (seans notu, danışan adı, arama sorgusu vb.)
 //! taşımamalı; bir `String`/`&str` alanı gerekiyorsa mutlaka dar bir biçim
 //! doğrulaması eklenmeli.
+//!
+//! # KRİTİK: Hacim politikası — neyin loglanacağı (Plan 3 Görev 2)
+//!
+//! `audit_log` tetikleyicilerle korunuyor: satır **güncellenemez,
+//! silinemez**. Bu tam olarak KVKK Karar 2018/10'un istediği şeydir — ama
+//! aynı özellik gürültünün de kalıcı olması demektir. Not editörü **2
+//! saniyede bir** otomatik kaydedecek; "her yazma bir log satırı" deseni bir
+//! saatlik seans notunda ~1800 silinemez satır üretir. **Denetlenebilir
+//! olmayan bir denetim kaydı, olmayan denetim kaydıyla aynı şeydir.** Bu
+//! yüzden hacim bir ayrıntı değil, bir tasarım kısıtıdır ve kural TEK YERDE
+//! — burada — yazılıdır; kod tabanındaki her yazma yolu buna uyar.
+//!
+//! ## Loglanır
+//! - Veriyi **değiştiren** ve sonradan hesabı verilmesi gereken işlemler:
+//!   oluşturma, düzenleme, silme, arşivleme, dışa aktarma.
+//! - **Belirli bir danışanın dosyasına erişim** (`clients::getir`): KVKK'nın
+//!   asıl sorusu "kimin dosyası, ne zaman, hangi cihazdan açıldı".
+//! - Oturum olayları (giriş/çıkış, ilk kurulum): seyrek ve her biri gerçek
+//!   bir olay.
+//!
+//! ## Loglanmaz
+//! - **Gezinmenin yan etkisi olan tekrarlı okumalar**: takvim yenilemesi
+//!   (`appointments::aralik_getir`), danışan listesi (`clients::listele`).
+//!   Bunlar kullanıcının hangi kaydı gördüğünü değil, hangi ekranda
+//!   olduğunu söyler; her mutasyondan sonra ve her hafta değişiminde
+//!   yeniden çalışırlar.
+//! - **Doğrulama sorguları**: `appointments::cakisanlari_bul`,
+//!   `seri_cakisanlari_bul`, `seri_sayisi` — kullanıcıya veri göstermeyen,
+//!   form doğrulaması sırasında (her tuş vuruşunda) çalışabilen kontroller
+//!   (karar Plan 2 Görev 5'te verildi, testle korunuyor).
+//! - **Ara otomatik kayıtlar**: not editörünün 2 saniyelik otomatik kaydı.
+//! - **Hiçbir satırı etkilemeyen mutasyonlar**: 0 satır silen bir `DELETE`
+//!   olmamış bir işlemdir; loglanırsa dışarıdan tetiklenebilir, sınırsız ve
+//!   silinemez bir gürültü yolu açılır.
+//!
+//! ## Not kayıtları
+//! Not başına, **düzenleme oturumu başına bir** satır — otomatik kayıt
+//! başına değil. Bunu sağlayan mekanizma `kaydet_birlestirerek`'tir.
+//!
+//! # KRİTİK: Birleştirme bir "yazma" kararıdır, "üzerine yazma" değil
+//!
+//! Birleştirme (coalescing) **asla** var olan bir satırı silerek veya
+//! güncelleyerek yapılmaz. Tetikleyiciler bunu zaten reddeder ve logun tüm
+//! değeri değiştirilemezliğidir. `son_kayit_yakin_mi` yalnızca **yazıp
+//! yazmamaya** karar verir; bu modülde `audit_log` üzerinde `UPDATE` veya
+//! `DELETE` içeren tek bir SQL ifadesi yoktur ve olmamalıdır.
 
 use crate::store::zaman::zaman_gecerli_mi;
 use rusqlite::Connection;
@@ -175,6 +221,91 @@ pub fn kaydet(
     Ok(())
 }
 
+/// Birleştirme penceresinin varsayılan uzunluğu (dakika).
+///
+/// Bir düzenleme oturumu boyunca (2 saniyede bir otomatik kayıt) tek satır
+/// üretmek için yeterince uzun; "sabah açtım, öğleden sonra yine açtım"
+/// ayrımını koruyacak kadar kısa. 5 dakika ayrıca `session`'ın boşta kalma
+/// kilidiyle (`VARSAYILAN_KILIT_SURESI_SN = 300`) aynı büyüklüktedir: oturum
+/// kilitlenip yeniden açıldığında zaten yeni bir `giris` satırı yazılır ve
+/// sonraki erişim de yeni bir satır alır.
+pub const BIRLESTIRME_PENCERESI_DK: i64 = 5;
+
+/// `pencere_dk` dakika öncesinin duvar-üstü UTC damgası. `simdi_utc()` ile
+/// **aynı biçimi** üretir (RFC3339, saniye çözünürlüğü, `Z` ekli, 20
+/// karakter): `olay_zamani` sütunu bu biçimde saklandığı için sabit uzunluklu
+/// ISO8601-UTC dizgilerinde sözlüksel karşılaştırma = kronolojik
+/// karşılaştırmadır, ayrıştırmaya gerek yoktur.
+fn pencere_esigi(pencere_dk: i64) -> String {
+    (OffsetDateTime::now_utc() - time::Duration::minutes(pencere_dk))
+        .replace_nanosecond(0)
+        .expect("nanosaniye sifirlanamadi")
+        .format(&Rfc3339)
+        .expect("zaman bicimlendirilemedi")
+}
+
+/// Aynı `(eylem, varlik, varlik_id)` üçlüsü için son `pencere_dk` dakika
+/// içinde YAZILMIŞ bir kayıt var mı?
+///
+/// Birleştirme kararını veren **tek** fonksiyon budur. Yalnızca OKUR:
+/// `audit_log` üzerinde hiçbir `UPDATE`/`DELETE` çalıştırmaz, çalıştıramaz
+/// (bkz. modül başlığı — birleştirme "yazma" kararıdır, "üzerine yazma"
+/// değil; tetikleyiciler de bunu zaten reddeder).
+///
+/// Eşleşme üçlünün TAMAMI üzerinden yapılır: farklı bir not (`varlik_id`),
+/// farklı bir varlık türü (`varlik`) veya farklı bir eylem (`eylem`) asla
+/// birbirini gizlemez — bir notun 30 otomatik kaydı tek satıra inerken aynı
+/// pencerede o notun SİLİNMESİ ayrı bir satır yazar.
+///
+/// Karşılaştırma **kesin** (`>`) eşiktir: `pencere_dk = 0` "birleştirme yok"
+/// anlamına gelir (eşik = şimdi; şimdi yazılmış bir satır bile pencerenin
+/// İÇİNDE sayılmaz), negatif bir değer de aynı şekilde her çağrıda yazar.
+pub fn son_kayit_yakin_mi(
+    conn: &Connection,
+    eylem: Eylem,
+    varlik: &str,
+    varlik_id: &str,
+    pencere_dk: i64,
+) -> Result<bool, rusqlite::Error> {
+    let esik = pencere_esigi(pencere_dk);
+    let var: i64 = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM audit_log
+              WHERE eylem = ?1 AND varlik = ?2 AND varlik_id = ?3 AND olay_zamani > ?4
+         )",
+        rusqlite::params![eylem.as_str(), varlik, varlik_id, esik],
+        |r| r.get(0),
+    )?;
+    Ok(var != 0)
+}
+
+/// `kaydet`'in birleştiren hâli: aynı üçlü için pencere içinde zaten bir
+/// satır varsa **hiçbir şey yapmaz**; yoksa yeni bir satır YAZAR.
+///
+/// Dönen `bool`, satırın gerçekten yazılıp yazılmadığını söyler (çağıran
+/// taraf istatistik/test için kullanabilir).
+///
+/// # Var olan satıra dokunulmaz
+/// Bu fonksiyonun "birleştirme" dediği şey, ikinci yazmadan VAZGEÇMEKtir.
+/// Var olan satırın `olay_zamani`'si ilk yazımdaki değerde kalır, `id`'si
+/// değişmez. Bu bilinçlidir: log değiştirilemez olduğu için değerlidir
+/// (bkz. modül başlığı ve `birlestirme_var_olan_satiri_degistirmez` testi).
+pub fn kaydet_birlestirerek(
+    conn: &Connection,
+    eylem: Eylem,
+    varlik: &str,
+    varlik_id: &str,
+    cihaz: Cihaz,
+    ayrinti: Option<Ayrinti>,
+    pencere_dk: i64,
+) -> Result<bool, rusqlite::Error> {
+    if son_kayit_yakin_mi(conn, eylem, varlik, varlik_id, pencere_dk)? {
+        return Ok(false);
+    }
+    kaydet(conn, eylem, varlik, varlik_id, cihaz, ayrinti)?;
+    Ok(true)
+}
+
 /// En yeni kayıttan en eskiye doğru sıralanmış son `limit` audit kaydını döner.
 ///
 /// Sıralama `id DESC` ile yapılır (`olay_zamani DESC` ile değil), böylece
@@ -305,5 +436,230 @@ mod tests {
         let (_d, c) = baglanti();
         kaydet(&c, Eylem::Giris, "session", "-", Cihaz::Masaustu, None).unwrap();
         assert_eq!(son_kayitlar(&c, 1).unwrap()[0].ayrinti, None);
+    }
+
+    // --- Plan 3 Gorev 2: hacim politikasi / birlestirme ------------------
+    //
+    // Bu testler kurali KANITLAR, varligini degil: hepsi SAYAR ve TAM
+    // ESITLIK iddia eder ("en az 1" degil). Sebep: birlestirme yanlis
+    // uygulanirsa (ornegin hic birlestirmezse) "en az 1" testi yine gecerdi
+    // -- bu kod tabaninda alti kez tekrarlanan "test yesil ama hicbir sey
+    // korumuyor" hata sinifi.
+
+    fn log_sayisi(c: &rusqlite::Connection) -> i64 {
+        c.query_row("SELECT COUNT(*) FROM audit_log", [], |r| r.get(0)).unwrap()
+    }
+
+    /// `dk_once` dakika onceye ait bir log satirini DOGRUDAN (kaydet'i
+    /// kullanmadan) yazar. `audit_log`'a INSERT serbesttir; yasak olan
+    /// UPDATE/DELETE'tir. Pencerenin gercekten ZAMANA bagli oldugunu
+    /// kanitlamak icin gerekiyor: var olan bir satirin zamanini geri almak
+    /// (UPDATE) tetikleyici tarafindan -- dogru olarak -- reddedilir.
+    fn eski_satir_ekle(c: &rusqlite::Connection, eylem: Eylem, varlik: &str, varlik_id: &str, dk_once: i64) -> String {
+        let zaman = pencere_esigi(dk_once);
+        c.execute(
+            "INSERT INTO audit_log (olay_zamani, eylem, varlik, varlik_id, cihaz, ayrinti)
+             VALUES (?1, ?2, ?3, ?4, 'masaustu', NULL)",
+            rusqlite::params![zaman, eylem.as_str(), varlik, varlik_id],
+        )
+        .unwrap();
+        zaman
+    }
+
+    #[test]
+    fn otuz_otomatik_kayit_tam_olarak_bir_satir_uretir() {
+        // Not editorunun 2 saniyelik otomatik kaydi: bir dakikalik yazma
+        // 30 cagri demektir. Sonuc TAM OLARAK 1 satir olmali.
+        let (_d, c) = baglanti();
+        assert_eq!(log_sayisi(&c), 0, "on kosul: log bos baslamali");
+
+        let mut yazilan = 0;
+        for _ in 0..30 {
+            if kaydet_birlestirerek(
+                &c,
+                Eylem::Duzenleme,
+                "note",
+                "5",
+                Cihaz::Masaustu,
+                None,
+                BIRLESTIRME_PENCERESI_DK,
+            )
+            .unwrap()
+            {
+                yazilan += 1;
+            }
+        }
+
+        assert_eq!(yazilan, 1, "30 cagridan yalnizca ILKI yazmali");
+        assert_eq!(log_sayisi(&c), 1, "30 otomatik kayit tam olarak 1 satir uretmeli");
+    }
+
+    #[test]
+    fn birlestirme_var_olan_satiri_degistirmez() {
+        // Logun tum degeri degistirilemezliginde. Birlestirme "uzerine
+        // yazma" degil, "yazmama" karari oldugu icin pencere icindeki 30
+        // cagridan sonra AYAKTA KALAN satir hala ILK yazmanin satiridir:
+        // ayni id, ayni olay_zamani.
+        let (_d, c) = baglanti();
+        let ilk_zaman = eski_satir_ekle(&c, Eylem::Duzenleme, "note", "5", 2);
+        let ilk_id: i64 = c.query_row("SELECT id FROM audit_log", [], |r| r.get(0)).unwrap();
+
+        for _ in 0..30 {
+            kaydet_birlestirerek(
+                &c,
+                Eylem::Duzenleme,
+                "note",
+                "5",
+                Cihaz::Masaustu,
+                None,
+                BIRLESTIRME_PENCERESI_DK,
+            )
+            .unwrap();
+        }
+
+        assert_eq!(log_sayisi(&c), 1, "pencere icinde yeni satir olusmamali");
+        let (id, zaman): (i64, String) = c
+            .query_row("SELECT id, olay_zamani FROM audit_log", [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!(id, ilk_id, "ayakta kalan satir ILK satir olmali (yeni satir degil)");
+        assert_eq!(
+            zaman, ilk_zaman,
+            "var olan satirin zaman degeri ilk yazimdaki degerde kalmali"
+        );
+    }
+
+    #[test]
+    fn pencere_gectikten_sonra_yeni_satir_yazilir() {
+        // Birlestirme logu TAMAMEN susturmuyor: pencere gecince erisim
+        // yeniden gorunur olur. Aksi halde "denetlenebilir olmayan log"
+        // sorununu "hic olmayan log" ile degistirmis olurduk.
+        let (_d, c) = baglanti();
+        let eski_zaman = eski_satir_ekle(&c, Eylem::Duzenleme, "note", "5", 10);
+
+        assert!(
+            !son_kayit_yakin_mi(&c, Eylem::Duzenleme, "note", "5", BIRLESTIRME_PENCERESI_DK)
+                .unwrap(),
+            "10 dakika onceki satir 5 dakikalik pencerenin DISINDA olmali"
+        );
+        assert!(
+            son_kayit_yakin_mi(&c, Eylem::Duzenleme, "note", "5", 15).unwrap(),
+            "ayni satir 15 dakikalik pencerenin ICINDE olmali -- esik gercekten zamana bagli"
+        );
+
+        let yazildi = kaydet_birlestirerek(
+            &c,
+            Eylem::Duzenleme,
+            "note",
+            "5",
+            Cihaz::Masaustu,
+            None,
+            BIRLESTIRME_PENCERESI_DK,
+        )
+        .unwrap();
+
+        assert!(yazildi, "pencere gectikten sonra yeni satir yazilmali");
+        assert_eq!(log_sayisi(&c), 2, "eski satir korunur, yenisi eklenir");
+        let eski_hala_var: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM audit_log WHERE olay_zamani = ?1",
+                [&eski_zaman],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(eski_hala_var, 1, "eski satir silinmemis/degismemis olmali");
+    }
+
+    #[test]
+    fn birlestirme_farkli_bir_notu_gizlemez() {
+        let (_d, c) = baglanti();
+        for _ in 0..30 {
+            kaydet_birlestirerek(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, None, BIRLESTIRME_PENCERESI_DK).unwrap();
+        }
+        assert_eq!(log_sayisi(&c), 1);
+
+        // AYNI pencere icinde BASKA bir nota yazmak ayri satir uretmeli.
+        let yazildi = kaydet_birlestirerek(&c, Eylem::Duzenleme, "note", "6", Cihaz::Masaustu, None, BIRLESTIRME_PENCERESI_DK).unwrap();
+        assert!(yazildi, "farkli bir not ayri satir yazmali");
+        assert_eq!(log_sayisi(&c), 2);
+    }
+
+    #[test]
+    fn birlestirme_farkli_bir_eylemi_gizlemez() {
+        let (_d, c) = baglanti();
+        for _ in 0..30 {
+            kaydet_birlestirerek(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, None, BIRLESTIRME_PENCERESI_DK).unwrap();
+        }
+        assert_eq!(log_sayisi(&c), 1);
+
+        // AYNI notta AYNI pencere icinde SILME ayri satir uretmeli --
+        // yoksa birlestirme, hesabi verilmesi gereken bir islemi orterdi.
+        let yazildi = kaydet_birlestirerek(&c, Eylem::Silme, "note", "5", Cihaz::Masaustu, None, BIRLESTIRME_PENCERESI_DK).unwrap();
+        assert!(yazildi, "ayni notta farkli eylem ayri satir yazmali");
+        assert_eq!(log_sayisi(&c), 2);
+
+        let eylemler: Vec<String> =
+            son_kayitlar(&c, 10).unwrap().into_iter().map(|k| k.eylem).collect();
+        assert!(eylemler.contains(&"silme".to_string()));
+        assert!(eylemler.contains(&"duzenleme".to_string()));
+    }
+
+    #[test]
+    fn birlestirme_farkli_bir_varligi_gizlemez() {
+        let (_d, c) = baglanti();
+        kaydet_birlestirerek(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, None, BIRLESTIRME_PENCERESI_DK).unwrap();
+        // Ayni id, farkli varlik turu: "5 numarali not" ile "5 numarali
+        // randevu" ayni sey degildir.
+        let yazildi = kaydet_birlestirerek(&c, Eylem::Duzenleme, "appointment", "5", Cihaz::Masaustu, None, BIRLESTIRME_PENCERESI_DK).unwrap();
+        assert!(yazildi);
+        assert_eq!(log_sayisi(&c), 2);
+    }
+
+    #[test]
+    fn sifir_pencere_hicbir_seyi_birlestirmez() {
+        // `pencere_dk = 0` "birlestirme yok" demektir: esik tam olarak
+        // SIMDI'dir ve karsilastirma kesin (`>`) oldugu icin ayni saniyede
+        // yazilmis bir satir bile pencerenin icinde sayilmaz. Bu, kesin
+        // esik davranisinin sinir testi.
+        let (_d, c) = baglanti();
+        for _ in 0..5 {
+            assert!(
+                kaydet_birlestirerek(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, None, 0)
+                    .unwrap(),
+                "pencere 0 iken her cagri yazmali"
+            );
+        }
+        assert_eq!(log_sayisi(&c), 5);
+    }
+
+    #[test]
+    fn bos_logda_ilk_kayit_her_zaman_yazilir() {
+        let (_d, c) = baglanti();
+        assert!(
+            !son_kayit_yakin_mi(&c, Eylem::Duzenleme, "note", "5", BIRLESTIRME_PENCERESI_DK)
+                .unwrap(),
+            "hic kayit yokken 'yakin kayit var' denemez"
+        );
+        assert!(kaydet_birlestirerek(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, None, BIRLESTIRME_PENCERESI_DK).unwrap());
+        assert_eq!(log_sayisi(&c), 1);
+    }
+
+    #[test]
+    fn birlestirme_asla_update_veya_delete_denemez() {
+        // Tetikleyiciler her UPDATE/DELETE'i ABORT ile reddeder. Bu test,
+        // birlestirmenin bunlara HIC basvurmadigini davranissal olarak
+        // kanitlar: eger `kaydet_birlestirerek` var olan satiri
+        // guncellemeye/silmeye calissaydi cagri Err donerdi.
+        let (_d, c) = baglanti();
+        eski_satir_ekle(&c, Eylem::Duzenleme, "note", "5", 1);
+
+        // On kosul: tetikleyiciler gercekten aktif.
+        assert!(c.execute("UPDATE audit_log SET eylem='silme'", []).is_err());
+        assert!(c.execute("DELETE FROM audit_log", []).is_err());
+
+        for _ in 0..30 {
+            kaydet_birlestirerek(&c, Eylem::Duzenleme, "note", "5", Cihaz::Masaustu, None, BIRLESTIRME_PENCERESI_DK)
+                .expect("birlestirme hicbir UPDATE/DELETE denememeli");
+        }
+        assert_eq!(log_sayisi(&c), 1);
     }
 }

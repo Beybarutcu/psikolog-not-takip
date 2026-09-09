@@ -38,10 +38,16 @@
 //! değil.*
 //!
 //! Bu modüldeki **beş** log çağrısının hepsi
-//! `LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK)` kullanır; seçim artık
-//! yazılı bir kural değil, derleyicinin zorladığı bir parametredir (bkz.
-//! `audit::LogHacmi`). Kural ayrıca testlerle sabitlenir: 30 ardışık kayıt
-//! **tam olarak 1** log satırı üretir (eşitlik, "en az 1" değil).
+//! `LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK)` kullanır. Seçim artık
+//! derleyicinin zorladığı bir parametredir (bkz. `audit::LogHacmi`), ama
+//! *hangi pencere* verildiği hâlâ bir sayıdır; bu yüzden kural iki yönlü
+//! testlerle sabitlenir:
+//! - **Çok fazla** yönü: 30 ardışık kayıt **tam olarak 1** log satırı üretir
+//!   (eşitlik, "en az 1" değil) — pencere `0`'a çekilirse kırılır.
+//! - **Çok az** yönü: pencerenin DIŞINDA kalan eski bir satır yeni kaydı
+//!   susturmaz (`pencere_disindaki_satir_...` testi) — pencere bir yıla
+//!   çıkarılırsa kırılır. Bu yön olmadan "log susturuldu" mutasyonu tek bir
+//!   testi bile kırmıyordu.
 //!
 //! Görüntüleme de birleştirilir. `clients::getir` bilerek birleştirilmiyor
 //! (her çağrı bir danışan dosyasının açılmasıdır) ama not editörü **kendi
@@ -640,6 +646,85 @@ mod tests {
     // Bu testler SAYAR ve TAM ESITLIK iddia eder ("en az 1" degil). Sebep:
     // `LogHacmi::OturumBasi` yerine `HerCagri` secilseydi "en az 1" testi
     // yine gecerdi.
+    //
+    // IKI YON: asagidaki "otuz ... tam olarak bir satir" testleri logu
+    // COGALTAN yonu tutuyor (pencere 0 yapilinca kirilirlar). Onlarin tek
+    // basina yakalayamadigi sey SUSTURAN yondur: pencere bir yila
+    // cikarilsaydi hicbiri kirilmazdi -- ve terapist bir yil boyunca her gun
+    // not duzenlese denetim kaydinda TEK satir kalirdi. O yonu
+    // `pencere_disindaki_satir_...` testi tutar.
+
+    /// `dk_once` dakika onceye ait bir log satirini DOGRUDAN yazar
+    /// (`audit::tests::eski_satir_ekle` ile ayni desen). `audit_log`'a INSERT
+    /// serbesttir; yasak olan UPDATE/DELETE'tir -- var olan bir satirin
+    /// zamanini geri almak tetikleyici tarafindan (dogru olarak) reddedilir,
+    /// bu yuzden eski satir bastan eski yazilir.
+    fn eski_satir_ekle(
+        c: &rusqlite::Connection,
+        eylem: &str,
+        varlik: &str,
+        varlik_id: &str,
+        dk_once: i64,
+    ) {
+        let zaman = (OffsetDateTime::now_utc() - time::Duration::minutes(dk_once))
+            .replace_nanosecond(0)
+            .unwrap()
+            .format(&Rfc3339)
+            .unwrap();
+        c.execute(
+            "INSERT INTO audit_log (olay_zamani, eylem, varlik, varlik_id, cihaz, ayrinti)
+             VALUES (?1, ?2, ?3, ?4, 'masaustu', NULL)",
+            rusqlite::params![zaman, eylem, varlik, varlik_id],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn pencere_disindaki_satir_bes_log_yolunun_hicbirini_susturmaz() {
+        // BIRLESTIRME PENCERESI ZAMANA BAGLI OLMALI. Pencere `525600`
+        // (bir yil) yapilsaydi asagidaki bes yolun hicbiri yeni satir
+        // yazmazdi ve denetim kaydi -- KVKK 2018/10'un istedigi kayit --
+        // fiilen yok olurdu. Bu testten once o mutasyonu TEK BIR test bile
+        // yakalamiyordu: hacim testlerinin hepsi yalnizca "cok fazla"
+        // yonunu olcuyordu.
+        //
+        // Her bes cagri yeri icin pencerenin DISINA (10 dk once) bir satir
+        // konur; cagri sonrasi sayinin 2 olmasi beklenir.
+        let (_d, c, cid, rid) = kurulum();
+        let id = rid.to_string();
+        let liste_id = format!("liste:{cid}");
+
+        let yollar: [(&str, &str, &str); 5] = [
+            ("goruntuleme", VARLIK_RESMI, id.as_str()),
+            ("duzenleme", VARLIK_RESMI, id.as_str()),
+            ("goruntuleme", VARLIK_OZEL, id.as_str()),
+            ("duzenleme", VARLIK_OZEL, id.as_str()),
+            ("goruntuleme", VARLIK_RESMI, liste_id.as_str()),
+        ];
+        for (eylem, varlik, varlik_id) in yollar {
+            eski_satir_ekle(&c, eylem, varlik, varlik_id, 10);
+            assert_eq!(
+                log_sayisi(&c, eylem, varlik, varlik_id),
+                1,
+                "on kosul: {eylem}/{varlik}/{varlik_id} icin tek eski satir olmali"
+            );
+        }
+
+        not_getir(&c, rid, Cihaz::Masaustu).unwrap();
+        not_kaydet(&c, rid, "dap", "x", Cihaz::Masaustu).unwrap();
+        ozel_not_getir(&c, rid, Cihaz::Masaustu).unwrap();
+        ozel_not_kaydet(&c, rid, "y", Cihaz::Masaustu).unwrap();
+        danisan_notlari(&c, cid, 50, Cihaz::Masaustu).unwrap();
+
+        for (eylem, varlik, varlik_id) in yollar {
+            assert_eq!(
+                log_sayisi(&c, eylem, varlik, varlik_id),
+                2,
+                "{eylem}/{varlik}/{varlik_id}: pencere DISINDAKI eski satir yeni kaydi \
+                 susturmamali -- pencere zamana bagli olmali"
+            );
+        }
+    }
 
     #[test]
     fn otuz_otomatik_kayit_tam_olarak_bir_log_satiri_uretir() {
@@ -1096,8 +1181,12 @@ mod tests {
         // Bu kod tabaninda turetilmis `Debug` UC kez sizinti uretti
         // (`DataKey`, `Ayrinti`, `Randevu`). `{:?}` bir panik mesajina veya
         // loga dusebilir; seans notu icerigi KVKK'da ozel nitelikli veridir.
+        // `appointment_id` zaman damgasindaki rakamlarla KARISMAYAN bir
+        // deger secildi: `contains('7')` iddiasi "2026-09-07T10:00:00Z"
+        // tarafindan zaten karsilaniyordu ve alanin gorunur kaldigini
+        // kanitlamiyordu (totoloji).
         let not = SeansNotu {
-            appointment_id: 7,
+            appointment_id: 481_516,
             client_id: 42,
             sablon: "dap".into(),
             icerik: "COK_GIZLI_SEANS_ICERIGI".into(),
@@ -1107,7 +1196,10 @@ mod tests {
         assert!(!metin.contains("COK_GIZLI_SEANS_ICERIGI"), "Debug icerigi basmamali: {metin}");
         assert!(!metin.contains("42"), "Debug client_id'yi basmamali: {metin}");
         assert!(metin.contains("<gizli>"));
-        assert!(metin.contains('7'), "hata ayiklama icin appointment_id gorunur kalmali");
+        assert!(
+            metin.contains("appointment_id: 481516"),
+            "hata ayiklama icin appointment_id gorunur kalmali: {metin}"
+        );
 
         // Serialize ise TUM alanlari icerir -- ayrim kasitli.
         let json = serde_json::to_string(&not).unwrap();

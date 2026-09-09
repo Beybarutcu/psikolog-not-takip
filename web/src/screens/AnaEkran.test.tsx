@@ -289,8 +289,12 @@ describe('AnaEkran — gereksiz yeniden yükleme yapmaz (Plan 3 Görev 2)', () =
       istekler.filter((i) => i.yol.startsWith('/api/randevular/') && i.method === 'DELETE'),
     ).toHaveLength(1)
     expect(takvimGetSayisi()).toBe(1)
-    expect(screen.queryByRole('button', { name: /Ayşe Yılmaz/ })).toBeNull()
-    expect(screen.getByRole('button', { name: /Mehmet Demir/ })).toBeDefined()
+    // TAM ad ile sorgulanıyor, regex ile değil: aranan şey takvimdeki randevu
+    // bloğu ("Ayşe Yılmaz"), danışan listesindeki "Ayşe Yılmaz adlı danışanı
+    // arşivle" düğmesi değil. Gevşek regex ikisini birbirine karıştırır ve
+    // test "randevu ekrandan kalktı mı" sorusunu ölçmeyi bırakırdı.
+    expect(screen.queryByRole('button', { name: 'Ayşe Yılmaz' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Mehmet Demir' })).toBeDefined()
   })
 
   it('mount tek bir takvim isteği atar, hafta değişimi tam olarak bir tane daha', async () => {
@@ -352,11 +356,50 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
 
   const danisanListesi = () => screen.getByRole('list')
 
+  // Her satırın arşivleme düğmesi KENDİ danışanının adıyla anılır. Eskiden
+  // hepsinin erişilebilir adı düz "Arşivle" idi ve testler sıraya (`[0]`,
+  // `[1]`) güveniyordu; sıra değişse test yanlış düğmeye basar, ekran
+  // okuyucu kullanıcısı da hangi düğmenin kime ait olduğunu duyamazdı.
+  const arsivDugmesi = (ad: string) =>
+    screen.getByRole('button', { name: `${ad} adlı danışanı arşivle` })
+
+  it('her arşivle düğmesi hangi danışana ait olduğunu erişilebilir adında söyler', async () => {
+    // Yıkıcı bir işlemde "hangi satırdaydım" bilgisi yalnızca GÖRSEL
+    // bağlamda kalamaz: ekran okuyucu kullanıcısı listede N tane özdeş
+    // "Arşivle" duyuyordu.
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByText('Ayşe Yılmaz')
+
+    expect(arsivDugmesi('Ayşe Yılmaz')).toBeDefined()
+    expect(arsivDugmesi('Mehmet Demir')).toBeDefined()
+    // Ad tek başına ARŞİVLEME düğmesini seçmemeli: takvimdeki randevu bloğu
+    // da düz danışan adıyla anılıyor; iki düğmenin adı çakışmamalı.
+    expect(screen.queryByRole('button', { name: 'Arşivle' })).toBeNull()
+    expect(arsivDugmesi('Ayşe Yılmaz')).not.toBe(
+      screen.queryByRole('button', { name: 'Ayşe Yılmaz' }),
+    )
+  })
+
+  it('arşivleme sonucu ekran okuyucuya duyurulur', async () => {
+    // `role="status"` olmadan işlem sessizdi: düğmeye basılıyor, danışan
+    // listeden düşüyor ama kullanıcı hiçbir şey duymuyordu.
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByText('Ayşe Yılmaz')
+
+    // Önce YOK: her `<p>`'ye status vermeyen, gerçekten sonuca bağlı olduğu.
+    expect(screen.queryByRole('status')).toBeNull()
+
+    await userEvent.click(arsivDugmesi('Ayşe Yılmaz'))
+    await userEvent.click(screen.getByRole('button', { name: 'Evet, arşivle' }))
+
+    expect(screen.getByRole('status').textContent ?? '').toMatch(/Ayşe Yılmaz arşivlendi/)
+  })
+
   it('arşivleme iki adımlıdır: tek tıkla istek gitmez', async () => {
     render(<AnaEkran kilitle={vi.fn()} />)
     await screen.findByText('Ayşe Yılmaz')
 
-    await userEvent.click(screen.getAllByRole('button', { name: 'Arşivle' })[0])
+    await userEvent.click(arsivDugmesi('Ayşe Yılmaz'))
 
     // Onay ekranda, ama HENÜZ hiçbir yazma isteği gitmedi.
     expect(screen.getByText(/Ayşe Yılmaz arşivlensin mi\?/)).toBeDefined()
@@ -370,7 +413,7 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
   it('onay metni arşivlemenin silme OLMADIĞINI söyler', async () => {
     render(<AnaEkran kilitle={vi.fn()} />)
     await screen.findByText('Ayşe Yılmaz')
-    await userEvent.click(screen.getAllByRole('button', { name: 'Arşivle' })[0])
+    await userEvent.click(arsivDugmesi('Ayşe Yılmaz'))
 
     const metin = screen.getByText(/arşivlensin mi\?/).textContent ?? ''
     // Kullanıcı "sildim, gitti" sanmamalı: metin kayıtların DURDUĞUNU
@@ -385,7 +428,7 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
     render(<AnaEkran kilitle={vi.fn()} />)
     await screen.findByText('Ayşe Yılmaz')
 
-    await userEvent.click(screen.getAllByRole('button', { name: 'Arşivle' })[0])
+    await userEvent.click(arsivDugmesi('Ayşe Yılmaz'))
     await userEvent.click(screen.getByRole('button', { name: 'Evet, arşivle' }))
 
     const yazmalar = istekler.filter((i) => i.method === 'POST')
@@ -410,7 +453,7 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
     ).length
     expect(oncekiGet).toBe(1)
 
-    await userEvent.click(screen.getAllByRole('button', { name: 'Arşivle' })[0])
+    await userEvent.click(arsivDugmesi('Ayşe Yılmaz'))
     await userEvent.click(screen.getByRole('button', { name: 'Evet, arşivle' }))
 
     expect(
@@ -422,7 +465,7 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
     render(<AnaEkran kilitle={vi.fn()} />)
     await screen.findByText('Ayşe Yılmaz')
 
-    await userEvent.click(screen.getAllByRole('button', { name: 'Arşivle' })[0])
+    await userEvent.click(arsivDugmesi('Ayşe Yılmaz'))
     await userEvent.click(screen.getByRole('button', { name: 'Vazgeç' }))
 
     expect(screen.queryByText(/arşivlensin mi\?/)).toBeNull()
@@ -436,11 +479,10 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
     render(<AnaEkran kilitle={vi.fn()} />)
     await screen.findByText('Ayşe Yılmaz')
 
-    const dugmeler = screen.getAllByRole('button', { name: 'Arşivle' })
-    await userEvent.click(dugmeler[0])
+    await userEvent.click(arsivDugmesi('Ayşe Yılmaz'))
     expect(screen.getByText(/Ayşe Yılmaz arşivlensin mi\?/)).toBeDefined()
 
-    await userEvent.click(screen.getAllByRole('button', { name: 'Arşivle' })[1])
+    await userEvent.click(arsivDugmesi('Mehmet Demir'))
     expect(screen.queryByText(/Ayşe Yılmaz arşivlensin mi\?/)).toBeNull()
     expect(screen.getByText(/Mehmet Demir arşivlensin mi\?/)).toBeDefined()
 
@@ -469,7 +511,7 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
 
     render(<AnaEkran kilitle={vi.fn()} />)
     await screen.findByText('Ayşe Yılmaz')
-    await userEvent.click(screen.getAllByRole('button', { name: 'Arşivle' })[0])
+    await userEvent.click(arsivDugmesi('Ayşe Yılmaz'))
     await userEvent.click(screen.getByRole('button', { name: 'Evet, arşivle' }))
 
     expect(screen.getByText('Veritabanı hatası.')).toBeDefined()

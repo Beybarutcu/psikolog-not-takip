@@ -298,7 +298,16 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
         )}
 
         {danisanHata && <p className="mt-1 text-sm text-red-600">{danisanHata}</p>}
-        {arsivBilgisi && <p className="mt-1 text-sm text-slate-600">{arsivBilgisi}</p>}
+        {/* `role="status"`: arşivleme sonucu ekranda sessizce beliriyordu.
+            Ekran okuyucu kullanıcısı düğmeye bastıktan sonra hiçbir şey
+            duymuyor, danışanın listeden düşmesini de göremiyordu. Kibar
+            (`polite`) duyuru, kullanıcının o an yazdığı şeyi kesmeden işlemin
+            olduğunu söyler. */}
+        {arsivBilgisi && (
+          <p role="status" className="mt-1 text-sm text-slate-600">
+            {arsivBilgisi}
+          </p>
+        )}
 
         {danisanlar.length > 0 && (
           <ul className="mt-2 flex flex-wrap gap-2 text-sm text-slate-700">
@@ -308,15 +317,22 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
                 className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1"
               >
                 <span>{d.ad_soyad}</span>
-                {/* Erişilebilir ad bilerek yalnızca "Arşivle": danışan adını
-                    da içerseydi takvimdeki randevu düğmesiyle aynı ada sahip
-                    ikinci bir düğme oluşur ve ad ile arama yapan testler
-                    (ve ekran okuyucu kullanıcısı) hangisinin randevu,
-                    hangisinin arşivleme olduğunu ayırt edemezdi. Hangi
-                    danışan olduğu onay metninde açıkça yazıyor. */}
+                {/* Erişilebilir ad danışanın ADINI taşır. Önceki hâlinde her
+                    satırdaki düğmenin adı yalnızca "Arşivle" idi: listede on
+                    danışan varken ekran okuyucu kullanıcısı on özdeş düğme
+                    duyuyor, hangisinin kime ait olduğunu yalnızca GÖRSEL
+                    bağlamdan (yanındaki isim) çıkarabiliyordu -- bu, yıkıcı
+                    bir işlemde kabul edilemez.
+                    Eski gerekçe (takvimdeki randevu düğmesiyle ad çakışması)
+                    burada geçerli değil: randevu bloğunun erişilebilir adı
+                    düz "Ayşe Yılmaz", buranınki "Ayşe Yılmaz adlı danışanı
+                    arşivle" -- ad ile arama yapan testler ve kullanıcı ikisini
+                    ayırt eder. Görünen metin kısa kalıyor (`Arşivle`); değişen
+                    yalnızca erişilebilir ad. */}
                 <button
                   type="button"
                   className="text-slate-500 underline disabled:opacity-50"
+                  aria-label={`${d.ad_soyad} adlı danışanı arşivle`}
                   title="Danışanı arşivle"
                   disabled={arsivSuruyor}
                   onClick={() => {

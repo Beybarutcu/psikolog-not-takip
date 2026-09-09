@@ -6,7 +6,19 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   build: { outDir: 'dist', emptyOutDir: true },
-  server: { port: 5173, strictPort: true },
+  server: {
+    port: 5173,
+    strictPort: true,
+    // `web/` dışındaki dosyaların METİN olarak (`?raw`) okunmasına izin
+    // verir. Tek kullanıcısı `seans/sablon.test.ts`: şablon kodlarının
+    // kapalı kümesi hem `core/src/store/schema.rs`'te (iki `CHECK` ve
+    // `templates` tohumu) hem `web/src/seans/sablon.ts`'te yazılıdır ve o
+    // test şemayı okuyup iki kopyanın ayrışmadığını doğrular. Bu yalnızca
+    // geliştirme/test sunucusunu ilgilendirir — ürün derlemesini Rust
+    // sunucusu `dist`'ten sunar, `dist`'e yalnızca içe aktarılan modüller
+    // girer ve bu test hiçbir uygulama modülünden erişilebilir değildir.
+    fs: { allow: ['..'] },
+  },
   test: {
     environment: 'jsdom',
     globals: true,

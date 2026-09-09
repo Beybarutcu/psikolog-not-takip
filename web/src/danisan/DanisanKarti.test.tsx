@@ -413,4 +413,58 @@ describe('DanisanKarti — danışan değişimi (kiplerin kesişimi)', () => {
       screen.getAllByRole('alert').some((u) => /açık rıza kaydı yok/i.test(u.textContent ?? '')),
     ).toBe(true)
   })
+
+  it('A icin secilmis dosya B nin kartinda B ye YUKLENMEZ', async () => {
+    // En somut biçimi: terapist A'nın onam formunu seçer, telefonu çalar,
+    // dönünce B'nin kartındadır ve "Yükle"ye basar. Dosya B'nin dosyasına
+    // girerdi — yanlış danışanın dosyasında başkasının belgesi.
+    const digeri: DanisanDosyasi = { ...danisan, id: 13, ad_soyad: 'Mehmet Demir' }
+    const ekYukle = vi.fn().mockResolvedValue(undefined)
+    const ortak = {
+      ekler,
+      randevular: [randevu({ id: 1 })],
+      bugun: '2026-09-09',
+      notlariGetir: vi.fn().mockResolvedValue(resmiNotlar),
+      ekYukle,
+      onRizaKaydet: vi.fn().mockResolvedValue(undefined),
+      onKapat: vi.fn(),
+    }
+    const { rerender } = render(<DanisanKarti danisan={danisan} {...ortak} />)
+
+    const dosya = new File(['x'], 'A-nin-onami.pdf', { type: 'application/pdf' })
+    await userEvent.upload(screen.getByLabelText('Yüklenecek dosya'), dosya)
+
+    rerender(<DanisanKarti danisan={digeri} {...ortak} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Dosyayı yükle' }))
+
+    expect(ekYukle).not.toHaveBeenCalled()
+    expect(screen.getByText(/önce bir dosya seçin/i)).toBeDefined()
+  })
+
+  it('A nin riza tarihi B nin formunda KALMAZ', async () => {
+    // Rıza formu prop'lardan İLK MOUNT'ta doldurulur; bileşen yeniden mount
+    // edilmezse "Rızayı kaydet" B'ye A'nın tarihini yazardı.
+    const digeri: DanisanDosyasi = {
+      ...danisan,
+      id: 13,
+      ad_soyad: 'Mehmet Demir',
+      riza_tarihi: '2020-01-02',
+      riza_dosya_id: null,
+    }
+    const ortak = {
+      ekler,
+      randevular: [randevu({ id: 1 })],
+      bugun: '2026-09-09',
+      notlariGetir: vi.fn().mockResolvedValue(resmiNotlar),
+      ekYukle: vi.fn().mockResolvedValue(undefined),
+      onRizaKaydet: vi.fn().mockResolvedValue(undefined),
+      onKapat: vi.fn(),
+    }
+    const { rerender } = render(<DanisanKarti danisan={danisan} {...ortak} />)
+    expect((screen.getByLabelText('Açık rıza tarihi') as HTMLInputElement).value).toBe('2026-03-01')
+
+    rerender(<DanisanKarti danisan={digeri} {...ortak} />)
+    expect((screen.getByLabelText('Açık rıza tarihi') as HTMLInputElement).value).toBe('2020-01-02')
+    expect((screen.getByLabelText('İmzalı onam dosyası') as HTMLSelectElement).value).toBe('')
+  })
 })

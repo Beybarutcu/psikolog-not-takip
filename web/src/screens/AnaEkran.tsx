@@ -199,8 +199,14 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
       await takvimApi.randevuDurumu(id, durum)
       setHata(null)
       setRandevular((onceki) => onceki.map((r) => (r.id === id ? { ...r, durum } : r)))
-      // Panel açık kalır; içindeki kopya da güncellenmezse kullanıcı
-      // işaretlediği durumu panelde göremez.
+      // Panel açık kalır ve elindeki `randevu` nesnesi bu state'tir; o kopya
+      // güncellenmezse `seciliRandevu.durum` sunucudaki gerçekten sessizce
+      // ayrışır. Bugün görünür bir etkisi YOK — `RandevuPaneli` `durum`
+      // alanını hiçbir yerde render etmiyor ve `key` değişmediği için remount
+      // da olmuyor (bu satırın eski gerekçesi "kullanıcı işaretlediği durumu
+      // panelde göremez" idi; yanlıştı, silindi). Satır yine de duruyor çünkü
+      // paneldeki kopyanın listedeki satırdan ayrışması, panel ileride
+      // `durum`'u okuduğu anda bayat veri gösterirdi.
       setSeciliRandevu((secili) => (secili && secili.id === id ? { ...secili, durum } : secili))
     } catch (e) {
       setHata(e instanceof Error ? e.message : 'Randevu güncellenemedi.')

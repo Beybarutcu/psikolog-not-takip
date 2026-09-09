@@ -175,7 +175,6 @@ mod tests {
         // (1) Bugunku hal: her yazmada `acik_baglanti` -> taze SQLCipher
         // baglantisi, yazma, kapanista WAL checkpoint + WAL yikimi.
         let t0 = Instant::now();
-        let mut taze_yazilan = 0usize;
         for i in 0..YAZMA {
             let conn = acik_baglanti(&state).expect("oturum acik olmali");
             conn.execute(
@@ -185,14 +184,12 @@ mod tests {
             )
             .unwrap();
             drop(conn);
-            taze_yazilan += 1;
         }
         let taze: Duration = t0.elapsed();
 
         // (2) Karsilastirma: ayni is, TEK baglanti uzerinde.
         let conn = acik_baglanti(&state).unwrap();
         let t1 = Instant::now();
-        let mut tekil_yazilan = 0usize;
         for i in 0..YAZMA {
             conn.execute(
                 "INSERT INTO app_meta (anahtar, deger) VALUES (?1, 'x')
@@ -200,7 +197,6 @@ mod tests {
                 [format!("tekil_{i}")],
             )
             .unwrap();
-            tekil_yazilan += 1;
         }
         let tekil: Duration = t1.elapsed();
         drop(conn);
@@ -221,8 +217,14 @@ mod tests {
             taze.saturating_sub(tekil) / YAZMA as u32
         );
 
-        assert_eq!(taze_yazilan, YAZMA, "olcum gercekten 30 yazma yapmis olmali");
-        assert_eq!(tekil_yazilan, YAZMA);
+        // Burada iki totolojik assertion vardi (`taze_yazilan == YAZMA`,
+        // `tekil_yazilan == YAZMA`): sayaclar dongu icinde KOSULSUZ artiyordu,
+        // dolayisiyla iddialar her zaman dogruydu ve hicbir sey korumuyordu.
+        // Olcumun gercekten diske yazdigini kanitlayan is asagida yapiliyor.
+        //
+        // Bu bir OLCUM testidir, esik testi degil: zamana bagli bir assertion
+        // (ornegin "taze < 2ms") CI'da kirilgan olurdu. Karar `guard.rs` modul
+        // basligindaki tabloya dayanir.
 
         // WAL davranisi: son baglanti kapandiginda checkpoint calisip WAL
         // kuculur; veri kaybolmaz. Olculen senaryonun gercekten diske

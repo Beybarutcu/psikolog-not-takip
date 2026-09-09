@@ -606,6 +606,30 @@ async fn seri_silinir_ve_gecmis_korunur() {
 }
 
 #[tokio::test]
+async fn olmayan_seriyi_silme_404_doner_ve_log_yazmaz() {
+    // Cekirdek `DepoHatasi::Bulunamadi` donduruyor; bu ESLEMENIN rota
+    // seviyesinde testi yoktu -- `depo_hatasi` eslemesi degisirse sessizce
+    // 200'e donebilirdi ve "sildim" diyen bir yanitin arkasinda hicbir silme
+    // olmazdi. Ayrica 0 satir silen bir istek SILINEMEZ bir log satiri
+    // birakmamali (disaridan tetiklenebilir gurultu yolu).
+    let (_d, s) = kurulu_state().await;
+    let (_cid, _sid) = seri_kur(&s).await;
+
+    let (kod, json) = cagir(
+        &s, "DELETE",
+        "/api/randevular/seri/boyle-bir-seri-yok?bu_tarihten_itibaren=2026-09-01T00:00", None,
+    ).await;
+    assert_eq!(kod, StatusCode::NOT_FOUND);
+    assert!(json.get("silinen").is_none(), "silme olmadi, sonuc donmemeli");
+
+    let (_, kalan) = cagir(
+        &s, "GET",
+        "/api/randevular?baslangic=2026-09-01T00:00&bitis=2026-10-01T00:00", None,
+    ).await;
+    assert_eq!(kalan.as_array().unwrap().len(), 4, "var olan seri etkilenmemeli");
+}
+
+#[tokio::test]
 async fn kilitliyken_seri_silme_401_doner_ve_silmez() {
     let (_d, s) = kurulu_state().await;
     let (_cid, sid) = seri_kur(&s).await;

@@ -7,8 +7,9 @@ use axum::{
 };
 use psikolog_core::store::appointments::{
     aralik_getir, cakisanlari_bul, durum_guncelle, guncelle as depo_guncelle,
-    olustur as tekil_olustur, seri_cakisanlari_bul, seri_olustur, seri_sayisi, seriyi_sil, sil,
-    Randevu, RandevuGuncelleme, SeriCakismasi, YeniRandevu,
+    olustur as tekil_olustur, seri_cakisanlari_bul, seri_olustur, seri_sayisi,
+    seri_silinecek_not_sayisi, seriyi_sil, sil, silinecek_not_sayisi, Randevu, RandevuGuncelleme,
+    SeriCakismasi, YeniRandevu,
 };
 use psikolog_core::store::audit::Cihaz;
 use serde::Deserialize;
@@ -127,6 +128,29 @@ pub async fn guncelle(
     Ok(Json(randevu))
 }
 
+/// Bir randevu silinirse **kaç notun** yok olacağını söyler
+/// (`GET /randevular/{id}/silinecekler`); hiçbir şey değiştirmez.
+///
+/// # Neden var (dal incelemesi I2)
+/// `progress_notes` ve `private_notes` `ON DELETE CASCADE` taşıyor: randevu
+/// silinince seans notu ve özel not da gider. Onay metni ("Bu randevu kalıcı
+/// olarak silinsin mi?") notlardan hiç söz etmiyordu — terapist bir takvim
+/// satırını sildiğini sanarken klinik kaydı yok ediyordu. Arayüz artık
+/// onayı açmadan önce bu sayıyı soruyor; emsal, seri onayındaki adet
+/// (`seri_adedi`).
+///
+/// `seri_adedi` ile aynı sınıf: **çekirdek log YAZMAZ** (onay kutusunu
+/// hazırlayan kontrol; kullanıcı vazgeçerse silinemez loga satır düşmemeli)
+/// ve rota katmanı da yazmaz.
+pub async fn silinecekler(
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<Json<Value>, ApiHata> {
+    let conn = acik_baglanti(&s)?;
+    let not_adedi = silinecek_not_sayisi(&conn, id).map_err(depo_hatasi)?;
+    Ok(Json(json!({ "not_adedi": not_adedi })))
+}
+
 pub async fn kaldir(
     State(s): State<AppState>,
     Path(id): Path<i64>,
@@ -148,6 +172,15 @@ pub struct SeriSorgusu {
 /// Silme geri alınamaz: iki adımlı onay metninin kaç kaydın gideceğini
 /// söyleyebilmesi için gerekiyor ve bu sayı yalnızca sunucuda bilinir
 /// (seri, ekrandaki haftanın çok ötesine uzanabilir).
+///
+/// # `not_adedi` de döner (dal incelemesi I2)
+/// Silinen her randevunun seans notu ve özel notu `ON DELETE CASCADE` ile
+/// birlikte gider; 52 haftalık bir serinin iptali gelecekteki tüm notları
+/// yok eder ve onay metni bundan hiç söz etmiyordu. **Yeni bir uç nokta
+/// açmak yerine bu yanıt genişletildi**: sayı zaten burada sorulan
+/// "silinecekler" sorusunun parçası ve iki ayrı istek atmak, iki sayının
+/// birbirinden farklı anlarda okunmasına (dolayısıyla tutarsız bir onay
+/// metnine) kapı açardı.
 pub async fn seri_adedi(
     State(s): State<AppState>,
     Path(seri_id): Path<String>,
@@ -155,7 +188,9 @@ pub async fn seri_adedi(
 ) -> Result<Json<Value>, ApiHata> {
     let conn = acik_baglanti(&s)?;
     let adet = seri_sayisi(&conn, &seri_id, &q.bu_tarihten_itibaren).map_err(depo_hatasi)?;
-    Ok(Json(json!({ "adet": adet })))
+    let not_adedi =
+        seri_silinecek_not_sayisi(&conn, &seri_id, &q.bu_tarihten_itibaren).map_err(depo_hatasi)?;
+    Ok(Json(json!({ "adet": adet, "not_adedi": not_adedi })))
 }
 
 /// `seriyi_sil`'in rotası: bir serinin verilen tarihten İTİBAREN gelen

@@ -924,6 +924,7 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
             onSil={sil}
             onSeriSil={seriSil}
             seriSayisiAl={takvimApi.seriSayisi}
+            silinecekNotSayisiAl={takvimApi.silinecekNotSayisi}
             onKapat={panelKapat}
             cakismaKontrol={takvimApi.cakismaKontrol}
           />

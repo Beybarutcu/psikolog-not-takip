@@ -175,14 +175,28 @@ export const takvimApi = {
     }),
   randevuSil: (id: number) =>
     istek<Record<string, never>>(`/api/randevular/${id}`, { method: 'DELETE' }),
-  // Seri silme geri alınamaz bir işlem: onay metninin kaç randevunun
-  // gideceğini söyleyebilmesi için önce sayı sorulur. Seri ekrandaki
-  // haftanın çok ötesine uzanabildiği için bu sayı yalnızca sunucuda bilinir.
+  /**
+   * Bir randevu silinirse **kaç notun** yok olacağı.
+   *
+   * `progress_notes` ve `private_notes` `ON DELETE CASCADE` taşıyor: randevu
+   * silinince seans notu ve özel not da gider (bkz. dal incelemesi I2).
+   * Onay metni bunu söylemek zorunda ve sayı yalnızca sunucuda bilinir.
+   * Yanıt **yalnızca sayı** taşır; not içeriği bu yolla asla gelmez.
+   */
+  silinecekNotSayisi: (id: number) =>
+    istek<{ not_adedi: number }>(`/api/randevular/${id}/silinecekler`).then((y) => y.not_adedi),
+  // Seri silme geri alınamaz bir işlem: onay metninin kaç randevunun VE kaç
+  // notun gideceğini söyleyebilmesi için önce sayılar sorulur. Seri
+  // ekrandaki haftanın çok ötesine uzanabildiği için bunlar yalnızca
+  // sunucuda bilinir.
+  //
+  // İki sayı TEK istekten gelir: ayrı ayrı sorulsalardı onay metni iki
+  // farklı ana ait iki sayıyı yan yana gösterebilirdi.
   seriSayisi: (seriId: string, buTarihtenItibaren: string) =>
-    istek<{ adet: number }>(
+    istek<{ adet: number; not_adedi: number }>(
       `/api/randevular/seri/${encodeURIComponent(seriId)}` +
         `?bu_tarihten_itibaren=${encodeURIComponent(buTarihtenItibaren)}`,
-    ).then((y) => y.adet),
+    ).then((y) => ({ adet: y.adet, notAdedi: y.not_adedi })),
   // Geçmiş randevular SİLİNMEZ (sunucudaki `seriyi_sil` yalnızca verilen
   // tarihten itibaren siler) — arayüz metni bunu açıkça söylemeli.
   seriSil: (seriId: string, buTarihtenItibaren: string) =>
@@ -207,6 +221,21 @@ export const takvimApi = {
     if (tekrarSayisi !== undefined) p.set('tekrar_sayisi', String(tekrarSayisi))
     return istek<SeriCakismasi>(`/api/cakisma?${p}`)
   },
+}
+
+/**
+ * `takvimApi.seriSayisi`'nin sonucu — seri silme onayının söyleyeceği iki
+ * sayı (dal incelemesi I2).
+ *
+ * Çıplak `number` DEĞİL: eskiden yalnızca `adet` dönüyordu ve onay metni
+ * notlardan hiç söz etmiyordu; 52 haftalık bir serinin gelecekteki tüm
+ * seans/özel notları sessizce gidiyordu.
+ */
+export type SeriSilmeOnizlemesi = {
+  /** Silinecek randevu sayısı (geçmiş üyeler hariç). */
+  adet: number
+  /** Onlarla birlikte gidecek seans + özel not sayısı. */
+  notAdedi: number
 }
 
 // Çakışma kontrolünün yanıtı. Çıplak dizi değil: uyarı metninin "kaç

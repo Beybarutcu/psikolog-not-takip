@@ -82,6 +82,12 @@ fn api_router() -> Router<AppState> {
                 .put(routes::appointments::guncelle)
                 .delete(routes::appointments::kaldir),
         )
+        // Silme ONIZLEMESI (dal incelemesi I2): bir randevu silinirse kac
+        // NOTUN cascade ile gidecegini soyler, hicbir sey degistirmez.
+        // Onay metni bunu soylemek zorunda; `seri/{seri_id}`'nin `adet`i ile
+        // ayni sinif. Uc segmentli ve ikinci segmenti sayisal oldugu icin
+        // literal `seri` yoluyla cakismaz.
+        .route("/randevular/{id}/silinecekler", get(routes::appointments::silinecekler))
         // Seri islemleri ayri bir yol segmentinde: `/randevular/{id}` iki
         // segmentli, bu uc segmentli -- cakisma yok.
         .route(

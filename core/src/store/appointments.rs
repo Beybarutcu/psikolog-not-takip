@@ -430,7 +430,75 @@ pub fn guncelle(
     Ok(randevu)
 }
 
+/// Bir randevu silinirse **kaç not** yok olacağını söyler; hiçbir şey
+/// değiştirmez (dal incelemesi I2).
+///
+/// # Neden var: silme SESSİZCE klinik kayıt yok ediyordu
+/// `progress_notes.appointment_id` ve `private_notes.appointment_id`
+/// `ON DELETE CASCADE` taşır (bkz. `schema::V3`). "Bu randevu kalıcı olarak
+/// silinsin mi?" diyen onay metni notlardan hiç söz etmiyordu; terapist bir
+/// takvim satırını sildiğini sanarken seans notunu ve özel notunu da
+/// siliyordu. Onay metninin ne gideceğini söyleyebilmesi için sayının
+/// **silmeden önce** bilinmesi gerekiyor.
+///
+/// Sayı, resmî not + özel notun TOPLAMIDIR. Özel notun VARLIĞI (içeriği
+/// değil) burada görünür: sayıyı gören tek kişi zaten o notu yazan
+/// terapisttir ve alternatif, ona kaç kaydını yok edeceğini söylememektir.
+///
+/// `cakisanlari_bul` / `seri_sayisi` ile aynı sınıf: kullanıcıya veri
+/// göstermeyen, onay kutusunu hazırlayan bir kontrol → **log YAZMAZ**.
+/// Var olmayan randevu için `0` döner, hata değil: onay akışı zaten
+/// silmede `404` alacaktır.
+pub fn silinecek_not_sayisi(conn: &Connection, id: i64) -> Result<usize, DepoHatasi> {
+    let adet: i64 = conn.query_row(
+        "SELECT (SELECT COUNT(*) FROM progress_notes WHERE appointment_id = ?1)
+              + (SELECT COUNT(*) FROM private_notes  WHERE appointment_id = ?1)",
+        [id],
+        |r| r.get(0),
+    )?;
+    Ok(adet as usize)
+}
+
+/// `seriyi_sil` çağrılsa kaç NOTUN yok olacağını söyler; hiçbir şey
+/// değiştirmez. `seri_sayisi`'nin not karşılığı — aynı gerekçe (dal
+/// incelemesi I2) ve aynı kesme (`baslangic >= bu_tarihten_itibaren`,
+/// geçmiş üyeler sayılmaz çünkü silinmiyorlar).
+///
+/// **Log YAZMAZ** (`seri_sayisi` ile aynı sınıf).
+pub fn seri_silinecek_not_sayisi(
+    conn: &Connection,
+    seri_id: &str,
+    bu_tarihten_itibaren: &str,
+) -> Result<usize, DepoHatasi> {
+    if !zaman_gecerli_mi(bu_tarihten_itibaren) {
+        return Err(DepoHatasi::GecersizVeri(
+            "Tarih biçimi YYYY-AA-GGTSS:DD olmalı.".into(),
+        ));
+    }
+    let adet: i64 = conn.query_row(
+        "SELECT (SELECT COUNT(*) FROM progress_notes p
+                  JOIN appointments a ON a.id = p.appointment_id
+                 WHERE a.seri_id = ?1 AND a.baslangic >= ?2)
+              + (SELECT COUNT(*) FROM private_notes n
+                  JOIN appointments a ON a.id = n.appointment_id
+                 WHERE a.seri_id = ?1 AND a.baslangic >= ?2)",
+        rusqlite::params![seri_id, bu_tarihten_itibaren],
+        |r| r.get(0),
+    )?;
+    Ok(adet as usize)
+}
+
 /// Bir randevuyu siler. Silme ve erişim logu tek transaction'da yazılır.
+///
+/// # Seans notu ve özel not da GİDER (cascade)
+/// `progress_notes` ve `private_notes` satırları `ON DELETE CASCADE` ile
+/// birlikte silinir (`schema::V3`). Bu davranış değiştirilmiyor -- randevu
+/// olmadan yetim bir seans notu tutulamaz -- ama artık **sessiz değil**:
+/// silinen not sayısı, silmeden ÖNCE sayılıp aynı log satırının `ayrinti`
+/// alanına yazılır (`Ayrinti::RandevuSilme`). Not başına ayrı satır
+/// yazılmaz; gerekçe `store::audit` modül başlığındaki "Cascade silinen
+/// notlar" bölümünde. Arayüz tarafındaki karşılığı, sayıyı söyleyen onay
+/// metnidir (`RandevuPaneli`).
 ///
 /// UYARI: Kendi `unchecked_transaction()`'ını içeride açar -- bunu zaten
 /// açık bir transaction'ın içinden çağırmayın (SQLite iç içe transaction
@@ -438,11 +506,24 @@ pub fn guncelle(
 pub fn sil(conn: &Connection, id: i64, cihaz: Cihaz) -> Result<(), DepoHatasi> {
     let tx = conn.unchecked_transaction()?;
 
+    // ONCE say, SONRA sil: cascade calistiktan sonra sayilacak bir sey
+    // kalmaz. Ayni transaction icinde oldugu icin araya baska bir yazma
+    // giremez.
+    let not_adedi = silinecek_not_sayisi(&tx, id)?;
+
     let etkilenen = tx.execute("DELETE FROM appointments WHERE id = ?1", [id])?;
     if etkilenen == 0 {
         return Err(DepoHatasi::Bulunamadi);
     }
-    kaydet(&tx, Eylem::Silme, "appointment", &id.to_string(), cihaz, None, LogHacmi::HerCagri)?;
+    kaydet(
+        &tx,
+        Eylem::Silme,
+        "appointment",
+        &id.to_string(),
+        cihaz,
+        Some(Ayrinti::RandevuSilme { not_adedi }),
+        LogHacmi::HerCagri,
+    )?;
 
     tx.commit()?;
     Ok(())
@@ -730,6 +811,15 @@ pub fn seri_sayisi(
 /// ile sınırlıdır; geçmişteki üyeler asla silinmez (bkz.
 /// `seri_silme_yalnizca_verilen_tarihten_sonrasini_siler` testi).
 ///
+/// # Gelecekteki üyelerin NOTLARI da gider (cascade)
+/// Silinen her randevunun seans notu ve özel notu `ON DELETE CASCADE` ile
+/// birlikte gider. 52 haftalık bir serinin iptali, o serideki gelecek
+/// seansların yazılmış tüm notlarını da yok eder. Davranış doğru (yetim not
+/// tutulamaz) ama **sessiz olmamalı**: sayı silmeden önce sayılıp log
+/// satırının `ayrinti` alanına yazılır (`Ayrinti::SeriSilme.not_adedi`) ve
+/// onay metni de aynı sayıyı söyler (bkz. `seri_silinecek_not_sayisi` ve
+/// `store::audit` modül başlığındaki "Cascade silinen notlar").
+///
 /// # Hiçbir satır silinmediyse `Bulunamadi` -- ve LOG YAZILMAZ
 /// `sil` ve `durum_guncelle` bu kontrolü zaten yapıyordu; burada eksikti.
 /// 0 satır silen bir `DELETE` olmamış bir işlemdir. Plan 2 bu fonksiyonu
@@ -756,6 +846,10 @@ pub fn seriyi_sil(
 
     let tx = conn.unchecked_transaction()?;
 
+    // ONCE say, SONRA sil (bkz. `sil`): cascade calistiktan sonra sayilacak
+    // bir sey kalmaz.
+    let not_adedi = seri_silinecek_not_sayisi(&tx, seri_id, bu_tarihten_itibaren)?;
+
     let silinen = tx.execute(
         "DELETE FROM appointments WHERE seri_id = ?1 AND baslangic >= ?2",
         rusqlite::params![seri_id, bu_tarihten_itibaren],
@@ -772,7 +866,11 @@ pub fn seriyi_sil(
         "appointment_seri",
         seri_id,
         cihaz,
-        Some(Ayrinti::SeriSilme { adet: silinen, tarihten: bu_tarihten_itibaren.to_string() }),
+        Some(Ayrinti::SeriSilme {
+            adet: silinen,
+            not_adedi,
+            tarihten: bu_tarihten_itibaren.to_string(),
+        }),
         LogHacmi::HerCagri,
     )?;
 
@@ -1954,5 +2052,198 @@ mod tests {
             .query_row("SELECT durum FROM appointments WHERE id = ?1", [r.id], |x| x.get(0))
             .unwrap();
         assert_eq!(durum, "planlandi", "randevu durumu da geri alinmali");
+    }
+    // --- Dal incelemesi I2: cascade silinen notlar ----------------------
+    //
+    // `ON DELETE CASCADE` (schema::V3) davranisini DOGRULAYAN hicbir test
+    // yoktu: `sil` sonrasi `progress_notes=0, private_notes=0` oluyor ve
+    // denetim kaydinda tek satir kaliyordu. Asagidaki testler once
+    // cascade'in gerceklestigini KANITLAR (yoksa "sayi dogru" iddialari
+    // hicbir sey olcmezdi), sonra sayinin loga ulastigini.
+
+    fn not_yaz(c: &rusqlite::Connection, randevu_id: i64) {
+        crate::store::notes::not_kaydet(c, randevu_id, "dap", "SEANS NOTU", Cihaz::Masaustu)
+            .unwrap();
+        crate::store::notes::ozel_not_kaydet(c, randevu_id, "OZEL NOT", Cihaz::Masaustu).unwrap();
+    }
+
+    fn not_sayilari(c: &rusqlite::Connection) -> (i64, i64) {
+        (
+            c.query_row("SELECT COUNT(*) FROM progress_notes", [], |r| r.get(0)).unwrap(),
+            c.query_row("SELECT COUNT(*) FROM private_notes", [], |r| r.get(0)).unwrap(),
+        )
+    }
+
+    #[test]
+    fn randevu_silmek_seans_notunu_ve_ozel_notu_da_siler() {
+        // Davranisin KENDISI (cascade) burada sabitleniyor: bir gun yabanci
+        // anahtar `ON DELETE RESTRICT`e cevrilirse ya da `PRAGMA
+        // foreign_keys` kapanirsa bu test kirilir ve karar yeniden verilir.
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        not_yaz(&c, r.id);
+        assert_eq!(not_sayilari(&c), (1, 1), "on kosul: iki not da yazilmis olmali");
+
+        sil(&c, r.id, Cihaz::Masaustu).unwrap();
+
+        assert_eq!(not_sayilari(&c), (0, 0), "randevuyla birlikte iki not da gitmeli");
+    }
+
+    #[test]
+    fn silinecek_not_sayisi_resmi_ve_ozel_notu_toplar() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        // ARTI YON once: notsuz bir randevu 0 verir. "Hep 2 don" diyen bir
+        // uygulama asagidaki iddiayi tek basina gecerdi.
+        assert_eq!(silinecek_not_sayisi(&c, r.id).unwrap(), 0);
+
+        crate::store::notes::not_kaydet(&c, r.id, "dap", "x", Cihaz::Masaustu).unwrap();
+        assert_eq!(silinecek_not_sayisi(&c, r.id).unwrap(), 1, "yalnizca resmi not");
+
+        crate::store::notes::ozel_not_kaydet(&c, r.id, "y", Cihaz::Masaustu).unwrap();
+        assert_eq!(silinecek_not_sayisi(&c, r.id).unwrap(), 2, "resmi + ozel");
+    }
+
+    #[test]
+    fn silinecek_not_sayisi_baska_randevunun_notunu_saymaz() {
+        let (_d, c, cid) = kurulum();
+        let a = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        let b = olustur(&c, &yeni(cid, "2026-09-08T14:00", "2026-09-08T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        not_yaz(&c, b.id);
+
+        assert_eq!(silinecek_not_sayisi(&c, a.id).unwrap(), 0, "komsu randevunun notu sayilmamali");
+        assert_eq!(silinecek_not_sayisi(&c, b.id).unwrap(), 2);
+    }
+
+    #[test]
+    fn silinecek_not_sayisi_log_yazmaz() {
+        // `cakisanlari_bul` / `seri_sayisi` ile ayni sinif: onay kutusunu
+        // hazirlayan kontrol, silinemez loga satir dusurmemeli.
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        not_yaz(&c, r.id);
+        let once = crate::store::audit::son_kayitlar(&c, 200).unwrap().len();
+
+        silinecek_not_sayisi(&c, r.id).unwrap();
+        seri_silinecek_not_sayisi(&c, "yok", "2026-09-07T00:00").unwrap();
+
+        assert_eq!(crate::store::audit::son_kayitlar(&c, 200).unwrap().len(), once);
+    }
+
+    #[test]
+    fn randevu_silme_logu_silinen_not_sayisini_tasir() {
+        // Bulgu: denetim kaydinda tek satir vardi -- `silme|appointment|1`
+        // -- ve "iki klinik kayit da yok oldu" bilgisi HICBIR yerde yoktu.
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        not_yaz(&c, r.id);
+
+        sil(&c, r.id, Cihaz::Masaustu).unwrap();
+
+        let kayit = crate::store::audit::son_kayitlar(&c, 1).unwrap().remove(0);
+        assert_eq!(kayit.eylem, "silme");
+        assert_eq!(kayit.varlik, "appointment");
+        assert_eq!(kayit.ayrinti.as_deref(), Some("silinen not: 2"));
+    }
+
+    #[test]
+    fn notsuz_randevu_silme_logu_sifir_yazar() {
+        // ARTI YON: "hep 2 yaz" diyen bir uygulama ustteki testi gecerdi.
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        sil(&c, r.id, Cihaz::Masaustu).unwrap();
+        assert_eq!(
+            crate::store::audit::son_kayitlar(&c, 1).unwrap()[0].ayrinti.as_deref(),
+            Some("silinen not: 0")
+        );
+    }
+
+    #[test]
+    fn randevu_silme_not_basina_ayri_satir_yazmaz() {
+        // Karar (bkz. `store::audit` "Cascade silinen notlar"): tek
+        // kullanici eylemi = tek silinemez satir. 52 haftalik bir serinin
+        // iptali 104 satir uretmemeli.
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+        not_yaz(&c, r.id);
+        let once = crate::store::audit::son_kayitlar(&c, 200).unwrap().len();
+
+        sil(&c, r.id, Cihaz::Masaustu).unwrap();
+
+        let sonra = crate::store::audit::son_kayitlar(&c, 200).unwrap();
+        assert_eq!(sonra.len(), once + 1, "silme TAM OLARAK bir satir yazmali");
+        assert!(
+            !sonra.iter().any(|k| k.varlik == "progress_note" && k.eylem == "silme"),
+            "not basina ayri silme satiri yazilmamali"
+        );
+        assert!(!sonra.iter().any(|k| k.varlik == "private_note" && k.eylem == "silme"));
+    }
+
+    #[test]
+    fn seri_silmek_gelecek_uyelerin_notlarini_da_siler() {
+        let (_d, c, cid) = kurulum();
+        let seri =
+            seri_olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), 3, Cihaz::Masaustu)
+                .unwrap();
+        let sid = seri[0].seri_id.clone().unwrap();
+        for r in &seri {
+            not_yaz(&c, r.id);
+        }
+        assert_eq!(not_sayilari(&c), (3, 3), "on kosul: uc seansin da notu var");
+
+        // Ikinci haftadan itibaren sil: ILK haftanin notlari KALMALI
+        // ("gecmis randevular silinmez" sozunun not tarafi).
+        let silinecek_not = seri_silinecek_not_sayisi(&c, &sid, "2026-09-14T14:00").unwrap();
+        assert_eq!(silinecek_not, 4, "iki randevunun resmi + ozel notu");
+
+        let silinen = seriyi_sil(&c, &sid, "2026-09-14T14:00", Cihaz::Masaustu).unwrap();
+        assert_eq!(silinen, 2);
+        assert_eq!(not_sayilari(&c), (1, 1), "ilk haftanin notlari korunmali");
+
+        let kayit = crate::store::audit::son_kayitlar(&c, 1).unwrap().remove(0);
+        assert_eq!(
+            kayit.ayrinti.as_deref(),
+            Some("seri silme: 2 kayit, 4 not, 2026-09-14T14:00 sonrasi")
+        );
+    }
+
+    #[test]
+    fn seri_silinecek_not_sayisi_gecmis_uyeleri_saymaz() {
+        // `seri_sayisi` ile AYNI kesme: silinmeyecek bir randevunun notu
+        // uyari metnindeki sayiya girmemeli.
+        let (_d, c, cid) = kurulum();
+        let seri =
+            seri_olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), 3, Cihaz::Masaustu)
+                .unwrap();
+        let sid = seri[0].seri_id.clone().unwrap();
+        not_yaz(&c, seri[0].id);
+
+        assert_eq!(
+            seri_silinecek_not_sayisi(&c, &sid, "2026-09-14T14:00").unwrap(),
+            0,
+            "yalnizca gecmis uyenin notu var; silinecek not yok"
+        );
+        assert_eq!(
+            seri_silinecek_not_sayisi(&c, &sid, "2026-09-07T14:00").unwrap(),
+            2,
+            "kesme geriye alininca ayni not sayiliyor -- kesme gercekten tarihe bagli"
+        );
+    }
+
+    #[test]
+    fn seri_silinecek_not_sayisi_gecersiz_tarihi_reddeder() {
+        let (_d, c, _cid) = kurulum();
+        assert!(matches!(
+            seri_silinecek_not_sayisi(&c, "s", "07.09.2026 14:00"),
+            Err(DepoHatasi::GecersizVeri(_))
+        ));
     }
 }

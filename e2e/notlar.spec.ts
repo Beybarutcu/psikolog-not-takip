@@ -20,7 +20,7 @@ import { kurulumYap } from './yardimcilar'
  * Bu dosya artık KENDİ sunucusunda ve kendi veri dizininde koşuyor (bkz.
  * `playwright.config.ts` SUNUCULAR), yani `takvim.spec.ts` ile hiçbir şey
  * paylaşmıyor. Ama dosya İÇİNDEKİ testler aynı sunucuyu paylaşmaya devam
- * ediyor: her test kendi saatini (13:00–18:00) kullanıyor ki bir testin
+ * ediyor: her test kendi saatini (13:00–19:00) kullanıyor ki bir testin
  * "ilk boş hücre" seçimi bir öncekinin randevusuna denk gelip çakışma
  * uyarısı doğurmasın.
  *
@@ -408,4 +408,52 @@ test('danisan dosyasi: ek dosya, riza ve saklama suresi', async ({ page }) => {
   await expect(page.getByText(/Saklama süresi henüz hesaplanmadı/)).toHaveCount(0)
   // Süre dolunca dosyanın kendiliğinden silinmeyeceği her durumda yazılı.
   await expect(page.getByText(/imha kararı her zaman sizindir/)).toBeVisible()
+})
+
+test('randevu silme onayi, gidecek NOTLARI da soyler (dal incelemesi I2)', async ({ page }) => {
+  await kurulumYap(page)
+  const ad = 'Deniz Arslan'
+  const resmi = 'CASCADEKANARYA19 — silinecek randevunun resmi notu.'
+  const gizli = 'CASCADEOZEL19 — silinecek randevunun ozel notu.'
+
+  const blok = await danisanVeRandevu(page, ad, '19:00')
+  const alan = await seansiAc(page, blok)
+  await alan.fill(resmi)
+  await kaydedildiBekle(page)
+
+  const ozelAlan = await ozelSekmeyeGec(page)
+  await ozelAlan.fill(gizli)
+  // BARİYER: iki not da SUNUCUDA. Aşağıdaki "2 not silinecek" iddiası,
+  // notlar hiç yazılmamışsa yanlış sebeple kırılırdı.
+  await kaydedildiBekle(page)
+
+  // İŞLEM ÖNCESİ DURUM: onay kutusu henüz yok.
+  await expect(page.getByRole('button', { name: 'Evet, sil', exact: true })).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Sil', exact: true }).click()
+
+  // Sayı SUNUCUDAN geliyor: arayüz notların varlığını başka hiçbir yerden
+  // bilmiyor (özel not yalnızca sekmeye geçilince yükleniyor ve panel
+  // kapanınca gidiyor).
+  await expect(page.getByText(/2 not .*da kalıcı olarak silinecek/)).toBeVisible()
+  await expect(page.getByText(/geri getirilemez/)).toBeVisible()
+  // Uyarı NOT İÇERİĞİNİ taşımıyor: onay kutusu bir sayı gösterir, metin değil.
+  await expect(page.getByText('CASCADEKANARYA19')).toHaveCount(0)
+  await expect(page.getByText('CASCADEOZEL19')).toHaveCount(0)
+
+  // Vazgeçmek gerçekten vazgeçiyor: randevu ve notu yerinde.
+  await page.getByRole('button', { name: 'Vazgeç', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Evet, sil', exact: true })).toHaveCount(0)
+  await expect(blok).toBeVisible()
+
+  // Silme uygulanınca randevu da notu da gider (cascade).
+  await page.getByRole('button', { name: 'Sil', exact: true }).click()
+  await page.getByRole('button', { name: 'Evet, sil', exact: true }).click()
+  await expect(page.getByRole('button', { name: ad, exact: true })).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Hızlı arama (Ctrl+K)' }).click()
+  await page.getByLabel('Danışan adı veya not içeriği').fill('CASCADEKANARYA19')
+  // "Sonuç bulunamadı." bir SENKRONİZASYON BARİYERİ (bkz. arama testi):
+  // sunucu bu sorguyu yanıtladı ve sonuç boştu.
+  await expect(page.getByText('Sonuç bulunamadı.')).toBeVisible()
 })

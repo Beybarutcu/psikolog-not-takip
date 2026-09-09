@@ -1555,8 +1555,9 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
         // guncelle_uc, saklama_listesi (Gorev 7'nin 3'u) + rapor_kaydi_uc
         // (dal incelemesi C1).
         ("clients.rs", include_str!("../src/routes/clients.rs"), 7),
-        // Gorev 7 oncesi 11 veri handler'i vardi (clients 3 + appointments 8).
-        ("appointments.rs", include_str!("../src/routes/appointments.rs"), 8),
+        // Gorev 7 oncesi 11 veri handler'i vardi (clients 3 + appointments 8);
+        // dal incelemesi I2 `silinecekler` onizlemesini ekledi -> 9.
+        ("appointments.rs", include_str!("../src/routes/appointments.rs"), 9),
     ];
 
     let mut toplam = 0;
@@ -1605,7 +1606,7 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
         }
         toplam += parcalar.len();
     }
-    assert_eq!(toplam, 26, "toplam veri handler'i sayisi 26 olmali");
+    assert_eq!(toplam, 27, "toplam veri handler'i sayisi 27 olmali");
 }
 
 // =====================================================================

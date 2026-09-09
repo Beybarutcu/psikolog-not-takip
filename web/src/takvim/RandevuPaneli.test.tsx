@@ -35,7 +35,8 @@ function kur(ozel = {}) {
     onDurumDegis: vi.fn().mockResolvedValue(undefined),
     onSil: vi.fn().mockResolvedValue(undefined),
     onSeriSil: vi.fn().mockResolvedValue(undefined),
-    seriSayisiAl: vi.fn().mockResolvedValue(9),
+    seriSayisiAl: vi.fn().mockResolvedValue({ adet: 9, notAdedi: 0 }),
+    silinecekNotSayisiAl: vi.fn().mockResolvedValue(0),
     onKapat: vi.fn(),
     cakismaKontrol: vi.fn().mockResolvedValue(temizCakisma),
     ...ozel,
@@ -113,8 +114,81 @@ describe('RandevuPaneli', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
     expect(props.onSil).not.toHaveBeenCalled()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Evet, sil' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
     expect(props.onSil).toHaveBeenCalledWith(7)
+  })
+
+  // --- Dal incelemesi I2: onay metni NOTLARDAN da söz eder --------------
+  //
+  // `ON DELETE CASCADE`: randevu silinince seans notu ve özel not da gider.
+  // Onay metni ("Bu randevu kalıcı olarak silinsin mi?") bunu hiç
+  // söylemiyordu.
+
+  it('I2: tekil silme onayi, silinecek NOT sayisini sunucudan alir ve soyler', async () => {
+    const silinecekNotSayisiAl = vi.fn().mockResolvedValue(2)
+    const props = kur({ randevu: mevcut, silinecekNotSayisiAl })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
+
+    expect(silinecekNotSayisiAl).toHaveBeenCalledWith(7)
+    const uyari = await screen.findByText(/2 not .*da kalıcı olarak silinecek/i)
+    expect(uyari.textContent).toMatch(/geri getirilemez/i)
+    // İlk tıklama hâlâ silmiyor: onay iki adımlı kalıyor.
+    expect(props.onSil).not.toHaveBeenCalled()
+  })
+
+  it('I2: not YOKSA uyari cikmaz, "not yok" yazar', async () => {
+    // ARTI/EKSİ yön: her silmede çıkan bir uyarı okunmaz hâle gelir ve
+    // gerçekten not olan durumda işe yaramaz.
+    kur({ randevu: mevcut, silinecekNotSayisiAl: vi.fn().mockResolvedValue(0) })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
+
+    expect(await screen.findByText(/seans notu veya özel not yok/i)).toBeDefined()
+    expect(screen.queryByText(/kalıcı olarak silinecek/i)).toBeNull()
+  })
+
+  it('I2: sayi alinamazsa onay kutusu ACILMAZ', async () => {
+    // Ne gideceğini söyleyemeyen bir onay, onay değildir. (Kilitli oturumda
+    // 401 gelir; o hâlde silme de reddedilecektir.)
+    const props = kur({
+      randevu: mevcut,
+      silinecekNotSayisiAl: vi.fn().mockRejectedValue(new Error('Oturum kilitli.')),
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
+
+    await waitFor(() => expect(screen.getByText('Oturum kilitli.')).toBeDefined())
+    expect(screen.queryByRole('button', { name: 'Evet, sil' })).toBeNull()
+    expect(props.onSil).not.toHaveBeenCalled()
+  })
+
+  it('I2: seri silme onayi da NOT sayisini soyler', async () => {
+    const props = kur({
+      randevu: { ...mevcut, seri_id: 'seri-abc' },
+      seriSayisiAl: vi.fn().mockResolvedValue({ adet: 12, notAdedi: 7 }),
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /bu ve sonraki tüm tekrarları sil/i }))
+
+    expect(await screen.findByText(/12 randevu/)).toBeDefined()
+    const uyari = await screen.findByText(/7 not .*da kalıcı olarak silinecek/i)
+    // "Geçmiş korunur" sözü notlar için de yazılı.
+    expect(uyari.textContent).toMatch(/geçmiş randevuların notları korunur/i)
+    expect(props.onSeriSil).not.toHaveBeenCalled()
+  })
+
+  it('I2: seri silmede not yoksa uyari cikmaz', async () => {
+    kur({
+      randevu: { ...mevcut, seri_id: 'seri-abc' },
+      seriSayisiAl: vi.fn().mockResolvedValue({ adet: 12, notAdedi: 0 }),
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /bu ve sonraki tüm tekrarları sil/i }))
+
+    expect(await screen.findByText(/Silinecek randevulara bağlı seans notu veya özel not yok/i))
+      .toBeDefined()
+    expect(screen.queryByText(/kalıcı olarak silinecek. Notlar/i)).toBeNull()
   })
 
   // --- Görev 10 inceleme bulguları --------------------------------------
@@ -232,7 +306,10 @@ describe('RandevuPaneli', () => {
   })
 
   it('I4a: seri silme iki adımlı onay ister, adet gösterir ve geçmişin korunduğunu söyler', async () => {
-    const props = kur({ randevu: seriUyesi, seriSayisiAl: vi.fn().mockResolvedValue(9) })
+    const props = kur({
+      randevu: seriUyesi,
+      seriSayisiAl: vi.fn().mockResolvedValue({ adet: 9, notAdedi: 0 }),
+    })
 
     await userEvent.click(screen.getByRole('button', { name: /bu ve sonraki tüm tekrarları sil/i }))
     expect(props.seriSayisiAl).toHaveBeenCalledWith('seri-abc', '2026-09-07T14:00')

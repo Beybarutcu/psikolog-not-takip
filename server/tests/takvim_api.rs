@@ -918,3 +918,176 @@ async fn api_disindaki_bilinmeyen_yol_hala_arayuze_duser() {
     let yanit = router(s.clone()).oneshot(istek).await.unwrap();
     assert_eq!(yanit.status(), StatusCode::OK, "API disi bilinmeyen yol SPA'ya dusmeli");
 }
+
+// =====================================================================
+// DAL INCELEMESI I2 -- CASCADE SILINEN NOTLARIN ONIZLEMESI
+// =====================================================================
+//
+// Bulgu: `progress_notes` / `private_notes` `ON DELETE CASCADE` tasiyor;
+// randevu silinince notlar da gidiyordu ve onay metni bundan hic soz
+// etmiyordu. Onay metninin sayiyi soyleyebilmesi icin sunucuya sormasi
+// gerekiyor -- 52 haftalik bir serinin notlari ekrandaki haftanin cok
+// otesinde olabilir.
+
+/// Bir randevuya resmi + ozel not yazar.
+async fn iki_not_yaz(s: &AppState, randevu_id: i64) {
+    let (k1, _) = cagir(
+        s,
+        "PUT",
+        &format!("/api/randevular/{randevu_id}/not"),
+        Some(json!({"sablon":"dap","icerik":"seans notu"})),
+    )
+    .await;
+    assert_eq!(k1, StatusCode::OK, "kurulum: resmi not yazilmali");
+    let (k2, _) = cagir(
+        s,
+        "PUT",
+        &format!("/api/randevular/{randevu_id}/ozel-not"),
+        Some(json!({"icerik":"ozel not"})),
+    )
+    .await;
+    assert_eq!(k2, StatusCode::OK, "kurulum: ozel not yazilmali");
+}
+
+#[tokio::test]
+async fn silinecekler_not_sayisini_verir_ve_hicbir_sey_degistirmez() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let (_, olusan) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": d["id"], "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00"
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+
+    // ARTI YON once: notsuz randevu 0 verir. "Hep 2 don" diyen bir uygulama
+    // asagidaki iddiayi tek basina gecerdi.
+    let (kod, json) = cagir(&s, "GET", &format!("/api/randevular/{id}/silinecekler"), None).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(json["not_adedi"], 0);
+
+    iki_not_yaz(&s, id).await;
+
+    let (_, json) = cagir(&s, "GET", &format!("/api/randevular/{id}/silinecekler"), None).await;
+    assert_eq!(json["not_adedi"], 2, "resmi + ozel not sayilmali");
+
+    // Onizleme HICBIR SEY silmedi: randevu ve notu yerinde.
+    let (kod, not) = cagir(&s, "GET", &format!("/api/randevular/{id}/not"), None).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(not["icerik"], "seans notu");
+}
+
+#[tokio::test]
+async fn silinecekler_not_icerigini_dondurmez() {
+    // Onizleme bir SAYI ucudur. Not metnini dondurseydi, onay kutusunu
+    // hazirlamak icin danisan verisi ekrana/bellege gelmis olurdu.
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let (_, olusan) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": d["id"], "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00"
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+    cagir(
+        &s,
+        "PUT",
+        &format!("/api/randevular/{id}/not"),
+        Some(json!({"sablon":"dap","icerik":"GIZLI_NOT_ICERIGI"})),
+    )
+    .await;
+    cagir(
+        &s,
+        "PUT",
+        &format!("/api/randevular/{id}/ozel-not"),
+        Some(json!({"icerik":"GIZLI_OZEL_ICERIGI"})),
+    )
+    .await;
+
+    let (_, json) = cagir(&s, "GET", &format!("/api/randevular/{id}/silinecekler"), None).await;
+    let metin = json.to_string();
+    assert!(!metin.contains("GIZLI_NOT_ICERIGI"), "not icerigi donmemeli: {metin}");
+    assert!(!metin.contains("GIZLI_OZEL_ICERIGI"), "ozel not icerigi donmemeli: {metin}");
+    assert_eq!(json["not_adedi"], 2);
+}
+
+#[tokio::test]
+async fn kilitliyken_silinecekler_401_doner() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let (_, olusan) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": d["id"], "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00"
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+    iki_not_yaz(&s, id).await;
+    cagir(&s, "POST", "/api/kilitle", None).await;
+
+    let (kod, json) = cagir(&s, "GET", &format!("/api/randevular/{id}/silinecekler"), None).await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED);
+    assert!(json.get("not_adedi").is_none(), "kilitliyken sayi donmemeli");
+}
+
+#[tokio::test]
+async fn seri_adedi_silinecek_not_sayisini_da_verir() {
+    let (_d, s) = kurulu_state().await;
+    let (_cid, sid) = seri_kur(&s).await;
+
+    // Serinin tum uyelerini bul, son ikisine not yaz.
+    let (_, hepsi) = cagir(
+        &s, "GET",
+        "/api/randevular?baslangic=2026-09-01T00:00&bitis=2026-10-01T00:00", None,
+    ).await;
+    let uyeler = hepsi.as_array().unwrap();
+    assert_eq!(uyeler.len(), 4, "on kosul: dort haftalik seri");
+    // 07, 14, 21, 28 Eylul. Ilk (07) ve son (28) uyeye not yaz: kesme
+    // gercekten calisiyorsa yalnizca 28'inki sayilir.
+    iki_not_yaz(&s, uyeler[0]["id"].as_i64().unwrap()).await;
+    iki_not_yaz(&s, uyeler[3]["id"].as_i64().unwrap()).await;
+
+    let (kod, json) = cagir(
+        &s, "GET",
+        &format!("/api/randevular/seri/{sid}?bu_tarihten_itibaren=2026-09-21T00:00"), None,
+    ).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(json["adet"], 2, "21 ve 28 Eylul silinecek");
+    assert_eq!(
+        json["not_adedi"], 2,
+        "yalnizca 28 Eylul'un iki notu sayilmali -- 07 Eylul silinmiyor"
+    );
+
+    // Kesme geriye alininca dort not birden sayilir: sayi gercekten tarihe bagli.
+    let (_, json) = cagir(
+        &s, "GET",
+        &format!("/api/randevular/seri/{sid}?bu_tarihten_itibaren=2026-09-01T00:00"), None,
+    ).await;
+    assert_eq!(json["adet"], 4);
+    assert_eq!(json["not_adedi"], 4);
+}
+
+#[tokio::test]
+async fn seri_silme_gelecek_uyelerin_notlarini_da_siler() {
+    // Cascade davranisini HTTP seviyesinde sabitler: silinen uyenin notu
+    // artik okunamaz, KORUNAN uyenin notu yerinde.
+    let (_d, s) = kurulu_state().await;
+    let (_cid, sid) = seri_kur(&s).await;
+    let (_, hepsi) = cagir(
+        &s, "GET",
+        "/api/randevular?baslangic=2026-09-01T00:00&bitis=2026-10-01T00:00", None,
+    ).await;
+    let uyeler = hepsi.as_array().unwrap().clone();
+    let korunan = uyeler[0]["id"].as_i64().unwrap();
+    let silinen_id = uyeler[3]["id"].as_i64().unwrap();
+    iki_not_yaz(&s, korunan).await;
+    iki_not_yaz(&s, silinen_id).await;
+
+    let (kod, _) = cagir(
+        &s, "DELETE",
+        &format!("/api/randevular/seri/{sid}?bu_tarihten_itibaren=2026-09-21T00:00"), None,
+    ).await;
+    assert_eq!(kod, StatusCode::OK);
+
+    // Silinen uyenin randevusu yok -> notu da yok (404).
+    let (kod, _) = cagir(&s, "GET", &format!("/api/randevular/{silinen_id}/not"), None).await;
+    assert_eq!(kod, StatusCode::NOT_FOUND, "silinen uyenin notu okunamamali");
+    // Korunan uyenin notu YERINDE: "gecmis randevular silinmez" sozu
+    // notlar icin de gecerli.
+    let (kod, not) = cagir(&s, "GET", &format!("/api/randevular/{korunan}/not"), None).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(not["icerik"], "seans notu");
+}

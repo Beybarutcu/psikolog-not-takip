@@ -65,6 +65,35 @@
 //! Not başına, **düzenleme oturumu başına bir** satır — otomatik kayıt
 //! başına değil. Bunu sağlayan mekanizma `LogHacmi::OturumBasi`'dır.
 //!
+//! ## Cascade silinen notlar: İKİNCİ SATIR DEĞİL, AYNI SATIRDA SAYI
+//! (dal incelemesi I2)
+//!
+//! `appointments` silindiğinde `progress_notes` ve `private_notes`
+//! satırları `ON DELETE CASCADE` ile birlikte gider (bkz. `schema::V3`).
+//! Denetim kaydında bu, tek bir `silme|appointment|<id>` satırı olarak
+//! görünüyordu ve "12 haftalık serinin bütün notları da gitti" bilgisi
+//! **hiçbir yerde yoktu**.
+//!
+//! Karar: **not başına ayrı satır YAZILMAZ**, silme satırının `ayrinti`
+//! alanına notların SAYISI yazılır (`Ayrinti::RandevuSilme`,
+//! `Ayrinti::SeriSilme.not_adedi`). Gerekçe iki yönlü:
+//!
+//! - *Neden ikinci satır değil:* ortada **tek bir kullanıcı eylemi** var
+//!   ("bu randevuyu sil"). Aynı eylem için ikinci bir silinemez satır
+//!   yazmak yukarıdaki hacim politikasının doğrudan ihlalidir; emsal
+//!   `attachments::sil`'in `riza_dosya_id` temizliği ve
+//!   `clients::son_temasi_tazele` — ikisi de aynı transaction'da başka bir
+//!   tabloya dokunur ve ikinci satır yazmaz. 52 haftalık bir serinin
+//!   iptali, tek bir tıkla 104'e kadar silinemez satır üretirdi.
+//! - *Neden yine de bir şey yazılıyor:* notlar türetilmiş defter alanı
+//!   değil, **klinik kayıttır**; "randevu silindi" satırı tek başına ne
+//!   olduğunu eksik anlatır. Sayı, denetimi yapan kişiye "burada yalnızca
+//!   bir takvim satırı değil, N klinik kayıt yok oldu" der.
+//!
+//! Alan **yalnızca `usize`**'dır: not içeriği, danışan adı ya da tarih
+//! metni buraya girmez (`SeriSilme.tarihten` zaten `metin()` içinde biçim
+//! doğrulamasından geçiyor).
+//!
 //! # KRİTİK: Hacim kararı DERLEME ZAMANINDA verilir — `LogHacmi`
 //!
 //! Bu modülün tek yazma kapısı `kaydet`'tir ve son parametresi
@@ -100,7 +129,10 @@ pub enum Ayrinti {
     Arsivlendi,
     Durum(&'static str),
     AralikBaslangici(String),
-    SeriSilme { adet: usize, tarihten: String },
+    /// Bir randevuyla birlikte kaç seans/özel notun gittiği (dal incelemesi
+    /// I2). Yalnızca SAYI taşır — not içeriği loga asla girmez.
+    RandevuSilme { not_adedi: usize },
+    SeriSilme { adet: usize, not_adedi: usize, tarihten: String },
 }
 
 /// Ham `String` alanlarini ASLA basmaz. Turetilmis `Debug` yerine elle
@@ -115,9 +147,14 @@ impl std::fmt::Debug for Ayrinti {
             Ayrinti::Arsivlendi => write!(f, "Ayrinti::Arsivlendi"),
             Ayrinti::Durum(_) => write!(f, "Ayrinti::Durum(<gizli>)"),
             Ayrinti::AralikBaslangici(_) => write!(f, "Ayrinti::AralikBaslangici(<gizli>)"),
-            Ayrinti::SeriSilme { adet, .. } => f
+            Ayrinti::RandevuSilme { not_adedi } => f
+                .debug_struct("Ayrinti::RandevuSilme")
+                .field("not_adedi", not_adedi)
+                .finish(),
+            Ayrinti::SeriSilme { adet, not_adedi, .. } => f
                 .debug_struct("Ayrinti::SeriSilme")
                 .field("adet", adet)
+                .field("not_adedi", not_adedi)
                 .field("tarihten", &"<gizli>")
                 .finish(),
         }
@@ -139,9 +176,10 @@ impl Ayrinti {
                     "aralik: gecersiz".to_string()
                 }
             }
-            Ayrinti::SeriSilme { adet, tarihten } => {
+            Ayrinti::RandevuSilme { not_adedi } => format!("silinen not: {not_adedi}"),
+            Ayrinti::SeriSilme { adet, not_adedi, tarihten } => {
                 if zaman_gecerli_mi(tarihten) {
-                    format!("seri silme: {adet} kayit, {tarihten} sonrasi")
+                    format!("seri silme: {adet} kayit, {not_adedi} not, {tarihten} sonrasi")
                 } else {
                     "seri silme: gecersiz".to_string()
                 }
@@ -427,9 +465,11 @@ mod tests {
             Ayrinti::AralikBaslangici("2026-09-07T00:00".into()).metin(),
             "aralik: 2026-09-07T00:00"
         );
+        assert_eq!(Ayrinti::RandevuSilme { not_adedi: 2 }.metin(), "silinen not: 2");
         assert_eq!(
-            Ayrinti::SeriSilme { adet: 3, tarihten: "2026-09-21T00:00".into() }.metin(),
-            "seri silme: 3 kayit, 2026-09-21T00:00 sonrasi"
+            Ayrinti::SeriSilme { adet: 3, not_adedi: 5, tarihten: "2026-09-21T00:00".into() }
+                .metin(),
+            "seri silme: 3 kayit, 5 not, 2026-09-21T00:00 sonrasi"
         );
     }
 
@@ -442,7 +482,7 @@ mod tests {
 
     #[test]
     fn seri_silme_tarihi_de_dogrulanir() {
-        let bozuk = Ayrinti::SeriSilme { adet: 1, tarihten: "COK_GIZLI".into() };
+        let bozuk = Ayrinti::SeriSilme { adet: 1, not_adedi: 0, tarihten: "COK_GIZLI".into() };
         assert!(!bozuk.metin().contains("COK_GIZLI"));
     }
 
@@ -459,7 +499,7 @@ mod tests {
             "Debug ciktisi ham dizgiyi icermemeli: {debug_metni}"
         );
 
-        let seri = Ayrinti::SeriSilme { adet: 3, tarihten: "COK_GIZLI_TARIH".into() };
+        let seri = Ayrinti::SeriSilme { adet: 3, not_adedi: 1, tarihten: "COK_GIZLI_TARIH".into() };
         let debug_metni = format!("{seri:?}");
         assert!(
             !debug_metni.contains("COK_GIZLI_TARIH"),

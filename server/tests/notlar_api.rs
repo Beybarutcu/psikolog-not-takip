@@ -513,7 +513,7 @@ async fn arama_ozel_not_dondurmez() {
     // ARTI YON: arama resmi notu BULUR (yoksa asagidaki eksi yon totoloji).
     let (kod, sonuc) = cagir(&s, "GET", "/api/ara?q=kaygi", None).await;
     assert_eq!(kod, StatusCode::OK);
-    let bulunan = sonuc.as_array().unwrap();
+    let bulunan = sonuc["sonuclar"].as_array().unwrap();
     assert_eq!(bulunan.len(), 1, "resmi not bulunmali: {sonuc}");
     assert_eq!(bulunan[0]["tur"], "not");
     assert_eq!(bulunan[0]["client_id"], cid);
@@ -521,7 +521,10 @@ async fn arama_ozel_not_dondurmez() {
     // EKSI YON: ozel nottaki kelime hicbir sey dondurmez.
     let (kod, sonuc) = cagir(&s, "GET", "/api/ara?q=ANAHTARKELIME", None).await;
     assert_eq!(kod, StatusCode::OK);
-    assert!(sonuc.as_array().unwrap().is_empty(), "ozel not aramaya girmemeli: {sonuc}");
+    assert!(
+        sonuc["sonuclar"].as_array().unwrap().is_empty(),
+        "ozel not aramaya girmemeli: {sonuc}"
+    );
     assert!(!sonuc.to_string().contains("hipotez"));
 }
 
@@ -721,7 +724,7 @@ async fn arama_limiti_de_kirpilir() {
         .await;
     }
 
-    let say = |v: &serde_json::Value| v.as_array().unwrap().len();
+    let say = |v: &serde_json::Value| v["sonuclar"].as_array().unwrap().len();
 
     // ON KOSUL + ARTI YON: uc not da gercekten eslesiyor, yani asagidaki
     // sayilar limitin FARKINI olcuyor, kurulumun darligini degil.
@@ -749,6 +752,54 @@ async fn arama_limiti_de_kirpilir() {
 }
 
 #[tokio::test]
+async fn arama_yaniti_kirpilmayi_bildirir_ve_sonuc_sayisi_loga_girmez() {
+    // BILINEN BOSLUK KAPANIYOR: butce paylastirmasi sessiz kaybi
+    // hafifletti ama kaldirmadi. Ciplak bir dizi "hepsi bu" ile
+    // "kirpildi"yi ayirt edilemez kiliyordu; terapist var olan bir notu
+    // bulamadigini fark etmiyordu.
+    //
+    // IKI YON AYNI TESTTE: ayni kurulumda once kirpilmayan sonra kirpilan
+    // bir arama. "Hep true" ve "hep false" mutasyonlarinin ikisi de kirilir.
+    let (_d, s) = kurulu_state().await;
+    let cid = danisan_ekle(&s, "Ayse Yilmaz").await;
+    for gun in ["2026-09-07", "2026-09-14", "2026-09-21"] {
+        let rid = randevu_ekle(&s, cid, gun).await;
+        cagir(
+            &s,
+            "PUT",
+            &format!("/api/randevular/{rid}/not"),
+            Some(json!({"sablon":"dap","icerik": format!("kaygi duzeyi {gun}")})),
+        )
+        .await;
+    }
+
+    // Sinir 3, eslesme 3: hicbir sey dusmedi.
+    let (kod, tam) = cagir(&s, "GET", "/api/ara?q=kaygi&limit=3", None).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(tam["sonuclar"].as_array().unwrap().len(), 3, "on kosul: ucu de donmeli");
+    assert_eq!(
+        tam["kirpildi"],
+        json!(false),
+        "tam sinirdaki arama kirpilmis sayilmamali: {tam}"
+    );
+
+    // Sinir 2, eslesme 3: biri dustu.
+    let (kod, kirpik) = cagir(&s, "GET", "/api/ara?q=kaygi&limit=2", None).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(kirpik["sonuclar"].as_array().unwrap().len(), 2);
+    assert_eq!(kirpik["kirpildi"], json!(true), "dusen eslesme bildirilmeli: {kirpik}");
+
+    // SONUC SAYISI VE KIRPILMA LOGA GIRMEZ (bkz. `store::search` basligi):
+    // yalnizca "bu cihazdan arama yapildi" satiri, sabit `varlik_id` ile.
+    let arama_satirlari: Vec<String> =
+        log_satirlari(&s).await.into_iter().filter(|x| x.contains("|arama|")).collect();
+    assert!(!arama_satirlari.is_empty(), "on kosul: arama satiri yazilmis olmali");
+    for satir in arama_satirlari {
+        assert_eq!(satir, "goruntuleme|arama|genel", "arama satiri sabit olmali: {satir}");
+    }
+}
+
+#[tokio::test]
 async fn iki_karakterden_kisa_sorgu_bos_liste_dondurur() {
     let (_d, s, _cid, rid) = dolu_state().await;
     cagir(
@@ -761,7 +812,10 @@ async fn iki_karakterden_kisa_sorgu_bos_liste_dondurur() {
 
     let (kod, sonuc) = cagir(&s, "GET", "/api/ara?q=k", None).await;
     assert_eq!(kod, StatusCode::OK, "kisa sorgu hata degil, bos liste");
-    assert!(sonuc.as_array().unwrap().is_empty());
+    assert!(sonuc["sonuclar"].as_array().unwrap().is_empty());
+    // Kisa sorgu KIRPILMIS da sayilmamali: uyari, kullanicinin daraltmasi
+    // gereken gercek bir durum icin ayrilmis.
+    assert_eq!(sonuc["kirpildi"], serde_json::json!(false), "{sonuc}");
 }
 
 // =====================================================================

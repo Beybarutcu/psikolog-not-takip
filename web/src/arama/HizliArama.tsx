@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ARAMA_SINIRI, type AramaSonucu } from '../api'
+import type { AramaSonucu, AramaYaniti } from '../api'
 
 /**
  * Hızlı arama (Ctrl+K / Cmd+K): danışan adı ve **resmî** seans notu içeriği.
@@ -24,17 +24,23 @@ import { ARAMA_SINIRI, type AramaSonucu } from '../api'
  * bir terim kalıcı olurdu). Arayüz de aynı kurala uyar: sorgu ve sonuç
  * parçaları `console`'a düşmez.
  *
- * # "Daha fazla sonuç var" işareti sunucuda YOK — sayıyı arayüz ölçer
+ * # "Daha fazla sonuç var" işareti artık SUNUCUDAN geliyor
  *
- * `GET /api/ara` kırpılma bilgisi döndürmüyor (Görev 6'nın bilinen boşluğu:
- * bütçe paylaştırması sessiz kaybı hafifletti, kaldırmadı — 61 danışan
- * eşleşirse 12'si hâlâ düşüyor). Sonuç sayısı sınıra (`ARAMA_SINIRI`)
- * eşitse liste büyük olasılıkla kırpılmıştır; bunu söylemeyen bir arayüzde
- * terapist "bu kadarmış" sanar ve var olan bir notu bulamadığını fark
- * etmez. Sayı ekranda yazılır, hiçbir loga yazılmaz.
+ * `GET /api/ara` yanıtı `kirpildi` alanını taşıyor ve bu bir tahmin değil,
+ * ölçüm: sunucu her iki sorguyu da `LIMIT sinir + 1` ile çalıştırıp düşen
+ * eşleşme olup olmadığına bakıyor.
+ *
+ * Eskiden bu bilgi arayüzde **sezgiyle** üretiliyordu ("sonuç sayısı ==
+ * `ARAMA_SINIRI`") ve sezgi iki yönde de yanlıştı: tam 50 eşleşmede
+ * (hiçbiri düşmemişken) uyarıyor, iki kipin bütçesi ayrı ayrı dolduğunda
+ * uyarmayı kaçırıyordu. Bunu söylemeyen bir arayüzde terapist "bu kadarmış"
+ * sanar ve var olan bir notu bulamadığını fark etmez.
+ *
+ * Gösterilen sonuç sayısı ekrana yazılır, hiçbir loga yazılmaz — sunucuda
+ * da `kirpildi` `audit_log`'a girmez.
  */
 type Props = {
-  ara: (sorgu: string) => Promise<AramaSonucu[]>
+  ara: (sorgu: string) => Promise<AramaYaniti>
   onDanisanSec: (clientId: number) => void
   /** `tarih` randevunun `baslangic`'i (`YYYY-AA-GGTSS:DD`) — çağıran taraf
    * hangi haftaya gideceğini ondan bilir. */
@@ -72,7 +78,9 @@ export function HizliArama({ ara, onDanisanSec, onSeansSec, gecikmeMs = GECIKME_
   // dizisi, kullanıcı sorguyu değiştirdiği an ile yeni yanıt geldiği an
   // arasında ÖNCEKİ sorgunun not parçalarını gösterirdi — bu ekran seans
   // sırasında, danışanın karşısında açılıyor.
-  const [yanit, setYanit] = useState<{ sorgu: string; sonuclar: AramaSonucu[] } | null>(null)
+  const [yanit, setYanit] = useState<
+    { sorgu: string; sonuclar: AramaSonucu[]; kirpildi: boolean } | null
+  >(null)
   const [hataKaydi, setHataKaydi] = useState<{ sorgu: string; mesaj: string } | null>(null)
   const kutuRef = useRef<HTMLInputElement>(null)
 
@@ -109,7 +117,11 @@ export function HizliArama({ ara, onDanisanSec, onSeansSec, gecikmeMs = GECIKME_
   // gösterilir. Sorgu kısaldığında (ya da tümüyle silindiğinde) eski
   // sonuçlar bir kare bile görünmez ve bunun için bir efektin çalışmasını
   // beklemek gerekmez.
-  const sonuclar = yanit !== null && yanit.sorgu === kirpilmis ? yanit.sonuclar : []
+  const gecerliYanit = yanit !== null && yanit.sorgu === kirpilmis ? yanit : null
+  const sonuclar = gecerliYanit?.sonuclar ?? []
+  // Uyarı da sonuçlarla AYNI türetmeden geçiyor: bayat bir yanıtın uyarısı
+  // yeni sorgunun üstünde bir kare bile durmamalı.
+  const sonucKirpildi = gecerliYanit?.kirpildi ?? false
   const hata = hataKaydi !== null && hataKaydi.sorgu === kirpilmis ? hataKaydi.mesaj : null
   // Sorgu yeterince uzun ama bu sorgu için henüz ne yanıt ne hata var.
   const bekleniyor =
@@ -125,7 +137,7 @@ export function HizliArama({ ara, onDanisanSec, onSeansSec, gecikmeMs = GECIKME_
       void ara(kirpilmis)
         .then((gelen) => {
           if (iptal) return
-          setYanit({ sorgu: kirpilmis, sonuclar: gelen })
+          setYanit({ sorgu: kirpilmis, sonuclar: gelen.sonuclar, kirpildi: gelen.kirpildi })
         })
         .catch((e: unknown) => {
           if (iptal) return
@@ -154,8 +166,6 @@ export function HizliArama({ ara, onDanisanSec, onSeansSec, gecikmeMs = GECIKME_
       </button>
     )
   }
-
-  const kirpilmisOlabilir = sonuclar.length >= ARAMA_SINIRI
 
   return (
     <div
@@ -197,10 +207,13 @@ export function HizliArama({ ara, onDanisanSec, onSeansSec, gecikmeMs = GECIKME_
         </p>
       )}
 
-      {kirpilmisOlabilir && (
+      {/* Sunucudan gelen ÖLÇÜLMÜŞ işaret: "olabilir" değil, "var". Metin
+          kullanıcıya ne yapacağını da söylüyor -- kırpıldığını bilmek tek
+          başına eşleşmeyi bulmasına yetmez. */}
+      {sonucKirpildi && (
         <p className="mt-2 rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-900">
-          {ARAMA_SINIRI} sonuç gösteriliyor; daha fazlası olabilir. Eşleşmeyi kaçırmamak için
-          aramayı daraltın.
+          {sonuclar.length} sonuç gösteriliyor; eşleşen başka kayıtlar da var. Aradığınızı
+          kaçırmamak için aramayı daraltın (daha uzun bir sözcük ya da danışan adı yazın).
         </p>
       )}
 

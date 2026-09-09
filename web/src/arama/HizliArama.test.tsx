@@ -2,7 +2,7 @@ import aramaKaynagi from './HizliArama.tsx?raw'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { AramaSonucu } from '../api'
+import type { AramaSonucu, AramaYaniti } from '../api'
 import { ARAMA_SINIRI } from '../api'
 import { GECIKME_MS, HizliArama } from './HizliArama'
 
@@ -24,9 +24,14 @@ const notSonucu: AramaSonucu = {
   parca: '…uyku düzeni ve kaygı üzerine konuşuldu…',
 }
 
+/** `AramaYaniti` kısayolu: testlerin çoğu kırpılmayla ilgilenmiyor. */
+function yanit(sonuclar: AramaSonucu[], kirpildi = false): AramaYaniti {
+  return { sonuclar, kirpildi }
+}
+
 function kur(ozel: Partial<React.ComponentProps<typeof HizliArama>> = {}) {
   const props = {
-    ara: vi.fn().mockResolvedValue([danisanSonucu, notSonucu]),
+    ara: vi.fn().mockResolvedValue(yanit([danisanSonucu, notSonucu])),
     onDanisanSec: vi.fn(),
     onSeansSec: vi.fn(),
     // Gecikme testlerde kısaltılıyor (NotEditoru'nun `gecikmeMs` deseni).
@@ -131,7 +136,7 @@ describe('HizliArama — açılış ve kapanış', () => {
     let ikinciTur = false
     const ara = vi.fn(async () =>
       // İkinci turda arama hiç bitmiyor: ekranda ne varsa bayat olandır.
-      ikinciTur ? new Promise<AramaSonucu[]>(() => {}) : [notSonucu],
+      ikinciTur ? new Promise<AramaYaniti>(() => {}) : yanit([notSonucu]),
     )
     kur({ ara })
     await ac()
@@ -276,7 +281,7 @@ describe('HizliArama — sonuçlar', () => {
   })
 
   it('sonuc yoksa bunu soyler', async () => {
-    const { ara } = kur({ ara: vi.fn().mockResolvedValue([]) })
+    const { ara } = kur({ ara: vi.fn().mockResolvedValue(yanit([])) })
     await ac()
     await userEvent.type(kutu(), 'zzzz')
     await waitFor(() => expect(ara).toHaveBeenCalled())
@@ -286,15 +291,15 @@ describe('HizliArama — sonuçlar', () => {
   it('yanit beklenirken "sonuc bulunamadi" DEMEZ', async () => {
     // Türetilen liste yanıt gelene kadar boş; ayrım yapılmasaydı ekranda
     // henüz sorulmamış bir sorunun cevabı görünürdü.
-    let coz: (s: AramaSonucu[]) => void = () => {}
-    kur({ ara: vi.fn(() => new Promise<AramaSonucu[]>((c) => { coz = c })) })
+    let coz: (s: AramaYaniti) => void = () => {}
+    kur({ ara: vi.fn(() => new Promise<AramaYaniti>((c) => { coz = c })) })
     await ac()
     await userEvent.type(kutu(), 'kaygi')
 
     expect(await screen.findByText(/aranıyor/i)).toBeDefined()
     expect(screen.queryByText(/sonuç bulunamadı/i)).toBeNull()
 
-    coz([])
+    coz(yanit([]))
     expect(await screen.findByText(/sonuç bulunamadı/i)).toBeDefined()
   })
 
@@ -302,7 +307,7 @@ describe('HizliArama — sonuçlar', () => {
     // Sonuçlar hangi sorguya ait olduklarıyla birlikte tutuluyor ve render
     // sırasında süzülüyor; efekte bırakılsaydı arada bir kare boyunca
     // önceki sorgunun not parçaları ekranda kalırdı.
-    const bekleyen = vi.fn(async (q: string) => (q === 'kaygi' ? [notSonucu] : []))
+    const bekleyen = vi.fn(async (q: string) => yanit(q === 'kaygi' ? [notSonucu] : []))
     kur({ ara: bekleyen })
     await ac()
     await userEvent.type(kutu(), 'kaygi')
@@ -316,7 +321,7 @@ describe('HizliArama — sonuçlar', () => {
     let basarisiz = false
     const ara = vi.fn(async (q: string) => {
       if (basarisiz) throw new Error('Arama yapılamadı.')
-      return q === 'kaygi' ? [notSonucu] : []
+      return yanit(q === 'kaygi' ? [notSonucu] : [])
     })
     kur({ ara })
     await ac()
@@ -332,11 +337,11 @@ describe('HizliArama — sonuçlar', () => {
   })
 })
 
-// Görev 6'dan devreden bilinen boşluk: `/api/ara` "daha fazla sonuç var"
-// işareti TAŞIMIYOR. Bütçe paylaştırması sessiz kaybı hafifletti ama
-// kaldırmadı — 61 danışan eşleşirse 12'si hâlâ düşüyor. Arayüz sayıyı
-// kendisi ölçüp kullanıcıyı daraltmaya yönlendirmeli.
-describe('HizliArama — sonuçlar kırpılmış olabilir', () => {
+// Görev 6'dan devreden bilinen boşluk KAPANDI: `/api/ara` artık `kirpildi`
+// işaretini taşıyor ve arayüz onu kullanıyor. Eskiden arayüz "sonuç sayısı
+// == ARAMA_SINIRI" diye tahmin yürütüyordu; o sezgi iki yönde de yanlıştı
+// ve aşağıdaki ilk iki test tam olarak o iki yönü ölçüyor.
+describe('HizliArama — sunucu sonuçların kırpıldığını bildirdiğinde', () => {
   function sonuclar(adet: number): AramaSonucu[] {
     return Array.from({ length: adet }, (_, i) => ({
       ...danisanSonucu,
@@ -346,30 +351,50 @@ describe('HizliArama — sonuçlar kırpılmış olabilir', () => {
     }))
   }
 
-  it('sonuc sayisi sinira ESITSE aramayi daraltma uyarisi gosterir', async () => {
-    kur({ ara: vi.fn().mockResolvedValue(sonuclar(ARAMA_SINIRI)) })
+  it('`kirpildi` DOGRUYSA aramayi daraltma uyarisi gosterir', async () => {
+    // Sayı sınırın çok ALTINDA ama sunucu kırpıldığını söylüyor: eski
+    // sezgi (`sayi == 50`) burada uyarmayı KAÇIRIRDI. İki kipin bütçesi
+    // ayrı ayrı dolduğunda gerçekleşen durum tam olarak bu.
+    kur({ ara: vi.fn().mockResolvedValue(yanit(sonuclar(4), true)) })
     await ac()
     await userEvent.type(kutu(), 'yilmaz')
     expect(await screen.findByText(/aramayı daraltın/i)).toBeDefined()
   })
 
-  it('sinirin ALTINDA uyari YOKTUR', async () => {
-    // Her zaman uyaran bir arayüz uyarıyı anlamsızlaştırır.
-    kur({ ara: vi.fn().mockResolvedValue(sonuclar(ARAMA_SINIRI - 1)) })
+  it('`kirpildi` YANLISSA sonuc sayisi sinira ESIT olsa bile uyarmaz', async () => {
+    // Eski sezginin yanlış uyardığı yön: tam 50 eşleşme var, hiçbiri
+    // düşmedi. Her zaman uyaran bir arayüz uyarıyı anlamsızlaştırır.
+    kur({ ara: vi.fn().mockResolvedValue(yanit(sonuclar(ARAMA_SINIRI), false)) })
     await ac()
     await userEvent.type(kutu(), 'yilmaz')
     await screen.findByRole('button', { name: /Danisan 1 — danışan dosyasını aç/ })
     expect(screen.queryByText(/aramayı daraltın/i)).toBeNull()
   })
 
-  it('uyari sonuc SAYISINI ekranda yazar ama loga yazmaz', async () => {
+  it('uyari GOSTERILEN sonuc sayisini ekranda yazar ama loga yazmaz', async () => {
     const casus = vi.spyOn(console, 'log').mockImplementation(() => {})
-    kur({ ara: vi.fn().mockResolvedValue(sonuclar(ARAMA_SINIRI)) })
+    kur({ ara: vi.fn().mockResolvedValue(yanit(sonuclar(7), true)) })
     await ac()
     await userEvent.type(kutu(), 'yilmaz')
     const uyari = await screen.findByText(/aramayı daraltın/i)
-    expect(uyari.textContent).toContain(String(ARAMA_SINIRI))
+    expect(uyari.textContent).toContain('7 sonuç gösteriliyor')
     expect(casus).not.toHaveBeenCalled()
+  })
+
+  it('uyari BAYAT bir yanittan kalmaz', async () => {
+    // Sorgu değişince uyarı da sonuçlarla birlikte düşmeli; aksi hâlde
+    // kırpılmayan yeni bir sonuç listesinin üstünde eski uyarı durur.
+    const ara = vi.fn(async (q: string) =>
+      q === 'yilmaz' ? yanit(sonuclar(4), true) : yanit(sonuclar(1), false),
+    )
+    kur({ ara })
+    await ac()
+    await userEvent.type(kutu(), 'yilmaz')
+    await screen.findByText(/aramayı daraltın/i)
+
+    await userEvent.clear(kutu())
+    await userEvent.type(kutu(), 'demir')
+    await waitFor(() => expect(screen.queryByText(/aramayı daraltın/i)).toBeNull())
   })
 })
 
@@ -412,8 +437,10 @@ describe('HizliArama — gizlilik', () => {
       expect(kod).not.toContain('ozel-not')
       expect(kod).not.toContain('private_notes')
       // ARTI YÖN: yorum ayıklama kodu boşaltmadı (boş bir dizgi yukarıdaki
-      // üç iddiayı da geçerdi).
-      expect(kod).toContain('ARAMA_SINIRI')
+      // üç iddiayı da geçerdi). Sentinel olarak `kirpildi` seçildi: hem
+      // kod bölümünde geçiyor hem de bu bileşenin sunucudan gelen
+      // kırpılma işaretini gerçekten okuduğunu söylüyor.
+      expect(kod).toContain('kirpildi')
       expect(kod).toContain('export function HizliArama')
     })
   })

@@ -1703,7 +1703,10 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
       const notlar = notYaniti(yol, method, null)
       if (notlar) return notlar
 
-      if (yol.startsWith('/api/ara')) return jsonYanit(aramaSonuclari)
+      // Yanit sekli sunucunun `AramaYaniti`si: ciplak dizi DEGIL.
+      if (yol.startsWith('/api/ara')) {
+        return jsonYanit({ sonuclar: aramaSonuclari, kirpildi: false })
+      }
 
       // Ek SILME: sunucu satiri gercekten kaldiriyor, boylece "kart
       // yeniden cekildi mi" iddiasi ekrandan olculebiliyor.

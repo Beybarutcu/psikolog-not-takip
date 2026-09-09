@@ -182,14 +182,35 @@ export type AramaSonucu = {
 }
 
 /**
+ * `GET /api/ara` yanıtı (sunucudaki `AramaYaniti`).
+ *
+ * Çıplak dizi DEĞİL: `kirpildi` olmadan "sonuç yok" ile "sonuç kırpıldı"
+ * ayırt edilemiyordu. Bütçe paylaştırması sessiz kaybı hafifletti ama
+ * kaldırmadı — 61 danışan eşleşirse 12'si hâlâ düşer ve terapist var olan
+ * bir notu bulamadığını fark etmezdi.
+ *
+ * `kirpildi` sunucuda **ölçülür** (her iki sorgu `LIMIT sinir + 1` ile
+ * çalışır), istemcide tahmin edilmez.
+ */
+export type AramaYaniti = {
+  sonuclar: AramaSonucu[]
+  /** Eşleşen en az bir kayıt daha var ama sınıra sığmadı. */
+  kirpildi: boolean
+}
+
+/**
  * Bir aramanın döndürebileceği en fazla sonuç — sunucudaki `AZAMI_SONUC`.
  *
  * Sunucu `limit`i `1..=50` aralığına kırpıyor; daha büyük bir sayı göndermek
- * sessizce 50'ye düşerdi. Değerin burada da yazılı olmasının nedeni yalnızca
- * istek kurmak değil: `/api/ara` yanıtı **"daha fazla sonuç var" işareti
- * taşımıyor** (Görev 6'nın bilinen boşluğu; bütçe paylaştırması sessiz kaybı
- * hafifletti, kaldırmadı). Arayüzün "sonuç sayısı == sınır" durumunu
- * ölçebilmesi için sınırı bilmesi gerekiyor.
+ * sessizce 50'ye düşerdi, bu yüzden istek bu değerle kurulur.
+ *
+ * # Eskiden bir de "kırpılma sezgisi" için kullanılıyordu; ARTIK DEĞİL
+ *
+ * `/api/ara` yanıtı kırpılma işareti taşımadığı için arayüz
+ * "sonuç sayısı == sınır" diye tahmin yürütüyordu. O sezgi **iki yönde de
+ * yanlıştı**: tam 50 eşleşmede (hiçbiri düşmemişken) uyarıyor, iki kipin
+ * bütçesi ayrı ayrı dolduğunda (toplam 50'nin altındayken de düşen eşleşme
+ * varken) uyarmıyordu. Bugün karar sunucudan gelen `kirpildi` alanına ait.
  */
 export const ARAMA_SINIRI = 50
 
@@ -648,7 +669,7 @@ export const danisanApi = {
  */
 export const aramaApi = {
   ara: (sorgu: string) =>
-    istek<AramaSonucu[]>(`/api/ara?q=${encodeURIComponent(sorgu)}&limit=${ARAMA_SINIRI}`),
+    istek<AramaYaniti>(`/api/ara?q=${encodeURIComponent(sorgu)}&limit=${ARAMA_SINIRI}`),
 }
 
 /** `POST /api/yedekler` yanıtındaki tek yedek (sunucudaki `YedekOzeti`). */

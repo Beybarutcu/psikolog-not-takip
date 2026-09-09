@@ -115,6 +115,24 @@
 //! **yapısal olarak** sınırlanır (sondan `truncate` değil): iki sorgu da
 //! `LIMIT` dolusu satır döndürdüğünde bile üst sınır aşılamaz.
 //!
+//! ## Kırpılma SESSİZ değil: `AramaYaniti::kirpildi`
+//!
+//! Bütçe paylaştırması sessiz kaybı **hafifletti, kaldırmadı**: 61 danışan
+//! eşleşirse 12'si hâlâ düşer. Terapist "bu kadarmış" sanar ve var olan bir
+//! notu bulamadığını fark etmez. Bu yüzden yanıt artık `kirpildi` bayrağı
+//! taşıyor ve arayüz kullanıcıyı aramayı **daraltmaya** yönlendiriyor.
+//!
+//! Bayrak bir tahmin **değil**, ölçüm: her iki sorgu da `LIMIT sinir + 1`
+//! ile çalışır. Fazladan gelen satır bütçeye katılmaz, yalnızca "en az bir
+//! eşleşme daha var" demektir. "Sonuç sayısı == sınır" biçimindeki
+//! *istemci* sezgisi (Görev 6'dan kalan geçici çözüm) tam 50 eşleşmede
+//! **yanlış** uyarır ve iki kipin bütçesi ayrı ayrı dolduğunda uyarmayı
+//! **kaçırır**; bu bayrak ikisini de düzeltir.
+//!
+//! **Sonuç sayısı ve kırpılma bilgisi LOGA YAZILMAZ** (bkz. yukarıdaki
+//! "arama terimi erişim loguna asla yazılmaz"): bu, yalnızca gövde
+//! meselesidir. `kaydet` çağrısı `kirpildi`'yı görmez bile.
+//!
 //! Sıralama sözleşmesi: önce danışanlar (ada göre, `COLLATE NOCASE`), sonra
 //! notlar (en yeni seanstan en eskiye). `LIMIT` her sorgunun **içinde**
 //! olduğu için sıralama hangi satırların hayatta kalacağını da belirler —
@@ -269,6 +287,29 @@ impl std::fmt::Debug for AramaSonucu {
     }
 }
 
+/// Bir aramanın tam yanıtı: sonuçlar **ve** listenin kırpılıp
+/// kırpılmadığı.
+///
+/// # Neden çıplak `Vec` değil
+///
+/// Çıplak bir liste "sonuç yok" ile "sonuç kırpıldı"yı ayırt edilemez
+/// kılıyordu; bütçe paylaştırması bu kaybı hafifletti ama kaldırmadı (bkz.
+/// modül başlığı). Arayüz kullanıcıyı ancak gerçek bir işaretle aramayı
+/// daraltmaya yönlendirebilir.
+///
+/// `Debug` **türetiliyor** ve bu güvenli: `sonuclar`ın öğeleri
+/// `AramaSonucu`'nun ELLE yazılmış `Debug`'ından geçer (danışan adı, tarih
+/// ve not parçası `<gizli>` basılır), `kirpildi` ise bir `bool`.
+#[derive(Clone, Debug, Serialize)]
+pub struct AramaYaniti {
+    pub sonuclar: Vec<AramaSonucu>,
+    /// Eşleşen en az bir kayıt daha var ama sınıra sığmadı.
+    ///
+    /// Bir tahmin değil ölçüm: sorgular `LIMIT sinir + 1` ile çalışır ve
+    /// fazladan gelen satır yalnızca bu bayrağı besler.
+    pub kirpildi: bool,
+}
+
 /// Türkçe harf katlaması — **1:1**, her karakter tam olarak bir karaktere
 /// gider (bkz. modül başlığı; `parca_cikar` bu değişmezliğe dayanır).
 ///
@@ -370,21 +411,26 @@ pub fn ara(
     sorgu: &str,
     limit: i64,
     cihaz: Cihaz,
-) -> Result<Vec<AramaSonucu>, DepoHatasi> {
+) -> Result<AramaYaniti, DepoHatasi> {
     let katli_sorgu = katla(sorgu.trim());
     // Once kontrol, SONRA log: cok kisa bir sorgu silinemez bir satir
     // birakmasin (bkz. modul basligi).
     if katli_sorgu.chars().count() < ASGARI_SORGU {
-        return Ok(Vec::new());
+        return Ok(AramaYaniti { sonuclar: Vec::new(), kirpildi: false });
     }
 
     let desen = like_deseni(&katli_sorgu);
     // -1 SQLite'ta "sinirsiz" demektir; alt uctan da kirpiyoruz.
     let sinir = limit.clamp(1, AZAMI_SONUC);
+    // BIR FAZLASINI iste. Fazladan gelen satir hicbir zaman kullaniciya
+    // gosterilmez; yalnizca "en az bir eslesme daha var" demektir ve
+    // `kirpildi`yi besler. Tahmin degil olcum: "sonuc sayisi == sinir"
+    // sezgisi tam sinirdaki bir aramada YANLIS uyarirdi.
+    let yoklama_siniri = sinir.saturating_add(1);
 
     let mut stmt = conn.prepare(SORGU_DANISAN)?;
     let danisanlar = stmt
-        .query_map(rusqlite::params![desen, sinir], |r| {
+        .query_map(rusqlite::params![desen, yoklama_siniri], |r| {
             Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -392,7 +438,7 @@ pub fn ara(
 
     let mut stmt = conn.prepare(SORGU_NOT)?;
     let notlar = stmt
-        .query_map(rusqlite::params![desen, sinir], |r| {
+        .query_map(rusqlite::params![desen, yoklama_siniri], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 r.get::<_, i64>(1)?,
@@ -418,8 +464,19 @@ pub fn ara(
     // saglanir (sondan kirpmaya guvenilmez).
     let toplam = sinir as usize;
     let taban = toplam / 2;
-    let danisan_payi = danisanlar.len().min(toplam - notlar.len().min(taban));
-    let not_payi = notlar.len().min(toplam - danisan_payi);
+    // BULUNAN sayilar `sinir + 1`e kadar cikabilir (yoklama satiri). Butce
+    // hesabi ESKISI GIBI, yani `sinir`e KIRPILMIS sayilar uzerinden
+    // yapilir; yoklama satiri paylastirmayi etkilemez.
+    let danisan_bulunan = danisanlar.len();
+    let not_bulunan = notlar.len();
+    let danisan_sigan = danisan_bulunan.min(toplam);
+    let not_sigan = not_bulunan.min(toplam);
+    let danisan_payi = danisan_sigan.min(toplam - not_sigan.min(taban));
+    let not_payi = not_sigan.min(toplam - danisan_payi);
+    // Kirpilma, KIPLERIN HERHANGI BIRINDE dusen bir eslesme olmasidir --
+    // "toplam == sinir" degil. Iki kip de kendi payini asmissa da, tek kip
+    // bolluk yapip digerini bastirmissa da dogru cevabi verir.
+    let kirpildi = danisan_bulunan > danisan_payi || not_bulunan > not_payi;
 
     let mut sonuclar: Vec<AramaSonucu> = Vec::with_capacity(danisan_payi + not_payi);
 
@@ -448,9 +505,10 @@ pub fn ara(
         });
     }
 
-    // Sorgu metni, sonuc sayisi ve danisan kimligi loga GIRMEZ; yalnizca
-    // "bu cihazdan arama yapildi" bilgisi yazilir ve pencere boyunca
-    // birlestirilir (bkz. modul basligi).
+    // Sorgu metni, sonuc sayisi, KIRPILMA ISARETI ve danisan kimligi loga
+    // GIRMEZ; yalnizca "bu cihazdan arama yapildi" bilgisi yazilir ve
+    // pencere boyunca birlestirilir (bkz. modul basligi). `kirpildi` bu
+    // cagriya hicbir bicimde gecmiyor.
     kaydet(
         conn,
         Eylem::Goruntuleme,
@@ -461,7 +519,7 @@ pub fn ara(
         LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK),
     )?;
 
-    Ok(sonuclar)
+    Ok(AramaYaniti { sonuclar, kirpildi })
 }
 
 #[cfg(test)]
@@ -529,6 +587,19 @@ mod tests {
         .id
     }
 
+    /// Testlerin cogu yalnizca SONUC LISTESIYLE ilgileniyor. Kirpilma
+    /// isaretini olcen testler `ara`yi DOGRUDAN cagirir (bkz.
+    /// `kirpilma_isareti_*`), yani bu yardimci bayragi gizlemiyor --
+    /// yalnizca onunla ilgilenmeyen cagrilari kisaltiyor.
+    fn sonuclar_of(
+        c: &rusqlite::Connection,
+        sorgu: &str,
+        limit: i64,
+        cihaz: Cihaz,
+    ) -> Result<Vec<AramaSonucu>, DepoHatasi> {
+        Ok(ara(c, sorgu, limit, cihaz)?.sonuclar)
+    }
+
     fn arama_log_sayisi(c: &rusqlite::Connection) -> i64 {
         c.query_row(
             "SELECT COUNT(*) FROM audit_log WHERE varlik = ?1",
@@ -543,7 +614,7 @@ mod tests {
     #[test]
     fn danisan_adiyla_bulunur() {
         let (_d, c, _cid, _rid) = kurulum();
-        let sonuclar = ara(&c, "Ayse", 20, Cihaz::Masaustu).unwrap();
+        let sonuclar = sonuclar_of(&c, "Ayse", 20, Cihaz::Masaustu).unwrap();
         assert!(sonuclar.iter().any(|s| s.tur == "danisan"));
     }
 
@@ -552,7 +623,7 @@ mod tests {
         let (_d, c, _cid, rid) = kurulum();
         not_kaydet(&c, rid, "dap", "Danisan sinav kaygisindan bahsetti.", Cihaz::Masaustu).unwrap();
 
-        let sonuclar = ara(&c, "kaygi", 20, Cihaz::Masaustu).unwrap();
+        let sonuclar = sonuclar_of(&c, "kaygi", 20, Cihaz::Masaustu).unwrap();
         let not_sonucu = sonuclar.iter().find(|s| s.tur == "not").expect("not bulunmali");
         assert!(not_sonucu.parca.contains("kaygi"), "eslesme parcasi dondurulmeli");
         assert_eq!(not_sonucu.danisan_adi, "Ayse Yilmaz");
@@ -563,7 +634,7 @@ mod tests {
         let (_d, c, _cid, rid) = kurulum();
         ozel_not_kaydet(&c, rid, "GIZLI_HIPOTEZ_KAYGI", Cihaz::Masaustu).unwrap();
 
-        let sonuclar = ara(&c, "GIZLI_HIPOTEZ", 20, Cihaz::Masaustu).unwrap();
+        let sonuclar = sonuclar_of(&c, "GIZLI_HIPOTEZ", 20, Cihaz::Masaustu).unwrap();
         assert!(sonuclar.is_empty(), "ozel not aramada cikmamali");
     }
 
@@ -571,14 +642,14 @@ mod tests {
     fn buyuk_kucuk_harf_ve_turkce_karakter_tolere_edilir() {
         let (_d, c, _cid, rid) = kurulum();
         not_kaydet(&c, rid, "dap", "Danışan KAYGI yaşıyor.", Cihaz::Masaustu).unwrap();
-        assert!(!ara(&c, "kaygi", 20, Cihaz::Masaustu).unwrap().is_empty());
+        assert!(!sonuclar_of(&c, "kaygi", 20, Cihaz::Masaustu).unwrap().is_empty());
     }
 
     #[test]
     fn bos_veya_cok_kisa_sorgu_bos_doner() {
         let (_d, c, _cid, _rid) = kurulum();
-        assert!(ara(&c, "", 20, Cihaz::Masaustu).unwrap().is_empty());
-        assert!(ara(&c, "a", 20, Cihaz::Masaustu).unwrap().is_empty());
+        assert!(sonuclar_of(&c, "", 20, Cihaz::Masaustu).unwrap().is_empty());
+        assert!(sonuclar_of(&c, "a", 20, Cihaz::Masaustu).unwrap().is_empty());
     }
 
     #[test]
@@ -586,14 +657,14 @@ mod tests {
         let (_d, c, _cid, rid) = kurulum();
         not_kaydet(&c, rid, "dap", "normal icerik", Cihaz::Masaustu).unwrap();
         // "%" LIKE'ta her seyi eslestirir; kacirilmazsa tum notlar doner.
-        assert!(ara(&c, "%%", 20, Cihaz::Masaustu).unwrap().is_empty());
+        assert!(sonuclar_of(&c, "%%", 20, Cihaz::Masaustu).unwrap().is_empty());
     }
 
     #[test]
     fn arama_sorgusu_erisim_loguna_icerik_yazmaz() {
         let (_d, c, _cid, rid) = kurulum();
         not_kaydet(&c, rid, "dap", "COK_GIZLI", Cihaz::Masaustu).unwrap();
-        ara(&c, "COK_GIZLI", 20, Cihaz::Masaustu).unwrap();
+        sonuclar_of(&c, "COK_GIZLI", 20, Cihaz::Masaustu).unwrap();
 
         for kayit in crate::store::audit::son_kayitlar(&c, 50).unwrap() {
             let hepsi = format!("{} {:?}", kayit.varlik_id, kayit.ayrinti);
@@ -614,7 +685,7 @@ mod tests {
         // yuzden `varlik_id` sabit degerin TAM ESITI olmali.
         let (_d, c, _cid, rid) = kurulum();
         not_kaydet(&c, rid, "dap", "COK_GIZLI_TERIM notu", Cihaz::Masaustu).unwrap();
-        let sonuclar = ara(&c, "COK_GIZLI_TERIM", 20, Cihaz::Masaustu).unwrap();
+        let sonuclar = sonuclar_of(&c, "COK_GIZLI_TERIM", 20, Cihaz::Masaustu).unwrap();
         assert_eq!(sonuclar.len(), 1, "on kosul: arama gercekten bir sey bulmali");
 
         let kayitlar = crate::store::audit::son_kayitlar(&c, 50).unwrap();
@@ -661,7 +732,7 @@ mod tests {
         not_kaydet(&c, rid, "dap", "PAYLASILAN_ISARET resmi notta", Cihaz::Masaustu).unwrap();
         ozel_not_kaydet(&c, r2, "PAYLASILAN_ISARET ozel notta", Cihaz::Masaustu).unwrap();
 
-        let sonuclar = ara(&c, "PAYLASILAN_ISARET", 20, Cihaz::Masaustu).unwrap();
+        let sonuclar = sonuclar_of(&c, "PAYLASILAN_ISARET", 20, Cihaz::Masaustu).unwrap();
         assert_eq!(sonuclar.len(), 1, "tam olarak bir sonuc beklenir: {sonuclar:?}");
         assert_eq!(sonuclar[0].tur, "not");
         assert_eq!(sonuclar[0].appointment_id, Some(rid));
@@ -849,10 +920,10 @@ mod tests {
         not_kaydet(&c, r2, "dap", "sinav kaygisi ISARET_B", Cihaz::Masaustu).unwrap();
 
         // ASCII sorgu -> Turkce metin
-        let a = ara(&c, "sinav kaygi", 20, Cihaz::Masaustu).unwrap();
+        let a = sonuclar_of(&c, "sinav kaygi", 20, Cihaz::Masaustu).unwrap();
         assert!(a.iter().any(|s| s.parca.contains("ISARET_A")), "ASCII sorgu Turkce metni bulmali: {a:?}");
         // Turkce sorgu -> ASCII metin
-        let b = ara(&c, "sınav kaygı", 20, Cihaz::Masaustu).unwrap();
+        let b = sonuclar_of(&c, "sınav kaygı", 20, Cihaz::Masaustu).unwrap();
         assert!(b.iter().any(|s| s.parca.contains("ISARET_B")), "Turkce sorgu ASCII metni bulmali: {b:?}");
         // Her iki yonde de IKI not birden bulunmali.
         assert_eq!(a.len(), 2);
@@ -875,8 +946,8 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(ara(&c, "ipek sahin", 20, Cihaz::Masaustu).unwrap().len(), 2);
-        assert_eq!(ara(&c, "İPEK ŞAHİN", 20, Cihaz::Masaustu).unwrap().len(), 2);
+        assert_eq!(sonuclar_of(&c, "ipek sahin", 20, Cihaz::Masaustu).unwrap().len(), 2);
+        assert_eq!(sonuclar_of(&c, "İPEK ŞAHİN", 20, Cihaz::Masaustu).unwrap().len(), 2);
     }
 
     /// Katlanan HER harf ve ASCII karsiligi.
@@ -931,7 +1002,7 @@ mod tests {
             }
 
             let ascii_sorgu = format!("sqlkatla{ascii}z kayit{sira:02}");
-            let bulunan = ara(&c, &ascii_sorgu, AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+            let bulunan = sonuclar_of(&c, &ascii_sorgu, AZAMI_SONUC, Cihaz::Masaustu).unwrap();
             assert!(
                 bulunan.iter().any(|s| s.tur == "danisan" && s.danisan_adi == turkce_ad),
                 "SQL katlamasi '{harf}' -> '{ascii}' halkasi calismiyor: \
@@ -939,7 +1010,7 @@ mod tests {
             );
 
             let turkce_sorgu = format!("rustkatla{harf}z kayit{sira:02}");
-            let bulunan = ara(&c, &turkce_sorgu, AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+            let bulunan = sonuclar_of(&c, &turkce_sorgu, AZAMI_SONUC, Cihaz::Masaustu).unwrap();
             assert!(
                 bulunan.iter().any(|s| s.tur == "danisan" && s.danisan_adi == ascii_ad),
                 "katla_karakter '{harf}' -> '{ascii}' kolu calismiyor: \
@@ -961,7 +1032,7 @@ mod tests {
             not_kaydet(&c, r, "dap", &icerik, Cihaz::Masaustu).unwrap();
 
             let ascii_sorgu = format!("sqlkatla{ascii}z");
-            let bulunan = ara(&c, &ascii_sorgu, AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+            let bulunan = sonuclar_of(&c, &ascii_sorgu, AZAMI_SONUC, Cihaz::Masaustu).unwrap();
             assert!(
                 bulunan
                     .iter()
@@ -971,7 +1042,7 @@ mod tests {
             );
 
             let turkce_sorgu = format!("rustkatla{harf}z");
-            let bulunan = ara(&c, &turkce_sorgu, AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+            let bulunan = sonuclar_of(&c, &turkce_sorgu, AZAMI_SONUC, Cihaz::Masaustu).unwrap();
             assert!(
                 bulunan
                     .iter()
@@ -1004,12 +1075,12 @@ mod tests {
         let (_d, c, _cid, rid) = kurulum();
         not_kaydet(&c, rid, "dap", "normal icerik", Cihaz::Masaustu).unwrap();
         assert!(
-            ara(&c, "n_rmal", 20, Cihaz::Masaustu).unwrap().is_empty(),
+            sonuclar_of(&c, "n_rmal", 20, Cihaz::Masaustu).unwrap().is_empty(),
             "_ joker karakter olarak yorumlanmis"
         );
         // ARTI YON: gercek metin hala bulunuyor -- yukaridaki bos sonuc
         // "arama hic calismiyor"dan degil, kacirmadan geliyor.
-        assert!(!ara(&c, "normal", 20, Cihaz::Masaustu).unwrap().is_empty());
+        assert!(!sonuclar_of(&c, "normal", 20, Cihaz::Masaustu).unwrap().is_empty());
     }
 
     #[test]
@@ -1018,7 +1089,7 @@ mod tests {
         // bulunmali.
         let (_d, c, _cid, rid) = kurulum();
         not_kaydet(&c, rid, "dap", "iyilesme %40 civarinda", Cihaz::Masaustu).unwrap();
-        let sonuclar = ara(&c, "%40", 20, Cihaz::Masaustu).unwrap();
+        let sonuclar = sonuclar_of(&c, "%40", 20, Cihaz::Masaustu).unwrap();
         assert_eq!(sonuclar.len(), 1, "literal % aranabilmeli: {sonuclar:?}");
     }
 
@@ -1038,7 +1109,7 @@ mod tests {
             let r = randevu_ekle(&c, cid, &gun(i));
             not_kaydet(&c, r, "dap", "ORTAKKELIME notu", Cihaz::Masaustu).unwrap();
         }
-        let sonuclar = ara(&c, "ORTAKKELIME", 10_000, Cihaz::Masaustu).unwrap();
+        let sonuclar = sonuclar_of(&c, "ORTAKKELIME", 10_000, Cihaz::Masaustu).unwrap();
         assert_eq!(sonuclar.len(), 50);
         assert_eq!(sonuclar.len(), AZAMI_SONUC as usize);
     }
@@ -1052,9 +1123,9 @@ mod tests {
             not_kaydet(&c, r, "dap", "ORTAKKELIME notu", Cihaz::Masaustu).unwrap();
         }
         // On kosul: sinirsiz olsaydi 10 sonuc donerdi.
-        assert_eq!(ara(&c, "ORTAKKELIME", 50, Cihaz::Masaustu).unwrap().len(), 10);
-        assert_eq!(ara(&c, "ORTAKKELIME", -1, Cihaz::Masaustu).unwrap().len(), 1);
-        assert_eq!(ara(&c, "ORTAKKELIME", 0, Cihaz::Masaustu).unwrap().len(), 1);
+        assert_eq!(sonuclar_of(&c, "ORTAKKELIME", 50, Cihaz::Masaustu).unwrap().len(), 10);
+        assert_eq!(sonuclar_of(&c, "ORTAKKELIME", -1, Cihaz::Masaustu).unwrap().len(), 1);
+        assert_eq!(sonuclar_of(&c, "ORTAKKELIME", 0, Cihaz::Masaustu).unwrap().len(), 1);
     }
 
     // --- Siralama bir sozlesmedir ------------------------------------------
@@ -1079,7 +1150,7 @@ mod tests {
         not_kaydet(&c, eski, "dap", "SIRALIOK eski", Cihaz::Masaustu).unwrap();
         not_kaydet(&c, yeni, "dap", "SIRALIOK yeni", Cihaz::Masaustu).unwrap();
 
-        let sonuclar = ara(&c, "SIRALIOK", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        let sonuclar = sonuclar_of(&c, "SIRALIOK", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
         let sira: Vec<Option<i64>> = sonuclar.iter().map(|s| s.appointment_id).collect();
         assert_eq!(
             sira,
@@ -1104,7 +1175,7 @@ mod tests {
             .unwrap();
         }
 
-        let sonuclar = ara(&c, "ADSIRA", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        let sonuclar = sonuclar_of(&c, "ADSIRA", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
         let adlar: Vec<&str> = sonuclar.iter().map(|s| s.danisan_adi.as_str()).collect();
         assert_eq!(adlar, vec!["Alfa ADSIRA", "beta ADSIRA", "Zeta ADSIRA"]);
     }
@@ -1122,7 +1193,7 @@ mod tests {
             let r = randevu_ekle(&c, cid, &gun(i));
             not_kaydet(&c, r, "dap", "KESILENSIRA notu", Cihaz::Masaustu).unwrap();
         }
-        let notlar = ara(&c, "KESILENSIRA", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        let notlar = sonuclar_of(&c, "KESILENSIRA", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
         assert_eq!(notlar.len(), 50);
         let tarihler: Vec<String> = notlar.iter().map(|s| s.tarih.clone().unwrap()).collect();
         let mut azalan = tarihler.clone();
@@ -1154,7 +1225,7 @@ mod tests {
             )
             .unwrap();
         }
-        let danisanlar = ara(&c2, "KESILENAD", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        let danisanlar = sonuclar_of(&c2, "KESILENAD", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
         let adlar: Vec<&str> = danisanlar.iter().map(|s| s.danisan_adi.as_str()).collect();
         let beklenen: Vec<String> = (0..50).map(|i| format!("K{i:02} KESILENAD")).collect();
         assert_eq!(adlar, beklenen.iter().map(String::as_str).collect::<Vec<_>>());
@@ -1183,7 +1254,7 @@ mod tests {
         // ...ve ayni terimi iceren TEK bir not.
         not_kaydet(&c, rid, "dap", "Seansta ORTAKAD gecti.", Cihaz::Masaustu).unwrap();
 
-        let sonuclar = ara(&c, "ORTAKAD", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        let sonuclar = sonuclar_of(&c, "ORTAKAD", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
         let danisan_sayisi = sonuclar.iter().filter(|s| s.tur == "danisan").count();
         let not_sayisi = sonuclar.iter().filter(|s| s.tur == "not").count();
 
@@ -1216,10 +1287,133 @@ mod tests {
             not_kaydet(&c, r, "dap", "CIFTKIP notu", Cihaz::Masaustu).unwrap();
         }
 
-        let sonuclar = ara(&c, "CIFTKIP", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        let sonuclar = sonuclar_of(&c, "CIFTKIP", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
         assert_eq!(sonuclar.len(), 50, "toplam ust sinir asilmamali (2x50 degil)");
         assert_eq!(sonuclar.iter().filter(|s| s.tur == "danisan").count(), 25);
         assert_eq!(sonuclar.iter().filter(|s| s.tur == "not").count(), 25);
+    }
+
+    // --- Kirpilma isareti: bilinen bosluk kapaniyor --------------------
+    //
+    // Butce paylastirmasi sessiz kaybi HAFIFLETTI, kaldirmadi: 61 danisan
+    // eslesirse 12'si hala duser ve cagiran bunu hicbir yerden ogrenemezdi.
+    // Asagidaki testler `kirpildi`'yi IKI YONLU sabitler -- "hep true don"
+    // ve "hep false don" mutasyonlarinin ikisi de kirilir.
+
+    #[test]
+    fn kirpilma_isareti_dusen_eslesme_varken_dogrudur() {
+        let (_d, c, _cid, rid) = kurulum();
+        for i in 0..61 {
+            danisan_ekle(
+                &c,
+                &YeniDanisan { ad_soyad: format!("KIRPIK Danisan {i:02}"), telefon: None },
+                Cihaz::Masaustu,
+            )
+            .unwrap();
+        }
+        not_kaydet(&c, rid, "dap", "Seansta KIRPIK gecti.", Cihaz::Masaustu).unwrap();
+
+        let yanit = ara(&c, "KIRPIK", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        assert_eq!(yanit.sonuclar.len(), 50, "on kosul: liste gercekten dolmali");
+        assert!(yanit.kirpildi, "61 danisan + 1 not, sinir 50: dusen eslesme VAR");
+    }
+
+    #[test]
+    fn kirpilma_isareti_TAM_sinirdaki_aramada_yanlis_uyarmaz() {
+        // ARAYUZUN ESKI SEZGISININ (`sonuc sayisi == sinir`) YANLIS oldugu
+        // durum: tam olarak `sinir` kadar eslesme var ve HICBIRI dusmedi.
+        // Sezgi burada "daha fazlasi olabilir" derdi; bayrak demez.
+        //
+        // MUTASYON: `LIMIT sinir + 1` yerine `LIMIT sinir` yazip
+        // `kirpildi = sonuclar.len() == toplam` demek -> bu test kirilir.
+        let (_d, c, cid, _rid) = kurulum();
+        for i in 0..AZAMI_SONUC {
+            let r = randevu_ekle(&c, cid, &gun(i as usize));
+            not_kaydet(&c, r, "dap", &format!("TAMSINIR notu {i}"), Cihaz::Masaustu).unwrap();
+        }
+
+        let yanit = ara(&c, "TAMSINIR", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        assert_eq!(yanit.sonuclar.len(), AZAMI_SONUC as usize, "on kosul: liste tam dolmali");
+        assert!(!yanit.kirpildi, "tam sinirdaki arama kirpilmis SAYILMAMALI");
+
+        // Ve BIR TANE daha eklenince bayrak donmeli (iki yon ayni kurulumda).
+        let r = randevu_ekle(&c, cid, &gun(AZAMI_SONUC as usize));
+        not_kaydet(&c, r, "dap", "TAMSINIR notu fazladan", Cihaz::Masaustu).unwrap();
+        let yanit = ara(&c, "TAMSINIR", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        assert_eq!(yanit.sonuclar.len(), AZAMI_SONUC as usize);
+        assert!(yanit.kirpildi, "sinirin bir fazlasi kirpilma olarak bildirilmeli");
+    }
+
+    #[test]
+    fn kirpilma_isareti_az_sonucta_ve_bos_sonucta_kapalidir() {
+        // "Hep true don" mutasyonunu yakalar: her aramada uyaran bir arayuz
+        // uyariyi anlamsizlastirir.
+        let (_d, c, _cid, rid) = kurulum();
+        not_kaydet(&c, rid, "dap", "AZSONUC notu", Cihaz::Masaustu).unwrap();
+
+        let dolu = ara(&c, "AZSONUC", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        assert_eq!(dolu.sonuclar.len(), 1, "on kosul: tek sonuc donmeli");
+        assert!(!dolu.kirpildi);
+
+        let bos = ara(&c, "HICBIRSEYEUYMAZ", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        assert!(bos.sonuclar.is_empty());
+        assert!(!bos.kirpildi, "sonuc yoksa kirpilma da yoktur");
+
+        let kisa = ara(&c, "a", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        assert!(kisa.sonuclar.is_empty());
+        assert!(!kisa.kirpildi, "cok kisa sorgu kirpilmis sayilmamali");
+    }
+
+    #[test]
+    fn kirpilma_isareti_kip_bazinda_dusen_eslesmeyi_de_gorur() {
+        // Toplam sinira DAYANMAYAN kayip: her iki kip de bol, bütçe 25/25
+        // paylasiliyor ve her kipten 26+ eslesme duşuyor. "Toplam == sinir"
+        // sezgisi bunu ancak tesadufen yakalardi; bayrak kip bazinda bakiyor.
+        let (_d, c, cid, _rid) = kurulum();
+        for i in 0..30 {
+            danisan_ekle(
+                &c,
+                &YeniDanisan { ad_soyad: format!("IKIKIP Danisan {i:02}"), telefon: None },
+                Cihaz::Masaustu,
+            )
+            .unwrap();
+            let r = randevu_ekle(&c, cid, &gun(i));
+            not_kaydet(&c, r, "dap", "IKIKIP notu", Cihaz::Masaustu).unwrap();
+        }
+
+        let yanit = ara(&c, "IKIKIP", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        assert_eq!(yanit.sonuclar.len(), 50);
+        assert_eq!(yanit.sonuclar.iter().filter(|s| s.tur == "danisan").count(), 25);
+        assert_eq!(yanit.sonuclar.iter().filter(|s| s.tur == "not").count(), 25);
+        assert!(yanit.kirpildi, "her iki kipten de 5'er eslesme dustu");
+    }
+
+    #[test]
+    fn kirpilma_isareti_loga_YAZILMAZ() {
+        // Sonuc sayisi gibi kirpilma bilgisi de `audit_log`a girmez: art
+        // arda aramalarla bir terimin varligini sizdirirdi ve satirlar
+        // SILINEMEZ. Bu yalnizca govde meselesidir.
+        let (_d, c, _cid, rid) = kurulum();
+        for i in 0..61 {
+            danisan_ekle(
+                &c,
+                &YeniDanisan { ad_soyad: format!("LOGKIRPIK {i:02}"), telefon: None },
+                Cihaz::Masaustu,
+            )
+            .unwrap();
+        }
+        not_kaydet(&c, rid, "dap", "LOGKIRPIK notu", Cihaz::Masaustu).unwrap();
+
+        let yanit = ara(&c, "LOGKIRPIK", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        assert!(yanit.kirpildi, "on kosul: bu arama gercekten kirpilmali");
+
+        for kayit in crate::store::audit::son_kayitlar(&c, 200).unwrap() {
+            if kayit.varlik != VARLIK_ARAMA {
+                continue;
+            }
+            assert_eq!(kayit.varlik_id, VARLIK_ID_ARAMA, "kirpilma varlik_id'ye sizmis");
+            assert!(kayit.ayrinti.is_none(), "kirpilma ayrintiya sizmis: {:?}", kayit.ayrinti);
+        }
     }
 
     #[test]
@@ -1228,7 +1422,7 @@ mod tests {
         let uzun = format!("{} HEDEFKELIME {}", "a".repeat(500), "b".repeat(500));
         not_kaydet(&c, rid, "dap", &uzun, Cihaz::Masaustu).unwrap();
 
-        let sonuclar = ara(&c, "HEDEFKELIME", 20, Cihaz::Masaustu).unwrap();
+        let sonuclar = sonuclar_of(&c, "HEDEFKELIME", 20, Cihaz::Masaustu).unwrap();
         assert_eq!(sonuclar.len(), 1);
         let parca = &sonuclar[0].parca;
         assert!(parca.contains("HEDEFKELIME"), "eslesme parcada olmali: {parca}");
@@ -1264,16 +1458,16 @@ mod tests {
         not_kaydet(&c, rid, "dap", "kaygi notu", Cihaz::Masaustu).unwrap();
 
         assert_eq!(arama_log_sayisi(&c), 0, "on kosul: henuz arama yapilmadi");
-        ara(&c, "kaygi", 20, Cihaz::Masaustu).unwrap();
+        sonuclar_of(&c, "kaygi", 20, Cihaz::Masaustu).unwrap();
         assert_eq!(arama_log_sayisi(&c), 1, "arama loglanmali");
 
-        ara(&c, "kaygi", 20, Cihaz::Masaustu).unwrap();
-        ara(&c, "baska", 20, Cihaz::Masaustu).unwrap();
+        sonuclar_of(&c, "kaygi", 20, Cihaz::Masaustu).unwrap();
+        sonuclar_of(&c, "baska", 20, Cihaz::Masaustu).unwrap();
         assert_eq!(arama_log_sayisi(&c), 1, "pencere icinde tek satir kalmali");
 
         // Farkli CIHAZ ayri bir satirdir: log "hangi cihazdan" sorusunu
         // yanitlar (bkz. audit::son_kayit_yakin_mi).
-        ara(&c, "kaygi", 20, Cihaz::Telefon).unwrap();
+        sonuclar_of(&c, "kaygi", 20, Cihaz::Telefon).unwrap();
         assert_eq!(arama_log_sayisi(&c), 2, "telefon ayri bir satir yazmali");
     }
 
@@ -1314,7 +1508,7 @@ mod tests {
         eski_arama_satiri_ekle(&c, 10);
         assert_eq!(arama_log_sayisi(&c), 1, "on kosul: tek eski satir olmali");
 
-        ara(&c, "PENCERE", 20, Cihaz::Masaustu).unwrap();
+        sonuclar_of(&c, "PENCERE", 20, Cihaz::Masaustu).unwrap();
         assert_eq!(
             arama_log_sayisi(&c),
             2,
@@ -1324,7 +1518,7 @@ mod tests {
 
         // Pencere ICINDEKI satir ise susturur: ayni cagri hemen tekrar
         // edilince yeni satir YAZILMAZ. (Iki yon ayni testte.)
-        ara(&c, "PENCERE", 20, Cihaz::Masaustu).unwrap();
+        sonuclar_of(&c, "PENCERE", 20, Cihaz::Masaustu).unwrap();
         assert_eq!(arama_log_sayisi(&c), 2, "pencere icinde tek satir kalmali");
     }
 
@@ -1334,9 +1528,9 @@ mod tests {
         // SILINEMEZ bir satir birakirsa disaridan tetiklenebilir bir gurultu
         // yolu acilir.
         let (_d, c, _cid, _rid) = kurulum();
-        ara(&c, "", 20, Cihaz::Masaustu).unwrap();
-        ara(&c, "a", 20, Cihaz::Masaustu).unwrap();
-        ara(&c, "  ", 20, Cihaz::Masaustu).unwrap();
+        sonuclar_of(&c, "", 20, Cihaz::Masaustu).unwrap();
+        sonuclar_of(&c, "a", 20, Cihaz::Masaustu).unwrap();
+        sonuclar_of(&c, "  ", 20, Cihaz::Masaustu).unwrap();
         assert_eq!(arama_log_sayisi(&c), 0, "cok kisa sorgu log yazmamali");
     }
 
@@ -1368,7 +1562,7 @@ mod tests {
         )
         .unwrap();
 
-        let once = ara(&c, "TASINAN_NOT", 20, Cihaz::Masaustu).unwrap();
+        let once = sonuclar_of(&c, "TASINAN_NOT", 20, Cihaz::Masaustu).unwrap();
         assert_eq!(once[0].danisan_adi, "Ayse Yilmaz", "on kosul");
         assert_eq!(once[0].client_id, a_id);
 
@@ -1394,7 +1588,7 @@ mod tests {
             .unwrap();
         assert_eq!(kopya, a_id, "on kosul: kopya eskimis olmali");
 
-        let sonra = ara(&c, "TASINAN_NOT", 20, Cihaz::Masaustu).unwrap();
+        let sonra = sonuclar_of(&c, "TASINAN_NOT", 20, Cihaz::Masaustu).unwrap();
         assert_eq!(sonra.len(), 1);
         assert_eq!(sonra[0].client_id, b.id, "yetkili kaynak appointments olmali");
         assert_eq!(sonra[0].danisan_adi, "Mehmet Demir");
@@ -1405,7 +1599,7 @@ mod tests {
         // Dislayici `WHERE` deseni bu modulde YOK: arsiv kaydi da aranabilir.
         let (_d, c, cid, _rid) = kurulum();
         crate::store::clients::arsivle(&c, cid, Cihaz::Masaustu).unwrap();
-        assert!(ara(&c, "Ayse", 20, Cihaz::Masaustu)
+        assert!(sonuclar_of(&c, "Ayse", 20, Cihaz::Masaustu)
             .unwrap()
             .iter()
             .any(|s| s.tur == "danisan"));
@@ -1449,7 +1643,7 @@ mod tests {
         let (_d, c, _cid, rid) = kurulum();
         not_kaydet(&c, rid, "dap", "COK_GIZLI_NOT_PARCASI burada", Cihaz::Masaustu).unwrap();
 
-        let sonuc = ara(&c, "COK_GIZLI_NOT_PARCASI", 20, Cihaz::Masaustu);
+        let sonuc = sonuclar_of(&c, "COK_GIZLI_NOT_PARCASI", 20, Cihaz::Masaustu);
         let metin = format!("{sonuc:?}");
         assert!(
             !metin.contains("COK_GIZLI_NOT_PARCASI"),

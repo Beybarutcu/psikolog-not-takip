@@ -176,7 +176,19 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   // ANCAK O LİSTEDEN yapılır — ekranda görünmeyen bir randevuya bağlı bir
   // not editörü açmak, kaydı belirsiz bir kimliğe göndermek olurdu.
   // `ref`: `yukle`'nin bağımlılıklarını (dolayısıyla kimliğini) değiştirmesin.
-  const bekleyenSeansId = useRef<number | null>(null)
+  //
+  // Kimlikle birlikte HEDEF HAFTA da tutuluyor. Önceden yalnızca kimlik
+  // vardı ve `yukle` onu KOŞULSUZ tüketiyordu: "seansa git" sırasında
+  // uçuşta bir yükleme varsa (ilk mount, hafta oku, kayıt sonrası tazeleme)
+  // o ESKİ yükleme bekleyen kimliği tüketir, kendi haftasının listesinde
+  // hedefi bulamaz ve `null` seçerdi; ardından gelen doğru haftanın
+  // yüklemesi için tüketilecek bir şey kalmaz, gezinme SESSİZCE düşerdi.
+  // Kullanıcı arama sonucuna tıklar, hafta değişir, panel açılmaz.
+  //
+  // Hafta damgası bunu kapatıyor: bekleyen istek yalnızca HEDEF HAFTANIN
+  // yüklemesinde tüketilir. Damgayı `haftaBasi.getTime()` taşıyor —
+  // `haftaninBasi` saati sıfırladığı için hafta başına tek bir değer.
+  const bekleyenSeans = useRef<{ id: number; hafta: number } | null>(null)
 
   const yukle = useCallback(async () => {
     const gunler = haftaGunleri(haftaBasi)
@@ -202,10 +214,17 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
       // Her iki durumda da ekranda görünmeyen bir randevuya bağlı bir not
       // editörü açık tutmak, kaydı belirsiz bir kimliğe göndermek olurdu.
       //
-      // Aramadan bir seans istendiyse hedef O'dur: `bekleyenSeansId`
+      // Aramadan bir seans istendiyse hedef O'dur: `bekleyenSeans`
       // tüketilir ve seçim yeni listeden kurulur.
-      const bekleyen = bekleyenSeansId.current
-      bekleyenSeansId.current = null
+      //
+      // AMA yalnızca HEDEF HAFTANIN yüklemesi tüketebilir. Bu closure
+      // uçuşta kalmış eski bir haftaya ait olabilir; koşulsuz tüketmek
+      // gezinmeyi sessizce düşürürdü (bkz. `bekleyenSeans`).
+      const bekleyen =
+        bekleyenSeans.current !== null && bekleyenSeans.current.hafta === haftaBasi.getTime()
+          ? bekleyenSeans.current.id
+          : null
+      if (bekleyen !== null) bekleyenSeans.current = null
       setSeciliRandevu((secili) => {
         const hedefId = bekleyen ?? secili?.id ?? null
         if (hedefId === null) return null
@@ -486,16 +505,21 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
    *
    * Randevu başka bir haftada olabilir; hafta değiştirilir ve seçim
    * `yukle` içinde, SUNUCUDAN GELEN listeden yapılır (bkz.
-   * `bekleyenSeansId`). `haftaninBasi` her çağrıda yeni bir `Date`
+   * `bekleyenSeans`). `haftaninBasi` her çağrıda yeni bir `Date`
    * döndürdüğü için hedef hafta zaten görünen haftaysa bile efekt yeniden
    * çalışır ve bekleyen seçim tüketilir.
+   *
+   * Bekleyen istek HEDEF HAFTAYLA damgalanıyor: o sırada uçuşta olan
+   * (başka bir haftaya ait) bir yükleme onu tüketip gezinmeyi sessizce
+   * düşüremesin.
    */
   function seansaGit(appointmentId: number, tarih: string) {
-    bekleyenSeansId.current = appointmentId
+    const [yil, ay, gun] = tarih.slice(0, 10).split('-').map(Number)
+    const hedefHafta = haftaninBasi(new Date(yil, (ay ?? 1) - 1, gun ?? 1))
+    bekleyenSeans.current = { id: appointmentId, hafta: hedefHafta.getTime() }
     setSeciliBosSaat(null)
     danisanKartiKapat()
-    const [yil, ay, gun] = tarih.slice(0, 10).split('-').map(Number)
-    setHaftaBasi(haftaninBasi(new Date(yil, (ay ?? 1) - 1, gun ?? 1)))
+    setHaftaBasi(hedefHafta)
   }
 
   async function danisanEkle() {

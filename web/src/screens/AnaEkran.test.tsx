@@ -1867,6 +1867,42 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     expect(document.body.textContent).not.toContain('RISK-NOTU-KANARYA')
   })
 
+  it('ucusta bir hafta yuklemesi varken "seansa git" SESSIZCE DUSMEZ', async () => {
+    // Görev 10 inceleme minor'u: `bekleyenSeans` yalnızca kimlik tutuyor ve
+    // `yukle` onu KOŞULSUZ tüketiyordu. Uçuşta kalmış (başka bir haftaya
+    // ait) bir yükleme geri döndüğünde bekleyen kimliği tüketir, kendi
+    // listesinde hedefi bulamaz ve `null` seçerdi; ardından gelen DOĞRU
+    // haftanın yüklemesi için tüketilecek bir şey kalmaz ve kullanıcının
+    // tıkladığı seans hiç açılmazdı.
+    //
+    // Kurulum: iki hafta yüklemesi de kapıda bekletiliyor ve ESKİ olan
+    // ÖNCE salınıyor — yarışın kaybedilen sırası tam olarak bu.
+    const haftaYolu = (bas: string, bit: string) =>
+      `GET /api/randevular?baslangic=${encodeURIComponent(bas)}&bitis=${encodeURIComponent(bit)}`
+    const eski = kapi()
+    const yeni = kapi()
+    gecikmeler[haftaYolu('2026-09-07T00:00', '2026-09-13T23:59')] = eski.bekle
+    gecikmeler[haftaYolu('2026-09-14T00:00', '2026-09-20T23:59')] = yeni.bekle
+
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await aramayiAc()
+    await userEvent.type(
+      screen.getByRole('searchbox', { name: 'Danışan adı veya not içeriği' }),
+      'kaygi',
+    )
+    await userEvent.click(
+      await screen.findByRole('button', { name: /14\.09\.2026 10:00 seansına git/ }),
+    )
+
+    // Görünen haftanın (eski) yüklemesi ŞİMDİ dönüyor: bekleyen seçimi
+    // tüketmemeli.
+    eski.ac()
+    yeni.ac()
+
+    // Panel hedef seansla açıldı.
+    await screen.findByText(/Ayşe Yılmaz — 14 Eylül 2026, 10:00/)
+  })
+
   it('arama sorgusu HICBIR istek yolunda not iceriğiyle birlikte tasinmaz; yalniz /api/ara', async () => {
     // Sorgu metni sunucuda loga yazılmıyor; arayüz de onu başka bir uç
     // noktaya taşımamalı (ör. "danışanları sorguyla filtrele" gibi bir

@@ -912,6 +912,109 @@ mod tests {
         assert_eq!(ara(&c, "ORTAKKELIME", 0, Cihaz::Masaustu).unwrap().len(), 1);
     }
 
+    // --- Siralama bir sozlesmedir ------------------------------------------
+    //
+    // Iki `ORDER BY` de sessizce ters cevrilebiliyordu: `a.baslangic DESC,
+    // p.appointment_id DESC` -> `ASC, ASC` ve `ad_soyad COLLATE NOCASE` ->
+    // `id DESC`, ikisi de 25/25 YESIL. Oysa `LIMIT` her sorgunun ICINDE
+    // oldugu icin siralama HANGI SATIRLARIN HAYATTA KALACAGINI belirler:
+    // `ASC` altinda terapist en yeni degil EN ESKI 50 notu gorurdu.
+    // Emsal: `notes::tests::danisan_notlari_en_yeniden_eskiye_siralanir`
+    // (ayni `ORDER BY`, FARKLI tarihlerle).
+
+    #[test]
+    fn not_sonuclari_en_yeni_seanstan_eskiye_siralanir() {
+        let (_d, c, cid, _rid) = kurulum();
+        let eski = randevu_ekle(&c, cid, "2026-03-01");
+        let orta = randevu_ekle(&c, cid, "2026-03-15");
+        let yeni = randevu_ekle(&c, cid, "2026-03-30");
+        // Ekleme sirasi tarih sirasindan FARKLI: siralama gercekten
+        // `a.baslangic`'a bakmali, ekleme/kimlik sirasina degil.
+        not_kaydet(&c, orta, "dap", "SIRALIOK orta", Cihaz::Masaustu).unwrap();
+        not_kaydet(&c, eski, "dap", "SIRALIOK eski", Cihaz::Masaustu).unwrap();
+        not_kaydet(&c, yeni, "dap", "SIRALIOK yeni", Cihaz::Masaustu).unwrap();
+
+        let sonuclar = ara(&c, "SIRALIOK", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        let sira: Vec<Option<i64>> = sonuclar.iter().map(|s| s.appointment_id).collect();
+        assert_eq!(
+            sira,
+            vec![Some(yeni), Some(orta), Some(eski)],
+            "notlar en yeni seanstan en eskiye siralanmali"
+        );
+    }
+
+    #[test]
+    fn danisan_sonuclari_ada_gore_harf_duyarsiz_siralanir() {
+        let (_d, c, _cid, _rid) = kurulum();
+        // Ekleme sirasi (Alfa, Zeta, beta) beklenen siradan (Alfa, beta,
+        // Zeta) farkli: `id ASC` de `id DESC` de yakalanir. Ayrica "beta"
+        // KUCUK harfle basliyor: `COLLATE NOCASE` dusurulurse ikili
+        // siralamada "Zeta" (Z=90) < "beta" (b=98) olur ve sira bozulur.
+        for ad in ["Alfa ADSIRA", "Zeta ADSIRA", "beta ADSIRA"] {
+            danisan_ekle(
+                &c,
+                &YeniDanisan { ad_soyad: ad.into(), telefon: None },
+                Cihaz::Masaustu,
+            )
+            .unwrap();
+        }
+
+        let sonuclar = ara(&c, "ADSIRA", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        let adlar: Vec<&str> = sonuclar.iter().map(|s| s.danisan_adi.as_str()).collect();
+        assert_eq!(adlar, vec!["Alfa ADSIRA", "beta ADSIRA", "Zeta ADSIRA"]);
+    }
+
+    #[test]
+    fn siralama_hangi_satirlarin_hayatta_kalacagini_belirler() {
+        // EN ONEMLI SIRALAMA IDDIASI. `LIMIT` sorgunun ICINDE; yanlis
+        // siralama sonuclari yalnizca yeniden dizmez, YANLIS SATIRLARI
+        // secer -- ve kesilen satirlar arayuze hic ulasmaz.
+        let (_d, c, cid, _rid) = kurulum();
+
+        // (a) NOTLAR: 55 farkli gunde 55 not. Sinir 50 => EN YENI 50
+        //     hayatta kalmali; en eski 5 gun (gun(0)..gun(4)) DUSMELI.
+        for i in 0..55 {
+            let r = randevu_ekle(&c, cid, &gun(i));
+            not_kaydet(&c, r, "dap", "KESILENSIRA notu", Cihaz::Masaustu).unwrap();
+        }
+        let notlar = ara(&c, "KESILENSIRA", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        assert_eq!(notlar.len(), 50);
+        let tarihler: Vec<String> = notlar.iter().map(|s| s.tarih.clone().unwrap()).collect();
+        let mut azalan = tarihler.clone();
+        azalan.sort_by(|a, b| b.cmp(a));
+        assert_eq!(tarihler, azalan, "tarihler azalan sirada olmali");
+        assert!(
+            tarihler[0].starts_with(&gun(54)),
+            "en yeni seans ilk sirada olmali: {}",
+            tarihler[0]
+        );
+        for i in 0..5 {
+            assert!(
+                !tarihler.iter().any(|t| t.starts_with(&gun(i))),
+                "en eski 5 gun kesilmis olmali; {} hâlâ listede",
+                gun(i)
+            );
+        }
+
+        // (b) DANISANLAR: 55 ad, ekleme sirasi alfabetik siradan farkli
+        //     (once cift numaralar, sonra tekler). Sinir 50 => alfabetik
+        //     ILK 50 (K00..K49) hayatta kalmali. `id ASC` ya da `id DESC`
+        //     ile siralanirsa kume degisir.
+        let (_d2, c2, _cid2, _rid2) = kurulum();
+        for i in (0..55).step_by(2).chain((1..55).step_by(2)) {
+            danisan_ekle(
+                &c2,
+                &YeniDanisan { ad_soyad: format!("K{i:02} KESILENAD"), telefon: None },
+                Cihaz::Masaustu,
+            )
+            .unwrap();
+        }
+        let danisanlar = ara(&c2, "KESILENAD", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        let adlar: Vec<&str> = danisanlar.iter().map(|s| s.danisan_adi.as_str()).collect();
+        let beklenen: Vec<String> = (0..50).map(|i| format!("K{i:02} KESILENAD")).collect();
+        assert_eq!(adlar, beklenen.iter().map(String::as_str).collect::<Vec<_>>());
+    }
+
     // --- Iki kip tek butceyi paylasir (bkz. modul basligi) ----------------
     //
     // ONCEKI DAVRANIS BIR KULLANICI HATASIYDI: iki liste arka arkaya eklenip

@@ -132,6 +132,16 @@ describe('veriRaporuMetni', () => {
 // özel not içermiyor" der; bu test "içerebilecek bir yol EKLENEMEZ" der.
 // Sızıntının en olası biçimi, ileride birinin rapora "bir de terapistin
 // kendi notlarını ekleyelim" diye ikinci bir kaynak koymasıdır.
+//
+// UYARI — bu blok İHLALİN GERÇEKLEŞTİĞİ KAVŞAĞI ölçmez. Aşağıdaki iki
+// dosya (`veriRaporu.ts`, `DanisanKarti.tsx`) `ozelNotApi`'yi zaten hiç
+// içe aktarmıyor ve aktarmaya ihtiyaçları da yok; raporun NOT KAYNAĞINI
+// seçen tek yer `AnaEkran::raporNotlariGetir`. Burası "sızıntı ikinci bir
+// kaynak olarak ÜRETİCİYE eklenemez" der — meşru bir derinlik katmanı, ama
+// birincil hat DEĞİL. Birincil hat `AnaEkran.test.tsx` içinde ölçülüyor:
+// "uretilen rapor METNI ozel not kanaryasini TASIMAZ, resmi notu TASIR"
+// (davranışsal) ve "rapor not kaynağı: `raporNotlariGetir` gövdesi"
+// (yapısal).
 describe('dışa aktarım kaynağında özel nota giden bir yol YOKTUR', () => {
   function kodu(kaynak: string): string {
     // Yorumlar ayıklanıyor: iki dosyanın da başlığı özel notlardan

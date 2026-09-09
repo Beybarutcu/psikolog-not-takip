@@ -1,3 +1,4 @@
+import anaEkranKaynagi from './AnaEkran.tsx?raw'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -46,6 +47,13 @@ let sunucuGecmisi: {
 }[]
 
 const ZAMAN = '2026-09-07T06:00:00Z'
+
+// Veri raporu sızıntı testinin iki kanaryası. `OZEL_NOT_KANARYASI` özel not
+// tablosundan gelir ve HİÇBİR dışa aktarımda görünmemelidir;
+// `RESMI_NOT_KANARYASI` görünmelidir (artı yön — hiçbir şey üretmeyen bir
+// rapor da tek başına eksi yön iddiasını geçerdi).
+const OZEL_NOT_KANARYASI = 'OZEL-NOT-KANARYASI-XYZ'
+const RESMI_NOT_KANARYASI = 'RESMI-NOT-KANARYASI-ABC'
 
 function jsonYanit(govde: unknown): Response {
   return { ok: true, json: async () => govde } as unknown as Response
@@ -1470,6 +1478,10 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
 
   let yetkisiz: boolean
   let istekYollari: string[]
+  // Üretilen veri raporu Blob'ları. Raporun İÇİNDE ne olduğunu ölçmenin tek
+  // yolu bu: `istekYollari` yalnızca hangi ucun çağrıldığını söyler ve
+  // "rapora özel not girdi mi" sorusunu cevaplayamaz.
+  let uretilenBloblar: Blob[]
   // Belirli bir isteği açıkça salınana kadar bekletir (Görev 9'daki
   // `kapi()` deseninin aynısı): "yeni veri gelene kadar öncekinin ekranda
   // kalmadığı" ancak bekleyen bir istekle ölçülebilir.
@@ -1483,12 +1495,35 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     return { bekle, ac }
   }
 
+  const gercekOlustur = URL.createObjectURL
+  const gercekSerbest = URL.revokeObjectURL
+
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(2026, 8, 9, 12, 0))
     yetkisiz = false
     istekYollari = []
     gecikmeler = {}
+    uretilenBloblar = []
+    // jsdom `createObjectURL`i uygulamıyor; taklit ediliyor VE üretilen Blob
+    // yakalanıyor (`DanisanKarti.test.tsx` ile aynı desen).
+    URL.createObjectURL = vi.fn((b: Blob) => {
+      uretilenBloblar.push(b)
+      return `blob:rapor-${uretilenBloblar.length}`
+    }) as unknown as typeof URL.createObjectURL
+    URL.revokeObjectURL = vi.fn() as unknown as typeof URL.revokeObjectURL
+
+    // Özel not kanaryası: rapora sızarsa aşağıdaki test kırılır. Hem danışan
+    // kimliği hem randevu kimlikleri dolduruluyor — sızıntıyı ekleyen kodun
+    // `ozelNotApi.getir`e HANGİ kimliği geçirdiğini varsaymıyoruz.
+    for (const id of [1, 2, 201, 202, 203]) sunucuOzelNotlari[id] = OZEL_NOT_KANARYASI
+    sunucuGecmisi = [
+      {
+        appointment_id: 202, client_id: 1, seans_zamani: '2026-09-14T10:00',
+        sablon: 'dap', icerik: RESMI_NOT_KANARYASI,
+        guncelleme_zamani: '2026-09-14T12:00:00Z',
+      },
+    ]
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
@@ -1533,6 +1568,8 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   afterEach(() => {
     vi.useRealTimers()
     globalThis.fetch = gercekFetch
+    URL.createObjectURL = gercekOlustur
+    URL.revokeObjectURL = gercekSerbest
     vi.restoreAllMocks()
   })
 
@@ -1592,6 +1629,89 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     await waitFor(() =>
       expect(istekYollari).toContain('GET /api/danisanlar/1/notlar?limit=200'),
     )
+  })
+
+  // C1 — DAVRANIŞSAL katman. `veriRaporu.test.ts` ve `DanisanKarti.test.tsx`
+  // raporun ÜRETİCİSİNİ ölçüyor; ikisi de raporun NOT KAYNAĞINI seçen yeri
+  // (`AnaEkran::raporNotlariGetir`) göremez. Kanaryayı sunucudaki özel not
+  // tablosuna koyup üretilen dosyanın metnini okumak, o kavşağı ölçen tek
+  // testtir.
+  it('uretilen rapor METNI ozel not kanaryasini TASIMAZ, resmi notu TASIR', async () => {
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
+    await screen.findByText('0555 111 22 33')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
+    await screen.findByRole('link', { name: /raporu indir/i })
+
+    expect(uretilenBloblar).toHaveLength(1)
+    const metin = await uretilenBloblar[0].text()
+    // ARTI YÖN önce: hiçbir şey üretmeyen (ya da boş) bir rapor, aşağıdaki
+    // eksi yön iddiasını tek başına geçerdi.
+    expect(metin).toContain(RESMI_NOT_KANARYASI)
+    expect(metin).not.toContain(OZEL_NOT_KANARYASI)
+    // Özel notu getiren uç nokta HİÇ çağrılmadı: metinde görünmemesi
+    // (ör. sızıntıyı ekleyen kodun içeriği kırpması) yeterli değil.
+    expect(istekYollari.some((y) => y.includes('/ozel-not'))).toBe(false)
+  })
+
+  // C1 — YAPISAL katman. Davranışsal test "bugün sızmıyor" der; bu test
+  // "sızdıracak bir kaynak EKLENEMEZ" der.
+  //
+  // Tarama DOSYANIN TAMAMINDA değil, `raporNotlariGetir`'in GÖVDESİNDE:
+  // `AnaEkran` özel notu seans panelinde meşru olarak kullanıyor
+  // (`ozelNotApi.getir` / `ozelNotApi.kaydet`), yani dosya düzeyinde bir
+  // "geçmiyor" iddiası yazılamaz. Korumanın konacağı yer, ihlalin
+  // gerçekleşebileceği kavşaktır — raporun not kaynağını seçen fonksiyon.
+  describe('rapor not kaynağı: `raporNotlariGetir` gövdesi', () => {
+    function fonksiyonGovdesi(kaynak: string, imza: string): string {
+      const bas = kaynak.indexOf(imza)
+      expect(bas, `imza kaynakta bulunamadı: ${imza}`).toBeGreaterThan(-1)
+      const acilis = kaynak.indexOf('{', bas)
+      let derinlik = 0
+      for (let i = acilis; i < kaynak.length; i++) {
+        if (kaynak[i] === '{') derinlik += 1
+        else if (kaynak[i] === '}') {
+          derinlik -= 1
+          if (derinlik === 0) return kaynak.slice(acilis + 1, i)
+        }
+      }
+      throw new Error(`gövde kapanmadı: ${imza}`)
+    }
+
+    // Yorumlar ayıklanıyor: bir yorum kodun YAPISI hakkındaki iddiayı
+    // tatmin edemez (dokuzuncu biçim, `HizliArama.test.tsx` ile aynı gerekçe).
+    const govde = fonksiyonGovdesi(anaEkranKaynagi, 'async function raporNotlariGetir')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '')
+
+    it('kaynak ve govde gercekten okundu', () => {
+      // Boş bir okuma aşağıdaki iddiayı hiçbir şeyi sınamayan yeşile çevirirdi.
+      expect(anaEkranKaynagi).toContain('export function AnaEkran')
+      // ARTI YÖN: `AnaEkran` özel notu BAŞKA bir amaçla gerçekten kullanıyor —
+      // yani aşağıdaki iddia "bu dosyada ozelNotApi yok" demenin kısayolu
+      // değil, gövdeye özgü.
+      expect(anaEkranKaynagi).toContain('ozelNotApi.getir')
+      expect(govde).toContain('notApi.danisanNotlari')
+      expect(govde).toContain('RAPOR_NOT_SINIRI')
+    })
+
+    it('govdede ozel nota giden hicbir yol YOKTUR', () => {
+      expect(govde).not.toContain('ozelNotApi')
+      expect(govde).not.toContain('ozel-not')
+      expect(govde).not.toContain('OzelNot')
+      expect(govde).not.toContain('private_notes')
+    })
+
+    it('rapor karta YALNIZCA `raporNotlariGetir` uzerinden not verilir', () => {
+      // `notlariGetir` prop'u başka bir kaynağa bağlanırsa gövde taraması
+      // (ve onun ölçtüğü kavşak) anlamsızlaşır.
+      const kod = anaEkranKaynagi
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '')
+      expect(kod).toContain('notlariGetir={raporNotlariGetir}')
+      expect(kod.match(/notlariGetir=/g)).toHaveLength(1)
+    })
   })
 
   it('Ctrl+K ile acilan aramadan seans secilince O HAFTAYA gidilir ve panel acilir', async () => {

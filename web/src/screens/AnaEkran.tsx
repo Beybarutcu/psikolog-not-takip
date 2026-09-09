@@ -562,6 +562,18 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
 
   // Rapor için not çekmenin TEK yolu `notApi` — yani yalnızca resmî notlar.
   // `ozelNotApi` bu bileşende de ayrı bir nesnedir ve karta hiç geçmez.
+  //
+  // BURASI KAVŞAK. `veriRaporu.ts` ve `DanisanKarti.tsx` `ozelNotApi`'yi
+  // içe aktarmıyor ve aktarmalarına gerek de yok; raporun NOT KAYNAĞINI
+  // seçen tek yer bu fonksiyondur. Dolayısıyla "özel not rapora giremez"
+  // güvencesi burada ölçülüyor, orada değil (`veriRaporu.test.ts`'teki
+  // kaynak taraması riskin olmadığı dosyalara bakıyordu):
+  //   - davranışsal: `AnaEkran.test.tsx` "uretilen rapor METNI ozel not
+  //     kanaryasini TASIMAZ, resmi notu TASIR" — üretilen Blob'un metnini
+  //     okur;
+  //   - yapısal: aynı dosyadaki "rapor not kaynağı: `raporNotlariGetir`
+  //     gövdesi" bloğu bu fonksiyonun GÖVDESİNİ tarar (dosyanın tamamı
+  //     taranamaz — `ozelNotApi` seans panelinde meşru olarak kullanılıyor).
   async function raporNotlariGetir(): Promise<SeansNotu[]> {
     if (seciliDanisanId === null) return []
     return notApi.danisanNotlari(seciliDanisanId, RAPOR_NOT_SINIRI)

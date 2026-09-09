@@ -1,84 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  aramaApi,
-  danisanApi,
-  notApi,
-  ozelNotApi,
-  takvimApi,
-  YetkisizHata,
-  type DanisanDosyasi,
-  type DepolamaDurumu,
-  type EkBilgisi,
-  type OzelNot,
-  type SeansNotu,
-} from '../api'
+import { aramaApi, danisanApi, notApi, takvimApi, type SeansNotu } from '../api'
 import { HizliArama } from '../arama/HizliArama'
 import { boyutBicimle } from '../danisan/bicim'
 import { DanisanKarti } from '../danisan/DanisanKarti'
 import { SeansPaneli } from '../seans/SeansPaneli'
-import { HaftalikTakvim, type Randevu } from '../takvim/HaftalikTakvim'
-import { haftaGunleri, haftaninBasi, yerelZaman } from '../takvim/hafta'
+import { HaftalikTakvim } from '../takvim/HaftalikTakvim'
 import { RandevuPaneli } from '../takvim/RandevuPaneli'
+import { useDanisanDosyasi } from './anaEkranKancalari/useDanisanDosyasi'
 import { useDanisanListesi } from './anaEkranKancalari/useDanisanListesi'
 import { useParolaFormu } from './anaEkranKancalari/useParolaFormu'
+import { useSeansNotlari } from './anaEkranKancalari/useSeansNotlari'
+import { useTakvimAkisi } from './anaEkranKancalari/useTakvimAkisi'
 import { useYedekleme } from './anaEkranKancalari/useYedekleme'
 import { yerelGun } from './anaEkranKancalari/yerelGun'
-
-/**
- * Seans panelinde gösterilecek geçmiş not sayısı — ve sunucudan istenen
- * `limit`in ta kendisi.
- *
- * # Eskiden bir FAZLASI isteniyordu; o telafi ÖLÜYDÜ (dal incelemesi M1)
- *
- * Gerekçe şuydu: "aynı dakikaya denk gelen ikinci bir randevunun notu
- * `once` kesmesine takılır, bir fazlası onu telafi eder". **Telafi
- * çalışmıyordu.** Kesme sunucuda uygulanıyor (`a.baslangic < ?`), yani o
- * randevunun notu SQL seviyesinde düşüyor; "bir fazlasını iste" bir
- * fazladan **daha eski** not getirir, düşen notu geri getiremez. Yanında
- * duran `filter(n => n.appointment_id !== seansId)` süzgeci de hiçbir
- * zaman bir şey elemiyordu: kesme kesin küçük olduğu için seansın kendi
- * notu zaten dönmüyor.
- *
- * Davranış her iki hâlde de aynı (fazladan not `slice` ile atılıyordu);
- * kaldırılan şey ölü bir savunma ve **olmayan bir mekanizmayı** tarif eden
- * bir gerekçeydi. `kalanGun`'un `Date.UTC` yorumuyla aynı sınıf (Görev 10).
- *
- * Sunucunun varsayılanı (50) burada kullanılmıyor: "son üç seans" gösteren
- * bir panelin 50 seans notunun tam içeriğini indirmesi için sebep yok.
- */
-const GECMIS_SEANS_SAYISI = 3
-
-/**
- * Açık seansın not verisi. `id`, verinin HANGİ randevuya ait olduğunu
- * söyler; `null` alanlar "henüz yüklenmedi" demektir (editör içerik gelmeden
- * mount EDİLMEZ — boş mount, sunucudaki notu ekranda boş göstermek olurdu).
- */
-type SeansVerisi = {
-  id: number | null
-  not: SeansNotu | null
-  /**
-   * Özel not. Panel açılışında YÜKLENMEZ (bkz. `ozelNotIstenen`), bu
-   * yüzden `null` burada "istenmedi ya da yükleniyor" demektir.
-   */
-  ozelNot: OzelNot | null
-  /**
-   * Özel notun kendi hatası. Panelin genel `hata`sından AYRI: özel not
-   * gelmediği için tüm paneli kapatmak, kullanıcının o an yazdığı resmî
-   * notu ekrandan silmek olurdu.
-   */
-  ozelHata: string | null
-  gecmisNotlar: SeansNotu[]
-  hata: string | null
-}
-
-const BOS_SEANS: SeansVerisi = {
-  id: null,
-  not: null,
-  ozelNot: null,
-  ozelHata: null,
-  gecmisNotlar: [],
-  hata: null,
-}
 
 /**
  * Veri raporuna alınacak en fazla resmî not sayısı.
@@ -92,33 +25,40 @@ const BOS_SEANS: SeansVerisi = {
 const RAPOR_NOT_SINIRI = 200
 
 /**
- * Danışan kartındaki bakiye için randevu penceresi.
+ * Ana ekran: takvim, danışan listesi, danışan kartı, seans paneli, yedekleme
+ * ve parola bölümlerini bir arada tutar.
  *
- * Bakiye "gelinmiş ama ödenmemiş seansların toplamı"dır ve bu, GÖRÜNEN
- * HAFTAYLA sınırlı hesaplanamaz: o sayı neredeyse her zaman yanlış olurdu ve
- * para söz konusuyken yanlış bir sayı, hiç sayı olmamasından kötüdür. Uç
- * nokta yalnızca tarih aralığıyla süzüyor (danışan süzgeci yok), bu yüzden
- * geniş bir pencere çekilip istemcide `client_id`'ye göre süzülüyor.
+ * # Veri akışları KANCALARDA, ekran yalnızca bağlıyor
  *
- * Denetim kaydı açısından ek yük yok: `appointments::aralik_getir` tek bir
- * `goruntuleme` satırı yazar ve o satır 5 dakikalık pencerede haftalık
- * yüklemeyle **birleşir** (`LogHacmi::OturumBasi`).
+ * Beş ayrı yükleme akışı var ve her birinin kendi yaşam döngüsü kuralları
+ * (`store::audit` hacim politikası yüzünden hangi isteğin ne zaman
+ * atılabileceği, 401'de neyin ekrandan silineceği, geciken yanıtların hangi
+ * state'i ezmeyeceği). Hepsi tek bir bileşende dokuz `useEffect` olarak
+ * durduğunda bir akışın kuralını okumak için diğer dördünü de okumak
+ * gerekiyordu. Ayrım akış başına:
+ *
+ *   - `useTakvimAkisi`   — görünen haftanın randevuları ve SEÇİM (omurga)
+ *   - `useSeansNotlari`  — açık seansın resmî notu, geçmişi ve özel notu
+ *   - `useDanisanDosyasi`— açık danışan kartı, ekleri ve depolama durumu
+ *   - `useDanisanListesi`— danışan listesi, ekleme, arşivleme, saklama uyarısı
+ *   - `useYedekleme`     — otomatik/elle yedek ve KALICI uyarı
+ *   - `useParolaFormu`   — parola değiştirme (yükleme değil, ama kendi başına
+ *                          bir akış; parolalar form kapanınca siliniyor)
+ *
+ * # 401 temizliği İKİ YÖNLÜ ve bu yüzden burada bağlanıyor
+ *
+ * Takvim yüklemesi 401 alırsa açık danışan kartı da kapanmalı; seans ve
+ * danışan akışları 401 alırsa takvim seçimi kapanmalı. İki kanca birbirini
+ * doğrudan göremez, dolayısıyla bağ burada, geri çağrılarla kuruluyor.
+ * Kancalar bu geri çağrıları içeride bir `ref`te tutuyor — böylece efekt
+ * bağımlılıkları İLKEL kimliklerle sınırlı kalıyor ve her render yeni bir
+ * istek atmıyor (silinemez `goruntuleme` satırları).
+ *
+ * Temizliğin KAPSAMI akışa göre farklı ve bilerek öyle: seans/özel not 401'i
+ * yalnızca takvim seçimini kapatır (açık kart hassas veri göstermiyor
+ * demek değil — kart kendi isteğini attığında kendi 401'ini alır), takvim ve
+ * kart 401'i ikisini birden kapatır.
  */
-const TUM_ZAMAN_BASI = '2000-01-01T00:00'
-const TUM_ZAMAN_SONU = '2100-01-01T00:00'
-
-/** Açık danışan kartının verisi. `id`, verinin HANGİ danışana ait olduğunu
- * söyler (aynı gerekçe `SeansVerisi`'nde). */
-type KartVerisi = {
-  id: number | null
-  dosya: DanisanDosyasi | null
-  ekler: EkBilgisi[]
-  randevular: Randevu[]
-  hata: string | null
-}
-
-const BOS_KART: KartVerisi = { id: null, dosya: null, ekler: [], randevular: [], hata: null }
-
 export function AnaEkran({
   kilitle,
   onGeriYukle,
@@ -132,438 +72,47 @@ export function AnaEkran({
    */
   onGeriYukle: () => void
 }) {
-  const [haftaBasi, setHaftaBasi] = useState(() => haftaninBasi(new Date()))
-  const [randevular, setRandevular] = useState<Randevu[]>([])
-  const [hata, setHata] = useState<string | null>(null)
-  const [seciliRandevu, setSeciliRandevu] = useState<Randevu | null>(null)
-  const [seciliBosSaat, setSeciliBosSaat] = useState<string | null>(null)
-  // Danışan listesi, ekleme formu, arşivleme ve saklama hatırlatması kendi
-  // kancasında: bu ekranın en bağımsız akışı, hiçbir 401 temizliği ona
-  // dokunmuyor.
+  // `dosya` aşağıda tanımlanıyor; closure çağrıldığı anda okunuyor, bu
+  // yüzden kancaların bildirim sırası bir kısıt değil (bkz. modül başlığı).
+  const takvim = useTakvimAkisi({ onYetkisiz: () => dosya.kapat() })
   const liste = useDanisanListesi()
-  // Yedekleme (otomatik günlük yedek + elle yedek + KALICI uyarı) ve parola
-  // değiştirme de kendi kancalarında; ikisi de bu ekranın başka hiçbir
-  // state'ini okumuyor.
+  const dosya = useDanisanDosyasi({ onYetkisiz: () => takvim.oturumKapandi() })
   const yedekleme = useYedekleme()
+  const seansAkisi = useSeansNotlari({
+    randevu: takvim.seciliRandevu,
+    onYetkisiz: () => takvim.oturumKapandi(),
+  })
   const parola = useParolaFormu()
-  // Seans paneli verisi, HANGİ SEANSA ait olduğuyla birlikte. `id` alanı
-  // tek başına bir kolaylık değil: seçim değiştiği anda önceki danışanın
-  // notu ekranda kalmamalı ve bunun için bir efektin çalışmasını beklemek
-  // (bir kare boyunca yanlış içerik göstermek) kabul edilebilir değil.
-  // Aşağıda `seansId` ile karşılaştırılarak RENDER SIRASINDA türetiliyor.
-  const [seansVerisi, setSeansVerisi] = useState<SeansVerisi>(BOS_SEANS)
-  const [seansTazeleme, setSeansTazeleme] = useState(0)
-  // Özel notu HANGİ seans için istedik. Panel açılışında özel not
-  // yüklenmiyor: sunucudaki `ozel_not_getir` her çağrıda SİLİNEMEZ bir
-  // `goruntuleme | private_note | <id>` satırı yazar ve kullanıcı özel
-  // sekmeye hiç girmemişken o satırı bastırmak, olmayan bir eylemi kalıcı
-  // olarak bildirmek olur (bkz. `SeansPaneli` modül başlığı).
-  //
-  // Değer bir bayrak değil SEANS KİMLİĞİ: başka bir seansa geçildiğinde
-  // eski kimlik yeni seansla eşleşmez, dolayısıyla "önceki seansta özel
-  // sekmeye girmiştim" hâli yeni seansa sızıp orada istenmemiş bir
-  // görüntüleme satırı yazdırmaz.
-  const [ozelNotIstenen, setOzelNotIstenen] = useState<number | null>(null)
-  const [ozelTazeleme, setOzelTazeleme] = useState(0)
-  // Açık danışan kartı. Seans panelindeki desenle aynı: state HANGİ danışana
-  // ait olduğunu taşır ve ekrana giden veri render sırasında türetilir.
-  const [seciliDanisanId, setSeciliDanisanId] = useState<number | null>(null)
-  const [kartVerisi, setKartVerisi] = useState<KartVerisi>(BOS_KART)
-  const [kartTazeleme, setKartTazeleme] = useState(0)
-  // Depolama durumu. `null` = henüz gelmedi ya da alınamadı; ikisi de aynı
-  // şeyi gerektirir (hiçbir şey gösterme). Bu uç nokta sunucuda LOG YAZMAZ,
-  // bu yüzden ek yükleme/silme sonrasında tazelenebiliyor.
-  const [depolama, setDepolama] = useState<DepolamaDurumu | null>(null)
-  // Aramadan gelen "şu seansa git" isteği. Hedef randevu başka bir haftada
-  // olabilir; hafta değiştirilir, randevu listesi yeniden yüklenir ve seçim
-  // ANCAK O LİSTEDEN yapılır — ekranda görünmeyen bir randevuya bağlı bir
-  // not editörü açmak, kaydı belirsiz bir kimliğe göndermek olurdu.
-  // `ref`: `yukle`'nin bağımlılıklarını (dolayısıyla kimliğini) değiştirmesin.
-  //
-  // Kimlikle birlikte HEDEF HAFTA da tutuluyor. Önceden yalnızca kimlik
-  // vardı ve `yukle` onu KOŞULSUZ tüketiyordu: "seansa git" sırasında
-  // uçuşta bir yükleme varsa (ilk mount, hafta oku, kayıt sonrası tazeleme)
-  // o ESKİ yükleme bekleyen kimliği tüketir, kendi haftasının listesinde
-  // hedefi bulamaz ve `null` seçerdi; ardından gelen doğru haftanın
-  // yüklemesi için tüketilecek bir şey kalmaz, gezinme SESSİZCE düşerdi.
-  // Kullanıcı arama sonucuna tıklar, hafta değişir, panel açılmaz.
-  //
-  // Hafta damgası bunu kapatıyor: bekleyen istek yalnızca HEDEF HAFTANIN
-  // yüklemesinde tüketilir. Damgayı `haftaBasi.getTime()` taşıyor —
-  // `haftaninBasi` saati sıfırladığı için hafta başına tek bir değer.
-  const bekleyenSeans = useRef<{ id: number; hafta: number } | null>(null)
 
-  const yukle = useCallback(async () => {
-    const gunler = haftaGunleri(haftaBasi)
-    const baslangic = yerelZaman(gunler[0])
-    const sonGun = gunler[6]
-    const bitis = yerelZaman(new Date(
-      sonGun.getFullYear(), sonGun.getMonth(), sonGun.getDate(), 23, 59,
-    ))
-    try {
-      const gelen = await takvimApi.randevulariGetir(baslangic, bitis)
-      setRandevular(gelen)
-      // Seçili randevu TAZE nesneyle değiştirilir. Panelin `key`'i
-      // `randevu-${id}` olduğu için kimlik aynı kaldığında bileşen yeniden
-      // mount EDİLMEZ; `seciliRandevu` burada tazelenmezse panel, yeniden
-      // yüklemeden önceki nesneyi tutmaya devam eder. Plan 2'de görünür bir
-      // etkisi yoktu (panel `durum` basmıyor); Plan 3'te seans notu editörü
-      // bu nesneye bağlanacak ve yazdığı `appointment_id` ile `client_id`
-      // buradan gelecek — bayat bir nesneden gelen kimlik, notu yanlış (ya
-      // da artık var olmayan) bir randevuya yazmak demektir.
-      //
-      // Listede yoksa seçim KAPATILIR: randevu silinmiş olabilir (ör. seri
-      // iptali bu randevuyu da kapsadı) ya da başka bir haftaya bakılıyordur.
-      // Her iki durumda da ekranda görünmeyen bir randevuya bağlı bir not
-      // editörü açık tutmak, kaydı belirsiz bir kimliğe göndermek olurdu.
-      //
-      // Aramadan bir seans istendiyse hedef O'dur: `bekleyenSeans`
-      // tüketilir ve seçim yeni listeden kurulur.
-      //
-      // AMA yalnızca HEDEF HAFTANIN yüklemesi tüketebilir. Bu closure
-      // uçuşta kalmış eski bir haftaya ait olabilir; koşulsuz tüketmek
-      // gezinmeyi sessizce düşürürdü (bkz. `bekleyenSeans`).
-      const bekleyen =
-        bekleyenSeans.current !== null && bekleyenSeans.current.hafta === haftaBasi.getTime()
-          ? bekleyenSeans.current.id
-          : null
-      if (bekleyen !== null) bekleyenSeans.current = null
-      setSeciliRandevu((secili) => {
-        const hedefId = bekleyen ?? secili?.id ?? null
-        if (hedefId === null) return null
-        return gelen.find((r) => r.id === hedefId) ?? null
-      })
-      setHata(null)
-    } catch (e) {
-      if (e instanceof YetkisizHata) {
-        // Oturum kilitlendi. Kilit ekranına geçiş App.tsx'teki merkezi 401
-        // dinleyicisi tarafından (durum yeniden çekilerek) tetiklenecek —
-        // ama bu, sunucuya bir gidiş-dönüş sürer. O kısa süre boyunca bile
-        // ekranda danışan adları kalmasın diye randevu listesi burada
-        // hemen temizleniyor.
-        setRandevular([])
-        // Panel de kapatılıyor: açık panel seçili danışanın adını (açılır
-        // menüde) ve saatini taşıyor, yani listeyi temizlemek tek başına
-        // ekranı boşaltmıyordu. Panelde açık bir not editörünün yazılmamış
-        // metni bu yüzden kaybolmaz — o metin `seans/taslak.ts`'te, bileşen
-        // ağacının dışında duruyor ve kilit açılıp seans yeniden açıldığında
-        // geri yükleniyor (bkz. `NotEditoru`'nun 401 kararı).
-        setSeciliRandevu(null)
-        setSeciliBosSaat(null)
-        // Danışan kartı da kapatılıyor: kart danışanın adını, telefonunu,
-        // başvuru nedenini ve risk notunu taşıyor — randevu listesini
-        // temizlemek tek başına ekranı boşaltmıyordu.
-        setSeciliDanisanId(null)
-        setKartVerisi(BOS_KART)
-      }
-      setHata(e instanceof Error ? e.message : 'Randevular yüklenemedi.')
-    }
-  }, [haftaBasi])
-
-  useEffect(() => { void yukle() }, [yukle])
-
-  // Depolama durumu: ilk yüklemede ve kart her tazelendiğinde (ek yükleme /
-  // ek silme) yeniden çekilir. Bu uç nokta denetim kaydına HİÇBİR ŞEY
-  // yazmıyor (`depolama_durumu` bir sayı sorgusudur), yani hacim kaygısı
-  // yok — `useDanisanListesi`'ndeki saklama listesinden farkı tam olarak
-  // budur.
-  useEffect(() => {
-    void danisanApi.depolamaDurumu().then(setDepolama).catch(() => {})
-  }, [kartTazeleme])
-
-  // Seans notu verisi RANDEVU KİMLİĞİNE bağlı yükleniyor, `seciliRandevu`
-  // NESNESİNE değil. `yukle()` her çağrıldığında seçili randevu taze bir
-  // nesneyle değiştiriliyor; efekt nesneye bağlı olsaydı her yeniden
-  // yüklemede (hafta değişimi, kayıt, seri silme) üç not isteği daha giderdi
-  // ve her biri sunucuda SİLİNEMEZ bir `goruntuleme` satırı bırakırdı
-  // (bkz. `store::audit` ve aşağıdaki `durumDegis` gerekçesi).
-  const seansId = seciliRandevu?.id ?? null
-  const seansDanisanId = seciliRandevu?.client_id ?? null
-  // Geçmiş listesinin kesmesi: "bu seans BAŞLAMADAN önce". Efektin
-  // bağımlılığı olduğu için kimlikler gibi ilkel bir değer olarak
-  // türetiliyor (nesneye bağlanmak her yeniden yüklemede üç istek daha
-  // demekti — bkz. yukarıdaki gerekçe).
-  const seansBaslangici = seciliRandevu?.baslangic ?? null
-
-  // Ekrana giden veri RENDER SIRASINDA türetiliyor: state başka bir seansa
-  // aitse boş sayılır. Sıfırlamayı efekte bırakmak, seçim değişimiyle
-  // efektin çalışması arasındaki karede ÖNCEKİ danışanın notunu yeni
-  // seansın panelinde göstermek olurdu.
-  const seans = seansVerisi.id === seansId ? seansVerisi : BOS_SEANS
-
-  // Yerel değişkene alınıyor: onay metni ile "Evet, arşivle" düğmesinin AYNI
-  // danışanı görmesini bu satır garanti eder (kancadaki alan üzerinden daralan
-  // tür bir callback'in içine taşınmaz).
+  const { seciliRandevu, seciliBosSaat } = takvim
+  const { seciliDanisanId, kart } = dosya
+  const seans = seansAkisi.seans
+  // Yerel değişkene alınıyor: `liste.arsivOnayi` üzerinden daralan tür bir
+  // callback'in içine taşınmaz (TS özelliği bir yana, onay metniyle
+  // "Evet, arşivle"nin AYNI danışanı görmesi bu satırla garanti).
   const { arsivOnayi } = liste
-
-  useEffect(() => {
-    if (seansId === null || seansDanisanId === null || seansBaslangici === null) return
-    let iptal = false
-
-    void (async () => {
-      try {
-        // İkisi birlikte: geçmiş notların isteği ayrı yakalanıp yutulsaydı,
-        // başarısızlık "bu danışanın önceki notu yok" diye görünürdü —
-        // notu olan bir danışan için sessiz bir yalan.
-        //
-        // Özel not burada YOK: o, sekmeye geçilince ayrı bir efektte
-        // yükleniyor (bkz. `ozelNotIstenen`).
-        const [gelenNot, gelenGecmis] = await Promise.all([
-          notApi.notGetir(seansId),
-          // `once` ZORUNLU: bu panelin başlığı "Önceki seans notları" ve
-          // kesme olmadan liste, açık seanstan SONRAKİ seansların notlarını
-          // da içeriyordu. Terapist takvimde hafta hafta geriye gidip eski
-          // bir seansı açtığında (olağan bir işlem) sol sütun henüz
-          // yaşanmamış seansların içeriğini "geçen seansta konuşulan" diye
-          // gösteriyordu.
-          notApi.danisanNotlari(seansDanisanId, GECMIS_SEANS_SAYISI, seansBaslangici),
-        ])
-        if (iptal) return
-        setSeansVerisi({
-          id: seansId,
-          not: gelenNot,
-          ozelNot: null,
-          ozelHata: null,
-          // Bu seansın KENDİ notu geçmiş listesine girmez: üstte düzenlenen
-          // metnin bayat bir kopyası, "geçen seansta ne konuşulmuştu"
-          // sorusuna cevap değil. Bunu sağlayan tek şey sunucudaki `once`
-          // kesmesidir ve o KESİN küçüktür. İstemcide ikinci bir süzgeç
-          // YOK: vardı, hiçbir zaman bir şey elemiyordu ve gerekçesi
-          // olmayan bir mekanizmayı tarif ediyordu (bkz.
-          // `GECMIS_SEANS_SAYISI`).
-          gecmisNotlar: gelenGecmis,
-          hata: null,
-        })
-      } catch (e) {
-        if (iptal) return
-        if (e instanceof YetkisizHata) {
-          // Kilit: ekranda danışan adı kalmasın (aynı gerekçe `yukle`'de).
-          // Yazılmamış not metni kaybolmaz — o, bileşen ağacının dışındaki
-          // taslak deposunda.
-          setRandevular([])
-          setSeciliRandevu(null)
-          setSeciliBosSaat(null)
-        }
-        setSeansVerisi({
-          ...BOS_SEANS,
-          id: seansId,
-          hata: e instanceof Error ? e.message : 'Seans notu yüklenemedi.',
-        })
-      }
-    })()
-
-    return () => {
-      iptal = true
-    }
-  }, [seansId, seansDanisanId, seansBaslangici, seansTazeleme])
-
-  // Özel not: YALNIZCA sekmeye geçilince. Efektin bağımlılığı
-  // `ozelNotIstenen` olduğu için sekme değişimi dışında hiçbir şey
-  // (hafta değişimi, "Geldi", kayıt) bu isteği tetikleyemez.
-  useEffect(() => {
-    if (seansId === null || ozelNotIstenen !== seansId) return
-    let iptal = false
-
-    void (async () => {
-      try {
-        const gelen = await ozelNotApi.getir(seansId)
-        if (iptal) return
-        // Geciken bir yanıt başka bir seansın panelini doldurmasın.
-        setSeansVerisi((onceki) =>
-          onceki.id === seansId ? { ...onceki, ozelNot: gelen, ozelHata: null } : onceki,
-        )
-      } catch (e) {
-        if (iptal) return
-        if (e instanceof YetkisizHata) {
-          // Kilit: ekranda danışan adı kalmasın (aynı gerekçe `yukle`'de).
-          setRandevular([])
-          setSeciliRandevu(null)
-          setSeciliBosSaat(null)
-          return
-        }
-        setSeansVerisi((onceki) =>
-          onceki.id === seansId
-            ? {
-                ...onceki,
-                ozelHata: e instanceof Error ? e.message : 'Özel not yüklenemedi.',
-              }
-            : onceki,
-        )
-      }
-    })()
-
-    return () => {
-      iptal = true
-    }
-  }, [seansId, ozelNotIstenen, ozelTazeleme])
-
-  // Kayıt, editörün BAĞLI OLDUĞU randevunun kimliğine gider; `seciliRandevu`
-  // okunmuyor. Unmount tahliyesi (seans değişiminde) bu fonksiyonu çağırdığı
-  // an seçim çoktan başka bir randevuya geçmiş olabilir — o durumda giden
-  // seansın metni YENİ randevunun notuna yazılırdı: yanlış danışanın
-  // dosyasına not.
-  const notKaydet = useCallback(
-    async (kayit: { sablon: string; icerik: string }) => {
-      if (seansId === null) return
-      const yeni = await notApi.notKaydet(seansId, kayit.sablon, kayit.icerik)
-      // Geciken bir yanıt, o sırada açılmış BAŞKA bir seansın notunu
-      // ezmemeli: state hâlâ bu seansa aitse tazelenir, değilse dokunulmaz.
-      setSeansVerisi((onceki) => (onceki.id === seansId ? { ...onceki, not: yeni } : onceki))
-    },
-    [seansId],
-  )
-
-  // Danışan kartı verisi. Seans verisiyle aynı desen: `id` ile eşleşmeyen
-  // state boş sayılır (render sırasında), böylece bir danışandan diğerine
-  // geçerken ÖNCEKİNİN dosyası bir kare bile görünmez.
-  const kart = kartVerisi.id === seciliDanisanId ? kartVerisi : BOS_KART
-
-  useEffect(() => {
-    if (seciliDanisanId === null) return
-    let iptal = false
-
-    void (async () => {
-      try {
-        // Üçü birlikte: ek listesi ayrı yakalanıp yutulsaydı, başarısızlık
-        // "bu danışanın dosyası yok" diye görünürdü — dosyası olan bir
-        // danışan için sessiz bir yalan (`seansVerisi` ile aynı gerekçe).
-        const [dosya, ekler, tumRandevular] = await Promise.all([
-          danisanApi.dosyaGetir(seciliDanisanId),
-          danisanApi.ekleriGetir(seciliDanisanId),
-          takvimApi.randevulariGetir(TUM_ZAMAN_BASI, TUM_ZAMAN_SONU),
-        ])
-        if (iptal) return
-        setKartVerisi({
-          id: seciliDanisanId,
-          dosya,
-          ekler,
-          randevular: tumRandevular.filter((r) => r.client_id === seciliDanisanId),
-          hata: null,
-        })
-      } catch (e) {
-        if (iptal) return
-        if (e instanceof YetkisizHata) {
-          setRandevular([])
-          setSeciliRandevu(null)
-          setSeciliBosSaat(null)
-          setSeciliDanisanId(null)
-          setKartVerisi(BOS_KART)
-          return
-        }
-        setKartVerisi({
-          ...BOS_KART,
-          id: seciliDanisanId,
-          hata: e instanceof Error ? e.message : 'Danışan dosyası yüklenemedi.',
-        })
-      }
-    })()
-
-    return () => {
-      iptal = true
-    }
-  }, [seciliDanisanId, kartTazeleme])
-
-  const ozelNotKaydet = useCallback(
-    async (icerik: string) => {
-      if (seansId === null) return
-      const yeni = await ozelNotApi.kaydet(seansId, icerik)
-      setSeansVerisi((onceki) => (onceki.id === seansId ? { ...onceki, ozelNot: yeni } : onceki))
-    },
-    [seansId],
-  )
-
-  function haftaDegis(yon: number) {
-    setHaftaBasi((onceki) => {
-      const yeni = new Date(onceki)
-      yeni.setDate(yeni.getDate() + yon * 7)
-      return yeni
-    })
-  }
-
-  function randevuSec(randevu: Randevu) {
-    setSeciliBosSaat(null)
-    setSeciliRandevu(randevu)
-  }
-
-  function bosSaatSec(zaman: string) {
-    setSeciliRandevu(null)
-    setSeciliBosSaat(zaman)
-  }
-
-  function panelKapat() {
-    setSeciliRandevu(null)
-    setSeciliBosSaat(null)
-  }
 
   function danisanKartiAc(clientId: number) {
     liste.setArsivBilgisi(null)
-    setSeciliDanisanId(clientId)
-  }
-
-  function danisanKartiKapat() {
-    setSeciliDanisanId(null)
-    // Veri de siliniyor, yalnızca panel gizlenmiyor: kart risk notu ve rıza
-    // bilgisi taşıyor ve kapalı bir bileşenin state'inde duran veri, bir
-    // sonraki açılışta yanlış danışanın kartında görünebilirdi.
-    setKartVerisi(BOS_KART)
+    dosya.ac(clientId)
   }
 
   /**
-   * Aramadan seçilen seansa gider.
+   * Aramadan seçilen seansa gider: hafta değişir, seçim `useTakvimAkisi`
+   * içinde SUNUCUDAN GELEN listeden kurulur (bkz. `bekleyenSeans`).
    *
-   * Randevu başka bir haftada olabilir; hafta değiştirilir ve seçim
-   * `yukle` içinde, SUNUCUDAN GELEN listeden yapılır (bkz.
-   * `bekleyenSeans`). `haftaninBasi` her çağrıda yeni bir `Date`
-   * döndürdüğü için hedef hafta zaten görünen haftaysa bile efekt yeniden
-   * çalışır ve bekleyen seçim tüketilir.
-   *
-   * Bekleyen istek HEDEF HAFTAYLA damgalanıyor: o sırada uçuşta olan
-   * (başka bir haftaya ait) bir yükleme onu tüketip gezinmeyi sessizce
-   * düşüremesin.
+   * Açık danışan kartı burada kapatılıyor: kartın state'i başka bir kancada
+   * ve gidilen seans başka bir danışana ait olabilir.
    */
   function seansaGit(appointmentId: number, tarih: string) {
-    const [yil, ay, gun] = tarih.slice(0, 10).split('-').map(Number)
-    const hedefHafta = haftaninBasi(new Date(yil, (ay ?? 1) - 1, gun ?? 1))
-    bekleyenSeans.current = { id: appointmentId, hafta: hedefHafta.getTime() }
-    setSeciliBosSaat(null)
-    danisanKartiKapat()
-    setHaftaBasi(hedefHafta)
-  }
-
-  // Rıza kaydı ve ek yükleme başarılı olunca kart YENİDEN ÇEKİLİYOR.
-  // `durumDegis`/`sil`'deki "sonucu yerel olarak uygula" kararı burada
-  // GEÇERSİZ: `PATCH` sunucudan dönen dosyayı verse bile, ek yükleme
-  // `saklama_bitis` gibi türetilmiş alanları etkilemez ve iki kaynağın
-  // (ekler + dosya) tutarlılığı yalnızca birlikte çekilerek korunur.
-  // Denetim kaydı hacmi burada sorun değil: ikisi de seyrek, kullanıcı
-  // tarafından başlatılan işlemler.
-  async function rizaKaydet(alan: { riza_tarihi: string; riza_dosya_id: number | null }) {
-    if (seciliDanisanId === null) return
-    await danisanApi.rizaKaydet(seciliDanisanId, alan)
-    setKartTazeleme((n) => n + 1)
-  }
-
-  async function ekYukle(dosya: File, tur: string) {
-    if (seciliDanisanId === null) return
-    await danisanApi.ekYukle(seciliDanisanId, dosya, tur)
-    setKartTazeleme((n) => n + 1)
-  }
-
-  // Silme sonrası kart YENİDEN ÇEKİLİYOR, sonuç yerel olarak uygulanmıyor.
-  // `durumDegis`/`sil`'deki "sonucu yerel olarak uygula" kararı burada
-  // GEÇERSİZ, `ekYukle` ile aynı gerekçe ve bir fazlasıyla: sunucudaki
-  // `attachments::sil` aynı transaction'da `clients.riza_dosya_id`'yi de
-  // temizliyor. Ek listesini yerel olarak süzmek dosyayı listeden düşürür
-  // ama rıza bölümü hâlâ silinmiş dosyaya bağlı görünürdü — ekranda sessiz
-  // bir yalan. İki kaynağın (dosya + ekler) tutarlılığı yalnızca birlikte
-  // çekilerek korunur.
-  async function ekSil(ekId: number) {
-    await danisanApi.ekSil(ekId)
-    setKartTazeleme((n) => n + 1)
+    takvim.seansaGit(appointmentId, tarih)
+    dosya.kapat()
   }
 
   // Rapor için not çekmenin TEK yolu `notApi` — yani yalnızca resmî notlar.
-  // `ozelNotApi` bu bileşende de ayrı bir nesnedir ve karta hiç geçmez.
+  // `ozelNotApi` bu bileşene HİÇ girmiyor (özel not `useSeansNotlari`
+  // kancasında, seans panelinde meşru olarak kullanılıyor) ve karta da
+  // geçmiyor.
   //
   // BURASI KAVŞAK. `veriRaporu.ts` ve `DanisanKarti.tsx` `ozelNotApi`'yi
   // içe aktarmıyor ve aktarmalarına gerek de yok; raporun NOT KAYNAĞINI
@@ -574,8 +123,12 @@ export function AnaEkran({
   //     kanaryasini TASIMAZ, resmi notu TASIR" — üretilen Blob'un metnini
   //     okur;
   //   - yapısal: aynı dosyadaki "rapor not kaynağı: `raporNotlariGetir`
-  //     gövdesi" bloğu bu fonksiyonun GÖVDESİNİ tarar (dosyanın tamamı
-  //     taranamaz — `ozelNotApi` seans panelinde meşru olarak kullanılıyor).
+  //     gövdesi" bloğu bu fonksiyonun GÖVDESİNİ tarar. Fonksiyon kanca
+  //     ayrımında BİLEREK burada bırakıldı: taşınsaydı tarama yanlış dosyaya
+  //     bakan bir teste dönerdi (`docs/test-yesil-ama-korumuyor.md` biçim 12).
+  //     Özel notun bu ekranın erişim alanında GERÇEKTEN durduğunu (yani
+  //     taramanın gövdeye özgü olduğunu) o testin artı yön iddiası
+  //     `useSeansNotlari`'yi göstererek koruyor.
   async function raporNotlariGetir(): Promise<SeansNotu[]> {
     if (seciliDanisanId === null) return []
     return notApi.danisanNotlari(seciliDanisanId, RAPOR_NOT_SINIRI)
@@ -599,112 +152,6 @@ export function AnaEkran({
     if (seciliDanisanId === null) throw new Error('Danışan seçili değil; rapor kaydı yazılamadı.')
     await danisanApi.raporKaydiOlustur(seciliDanisanId)
   }
-
-  async function kaydet(kayit: {
-    client_id: number
-    baslangic: string
-    bitis: string
-    ucret: number | null
-    tekrar_sayisi?: number
-  }) {
-    try {
-      // İki kip: panel mevcut bir randevuyla açıldıysa DÜZENLEME (PUT),
-      // yalnızca boş bir saatle açıldıysa YENİ KAYIT (POST). Bu ayrım
-      // yokken düzenleme kipinde de POST atılıyordu ve sunucu randevunun
-      // KOPYASINI yaratıyordu — orijinal kayıt değişmemiş hâlde kalıyor,
-      // aynı saatte ikinci bir blok beliriyordu (bkz. dal incelemesi C1).
-      if (seciliRandevu) {
-        // `tekrar_sayisi` bilerek geçirilmiyor: düzenleme kipinde panel o
-        // alanı zaten göstermiyor ve mevcut bir randevuyu "8 hafta
-        // tekrarla" ile kaydetmek anlamsız olurdu.
-        await takvimApi.randevuGuncelle(seciliRandevu.id, {
-          client_id: kayit.client_id,
-          baslangic: kayit.baslangic,
-          bitis: kayit.bitis,
-          ucret: kayit.ucret,
-        })
-      } else {
-        await takvimApi.randevuOlustur(kayit)
-      }
-      setHata(null)
-      panelKapat()
-      await yukle()
-    } catch (e) {
-      // Üstteki bant dar bir sayfada gözden kaçabilir (bkz. Görev 10 inceleme
-      // bulgusu) — burada set edilip yeniden fırlatılıyor ki panel de kendi
-      // içinde aynı hatayı gösterebilsin (RandevuPaneli'nin onKaydet'i
-      // bekleyen islemCalistir'i bu reddi yakalayıp yerel hata state'ine
-      // yazıyor). Merkezi 401 dinleyicisi zaten api.ts içindeki `istek`
-      // fonksiyonunda, bu reddin fırlatılmasından önce tetiklenmiş oluyor —
-      // burada yeniden fırlatmak o mekanizmayı etkilemez.
-      setHata(e instanceof Error ? e.message : 'Randevu kaydedilemedi.')
-      throw e
-    }
-  }
-
-  // Durum değişikliği ve silme, sunucudan YENİDEN YÜKLEMEDEN yerel listeye
-  // uygulanır. Gerekçe hız değil, denetim kaydı hacmi (bkz. Plan 3 Görev 2
-  // ve `store::audit` modül başlığı): `yukle()` her çağrıldığında sunucuda
-  // bir `goruntuleme` satırı üretiyordu ve `audit_log` satırları SİLİNEMEZ.
-  // "Geldi" işaretlemek tek bir kullanıcı eylemi olduğu hâlde iki satır
-  // bırakıyordu. Sunucu tarafında da birleştirme var (aynı görev) — bu iki
-  // önlem birbirinin yedeği: burada gereksiz isteği hiç atmıyoruz, orada
-  // atılırsa bile satır birikmiyor.
-  //
-  // Bu iki işlemin sonucu yerel olarak KESİN BİÇİMDE bilinebilir: durum
-  // sunucuda doğrulanmış sabit bir değer, silinen kayıt da tek bir id.
-  // `kaydet` ve `seriSil` için AYNI ŞEY YAPILMADI — orada sonuç birden çok
-  // satırı (ve görünen haftanın dışını) etkileyebilir, dolayısıyla yeniden
-  // yükleme doğru olanı.
-  async function durumDegis(id: number, durum: string) {
-    try {
-      await takvimApi.randevuDurumu(id, durum)
-      setHata(null)
-      setRandevular((onceki) => onceki.map((r) => (r.id === id ? { ...r, durum } : r)))
-      // Panel açık kalır ve elindeki `randevu` nesnesi bu state'tir; o kopya
-      // güncellenmezse `seciliRandevu.durum` sunucudaki gerçekten sessizce
-      // ayrışır. Bugün görünür bir etkisi YOK — `RandevuPaneli` `durum`
-      // alanını hiçbir yerde render etmiyor ve `key` değişmediği için remount
-      // da olmuyor (bu satırın eski gerekçesi "kullanıcı işaretlediği durumu
-      // panelde göremez" idi; yanlıştı, silindi). Satır yine de duruyor çünkü
-      // paneldeki kopyanın listedeki satırdan ayrışması, panel ileride
-      // `durum`'u okuduğu anda bayat veri gösterirdi.
-      setSeciliRandevu((secili) => (secili && secili.id === id ? { ...secili, durum } : secili))
-    } catch (e) {
-      setHata(e instanceof Error ? e.message : 'Randevu güncellenemedi.')
-      throw e
-    }
-  }
-
-  async function sil(id: number) {
-    try {
-      await takvimApi.randevuSil(id)
-      setHata(null)
-      panelKapat()
-      setRandevular((onceki) => onceki.filter((r) => r.id !== id))
-    } catch (e) {
-      setHata(e instanceof Error ? e.message : 'Randevu silinemedi.')
-      throw e
-    }
-  }
-
-  // Seriyi bu randevudan İTİBAREN iptal eder; geçmiş randevular sunucuda
-  // korunuyor (bkz. `seriyi_sil`). `seriyi_sil` Görev 6'da yazılmış ve test
-  // edilmişti ama hiçbir çağrı yeri yoktu — 52 haftalık bir seri iki tıkla
-  // kuruluyor, iptal edilemiyordu (bkz. dal incelemesi I4a).
-  async function seriSil(seriId: string, buTarihtenItibaren: string) {
-    try {
-      await takvimApi.seriSil(seriId, buTarihtenItibaren)
-      setHata(null)
-      panelKapat()
-      await yukle()
-    } catch (e) {
-      setHata(e instanceof Error ? e.message : 'Seri silinemedi.')
-      throw e
-    }
-  }
-
-  const panelAcik = seciliRandevu !== null || seciliBosSaat !== null
 
   return (
     <div className="p-8">
@@ -910,14 +357,14 @@ export function AnaEkran({
           eder). Eşik metni sunucudan gelen `esik` alanından basılıyor;
           istemcide ikinci bir kopya tutmak iki sayının sessizce ayrışması
           demekti. */}
-      {depolama?.uyari && (
+      {dosya.depolama?.uyari && (
         <p
           role="status"
           className="mb-4 rounded border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900"
         >
-          Ekli dosyalar {boyutBicimle(depolama.toplam_boyut)} yer kaplıyor ve{' '}
-          {boyutBicimle(depolama.esik)} uyarı eşiğini aştı. Yükleme engellenmiyor; yedeklerinizi
-          ve eski dosyalarınızı gözden geçirmek isteyebilirsiniz.
+          Ekli dosyalar {boyutBicimle(dosya.depolama.toplam_boyut)} yer kaplıyor ve{' '}
+          {boyutBicimle(dosya.depolama.esik)} uyarı eşiğini aştı. Yükleme engellenmiyor;
+          yedeklerinizi ve eski dosyalarınızı gözden geçirmek isteyebilirsiniz.
         </p>
       )}
 
@@ -1140,20 +587,20 @@ export function AnaEkran({
         )}
       </section>
 
-      {hata && <p className="mb-4 text-sm text-red-600">{hata}</p>}
+      {takvim.hata && <p className="mb-4 text-sm text-red-600">{takvim.hata}</p>}
 
       <div className="flex items-start gap-4">
         <div className="flex-1">
           <HaftalikTakvim
-            randevular={randevular}
-            haftaBasi={haftaBasi}
-            onHaftaDegis={haftaDegis}
-            onRandevuSec={randevuSec}
-            onBosSaatSec={bosSaatSec}
+            randevular={takvim.randevular}
+            haftaBasi={takvim.haftaBasi}
+            onHaftaDegis={takvim.haftaDegis}
+            onRandevuSec={takvim.randevuSec}
+            onBosSaatSec={takvim.bosSaatSec}
           />
         </div>
 
-        {panelAcik && (
+        {takvim.panelAcik && (
           <RandevuPaneli
             // Seçim değişince (başka bir randevu ya da boş saat) bileşen
             // yeniden mount edilmeli — aksi hâlde panelin iç state'i (silme
@@ -1164,13 +611,13 @@ export function AnaEkran({
             zaman={seciliBosSaat ?? seciliRandevu?.baslangic ?? ''}
             randevu={seciliRandevu}
             danisanlar={liste.danisanlar}
-            onKaydet={kaydet}
-            onDurumDegis={durumDegis}
-            onSil={sil}
-            onSeriSil={seriSil}
+            onKaydet={takvim.kaydet}
+            onDurumDegis={takvim.durumDegis}
+            onSil={takvim.sil}
+            onSeriSil={takvim.seriSil}
             seriSayisiAl={takvimApi.seriSayisi}
             silinecekNotSayisiAl={takvimApi.silinecekNotSayisi}
-            onKapat={panelKapat}
+            onKapat={takvim.panelKapat}
             cakismaKontrol={takvimApi.cakismaKontrol}
           />
         )}
@@ -1185,10 +632,7 @@ export function AnaEkran({
             <button
               type="button"
               className="mt-2 rounded border border-red-300 px-2 py-1 text-sm"
-              onClick={() => {
-                setKartVerisi(BOS_KART)
-                setKartTazeleme((n) => n + 1)
-              }}
+              onClick={dosya.yenidenDene}
             >
               Yeniden dene
             </button>
@@ -1198,10 +642,10 @@ export function AnaEkran({
             <DanisanKarti
               // İKİNCİL HAT — bugün ULAŞILAMAZ, bilerek duruyor.
               //
-              // Birincil hat yukarıdaki `kart` türetmesi + bu koşullu
-              // render: danışan değişince `kart.dosya` `null` olur ve kart
-              // zaten UNMOUNT edilir, yani bu `key` hiçbir zaman değişerek
-              // bir remount tetiklemez (kaldırıldığında hiçbir test
+              // Birincil hat `useDanisanDosyasi`'ndeki `kart` türetmesi + bu
+              // koşullu render: danışan değişince `kart.dosya` `null` olur ve
+              // kart zaten UNMOUNT edilir, yani bu `key` hiçbir zaman
+              // değişerek bir remount tetiklemez (kaldırıldığında hiçbir test
               // kırılmaz — ölçülmüş). Birincil hattın ölçüldüğü yer:
               // `AnaEkran.test.tsx` > "baska danisana gecince onceki kartin
               // verisi EKRANDA KALMAZ".
@@ -1219,10 +663,10 @@ export function AnaEkran({
               notlariGetir={raporNotlariGetir}
               notSiniri={RAPOR_NOT_SINIRI}
               raporKaydiOlustur={raporKaydiOlustur}
-              ekYukle={ekYukle}
-              ekSil={ekSil}
-              onRizaKaydet={rizaKaydet}
-              onKapat={danisanKartiKapat}
+              ekYukle={dosya.ekYukle}
+              ekSil={dosya.ekSil}
+              onRizaKaydet={dosya.rizaKaydet}
+              onKapat={dosya.kapat}
             />
           )
         ))}
@@ -1240,14 +684,11 @@ export function AnaEkran({
             not={seans.not}
             ozelNot={seans.ozelNot}
             ozelHata={seans.ozelHata}
-            onNotKaydet={notKaydet}
-            onOzelNotKaydet={ozelNotKaydet}
-            onOzelSekme={() => setOzelNotIstenen(seciliRandevu.id)}
-            onOzelYenidenDene={() => {
-              setSeansVerisi((onceki) => ({ ...onceki, ozelHata: null }))
-              setOzelTazeleme((n) => n + 1)
-            }}
-            onKapat={panelKapat}
+            onNotKaydet={seansAkisi.notKaydet}
+            onOzelNotKaydet={seansAkisi.ozelNotKaydet}
+            onOzelSekme={seansAkisi.ozelSekmeAcildi}
+            onOzelYenidenDene={seansAkisi.ozelYenidenDene}
+            onKapat={takvim.panelKapat}
           />
         ) : (
           // Yükleme başarısızsa panel AÇILMAZ: "yükleniyor…" yazan bir panel
@@ -1258,12 +699,7 @@ export function AnaEkran({
             <button
               type="button"
               className="mt-2 rounded border border-red-300 px-2 py-1 text-sm"
-              onClick={() => {
-                // Hata state'i de temizleniyor: aksi hâlde yeniden deneme
-                // sürerken ekranda hâlâ eski hata durur.
-                setSeansVerisi(BOS_SEANS)
-                setSeansTazeleme((n) => n + 1)
-              }}
+              onClick={seansAkisi.yenidenDene}
             >
               Yeniden dene
             </button>

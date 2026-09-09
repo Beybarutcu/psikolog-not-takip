@@ -1,4 +1,5 @@
 import anaEkranKaynagi from './AnaEkran.tsx?raw'
+import seansKancasiKaynagi from './anaEkranKancalari/useSeansNotlari.ts?raw'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -2018,10 +2019,19 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     it('kaynak ve govde gercekten okundu', () => {
       // Boş bir okuma aşağıdaki iddiayı hiçbir şeyi sınamayan yeşile çevirirdi.
       expect(anaEkranKaynagi).toContain('export function AnaEkran')
-      // ARTI YÖN: `AnaEkran` özel notu BAŞKA bir amaçla gerçekten kullanıyor —
-      // yani aşağıdaki iddia "bu dosyada ozelNotApi yok" demenin kısayolu
-      // değil, gövdeye özgü.
-      expect(anaEkranKaynagi).toContain('ozelNotApi.getir')
+      // ARTI YÖN: `AnaEkran` özel notu BAŞKA bir amaçla gerçekten
+      // ERİŞEBİLİYOR — yani aşağıdaki iddia "burada ozelNotApi yok" demenin
+      // kısayolu değil, gövdeye özgü.
+      //
+      // Kanca ayrımından önce bu tek satırdı (`anaEkranKaynagi` içinde
+      // `ozelNotApi.getir` aranıyordu); özel not yükleme `useSeansNotlari`'ye
+      // taşınınca erişim YOLU iki adıma çıktı ve iddia da iki adımı birden
+      // pinliyor: ekran kancayı içe aktarıyor VE kanca özel notu çekiyor.
+      // (İkinci adım tek başına yeterli değildi: `AnaEkran` kancayı hiç
+      // kullanmasaydı özel not bu ekranın erişim alanında olmazdı ve
+      // aşağıdaki tarama yine kısayola dönerdi.)
+      expect(anaEkranKaynagi).toContain("from './anaEkranKancalari/useSeansNotlari'")
+      expect(seansKancasiKaynagi).toContain('ozelNotApi.getir')
       expect(govde).toContain('notApi.danisanNotlari')
       expect(govde).toContain('RAPOR_NOT_SINIRI')
     })

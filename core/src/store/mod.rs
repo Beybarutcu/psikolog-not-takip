@@ -7,3 +7,4 @@ pub mod clients;
 pub mod appointments;
 pub mod notes;
 pub mod attachments;
+pub mod search;

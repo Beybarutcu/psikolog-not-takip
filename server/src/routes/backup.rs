@@ -178,6 +178,16 @@ pub async fn al(
     })))
 }
 
+/// Bağlama kararının **koşulu** — bkz. modül başlığı ve `tests`.
+///
+/// Karar ("HTTP rotası, Tauri komutu değil") boşlukta verilmedi: pencere
+/// `WebviewUrl::External` ile açıldığı için `window.__TAURI__` enjekte
+/// edilmiyor ve IPC'yi açmak CSP'yi genişletmeyi gerektirirdi. Bu dizgi
+/// `src-tauri/src/main.rs`'te aranıyor; oradan kalkarsa karar da yeniden
+/// gözden geçirilmelidir.
+#[cfg(test)]
+const PENCERE_KOSULU: &str = "WebviewUrl::External";
+
 /// `YedekHatasi`'yi HTTP'ye çevirir — **varyantları düzleştirmeden**.
 ///
 /// Metinler çekirdekten geliyor ve olduğu gibi gövdeye taşınıyor: "eksik" ≠
@@ -193,4 +203,75 @@ pub(crate) fn yedek_hatasi(e: psikolog_core::backup::YedekHatasi) -> ApiHata {
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     (kod, Json(json!({ "hata": e.to_string() })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **Koşullu kararın tetikleyicisi ÇALIŞTIRILABİLİR olmalı.**
+    ///
+    /// # Neden bu test var
+    ///
+    /// Modül başlığındaki bağlama kararı ("HTTP rotası, Tauri komutu
+    /// değil") bir **koşula** dayanıyor: pencere
+    /// `WebviewUrl::External("http://127.0.0.1:<port>")` ile açılıyor, yani
+    /// arayüz uzak bir kaynak olarak yükleniyor ve `window.__TAURI__` orada
+    /// enjekte edilmiyor. Koşul düşerse gerekçe de düşer.
+    ///
+    /// Bu kod tabanında aynı sınıftan bir hata zaten bulundu: bağlantı ömrü
+    /// kararının koşulu ("ekler yazma yoluna girerse") gerçekleşti, ölçüm
+    /// tekrarlanmadı ve kimse fark etmedi -- çünkü tetikleyici bir koruma
+    /// değil, bir **cümleydi**. Düzeltme oradaki
+    /// `guard::tests::ekler_yazma_yolundaysa_olcum_blob_senaryosunu_da_icermeli`
+    /// ile aynı yöntem: koşulun kendisi de çalıştırılabilir olmalı.
+    ///
+    /// İki yön de kırılabilir: Tauri kabuğu kendi protokolüne (ya da
+    /// `WebviewUrl::App`'e) geçerse (1) kırılır ve karar metni yeniden
+    /// yazılmaya zorlanır; modül başlığından gerekçe silinirse (2) kırılır.
+    #[test]
+    fn baglama_kararinin_kosulu_hala_gecerli_mi() {
+        let main_rs = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../src-tauri/src/main.rs");
+        let kaynak = std::fs::read_to_string(&main_rs)
+            .unwrap_or_else(|e| panic!("{} okunamadi: {e}", main_rs.display()));
+        // Yorumlar kuralin KENDISINDEN bahsedebilir (kardes yapisal
+        // testlerle ayni eleme).
+        let kod: String = kaynak
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        // (1) KOSUL: bugun DOGRU. Pencere uzak bir kaynak yukluyor.
+        assert!(
+            kod.contains(PENCERE_KOSULU),
+            "Tauri kabugu artik `{PENCERE_KOSULU}` kullanmiyor: arayuz Tauri'nin kendi \
+             protokoluyle yukleniyor olabilir ve `window.__TAURI__` erisilebilir hale \
+             gelmis olabilir. Yedekleme icin verilen 'HTTP rotasi, Tauri komutu degil' \
+             karari (bkz. modul basligi) yeniden gozden gecirilmeli -- ozellikle yerel \
+             klasor secici artik maliyetsiz olabilir."
+        );
+
+        // (2) YUKUMLULUK: kosul dogruysa gerekce bu modulun BASLIGINDA
+        // yazili olmali. Dosyanin TAMAMI degil, yalnizca `//!` blogu
+        // taranir: yukaridaki sabit (`PENCERE_KOSULU`) dosyada zaten
+        // geciyor ve tam dosya taramasi kendi kendini dogrulayan bir
+        // TOTOLOJI olurdu -- gerekce basliktan tumuyle silinse bile test
+        // gecerdi.
+        let bu_baslik: String = include_str!("backup.rs")
+            .lines()
+            .take_while(|l| l.starts_with("//!"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        // Sinir gercekten tuttu mu: baslik bu testin KENDISINI kapsamamali.
+        assert!(
+            !bu_baslik.contains("fn baglama_kararinin_kosulu"),
+            "modul basligi ayiklanamadi (sinir kaydi); tarama totolojiye donusurdu"
+        );
+        assert!(
+            bu_baslik.contains(PENCERE_KOSULU),
+            "`routes::backup` modul basligi baglama kararinin kosulunu artik anlatmiyor"
+        );
+    }
 }

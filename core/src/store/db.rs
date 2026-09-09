@@ -108,17 +108,37 @@ pub fn open_existing(path: &Path, key: &DataKey) -> Result<Connection, DbError> 
 /// tek çağrı yeri `routes::session::kilit_ac`'tır (yani gerçekten **açılış**
 /// yolu).
 ///
-/// # Neden `integrity_check`, `quick_check` değil
+/// # Neden `integrity_check`, `quick_check` değil -- ÖLÇÜLDÜ
 ///
 /// `backup::geri_yukle` bir YEDEK dosyasını doğrularken bilerek
 /// `quick_check` kullanır (hız/kapsam dengesi; bkz. oradaki gerekçe).
 /// Burada denge terstir: bu, oturum başına **bir kez** çalışan giriş
-/// kapısıdır ve atlanan tek şey -- indeks/tablo çapraz doğrulaması -- tam
-/// olarak sessizce yanlış sonuç üreten bozulma sınıfıdır: bozuk bir FTS ya
-/// da `idx_appointments_baslangic` indeksi, var olan bir seans notunu
-/// aramada "yok" gösterir ve kullanıcı bunu bir bozulma değil, kendi hatası
-/// sanar. Maliyeti dosyanın tamamını okumaktır; kilit açma zaten Argon2id
-/// türetmesiyle saniyeler sürüyor ve bu kontrol oturumda bir kez yapılıyor.
+/// kapısıdır ve `quick_check`'in atladığı tek şey -- indeks/tablo çapraz
+/// doğrulaması -- tam olarak sessizce yanlış sonuç üreten bozulma
+/// sınıfıdır: bozuk bir `idx_appointments_baslangic` ya da arama indeksi,
+/// var olan bir seans notunu aramada "yok" gösterir ve kullanıcı bunu bir
+/// bozulma değil, kendi hatası sanar.
+///
+/// **Fark ölçüldü, sonra karar verildi** (`tests::butunluk_kontrolu_maliyet_olcumu`,
+/// `--nocapture`; Windows 11, debug profili -- yani gerçek dağıtımdan
+/// yavaş; ~41 MB'lık veritabanı = iki adet 20 MB'lık ek, üç ardışık koşu):
+///
+/// | Kontrol                  | ölçülen       |
+/// |--------------------------|---------------|
+/// | `PRAGMA integrity_check` | 160-176 ms    |
+/// | `PRAGMA quick_check`     | 161-176 ms    |
+///
+/// İki süre **ölçüm gürültüsünün içinde**: bu veritabanı boyutunda
+/// `quick_check`'in hiçbir kazancı yok, dolayısıyla kapsamı feda etmek
+/// için hiçbir sebep de yok. Kilit açma zaten Argon2id türetmesiyle
+/// ~2 saniye sürüyor (bkz. `playwright.config.ts`'teki ölçüm); 0,17 sn
+/// onun %8'i ve oturumda **bir kez** ödeniyor.
+///
+/// Bu karar yeniden gözden geçirilmelidir eğer: veritabanı, eklerin uyarı
+/// eşiğine (500 MB) yaklaşırsa -- doğrusal ölçeklemeyle ~2 sn -- ya da
+/// kontrol her istekte çalıştırılmak istenirse (aşağıya bakınız). Ölçüm
+/// BLOB boyutunu `attachments::AZAMI_DOSYA_BOYUTU`'ndan alıyor: dosya
+/// başına sınır büyürse ölçüm de kendiliğinden büyür.
 ///
 /// # Veri uç noktalarında ÇALIŞTIRILMAZ
 ///
@@ -400,6 +420,79 @@ mod tests {
             matches!(hata, DbError::Bozuk),
             "bozuk sayfa `Bozuk` olarak raporlanmali, gelen: {hata:?}"
         );
+    }
+
+    /// **`integrity_check` mi `quick_check` mi** -- kararın ÖLÇÜMÜ.
+    ///
+    /// `guard::baglanti_omru_olcumu` ile aynı yöntem ve aynı gerekçe: bu bir
+    /// eşik testi DEĞİL, bir ölçümdür. Makineye ve diske bağlı bir süreyi
+    /// assert etmek bu kod tabanında zaten bir kez "ortama bağlı
+    /// etkisizleşen test" olarak geri tepti; bunun yerine iki seçenek aynı
+    /// koşullarda ölçülür, süreler `--nocapture` ile yazdırılır ve **kararın
+    /// kendisi** `butunluk_kontrol`'ün belgesinde yazılıdır.
+    ///
+    /// Neden BLOB'lu: bu ürünün en büyük veritabanı senaryosu ekli
+    /// dosyalardır (dosya başına 20 MB, uyarı eşiği 500 MB). Küçük bir
+    /// veritabanıyla yapılan ölçüm "kilit açmayı yavaşlatır mı" sorusunu
+    /// yanıtlamazdı -- `guard::baglanti_omru_olcumu`'nun BLOB senaryosunu
+    /// eklemesiyle aynı ders.
+    ///
+    /// Assertion yalnızca ölçümün gerçekten yapıldığını (BLOB'ların diske
+    /// TAM boyutunda yazıldığını ve kontrolün sağlam dosyada geçtiğini)
+    /// doğrular -- yoksa boş bir veritabanını ölçüyor olabilirdik.
+    #[test]
+    fn butunluk_kontrolu_maliyet_olcumu() {
+        use std::time::Instant;
+        // Sinira BAGLI: dosya basina azami boyut buyurse olcum de buyur.
+        // Sabit bir `20 * 1024 * 1024` yazmak, sinir degistiginde olcumu
+        // sessizce bayatlatirdi (`guard::baglanti_omru_olcumu` ile ayni
+        // gerekce).
+        const BLOB_BOYUTU: usize = crate::store::attachments::AZAMI_DOSYA_BOYUTU;
+        const BLOB_ADEDI: usize = 2;
+
+        let dir = tempfile::tempdir().unwrap();
+        let yol = dir.path().join("veri.db");
+        let key = generate_data_key();
+        {
+            let c = open_encrypted(&yol, &key).unwrap();
+            crate::store::schema::migrate(&c).unwrap();
+            c.execute_batch("CREATE TABLE ekler(icerik BLOB);").unwrap();
+            let icerik = vec![0x41u8; BLOB_BOYUTU];
+            let mut stmt = c.prepare("INSERT INTO ekler VALUES (?1)").unwrap();
+            for _ in 0..BLOB_ADEDI {
+                stmt.execute([&icerik]).unwrap();
+            }
+        }
+        let dosya_boyutu = std::fs::metadata(&yol).unwrap().len();
+
+        let c = open_existing(&yol, &key).unwrap();
+
+        let t0 = Instant::now();
+        butunluk_kontrol(&c).expect("saglam veritabani gecmeli");
+        let tam: std::time::Duration = t0.elapsed();
+
+        let t1 = Instant::now();
+        let hizli_sonuc: String = c.query_row("PRAGMA quick_check", [], |r| r.get(0)).unwrap();
+        let hizli: std::time::Duration = t1.elapsed();
+
+        println!(
+            "--- butunluk kontrolu olcumu ({BLOB_ADEDI} x {:.0} MB ek) ---",
+            BLOB_BOYUTU as f64 / (1024.0 * 1024.0)
+        );
+        println!("veritabani boyutu           : {:.1} MB", dosya_boyutu as f64 / (1024.0 * 1024.0));
+        println!("PRAGMA integrity_check      : {tam:>10.2?}");
+        println!("PRAGMA quick_check          : {hizli:>10.2?}");
+        println!(
+            "fark (capraz dogrulamanin bedeli): {:>10.2?} -- kilit acma oturumda BIR KEZ",
+            tam.saturating_sub(hizli)
+        );
+
+        // Olcumun gercekten ~40 MB'lik bir dosyayi taradigini kanitlar.
+        assert!(
+            dosya_boyutu as usize >= BLOB_BOYUTU * BLOB_ADEDI,
+            "olculen veritabani beklenenden kucuk: {dosya_boyutu}"
+        );
+        assert_eq!(hizli_sonuc, "ok", "on kosul: dosya saglam olmali");
     }
 
     #[test]

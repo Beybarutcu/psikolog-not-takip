@@ -91,6 +91,14 @@ let yedekListeHatasi: string | null
 /** Testlerin varsaydigi "bugun" — `AnaEkran::yerelGun` ile ayni bicimde. */
 const BUGUN = '2026-09-09'
 
+/**
+ * Sunucudaki gecerli parola. `POST /api/parola` taklidi bunu GERCEKTEN
+ * degistirir: "parola degisti mi" iddiasi ancak boyle olculebilir --
+ * her istegi `200` donen bir taklit, mevcut parola dogrulamasini hic
+ * yapmayan bir istemciyi de yesil gecerdi.
+ */
+let sunucuParolasi: string
+
 function hataYaniti(kod: number, mesaj: string): Response {
   return {
     ok: false,
@@ -100,6 +108,23 @@ function hataYaniti(kod: number, mesaj: string): Response {
 }
 
 function ekUcYaniti(yol: string, secenekler?: RequestInit): Response | null {
+  // `POST /api/parola` taklidi -- sunucunun `core::parola` sozlesmesini
+  // izler: mevcut parola YANLISSA 401, yeni parola KISAYSA 400, ikisi de
+  // farkli metinler ("her hata parola hatasidir" tuzagi).
+  if (yol === '/api/parola') {
+    const g = JSON.parse((secenekler?.body as string) ?? '{}') as {
+      mevcut_parola: string
+      yeni_parola: string
+    }
+    if (g.mevcut_parola !== sunucuParolasi) {
+      return hataYaniti(401, 'Mevcut parolanız hatalı. Parolanız değişmedi.')
+    }
+    if (g.yeni_parola.length < 8) {
+      return hataYaniti(400, 'Yeni parola en az 8 karakter olmalı. Parolanız değişmedi.')
+    }
+    sunucuParolasi = g.yeni_parola
+    return jsonYanit({})
+  }
   if (yol.startsWith('/api/saklama-suresi-dolanlar')) return jsonYanit(sunucuSaklamaDolanlar)
   if (yol.startsWith('/api/depolama-durumu')) return jsonYanit(sunucuDepolama)
   // `/api/yedekler` ONCE: `/api/yedek` onun oneki.
@@ -183,6 +208,7 @@ beforeEach(() => {
   yedekIstekleri = []
   yedekAlmaHatasi = null
   yedekListeHatasi = null
+  sunucuParolasi = 'gizli-parola-123'
   // Taslak deposu MODÜL DÜZEYİNDE (bileşen ağacının dışında) yaşıyor ve
   // kendi belgesi "testler arası sızar" diyor. `SeansPaneli.test.tsx` ile
   // `NotEditoru.test.tsx` temizliyordu, bu dosya temizlemiyordu: bugün
@@ -2160,6 +2186,164 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     expect(sorguTasiyanlar).toHaveLength(1)
     expect(sorguTasiyanlar[0]).toContain('/api/ara?q=kaygi')
   })
+  // -------------------------------------------------------------------
+  // PAROLA DEĞİŞTİRME — "kodda var, üründe yok"un bir örneği daha.
+  // `keystore::change_password` Plan 1'den beri yazılı ve testliydi ama
+  // hiçbir çağrı yeri yoktu: kullanıcı parolasını DEĞİŞTİREMİYORDU.
+  // -------------------------------------------------------------------
+
+  async function parolaFormunuAc() {
+    const bolum = screen.getByRole('region', { name: 'Parola' })
+    await userEvent.click(within(bolum).getByRole('button', { name: 'Parolayı değiştir' }))
+    return bolum
+  }
+
+  async function parolayiDoldur(mevcut: string, yeni: string, tekrar = yeni) {
+    await userEvent.type(screen.getByLabelText('Mevcut parolanız'), mevcut)
+    await userEvent.type(screen.getByLabelText('Yeni parola'), yeni)
+    await userEvent.type(screen.getByLabelText('Yeni parola (tekrar)'), tekrar)
+  }
+
+  /** Formdaki "Parolayı değiştir" (gönder) düğmesi — açan düğmeyle aynı ada
+   *  sahip; gönder olan, `disabled` olabilendir (`type=button`, sonuncusu). */
+  function gonderDugmesi() {
+    const hepsi = screen.getAllByRole('button', { name: 'Parolayı değiştir' })
+    return hepsi[hepsi.length - 1]
+  }
+
+  it('parola degistirilebilir ve sunucudaki parola GERCEKTEN degisir', async () => {
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+
+    await parolaFormunuAc()
+    await parolayiDoldur('gizli-parola-123', 'yepyeni-parola')
+    await userEvent.click(gonderDugmesi())
+
+    await screen.findByRole('status', { name: '' }).catch(() => null)
+    await waitFor(() => expect(sunucuParolasi).toBe('yepyeni-parola'))
+    // İstek gerçekten `/api/parola`ya gitti.
+    expect(istekYollari).toContain('POST /api/parola')
+  })
+
+  it('basari mesaji KURTARMA KODU ve ESKI YEDEK gerceklerini yazar', async () => {
+    // İki gerçek de kullanıcının ancak "çok geç" öğrenebileceği türden:
+    // kurtarma kodunu parolasını unuttuğunda, eski yedeği de onu geri
+    // yüklemeye çalıştığında. Ekran ikisini de ÖNCEDEN söylemeli.
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+
+    await parolaFormunuAc()
+    await parolayiDoldur('gizli-parola-123', 'yepyeni-parola')
+    await userEvent.click(gonderDugmesi())
+
+    const bilgi = await screen.findByText(/Parolanız değişti/)
+    expect(bilgi.textContent).toContain('Kurtarma kodunuz aynı kaldı')
+    // Dizgi OLDUĞU GİBİ aranıyor, `/i` bayrağıyla değil: JavaScript'te
+    // `İ` (U+0130) `i`ye katlanmaz (birleşen noktalı `i̇` verir), yani
+    // `/eski/i` "ESKİ"yi bulmaz. Bu kod tabanının Türkçe katlama dersinin
+    // (bkz. `store::search`) istemci tarafındaki karşılığı.
+    expect(bilgi.textContent).toContain('ESKİ parolanızla açılır')
+    // `role="status"`: ekran okuyucu kullanıcısı da duymalı.
+    expect(bilgi.getAttribute('role')).toBe('status')
+  })
+
+  it('yanlis mevcut parolada sunucunun mesaji gosterilir ve parola DEGISMEZ', async () => {
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+
+    await parolaFormunuAc()
+    await parolayiDoldur('bambaska-parola', 'yepyeni-parola')
+    await userEvent.click(gonderDugmesi())
+
+    expect(await screen.findByText(/Mevcut parolanız hatalı/)).toBeDefined()
+    expect(sunucuParolasi).toBe('gizli-parola-123')
+    // Form AÇIK kalır: kullanıcı düzeltip yeniden deneyebilmeli.
+    expect(screen.getByLabelText('Mevcut parolanız')).toBeDefined()
+    expect(screen.queryByText(/Parolanız değişti/)).toBeNull()
+  })
+
+  it('kisa yeni parolada AYRI bir mesaj gosterilir', async () => {
+    // "Her hata parola hatasıdır" tuzağı: iki ret aynı metni vermemeli,
+    // yoksa kullanıcı neyi düzelteceğini bilemez.
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+
+    await parolaFormunuAc()
+    await parolayiDoldur('gizli-parola-123', 'kisa')
+    await userEvent.click(gonderDugmesi())
+
+    expect(await screen.findByText(/en az 8 karakter/)).toBeDefined()
+    expect(screen.queryByText(/Mevcut parolanız hatalı/)).toBeNull()
+    expect(sunucuParolasi).toBe('gizli-parola-123')
+  })
+
+  it('yeni parola ile tekrari uyusmuyorsa istek HIC ATILMAZ', async () => {
+    // Sunucu iki alanı karşılaştıramaz (ikincisi ona hiç gönderilmiyor):
+    // yazım hatası yapan bir kullanıcı, yeni parolasını bilmeden
+    // değiştirmiş olurdu.
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+
+    await parolaFormunuAc()
+    await parolayiDoldur('gizli-parola-123', 'yepyeni-parola', 'yepyeni-paroa')
+    await userEvent.click(gonderDugmesi())
+
+    expect(await screen.findByText(/tekrarı aynı değil/i)).toBeDefined()
+    expect(istekYollari.filter((y) => y.includes('/api/parola'))).toHaveLength(0)
+    expect(sunucuParolasi).toBe('gizli-parola-123')
+  })
+
+  it('parola HICBIR istek YOLUNDA tasinmaz', async () => {
+    // URL'ler tarayıcı geçmişine ve genel amaçlı erişim günlüklerine
+    // düşer; parola gövdede kalmalı (`ekYukle`nin dosya adı kararıyla
+    // aynı sınıf).
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+
+    await parolaFormunuAc()
+    await parolayiDoldur('gizli-parola-123', 'KANARYA-PAROLASI')
+    await userEvent.click(gonderDugmesi())
+    await waitFor(() => expect(istekYollari).toContain('POST /api/parola'))
+
+    for (const yol of istekYollari) {
+      expect(yol).not.toContain('KANARYA-PAROLASI')
+      expect(yol).not.toContain('gizli-parola-123')
+    }
+  })
+
+  it('form kapaninca girilen parolalar STATE ten silinir', async () => {
+    // Gizlenmiş ama duran bir parola alanı, katman bir sonraki açılışta
+    // dolu gelirdi (`HizliArama`nın "kapanınca sonuçlar silinir"
+    // kararıyla aynı ilke).
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+
+    const bolum = await parolaFormunuAc()
+    await parolayiDoldur('gizli-parola-123', 'yepyeni-parola')
+    expect((screen.getByLabelText('Mevcut parolanız') as HTMLInputElement).value).toBe(
+      'gizli-parola-123',
+    )
+
+    await userEvent.click(within(bolum).getByRole('button', { name: 'Vazgeç' }))
+    await userEvent.click(within(bolum).getByRole('button', { name: 'Parolayı değiştir' }))
+
+    expect((screen.getByLabelText('Mevcut parolanız') as HTMLInputElement).value).toBe('')
+    expect((screen.getByLabelText('Yeni parola') as HTMLInputElement).value).toBe('')
+    expect((screen.getByLabelText('Yeni parola (tekrar)') as HTMLInputElement).value).toBe('')
+  })
+
+  it('parola alanlari `type=password`', async () => {
+    // Ekran görünürken danışan odada olabilir (`HizliArama`nın kendi
+    // gerekçesiyle aynı sınıf); parola düz metin olarak görünmemeli.
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+    await parolaFormunuAc()
+
+    for (const etiket of ['Mevcut parolanız', 'Yeni parola', 'Yeni parola (tekrar)']) {
+      expect((screen.getByLabelText(etiket) as HTMLInputElement).type).toBe('password')
+    }
+  })
+
   // -------------------------------------------------------------------
   // Dal incelemesi: HTTP -> arayüz yönü. Üç uç noktanın istemcide hiçbir
   // çağrı yeri yoktu; aşağıdaki testler o çağrı yerlerini ölçüyor.

@@ -59,6 +59,12 @@ fn api_router() -> Router<AppState> {
         .route("/kurulum", post(routes::setup::kurulum))
         .route("/kilit-ac", post(routes::session::kilit_ac))
         .route("/kilitle", post(routes::session::kilitle))
+        // Parola degistirme: kilit kapisinin ICINDE (28. veri handler'i) ve
+        // `POST` -- parolalar GOVDEDE gider, sorgu dizesinde degil (URL'ler
+        // tarayici gecmisine ve gunluklere duser). `core::keystore::
+        // change_password` Plan 1'den beri yazili ve testliydi ama hicbir
+        // cagri yeri yoktu; bu, o zincirin arayuze kadar uzanan halkasi.
+        .route("/parola", post(routes::password::degistir))
         .route("/danisanlar", get(routes::clients::liste).post(routes::clients::olustur))
         // Arşivleme ayrı bir yol segmentinde ve `POST`: yumuşak silmedir,
         // `DELETE` değildir (gerekçe için bkz. `routes::clients::arsivle_uc`).

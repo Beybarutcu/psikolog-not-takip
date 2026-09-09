@@ -225,13 +225,20 @@ async fn geri_yuklenen_cift_eski_parolayla_calisir() {
     let (kod, _) = yedek_al(&o, DAMGA).await;
     assert_eq!(kod, StatusCode::OK);
 
-    // Parolayi degistir: DISKTEKI anahtar dosyasi degisir. (Parola degistirme
-    // ucu bu planda yok; degisiklik cekirdek uzerinden, diske dogrudan
-    // yaziliyor -- olculen sey geri yuklemenin anahtar dosyasini da tasidigi.)
+    // Parolayi degistir: DISKTEKI anahtar dosyasi degisir. Degisiklik artik
+    // URUNUN KENDI UC NOKTASINDAN (`POST /api/parola`) yapiliyor -- eskiden
+    // burada "parola degistirme ucu bu planda yok" yazip cekirdegi dogrudan
+    // cagiriyorduk. Bu, "eski yedekler ESKI parolayla acilir" davranisinin
+    // gercek kullanici yolundan da dogru oldugunu gosterir.
     let eski_anahtar = anahtar(&o, PAROLA);
-    let ks = keystore::load(&o.s.keystore_yolu()).unwrap();
-    let yeni_ks = keystore::change_password(&ks, PAROLA, "yeni-parola-456").unwrap();
-    keystore::save(&yeni_ks, &o.s.keystore_yolu()).unwrap();
+    let (kod, govde) = cagir(
+        &o.s,
+        "POST",
+        "/api/parola",
+        Some(serde_json::json!({ "mevcut_parola": PAROLA, "yeni_parola": "yeni-parola-456" })),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::OK, "on kosul: parola degistirme ucu calismali: {govde}");
     cagir(&o.s, "POST", "/api/kilitle", None).await;
 
     // ON KOSUL: eski parola artik CALISMIYOR.

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  api,
   AZAMI_EK_BOYUTU,
   aramaApi,
   ARAMA_SINIRI,
@@ -367,6 +368,58 @@ describe('ekIndir — kilitli oturumda SPA yıkılmaz', () => {
     ikiliSunucu({ ok: false, status: 404, govde: { hata: 'Kayıt bulunamadı.' } })
     await expect(ekIndir({ id: 9, dosya_adi: 'onam.pdf' })).rejects.toThrow('Kayıt bulunamadı.')
     expect(uretilenBloblar).toHaveLength(0)
+  })
+})
+
+describe('api.parolaDegistir — parola değiştirme', () => {
+  it('POST ile /api/parola adresine iki parolayi da GOVDEDE gonderir', async () => {
+    await api.parolaDegistir('eski-parola', 'yeni-parola')
+    expect(cagrilar).toEqual([
+      {
+        yol: '/api/parola',
+        method: 'POST',
+        govde: { mevcut_parola: 'eski-parola', yeni_parola: 'yeni-parola' },
+      },
+    ])
+  })
+
+  it('parola URL de tasinmaz', async () => {
+    // URL'ler tarayici gecmisine ve genel amacli erisim gunluklerine duser;
+    // govdeler dusmez (`ekYukle`nin dosya adi ve `yedekApi.listele`nin
+    // klasor yolu kararlariyla ayni sinif). Bir gun birileri "kolaylik
+    // olsun" diye sorgu dizesine tasirsa bu test kirilir.
+    await api.parolaDegistir('KANARYA-ESKI', 'KANARYA-YENI')
+    expect(cagrilar[0].yol).toBe('/api/parola')
+    expect(cagrilar[0].yol).not.toContain('KANARYA')
+  })
+
+  it('mevcut parola ZORUNLU olarak gonderilir', async () => {
+    // Yalnizca yeni parola gonderen bir istemci, sunucunun dogrulamasini
+    // fiilen atlatamaz (sunucu 401 doner) ama arayuz "parolam degisti"
+    // sanabilirdi. Alanin gonderildigi burada sabitleniyor.
+    await api.parolaDegistir('mevcut', 'yenisi-uzun')
+    const govde = cagrilar[0].govde as Record<string, unknown>
+    expect(govde.mevcut_parola).toBe('mevcut')
+  })
+
+  it('401de YetkisizHata firlatir (merkezi mekanizmadan gecer)', async () => {
+    sunucu(() => ({ ok: false, status: 401, govde: { hata: 'Mevcut parolanız hatalı.' } }))
+    await expect(api.parolaDegistir('yanlis', 'yenisi-uzun')).rejects.toThrow(
+      'Mevcut parolanız hatalı.',
+    )
+  })
+
+  it('400te sunucunun mesaji OLDUGU GIBI firlatilir', async () => {
+    // "Her hata parola hatasidir" tuzagi: kisa parola ile yanlis parola ayri
+    // sorunlar ve kullanici hangisini duzeltecegini bilmeli.
+    sunucu(() => ({
+      ok: false,
+      status: 400,
+      govde: { hata: 'Yeni parola en az 8 karakter olmalı. Parolanız değişmedi.' },
+    }))
+    await expect(api.parolaDegistir('dogru', 'kisa')).rejects.toThrow(
+      'Yeni parola en az 8 karakter olmalı. Parolanız değişmedi.',
+    )
   })
 })
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  api,
   aramaApi,
   danisanApi,
   notApi,
@@ -216,6 +217,20 @@ export function AnaEkran({
   const [klasorFormuAcik, setKlasorFormuAcik] = useState(false)
   const [klasorGirdisi, setKlasorGirdisi] = useState('')
   const [yedekSuruyor, setYedekSuruyor] = useState(false)
+  // PAROLA DEĞİŞTİRME. `keystore::change_password` Plan 1'den beri yazılı ve
+  // testliydi ama hiçbir çağrı yeri yoktu: kullanıcı parolasını
+  // DEĞİŞTİREMİYORDU (`seriyi_sil`, `clients::arsivle`, `depolama_durumu`
+  // ile aynı "kodda var, üründe yok" sınıfı).
+  //
+  // Alanlar form kapanınca temizleniyor: bir parola, hiç görünmeyen bir
+  // panelin state'inde oturmamalı.
+  const [parolaFormuAcik, setParolaFormuAcik] = useState(false)
+  const [mevcutParola, setMevcutParola] = useState('')
+  const [yeniParola, setYeniParola] = useState('')
+  const [yeniParolaTekrar, setYeniParolaTekrar] = useState('')
+  const [parolaHatasi, setParolaHatasi] = useState<string | null>(null)
+  const [parolaBilgisi, setParolaBilgisi] = useState<string | null>(null)
+  const [parolaSuruyor, setParolaSuruyor] = useState(false)
   // Aramadan gelen "şu seansa git" isteği. Hedef randevu başka bir haftada
   // olabilir; hafta değiştirilir, randevu listesi yeniden yüklenir ve seçim
   // ANCAK O LİSTEDEN yapılır — ekranda görünmeyen bir randevuya bağlı bir
@@ -600,6 +615,55 @@ export function AnaEkran({
     },
     [seansId],
   )
+
+  /** Parola formunu kapatır ve **girilen parolaları state'ten siler.** */
+  function parolaFormunuKapat() {
+    setParolaFormuAcik(false)
+    setMevcutParola('')
+    setYeniParola('')
+    setYeniParolaTekrar('')
+    setParolaHatasi(null)
+  }
+
+  /**
+   * Parolayı değiştirir.
+   *
+   * # "Yeni parola tekrar" YALNIZCA burada kontrol edilir
+   *
+   * Sunucu iki alanı karşılaştıramaz (ikincisi ona hiç gönderilmiyor) —
+   * yazım hatası yapan bir kullanıcı, yeni parolasını bilmeden
+   * değiştirmiş olurdu. Uzunluk kuralı ise **kopyalanmıyor**: sunucunun
+   * mesajı ("en az 8 karakter olmalı") olduğu gibi gösteriliyor, iki
+   * kopya sessizce ayrışmasın (`AZAMI_EK_BOYUTU`'nun aksine — o, isteği
+   * hiç atmadan reddedebilmek için istemcide de duruyor).
+   *
+   * # Hata mesajı OLDUĞU GİBİ gösterilir
+   *
+   * "Mevcut parolanız hatalı" ile "yeni parola çok kısa" farklı sorunlar
+   * ve kullanıcı hangisini düzelteceğini bilmeli — bu kod tabanında dört
+   * katmanda bulunan "her hata parola hatasıdır" sınıfının tam karşılığı.
+   */
+  async function parolayiDegistir() {
+    if (yeniParola !== yeniParolaTekrar) {
+      setParolaHatasi('Yeni parola ile tekrarı aynı değil. Parolanız değişmedi.')
+      return
+    }
+    setParolaSuruyor(true)
+    try {
+      await api.parolaDegistir(mevcutParola, yeniParola)
+      parolaFormunuKapat()
+      // Kullanıcı "başka ne değişti" sorusunu sormadan yanıtı görmeli:
+      // kurtarma kodu ve eski yedekler hakkındaki iki gerçek burada.
+      setParolaBilgisi(
+        'Parolanız değişti. Kurtarma kodunuz aynı kaldı ve çalışmaya devam ediyor. ' +
+          'Bugünden önce alınmış yedekler ESKİ parolanızla açılır.',
+      )
+    } catch (e) {
+      setParolaHatasi(e instanceof Error ? e.message : 'Parola değiştirilemedi.')
+    } finally {
+      setParolaSuruyor(false)
+    }
+  }
 
   function haftaDegis(yon: number) {
     setHaftaBasi((onceki) => {
@@ -1212,6 +1276,118 @@ export function AnaEkran({
               <kbd>⌥</kbd> tuşuna basılıyken “… Yol Adı Olarak Kopyala” deyince yol panoya
               kopyalanır.
             </p>
+          </div>
+        )}
+      </section>
+
+      {/* PAROLA — `keystore::change_password` Plan 1'den beri yazılı ve
+          testliydi ama hiçbir çağrı yeri yoktu: parola DEĞİŞTİRİLEMİYORDU.
+          Bölüm her zaman görünür (yalnızca form katlanıyor): "parolamı nasıl
+          değiştiririm" sorusunun ekranda bir cevabı olmalı. */}
+      <section
+        aria-label="Parola"
+        className="mb-4 rounded border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600"
+      >
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="font-medium">Parola</span>
+          <button
+            type="button"
+            className="rounded border px-2 py-1 text-xs"
+            onClick={() => {
+              setParolaBilgisi(null)
+              if (parolaFormuAcik) parolaFormunuKapat()
+              else setParolaFormuAcik(true)
+            }}
+          >
+            {parolaFormuAcik ? 'Vazgeç' : 'Parolayı değiştir'}
+          </button>
+        </div>
+
+        {/* `role="status"`: değişiklik ekranda sessizce olup bitiyordu.
+            Metin ne olduğunu VE ne OLMADIĞINI birlikte söylüyor (arşivleme
+            onayıyla aynı ilke). */}
+        {parolaBilgisi && (
+          <p role="status" className="mt-2 text-slate-700">
+            {parolaBilgisi}
+          </p>
+        )}
+
+        {parolaFormuAcik && (
+          <div className="mt-2 max-w-md">
+            <div>
+              <label className="block text-xs" htmlFor="mevcut-parola">
+                Mevcut parolanız
+              </label>
+              <input
+                id="mevcut-parola"
+                type="password"
+                autoComplete="current-password"
+                className="mt-1 w-full rounded border p-2"
+                value={mevcutParola}
+                onChange={(e) => setMevcutParola(e.target.value)}
+              />
+            </div>
+            <div className="mt-2">
+              <label className="block text-xs" htmlFor="yeni-parola">
+                Yeni parola
+              </label>
+              <input
+                id="yeni-parola"
+                type="password"
+                autoComplete="new-password"
+                className="mt-1 w-full rounded border p-2"
+                value={yeniParola}
+                onChange={(e) => setYeniParola(e.target.value)}
+              />
+            </div>
+            <div className="mt-2">
+              <label className="block text-xs" htmlFor="yeni-parola-tekrar">
+                Yeni parola (tekrar)
+              </label>
+              <input
+                id="yeni-parola-tekrar"
+                type="password"
+                autoComplete="new-password"
+                className="mt-1 w-full rounded border p-2"
+                value={yeniParolaTekrar}
+                onChange={(e) => setYeniParolaTekrar(e.target.value)}
+              />
+            </div>
+
+            {parolaHatasi && (
+              <p role="alert" className="mt-2 text-red-600">
+                {parolaHatasi}
+              </p>
+            )}
+
+            <button
+              type="button"
+              className="mt-2 rounded bg-slate-900 px-3 py-2 text-xs text-white disabled:opacity-50"
+              disabled={parolaSuruyor}
+              onClick={() => void parolayiDegistir()}
+            >
+              {parolaSuruyor ? 'Değiştiriliyor…' : 'Parolayı değiştir'}
+            </button>
+
+            {/* İKİ GERÇEĞİ ÖNCEDEN söyler; kullanıcı bunları ancak
+                parolasını unuttuğunda ya da eski bir yedeği geri yüklemeye
+                çalıştığında -- yani çok geç -- öğrenmemeli.
+
+                1. Kurtarma kodu DEĞİŞMEZ: veri anahtarı hem parolayla hem
+                   kurtarma koduyla ayrı ayrı sarmalanıyor ve sunucudaki
+                   `change_password` yalnızca parola sarmalamasını
+                   yeniliyor.
+                2. Eski yedekler ESKİ parolayla açılır: her yedek kendi
+                   anahtar dosyasıyla birlikte alınır ve geçmişteki o
+                   dosyaya dokunulmaz. */}
+            <div className="mt-2 text-xs">
+              <p>Kurtarma kodunuz değişmez; aynı kod çalışmaya devam eder.</p>
+              <p className="mt-1">
+                Bugünden önce alınmış yedekler <strong>eski</strong> parolanızla açılır — her
+                yedek kendi anahtar dosyasıyla birlikte alınır. Eski parolanızı unutmayın.
+              </p>
+              <p className="mt-1">Oturumunuz açık kalır; yeniden giriş yapmanız gerekmez.</p>
+            </div>
           </div>
         )}
       </section>

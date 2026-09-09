@@ -769,4 +769,35 @@ export const api = {
       body: JSON.stringify(girdi),
     }),
   kilitle: () => istek<Record<string, never>>('/api/kilitle', { method: 'POST' }),
+  /**
+   * Parolayı değiştirir (`POST /api/parola`).
+   *
+   * # Mevcut parola ZORUNLU
+   *
+   * Yalnızca yeni parola göndermek yetmez: oturum açıkken bilgisayarın
+   * başına geçen biri parolayı değiştirip terapisti kendi verisinden
+   * kilitleyebilirdi. Sunucu mevcut parolayı `unlock_with_password` ile
+   * doğruluyor ve yanlışsa `401` dönüyor — bu, "oturum kilitli" 401'inden
+   * ayrı bir durum ama aynı mekanizmadan geçer. `App` merkezi 401
+   * dinleyicisiyle kilit ekranına döner; çağıran taraf (`AnaEkran`) bu
+   * yüzden hatayı `YetkisizHata` olup olmadığına bakmadan kendi
+   * bandında gösterir ve kullanıcı yeniden dener.
+   *
+   * # Parolalar GÖVDEDE
+   *
+   * Sorgu dizesinde değil: URL'ler tarayıcı geçmişine ve genel amaçlı
+   * erişim günlüklerine düşer (`ekYukle`'nin dosya adı ve
+   * `yedekApi.listele`'nin klasör yolu kararlarıyla aynı sınıf).
+   *
+   * # Yanıt boş
+   *
+   * Ne yeni parola, ne kurtarma kodu, ne de anahtarla ilgili bir alan
+   * döner. Kurtarma kodu **değişmez** (aynı veri anahtarını açmaya devam
+   * eder), bu yüzden kullanıcıya yeniden gösterilecek bir şey de yoktur.
+   */
+  parolaDegistir: (mevcutParola: string, yeniParola: string) =>
+    istek<Record<string, never>>('/api/parola', {
+      method: 'POST',
+      body: JSON.stringify({ mevcut_parola: mevcutParola, yeni_parola: yeniParola }),
+    }),
 }

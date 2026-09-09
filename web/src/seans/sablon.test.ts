@@ -44,15 +44,36 @@ describe('sablon', () => {
 describe('sablon kumesi schema.rs ile ayrisamaz', () => {
   const kaynak = semaKaynagi
 
-  it('sema kaynagi gercekten okundu', () => {
+  // Desenler DOSYANIN TAMAMINDA değil, YALNIZCA V3 betiğinin içinde aranır.
+  //
+  // Düz bir `kaynak.match(...)` dosyadaki İLK eşleşmeyi alır ve `schema.rs`
+  // yoğun Türkçe gerekçe yorumlarıyla doludur: DDL'in üstündeki bir `///`
+  // yorumuna eski kümeyi yazan biri, gerçek `CHECK`'leri değiştirmiş olsa
+  // bile bu testleri yeşil bırakırdı — yani testin TEK VARLIK SEBEBİ olan
+  // iddia bir yorumla tatmin edilirdi. Betik bir Rust ham dizgisi
+  // (`r#"…"#`) olduğu için yorumlar tanım gereği onun DIŞINDADIR; kapsamı
+  // ona daraltmak bu yolu kapatır.
+  const v3Eslesme = kaynak.match(/const V3: &str = r#"([\s\S]*?)"#;/)
+  const v3 = v3Eslesme === null ? '' : v3Eslesme[1]
+
+  it('sema kaynagi gercekten okundu ve V3 betigi ayiklandi', () => {
     // Boş ya da bozuk bir okuma, aşağıdaki testleri "eşleşme yok, döngü
     // hiç dönmedi" yoluyla sessizce yeşile çevirebilirdi.
     expect(kaynak).toContain('CREATE TABLE IF NOT EXISTS templates')
+    expect(v3Eslesme, 'schema.rs içinde `const V3: &str = r#"…"#;` bulunamadı').not.toBeNull()
+    expect(v3).toContain('CREATE TABLE IF NOT EXISTS templates')
+    // Kapsamın gerçekten DARALDIĞI ölçülüyor: ayıklama tüm dosyayı geri
+    // verseydi (ya da desen kaçsaydı) yukarıdaki iddialar yine geçerdi.
+    expect(v3.length).toBeLessThan(kaynak.length)
+    // Ayıklanan parça bir SQL betiği: içinde Rust yorumu olamaz. Bu iddia
+    // düşerse aşağıdaki `CHECK` aramaları yine yorumlara bakıyor demektir.
+    expect(v3).not.toContain('///')
+    expect(v3).not.toContain('//')
   })
 
   function kumeAyristir(desen: RegExp): string[] {
-    const eslesme = kaynak.match(desen)
-    expect(eslesme, `schema.rs içinde ${desen} bulunamadı`).not.toBeNull()
+    const eslesme = v3.match(desen)
+    expect(eslesme, `V3 betiği içinde ${desen} bulunamadı`).not.toBeNull()
     return [...eslesme![1].matchAll(/'([a-z]+)'/g)].map((m) => m[1]).sort()
   }
 
@@ -65,8 +86,8 @@ describe('sablon kumesi schema.rs ile ayrisamaz', () => {
   })
 
   it('templates tohumundaki ad ve basliklar sablon.ts ile ayni', () => {
-    const blok = kaynak.match(/INSERT OR IGNORE INTO templates[\s\S]*?;/)
-    expect(blok, 'schema.rs içinde templates tohumu bulunamadı').not.toBeNull()
+    const blok = v3.match(/INSERT OR IGNORE INTO templates[\s\S]*?;/)
+    expect(blok, 'V3 betiği içinde templates tohumu bulunamadı').not.toBeNull()
 
     const satirlar = [
       ...blok![0].matchAll(/\('([a-z]+)',\s*'([^']*)',\s*'(\[[^\]]*\])'/g),

@@ -1,4 +1,4 @@
-﻿use crate::store::appointments::ASGARI_UCRET;
+use crate::store::appointments::ASGARI_UCRET;
 use rusqlite::{Connection, OptionalExtension};
 
 pub const CURRENT_VERSION: i64 = 4;
@@ -134,8 +134,8 @@ CREATE TABLE IF NOT EXISTS templates (
 );
 
 INSERT OR IGNORE INTO templates (kod, ad, basliklar, yerlesik) VALUES
-    ('dap',     'DAP',  '["Veri","DeÄŸerlendirme","Plan"]', 1),
-    ('soap',    'SOAP', '["Ã–znel","Nesnel","DeÄŸerlendirme","Plan"]', 1),
+    ('dap',     'DAP',  '["Veri","Değerlendirme","Plan"]', 1),
+    ('soap',    'SOAP', '["Öznel","Nesnel","Değerlendirme","Plan"]', 1),
     ('serbest', 'Serbest', '[]', 1);
 "#;
 
@@ -492,7 +492,7 @@ mod tests {
         let okunan: String = c
             .query_row("SELECT deger FROM app_meta WHERE anahtar='test_deger'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(okunan, "0501234567", "bastaki sifir korunmalÄ±");
+        assert_eq!(okunan, "0501234567", "bastaki sifir korunmalı");
     }
 
     #[test]
@@ -623,7 +623,7 @@ mod tests {
              VALUES (999, '2026-09-07T14:00', '2026-09-07T15:00', 'planlandi', 'z', 'z')",
             [],
         );
-        assert!(sonuc.is_err(), "yabanci anahtar kisiti calismalÄ±");
+        assert!(sonuc.is_err(), "yabanci anahtar kisiti calismalı");
     }
 
     #[test]

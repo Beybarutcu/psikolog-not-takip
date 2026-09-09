@@ -7,7 +7,7 @@ pub use state::AppState;
 
 use axum::{
     body::Body,
-    extract::Request,
+    extract::{DefaultBodyLimit, Request},
     http::{header, HeaderValue, StatusCode},
     middleware::{self, Next},
     response::Response,
@@ -86,6 +86,48 @@ fn api_router() -> Router<AppState> {
                 .delete(routes::appointments::seri_kaldir),
         )
         .route("/cakisma", get(routes::appointments::cakisma))
+        // --- Plan 3 Gorev 7: danisan dosyasi, notlar, ekler, arama --------
+        //
+        // Asagidaki on dort handler'in da ilk satiri `guard::acik_baglanti`:
+        // kilitliyken 401, govdede veri yok, islem uygulanmaz. Toplam veri
+        // handler'i sayisi 11 -> 25.
+        //
+        // `/danisanlar/{id}` iki segmentlidir; uc segmentli
+        // `/danisanlar/{id}/arsivle`, `.../notlar` ve `.../ekler` ile
+        // cakismaz.
+        .route(
+            "/danisanlar/{id}",
+            get(routes::clients::getir_uc).patch(routes::clients::guncelle_uc),
+        )
+        .route("/danisanlar/{id}/notlar", get(routes::notes::danisan_listesi))
+        .route(
+            "/danisanlar/{id}/ekler",
+            get(routes::attachments::liste)
+                .post(routes::attachments::yukle)
+                // Ham govde kullanildigi icin `govde boyutu == dosya boyutu`:
+                // sinir cekirdegin `AZAMI_DOSYA_BOYUTU`'suyla BIREBIR ayni
+                // (gerekce icin bkz. `routes::attachments` modul basligi).
+                // Katman rotanin tamamina uygulanir; GET'in govdesi zaten yok.
+                .layer(DefaultBodyLimit::max(routes::attachments::AZAMI_GOVDE_BOYUTU)),
+        )
+        .route(
+            "/ekler/{id}",
+            get(routes::attachments::indir).delete(routes::attachments::kaldir),
+        )
+        .route("/depolama-durumu", get(routes::attachments::depolama))
+        // Resmi not ve OZEL not ayri yol oneklerinde ve ayri rota
+        // modullerinde: bir liste/disa aktarim yolu ozel not handler'ini
+        // yanlislikla yeniden kullanamasin (bkz. `routes::private_notes`).
+        .route(
+            "/randevular/{id}/not",
+            get(routes::notes::getir).put(routes::notes::kaydet),
+        )
+        .route(
+            "/randevular/{id}/ozel-not",
+            get(routes::private_notes::getir).put(routes::private_notes::kaydet),
+        )
+        .route("/ara", get(routes::search::ara_uc))
+        .route("/saklama-suresi-dolanlar", get(routes::clients::saklama_listesi))
         .fallback(api_bulunamadi)
 }
 

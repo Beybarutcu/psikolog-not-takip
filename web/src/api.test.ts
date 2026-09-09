@@ -431,6 +431,12 @@ describe('danışan dosyası uç noktalarında 401', () => {
       // sozunu genisletmez.
       'raporKaydiOlustur',
       'ekYukle',
+      // Dal incelemesi (HTTP -> arayuz taramasi): ucu de yalnizca dosya/ek
+      // ustverisine ve bir SAYIYA dokunuyor; not icerigine giden yeni bir
+      // yol acmiyorlar.
+      'ekSil',
+      'saklamaSuresiDolanlar',
+      'depolamaDurumu',
     ])
   })
 

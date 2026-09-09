@@ -37,6 +37,25 @@ import { veriRaporuMetni } from './veriRaporu'
  * söylemeyen bir "Bakiye: 0,00 ₺", ücreti hiç girilmemiş bir dosyada
  * "borcu yok" diye okunur.
  *
+ * # …ve neyi SAYAMADIĞINI da yazar (dal incelemesi I1)
+ *
+ * `appointments.odendi` sütununun **hiçbir yazma yolu yok**: `ekle` ve
+ * `seri_ekle` onu `0` olarak yazıyor, hiçbir `UPDATE` ona dokunmuyor ve
+ * ne HTTP'de ne arayüzde bir seansı "ödendi" işaretleme yolu var.
+ * Dolayısıyla `!r.odendi` süzgeci **bugün hiçbir satırı elemiyor** ve
+ * bakiye ödemelerle hiçbir zaman azalmıyor: sayı fiilen *bugüne kadar
+ * gelinen tüm seansların ücret toplamıdır*.
+ *
+ * Eski etiket ("gelinmiş ve ödenmemiş seanslar") neyi saymadığını
+ * (`gelmedi`) söylüyordu ama bunu söylemiyordu — ve okuyan kişi ödemeleri
+ * işaretledikçe sayının düşeceğini sanırdı. Etiket artık ikisini de yazıyor.
+ *
+ * PLAN 4 NOTU: ödeme takibi (tasarım §8) Plan 4'ün konusu. Sütun ve süzgeç
+ * **bilerek duruyor** — o gün gelen yazma yolu bakiyeyi hiçbir hesabı
+ * değiştirmeden doğru kılacak; kaldırılmaları yalnızca aynı işi geri
+ * eklemek olurdu. O yazma yolu geldiğinde bu başlık ve aşağıdaki iki metin
+ * (etiket + açıklama) birlikte güncellenmeli.
+ *
  * # Risk notu KATLANMIŞ gösterilir
  *
  * `GecmisNotlar`'ın katlama kararı burada da geçerli ve daha güçlü: risk
@@ -121,6 +140,14 @@ type Props = {
    */
   raporKaydiOlustur: () => Promise<void>
   ekYukle: (dosya: File, tur: string) => Promise<void>
+  /**
+   * Eki **kalıcı olarak** siler (`danisanApi.ekSil`).
+   *
+   * Geri alınamaz bir işlem; bu yüzden iki adımlı onaydan geçer (bkz.
+   * `ekSilmeOnayi`). Sunucu ayrıca sarkan `riza_dosya_id`'yi temizler ve
+   * onay metni bunu söyler.
+   */
+  ekSil: (ekId: number) => Promise<void>
   onRizaKaydet: (alan: { riza_tarihi: string; riza_dosya_id: number | null }) => Promise<void>
   onKapat: () => void
 }
@@ -144,6 +171,7 @@ export function DanisanKarti({
   notSiniri,
   raporKaydiOlustur,
   ekYukle,
+  ekSil,
   onRizaKaydet,
   onKapat,
 }: Props) {
@@ -155,6 +183,19 @@ export function DanisanKarti({
   // `api.ekIndir`) hata sessizce yutulamaz: eskiden tarayıcı gezinip ham
   // JSON'u ekrana basıyordu, artık kullanıcıya burada söyleniyor.
   const [indirmeHatasi, setIndirmeHatasi] = useState<string | null>(null)
+  // Ek silme GERİ ALINAMAZ: BLOB gider, yedek dışında dönüşü yok. Bu yüzden
+  // iki adımlı onay — randevu/seri silme ve danışan arşivleme ile aynı desen.
+  //
+  // Onay state'i ONAYLANAN EKİN KENDİSİDİR, bir `boolean` ya da çıplak `id`
+  // değil. Görev 10 inceleme Bulgu 1'de panelin iç state'i bir seçimden
+  // diğerine sızıyordu ve çözüm state'i seçime bağlamaktı (`key` prop'u).
+  // Burada aynı ilke, state seçimi kendisi taşıyacak biçimde: başka bir ekin
+  // "Sil"ine basmak onayı devretmez, tümüyle değiştirir ve onay metni her
+  // zaman state'teki ekin adını gösterir. Çıplak bir bayrakla, A'nın onayı
+  // açıkken B'nin satırındaki "Evet, sil" A'yı silerdi.
+  const [ekSilmeOnayi, setEkSilmeOnayi] = useState<EkBilgisi | null>(null)
+  const [ekSilmeSuruyor, setEkSilmeSuruyor] = useState(false)
+  const [ekSilmeHatasi, setEkSilmeHatasi] = useState<string | null>(null)
   // Risk notu KAPALI açılır (gerekçe modül başlığında). State, HANGİ
   // danışan için açıldığını taşıyor ve ekrana giden hâli render sırasında
   // türetiliyor — `ekFormu` ile aynı desen. Düz bir `boolean` olsaydı,
@@ -213,6 +254,10 @@ export function DanisanKarti({
     }
   }, [rapor])
 
+  // `!r.odendi` BUGÜN hiçbir satırı elemiyor: `odendi` sütununun yazma yolu
+  // yok (bkz. modül başlığı "…ve neyi SAYAMADIĞINI da yazar"). Süzgeç Plan
+  // 4'ün ödeme takibi için duruyor; etiket ve açıklama metni bu durumu
+  // kullanıcıya söylüyor.
   const bakiyeKurus = randevular
     .filter((r) => r.durum === 'geldi' && !r.odendi)
     .reduce((toplam, r) => toplam + (r.ucret ?? 0), 0)
@@ -250,6 +295,19 @@ export function DanisanKarti({
       setRaporHatasi(e instanceof Error ? e.message : 'Veri raporu hazırlanamadı.')
     } finally {
       setRaporSuruyor(false)
+    }
+  }
+
+  async function ekiSil(ek: EkBilgisi) {
+    setEkSilmeSuruyor(true)
+    setEkSilmeHatasi(null)
+    try {
+      await ekSil(ek.id)
+      setEkSilmeOnayi(null)
+    } catch (e) {
+      setEkSilmeHatasi(e instanceof Error ? e.message : 'Dosya silinemedi.')
+    } finally {
+      setEkSilmeSuruyor(false)
     }
   }
 
@@ -328,8 +386,11 @@ export function DanisanKarti({
             </>
           )}
         </dd>
-        {/* Etiket kapsamı yazıyor; çıplak "Bakiye" yanıltıcı olurdu. */}
-        <dt className="font-medium text-slate-600">Bakiye (gelinmiş ve ödenmemiş seanslar)</dt>
+        {/* Etiket kapsamı yazıyor; çıplak "Bakiye" yanıltıcı olurdu.
+            "ödenmemiş" ibaresi KALDIRILDI (dal incelemesi I1): ödeme
+            işaretleme yolu olmadığı için sayı ödemelerle azalmıyor ve
+            etiket, olmayan bir mekanizmayı ima ediyordu. */}
+        <dt className="font-medium text-slate-600">Bakiye (gelinmiş seansların ücret toplamı)</dt>
         <dd>{tlBicimle(bakiyeKurus)}</dd>
       </dl>
       {/* Etiket neyi SAYDIĞINI yazıyordu, neyi SAYMADIĞINI yazmıyordu.
@@ -337,9 +398,14 @@ export function DanisanKarti({
           ücretlendirilmeyeceği terapistin politikasına bağlı ve uygulama o
           politikayı bilmiyor; sayının dışında bırakıldığını söylememek,
           gelmeyen seansları ücretlendiren bir terapiste sessizce eksik bir
-          bakiye göstermek olurdu. */}
+          bakiye göstermek olurdu.
+          İkinci cümle I1'in düzeltmesi: alınan ödemeler bu sayıdan
+          DÜŞMÜYOR, çünkü uygulamada bir seansı "ödendi" işaretleme yolu
+          henüz yok (bkz. modül başlığı). */}
       <p className="mt-1 text-xs text-slate-500">
         Gelmedi olarak işaretlenen seanslar bu sayıya girmez; ücretlendirme kararı sizindir.
+        Uygulamada seansı “ödendi” olarak işaretleme yolu henüz yok, bu yüzden aldığınız
+        ödemeler bu tutardan düşmez.
       </p>
 
       <div className="mt-3">
@@ -421,10 +487,67 @@ export function DanisanKarti({
                 </a>{' '}
                 <span className="text-slate-500">
                   ({ek.tur}, {boyutBicimle(ek.boyut)})
-                </span>
+                </span>{' '}
+                {/* Erişilebilir ad dosyanın ADINI taşır: listede beş dosya
+                    varken beş özdeş "Sil" düğmesi, ekran okuyucu
+                    kullanıcısına hangisinin ne olduğunu yalnızca GÖRSEL
+                    bağlamdan bıraktırırdı — yıkıcı bir işlemde kabul
+                    edilemez (aynı gerekçe `AnaEkran`'ın "Arşivle"
+                    düğmesinde). Dosya adı zaten bu satırda ekranda. */}
+                <button
+                  type="button"
+                  className="text-slate-500 underline disabled:opacity-50"
+                  aria-label={`${ek.dosya_adi} dosyasını sil`}
+                  disabled={ekSilmeSuruyor}
+                  onClick={() => {
+                    setEkSilmeHatasi(null)
+                    setEkSilmeOnayi(ek)
+                  }}
+                >
+                  Sil
+                </button>
               </li>
             ))}
           </ul>
+        )}
+
+        {/* İki adımlı onay. Metin ne olduğunu ve YAN ETKİSİNİ birlikte
+            söylüyor: silme geri alınamaz VE sunucudaki `attachments::sil`
+            sarkan `riza_dosya_id`'yi aynı transaction'da temizler. İkincisi
+            yazılmazsa, rıza belgesini silen kullanıcı rıza bölümündeki bağın
+            neden koptuğunu hiçbir yerden öğrenemezdi. `riza_tarihi`
+            korunuyor — rızanın alındığı gerçeği dosyayla birlikte gitmez. */}
+        {ekSilmeOnayi && (
+          <div className="mt-2 rounded bg-amber-50 p-2">
+            <p className="text-sm text-amber-900">
+              {ekSilmeOnayi.dosya_adi} kalıcı olarak silinsin mi? Dosyanın içeriği geri
+              alınamaz. Bu dosya danışanın rıza belgesi olarak işaretliyse rıza bağı da
+              kaldırılır; rıza tarihi kaydı silinmez.
+            </p>
+            <div className="mt-2 flex gap-2">
+              <button
+                type="button"
+                className="rounded bg-amber-700 px-3 py-1 text-sm text-white disabled:opacity-50"
+                disabled={ekSilmeSuruyor}
+                onClick={() => void ekiSil(ekSilmeOnayi)}
+              >
+                Evet, sil
+              </button>
+              <button
+                type="button"
+                className="rounded border px-3 py-1 text-sm"
+                disabled={ekSilmeSuruyor}
+                onClick={() => setEkSilmeOnayi(null)}
+              >
+                Vazgeç
+              </button>
+            </div>
+          </div>
+        )}
+        {ekSilmeHatasi && (
+          <p role="alert" className="mt-1 text-red-600">
+            {ekSilmeHatasi}
+          </p>
         )}
 
         <div className="mt-2 flex flex-wrap items-end gap-2">

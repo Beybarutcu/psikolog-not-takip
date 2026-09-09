@@ -102,6 +102,7 @@ function kur(ozel: Partial<React.ComponentProps<typeof DanisanKarti>> = {}) {
     notSiniri: 200,
     raporKaydiOlustur: vi.fn().mockResolvedValue(undefined),
     ekYukle: vi.fn().mockResolvedValue(undefined),
+    ekSil: vi.fn().mockResolvedValue(undefined),
     onRizaKaydet: vi.fn().mockResolvedValue(undefined),
     onKapat: vi.fn(),
     ...ozel,
@@ -207,7 +208,7 @@ describe('DanisanKarti — bakiye ne sayar, ne saymaz', () => {
     // "Bakiye: 0,00 ₺" tek başına, ücreti hiç girilmemiş bir dosyada
     // "borcu yok" diye okunur. Etiket kapsamı yazmazsa sayı yanıltıcıdır.
     kur()
-    expect(screen.getByText(/gelinmiş ve ödenmemiş/i)).toBeDefined()
+    expect(screen.getByText(/gelinmiş seansların ücret toplamı/i)).toBeDefined()
   })
 
   it('bakiye NEYI SAYMADIGINI da soyler', () => {
@@ -217,6 +218,17 @@ describe('DanisanKarti — bakiye ne sayar, ne saymaz', () => {
     kur()
     expect(screen.getByText(/gelmedi olarak işaretlenen seanslar bu sayıya girmez/i))
       .toBeDefined()
+  })
+
+  it('I1: etiket ODEME ISARETLEME YOLU OLMADIGINI da soyler', () => {
+    // `appointments.odendi` sutununun hicbir yazma yolu yok: bakiye
+    // odemelerle HIC azalmiyor ve eski etiket ("gelinmis ve ODENMEMIS")
+    // olmayan bir mekanizmayi ima ediyordu -- okuyan kisi odemeleri
+    // isaretledikce sayinin duseceğini sanardi.
+    kur()
+    expect(screen.getByText(/“ödendi” olarak işaretleme yolu henüz yok/i)).toBeDefined()
+    // EKSI YON: eski, yaniltici ibare ekranda KALMAMALI.
+    expect(document.body.textContent).not.toContain('gelinmiş ve ödenmemiş')
   })
 })
 
@@ -386,6 +398,77 @@ describe('DanisanKarti — ekli dosyalar', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Dosyayı yükle' }))
 
     await waitFor(() => expect(screen.getByText('Dosya en fazla 20 MB olabilir.')).toBeDefined())
+  })
+})
+
+describe('DanisanKarti — ek silme (dal incelemesi: DELETE /api/ekler/{id})', () => {
+  it('tek tiklama SILMEZ; onay istenir', async () => {
+    // Silme geri alınamaz (BLOB gider). Tek tıklamayla silen bir düğme,
+    // yanlış satıra basan kullanıcıya hiçbir şans bırakmazdı — randevu
+    // silme ve danışan arşivlemedeki iki adımlı onayın aynısı.
+    const { ekSil } = kur()
+    await userEvent.click(screen.getByRole('button', { name: 'onam-formu.pdf dosyasını sil' }))
+    expect(ekSil).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Evet, sil' })).toBeDefined()
+  })
+
+  it('onay metni RIZA BAGININ da kopacagini soyler', async () => {
+    // Sunucudaki `attachments::sil` sarkan `clients.riza_dosya_id`'yi AYNI
+    // transaction'da temizliyor. Bunu yazmayan bir onay metni, rıza
+    // belgesini silen kullanıcıyı "rıza bölümündeki bağ neden kayboldu"
+    // sorusuyla baş başa bırakırdı. `riza_tarihi` korunuyor — metin bunu
+    // da söylemeli, yoksa kullanıcı rıza kaydının tümden silindiğini sanır.
+    kur()
+    await userEvent.click(screen.getByRole('button', { name: 'onam-formu.pdf dosyasını sil' }))
+    const onay = screen.getByText(/kalıcı olarak silinsin mi/i)
+    expect(onay.textContent).toContain('onam-formu.pdf')
+    expect(onay.textContent).toMatch(/geri alınamaz/i)
+    expect(onay.textContent).toMatch(/rıza bağı da kaldırılır/i)
+    expect(onay.textContent).toMatch(/rıza tarihi kaydı silinmez/i)
+  })
+
+  it('onaylaninca DOGRU ekin kimligiyle silinir', async () => {
+    const { ekSil } = kur()
+    await userEvent.click(screen.getByRole('button', { name: 'beck-envanteri.pdf dosyasını sil' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Evet, sil' }))
+    await waitFor(() => expect(ekSil).toHaveBeenCalledWith(6))
+    expect(ekSil).toHaveBeenCalledTimes(1)
+  })
+
+  it('baska bir ekin Sil dugmesi onayi DEVRETMEZ, degistirir', async () => {
+    // Onay state'i onaylanan EKİN KENDİSİ (Görev 10 Bulgu 1'in dersi).
+    // Çıplak bir bayrakla A'nın onayı açıkken B'nin "Sil"ine basmak,
+    // ekranda B'nin adını gösterip A'yı silebilirdi.
+    const { ekSil } = kur()
+    await userEvent.click(screen.getByRole('button', { name: 'onam-formu.pdf dosyasını sil' }))
+    await userEvent.click(screen.getByRole('button', { name: 'beck-envanteri.pdf dosyasını sil' }))
+
+    expect(screen.getByText(/kalıcı olarak silinsin mi/i).textContent).toContain(
+      'beck-envanteri.pdf',
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Evet, sil' }))
+    await waitFor(() => expect(ekSil).toHaveBeenCalledWith(6))
+  })
+
+  it('vazgecince hicbir istek gitmez ve onay kapanir', async () => {
+    const { ekSil } = kur()
+    await userEvent.click(screen.getByRole('button', { name: 'onam-formu.pdf dosyasını sil' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Vazgeç' }))
+    expect(ekSil).not.toHaveBeenCalled()
+    expect(screen.queryByText(/kalıcı olarak silinsin mi/i)).toBeNull()
+  })
+
+  it('silme basarisiz olursa hata GORUNUR ve onay acik kalir', async () => {
+    // Sessizce yutulan bir hata, kullanıcıya "sildim" izlenimi verirdi;
+    // dosya duruyor ama kart yenilenmediği için ekranda da öyle görünür.
+    const ekSil = vi.fn().mockRejectedValue(new Error('Oturum kilitli.'))
+    kur({ ekSil })
+    await userEvent.click(screen.getByRole('button', { name: 'onam-formu.pdf dosyasını sil' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Evet, sil' }))
+
+    const uyari = await screen.findByRole('alert')
+    expect(uyari.textContent).toContain('Oturum kilitli.')
+    expect(screen.getByRole('button', { name: 'Evet, sil' })).toBeDefined()
   })
 })
 
@@ -619,6 +702,7 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
       notSiniri: 200,
       raporKaydiOlustur: vi.fn().mockResolvedValue(undefined),
       ekYukle: vi.fn().mockResolvedValue(undefined),
+      ekSil: vi.fn().mockResolvedValue(undefined),
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),
       onKapat: vi.fn(),
     }
@@ -665,6 +749,7 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
       notSiniri: 200,
       raporKaydiOlustur: vi.fn().mockResolvedValue(undefined),
       ekYukle,
+      ekSil: vi.fn().mockResolvedValue(undefined),
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),
       onKapat: vi.fn(),
     }
@@ -698,6 +783,7 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
       notSiniri: 200,
       raporKaydiOlustur: vi.fn().mockResolvedValue(undefined),
       ekYukle: vi.fn().mockResolvedValue(undefined),
+      ekSil: vi.fn().mockResolvedValue(undefined),
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),
       onKapat: vi.fn(),
     }
@@ -731,6 +817,7 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
       notSiniri: 200,
       raporKaydiOlustur: vi.fn().mockResolvedValue(undefined),
       ekYukle: vi.fn().mockResolvedValue(undefined),
+      ekSil: vi.fn().mockResolvedValue(undefined),
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),
       onKapat: vi.fn(),
     }

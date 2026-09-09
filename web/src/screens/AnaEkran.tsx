@@ -8,11 +8,13 @@ import {
   YetkisizHata,
   type Danisan,
   type DanisanDosyasi,
+  type DepolamaDurumu,
   type EkBilgisi,
   type OzelNot,
   type SeansNotu,
 } from '../api'
 import { HizliArama } from '../arama/HizliArama'
+import { boyutBicimle } from '../danisan/bicim'
 import { DanisanKarti } from '../danisan/DanisanKarti'
 import { SeansPaneli } from '../seans/SeansPaneli'
 import { HaftalikTakvim, type Randevu } from '../takvim/HaftalikTakvim'
@@ -20,16 +22,26 @@ import { haftaGunleri, haftaninBasi, yerelZaman } from '../takvim/hafta'
 import { RandevuPaneli } from '../takvim/RandevuPaneli'
 
 /**
- * Seans panelinde gösterilecek geçmiş not sayısı.
+ * Seans panelinde gösterilecek geçmiş not sayısı — ve sunucudan istenen
+ * `limit`in ta kendisi.
  *
- * Sunucudan bir FAZLASI isteniyor. Liste `?once=<bu seansın başlangıcı>`
- * kesmesiyle geliyor ve o kesme KESİN küçüktür, yani seansın kendi notu
- * zaten dışarıda. Fazlalık **aynı dakikaya denk gelen ikinci bir randevu**
- * için: o randevu da kesmeye takılır ve istemcideki `appointment_id`
- * süzgeci de onu düşüremez; bir fazlası olmadan liste sessizce ikiye
- * inerdi. Sunucunun varsayılanı (50) burada kullanılmıyor: "son üç seans"
- * gösteren bir panelin 50 seans notunun tam içeriğini indirmesi için
- * sebep yok.
+ * # Eskiden bir FAZLASI isteniyordu; o telafi ÖLÜYDÜ (dal incelemesi M1)
+ *
+ * Gerekçe şuydu: "aynı dakikaya denk gelen ikinci bir randevunun notu
+ * `once` kesmesine takılır, bir fazlası onu telafi eder". **Telafi
+ * çalışmıyordu.** Kesme sunucuda uygulanıyor (`a.baslangic < ?`), yani o
+ * randevunun notu SQL seviyesinde düşüyor; "bir fazlasını iste" bir
+ * fazladan **daha eski** not getirir, düşen notu geri getiremez. Yanında
+ * duran `filter(n => n.appointment_id !== seansId)` süzgeci de hiçbir
+ * zaman bir şey elemiyordu: kesme kesin küçük olduğu için seansın kendi
+ * notu zaten dönmüyor.
+ *
+ * Davranış her iki hâlde de aynı (fazladan not `slice` ile atılıyordu);
+ * kaldırılan şey ölü bir savunma ve **olmayan bir mekanizmayı** tarif eden
+ * bir gerekçeydi. `kalanGun`'un `Date.UTC` yorumuyla aynı sınıf (Görev 10).
+ *
+ * Sunucunun varsayılanı (50) burada kullanılmıyor: "son üç seans" gösteren
+ * bir panelin 50 seans notunun tam içeriğini indirmesi için sebep yok.
  */
 const GECMIS_SEANS_SAYISI = 3
 
@@ -171,6 +183,16 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   const [seciliDanisanId, setSeciliDanisanId] = useState<number | null>(null)
   const [kartVerisi, setKartVerisi] = useState<KartVerisi>(BOS_KART)
   const [kartTazeleme, setKartTazeleme] = useState(0)
+  // Saklama süresi dolmuş danışanlar — tasarım §7'nin ana ekran
+  // hatırlatması. Kart içindeki tekil gösterge bunun yerini tutmuyordu: bir
+  // dosyanın süresinin dolduğunu görmek için o dosyayı AÇMAK gerekiyordu,
+  // yani "hangi dosyaların süresi doldu" sorusunun ekranda hiçbir cevabı
+  // yoktu (dal incelemesi, HTTP → arayüz yönü).
+  const [saklamaDolanlar, setSaklamaDolanlar] = useState<Danisan[]>([])
+  // Depolama durumu. `null` = henüz gelmedi ya da alınamadı; ikisi de aynı
+  // şeyi gerektirir (hiçbir şey gösterme). Bu uç nokta sunucuda LOG YAZMAZ,
+  // bu yüzden ek yükleme/silme sonrasında tazelenebiliyor.
+  const [depolama, setDepolama] = useState<DepolamaDurumu | null>(null)
   // Aramadan gelen "şu seansa git" isteği. Hedef randevu başka bir haftada
   // olabilir; hafta değiştirilir, randevu listesi yeniden yüklenir ve seçim
   // ANCAK O LİSTEDEN yapılır — ekranda görünmeyen bir randevuya bağlı bir
@@ -267,6 +289,31 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
     })
   }, [])
 
+  // Saklama hatırlatması YALNIZCA ilk yüklemede çekiliyor, hafta
+  // değişiminde ya da her tazelemede DEĞİL: sunucudaki
+  // `clients::saklama_suresi_dolanlar` her çağrıda `LogHacmi::HerCagri` ile
+  // SİLİNEMEZ bir `goruntuleme` satırı yazıyor. Liste gün içinde değişmez
+  // (girdi yerel takvim günü), dolayısıyla tekrar sormanın kazancı yok,
+  // maliyeti kalıcı.
+  //
+  // Hata YUTULUYOR: hatırlatma ikincil bir bilgi; alınamadığında ana ekranı
+  // hata bandıyla kaplamak, terapistin takvimini görmesini engellerdi.
+  // (Kilit hâli zaten `api.ts`'in merkezî 401 dinleyicisiyle ele alınıyor.)
+  useEffect(() => {
+    void danisanApi
+      .saklamaSuresiDolanlar(yerelGun(new Date()))
+      .then(setSaklamaDolanlar)
+      .catch(() => {})
+  }, [])
+
+  // Depolama durumu: ilk yüklemede ve kart her tazelendiğinde (ek yükleme /
+  // ek silme) yeniden çekilir. Bu uç nokta denetim kaydına HİÇBİR ŞEY
+  // yazmıyor (`depolama_durumu` bir sayı sorgusudur), yani hacim kaygısı
+  // yok — yukarıdaki saklama listesinden farkı tam olarak budur.
+  useEffect(() => {
+    void danisanApi.depolamaDurumu().then(setDepolama).catch(() => {})
+  }, [kartTazeleme])
+
   // Seans notu verisi RANDEVU KİMLİĞİNE bağlı yükleniyor, `seciliRandevu`
   // NESNESİNE değil. `yukle()` her çağrıldığında seçili randevu taze bir
   // nesneyle değiştiriliyor; efekt nesneye bağlı olsaydı her yeniden
@@ -307,7 +354,7 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
           // bir seansı açtığında (olağan bir işlem) sol sütun henüz
           // yaşanmamış seansların içeriğini "geçen seansta konuşulan" diye
           // gösteriyordu.
-          notApi.danisanNotlari(seansDanisanId, GECMIS_SEANS_SAYISI + 1, seansBaslangici),
+          notApi.danisanNotlari(seansDanisanId, GECMIS_SEANS_SAYISI, seansBaslangici),
         ])
         if (iptal) return
         setSeansVerisi({
@@ -317,13 +364,12 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
           ozelHata: null,
           // Bu seansın KENDİ notu geçmiş listesine girmez: üstte düzenlenen
           // metnin bayat bir kopyası, "geçen seansta ne konuşulmuştu"
-          // sorusuna cevap değil. Sunucudaki `once` kesmesi (KESİN küçük)
-          // bunu zaten sağlıyor; buradaki süzgeç AYNI DAKİKAYA denk gelen
-          // ikinci bir randevu için duruyor ve `GECMIS_SEANS_SAYISI + 1`
-          // tam o düşme ihtimalini karşılıyor.
-          gecmisNotlar: gelenGecmis
-            .filter((n) => n.appointment_id !== seansId)
-            .slice(0, GECMIS_SEANS_SAYISI),
+          // sorusuna cevap değil. Bunu sağlayan tek şey sunucudaki `once`
+          // kesmesidir ve o KESİN küçüktür. İstemcide ikinci bir süzgeç
+          // YOK: vardı, hiçbir zaman bir şey elemiyordu ve gerekçesi
+          // olmayan bir mekanizmayı tarif ediyordu (bkz.
+          // `GECMIS_SEANS_SAYISI`).
+          gecmisNotlar: gelenGecmis,
           hata: null,
         })
       } catch (e) {
@@ -593,6 +639,19 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   async function ekYukle(dosya: File, tur: string) {
     if (seciliDanisanId === null) return
     await danisanApi.ekYukle(seciliDanisanId, dosya, tur)
+    setKartTazeleme((n) => n + 1)
+  }
+
+  // Silme sonrası kart YENİDEN ÇEKİLİYOR, sonuç yerel olarak uygulanmıyor.
+  // `durumDegis`/`sil`'deki "sonucu yerel olarak uygula" kararı burada
+  // GEÇERSİZ, `ekYukle` ile aynı gerekçe ve bir fazlasıyla: sunucudaki
+  // `attachments::sil` aynı transaction'da `clients.riza_dosya_id`'yi de
+  // temizliyor. Ek listesini yerel olarak süzmek dosyayı listeden düşürür
+  // ama rıza bölümü hâlâ silinmiş dosyaya bağlı görünürdü — ekranda sessiz
+  // bir yalan. İki kaynağın (dosya + ekler) tutarlılığı yalnızca birlikte
+  // çekilerek korunur.
+  async function ekSil(ekId: number) {
+    await danisanApi.ekSil(ekId)
     setKartTazeleme((n) => n + 1)
   }
 
@@ -895,6 +954,66 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
         )}
       </div>
 
+      {/* SAKLAMA HATIRLATMASI — tasarım §7: "süresi dolan dosyalar ana
+          ekranda hatırlatma olarak listelenir".
+
+          SİLME DÜĞMESİ YOK ve olmayacak: plan global kısıtı imha kararını
+          her zaman insana bırakıyor. Ekran bunu açıkça yazıyor ki
+          "uygulama halleder" beklentisi oluşmasın (danışan kartındaki aynı
+          cümlenin eşi).
+
+          Adlar burada görünüyor — zaten üstteki danışan listesinde de
+          görünüyorlar; bu bölüm yeni bir hassas alan (risk notu, tanı, not
+          içeriği) basmıyor. */}
+      {saklamaDolanlar.length > 0 && (
+        <section
+          aria-label="Saklama süresi dolan dosyalar"
+          className="mb-4 rounded border border-amber-400 bg-amber-50 p-3"
+        >
+          <h2 className="text-sm font-semibold text-amber-900">
+            Saklama süresi dolan dosyalar ({saklamaDolanlar.length})
+          </h2>
+          <ul className="mt-1 flex flex-wrap gap-2 text-sm">
+            {saklamaDolanlar.map((d) => (
+              <li key={d.id}>
+                <button
+                  type="button"
+                  className="underline"
+                  aria-label={`${d.ad_soyad} dosyasını aç (saklama süresi doldu)`}
+                  onClick={() => danisanKartiAc(d.id)}
+                >
+                  {d.ad_soyad}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-1 text-xs text-amber-900">
+            Bu dosyalar kendiliğinden silinmez; imha kararı her zaman sizindir.
+          </p>
+        </section>
+      )}
+
+      {/* DEPOLAMA UYARISI — plan global kısıtındaki 500 MB eşiği.
+          `depolama_durumu` Görev 7'de HTTP'ye bağlanmıştı ama arayüzde
+          çağrı yeri yoktu: ekler 20 MB'a kadar BLOB tutuyor ve terapist
+          veritabanı şişerken hiçbir uyarı almıyordu.
+
+          Yalnızca eşik AŞILINCA görünür ve hiçbir şeyi ENGELLEMEZ — sunucu
+          da engellemiyor (`uyari === true` iken yükleme çalışmaya devam
+          eder). Eşik metni sunucudan gelen `esik` alanından basılıyor;
+          istemcide ikinci bir kopya tutmak iki sayının sessizce ayrışması
+          demekti. */}
+      {depolama?.uyari && (
+        <p
+          role="status"
+          className="mb-4 rounded border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900"
+        >
+          Ekli dosyalar {boyutBicimle(depolama.toplam_boyut)} yer kaplıyor ve{' '}
+          {boyutBicimle(depolama.esik)} uyarı eşiğini aştı. Yükleme engellenmiyor; yedeklerinizi
+          ve eski dosyalarınızı gözden geçirmek isteyebilirsiniz.
+        </p>
+      )}
+
       {hata && <p className="mb-4 text-sm text-red-600">{hata}</p>}
 
       <div className="flex items-start gap-4">
@@ -975,6 +1094,7 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
               notSiniri={RAPOR_NOT_SINIRI}
               raporKaydiOlustur={raporKaydiOlustur}
               ekYukle={ekYukle}
+              ekSil={ekSil}
               onRizaKaydet={rizaKaydet}
               onKapat={danisanKartiKapat}
             />

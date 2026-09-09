@@ -59,6 +59,26 @@ function jsonYanit(govde: unknown): Response {
   return { ok: true, json: async () => govde } as unknown as Response
 }
 
+// --- Dal incelemesi: ana ekranin iki YENI mount istegi -------------------
+//
+// `AnaEkran` artik mount'ta `GET /api/saklama-suresi-dolanlar` ve
+// `GET /api/depolama-durumu` de cagiriyor (HTTP -> arayuz taramasinin
+// bagladigi uclar). Bu dosyadaki ON taklidin hepsi bilinmeyen yolda
+// FIRLATIYOR; ortak yardimci her taklide ayri dal eklemek yerine tek
+// yerde cevap veriyor.
+//
+// VARSAYILAN NOTR: hicbir dosyanin suresi dolmamis, esik asilmamis --
+// yani iki yeni bolum de gorunmez ve mevcut testlerin ekran iddialari
+// degismez. Onlari goren testler degerleri kendileri kuruyor.
+let sunucuSaklamaDolanlar: typeof danisanlar = []
+let sunucuDepolama = { toplam_boyut: 0, esik: 500 * 1024 * 1024, uyari: false }
+
+function ekUcYaniti(yol: string): Response | null {
+  if (yol.startsWith('/api/saklama-suresi-dolanlar')) return jsonYanit(sunucuSaklamaDolanlar)
+  if (yol.startsWith('/api/depolama-durumu')) return jsonYanit(sunucuDepolama)
+  return null
+}
+
 function notYaniti(yol: string, method: string, govde: unknown): Response | null {
   const ozel = /^\/api\/randevular\/(\d+)\/ozel-not$/.exec(yol)
   if (ozel) {
@@ -89,10 +109,17 @@ function notYaniti(yol: string, method: string, govde: unknown): Response | null
     // "Önceki seans notları" başlığı altında SONRAKİ seansların notları
     // gösterilir (inceleme I2). Taklit bunu uygulamasaydı, çağıran tarafın
     // `once` geçmemesi testlerde hiçbir fark yaratmazdı.
-    const once = new URL(yol, 'http://x').searchParams.get('once')
-    return jsonYanit(
-      once === null ? sunucuGecmisi : sunucuGecmisi.filter((n) => n.seans_zamani < once),
-    )
+    const sorgu = new URL(yol, 'http://x').searchParams
+    const once = sorgu.get('once')
+    const kesilmis =
+      once === null ? sunucuGecmisi : sunucuGecmisi.filter((n) => n.seans_zamani < once)
+    // `?limit=` de TAKLIT EDILIYOR: sunucu onu `LIMIT`e geciriyor. Taklit
+    // uygulamasaydi "en fazla ucu gosterir" iddiasi cagiranin GONDERDIGI
+    // limiti degil, taklidin veri kumesinin boyutunu olcerdi -- ve istemci
+    // tarafinda kalmis olu bir `slice` de gorunmez olurdu (dal incelemesi
+    // M1 tam olarak bu sinifta bir olu savunmaydi).
+    const limit = Number(sorgu.get('limit'))
+    return jsonYanit(Number.isFinite(limit) && limit > 0 ? kesilmis.slice(0, limit) : kesilmis)
   }
   return null
 }
@@ -101,6 +128,8 @@ beforeEach(() => {
   sunucuNotlari = {}
   sunucuOzelNotlari = {}
   sunucuGecmisi = []
+  sunucuSaklamaDolanlar = []
+  sunucuDepolama = { toplam_boyut: 0, esik: 500 * 1024 * 1024, uyari: false }
   // Taslak deposu MODÜL DÜZEYİNDE (bileşen ağacının dışında) yaşıyor ve
   // kendi belgesi "testler arası sızar" diyor. `SeansPaneli.test.tsx` ile
   // `NotEditoru.test.tsx` temizliyordu, bu dosya temizlemiyordu: bugün
@@ -121,6 +150,8 @@ describe('AnaEkran — panel kimliği (Görev 10 inceleme Bulgu 1)', () => {
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      const ekUc = ekUcYaniti(yol)
+      if (ekUc) return ekUc
       const notlar = notYaniti(yol, secenekler?.method ?? 'GET', null)
       if (notlar) return notlar
       if (yol.startsWith('/api/danisanlar')) {
@@ -202,6 +233,8 @@ describe('AnaEkran — düzenleme kipi POST değil PUT üretir (C1)', () => {
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      const ekUc = ekUcYaniti(yol)
+      if (ekUc) return ekUc
       const method = secenekler?.method ?? 'GET'
       const govde = secenekler?.body ? JSON.parse(String(secenekler.body)) : null
       istekler.push({ yol, method, govde })
@@ -299,6 +332,8 @@ describe('AnaEkran — gereksiz yeniden yükleme yapmaz (Plan 3 Görev 2)', () =
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      const ekUc = ekUcYaniti(yol)
+      if (ekUc) return ekUc
       const method = secenekler?.method ?? 'GET'
       istekler.push({ yol, method })
       const notlar = notYaniti(
@@ -413,6 +448,8 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      const ekUc = ekUcYaniti(yol)
+      if (ekUc) return ekUc
       const method = secenekler?.method ?? 'GET'
       istekler.push({ yol, method })
       const notYaniti_ = notYaniti(yol, method, null)
@@ -587,6 +624,8 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
   it('sunucu hatası gösterilir ve danışan listede kalır', async () => {
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      const ekUc = ekUcYaniti(yol)
+      if (ekUc) return ekUc
       const method = secenekler?.method ?? 'GET'
       if (method === 'POST' && yol.endsWith('/arsivle')) {
         return {
@@ -623,6 +662,8 @@ describe('AnaEkran — danışan ekleme doğrulama hatası (Plan 2 devri)', () =
     vi.setSystemTime(new Date(2026, 8, 9, 12, 0))
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      const ekUc = ekUcYaniti(yol)
+      if (ekUc) return ekUc
       const method = secenekler?.method ?? 'GET'
       if (yol === '/api/danisanlar' && method === 'POST') {
         return {
@@ -688,6 +729,8 @@ describe('AnaEkran — seçili randevu yeniden yüklemede bayatlamaz (Plan 2 dev
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      const ekUc = ekUcYaniti(yol)
+      if (ekUc) return ekUc
       const method = secenekler?.method ?? 'GET'
       if (notYetkisiz && /\/(ozel-)?not$|\/notlar/.test(yol)) {
         return {
@@ -832,6 +875,8 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      const ekUc = ekUcYaniti(yol)
+      if (ekUc) return ekUc
       const method = secenekler?.method ?? 'GET'
       const govde = secenekler?.body ? JSON.parse(String(secenekler.body)) : null
       istekler.push({ yol, method, govde })
@@ -1123,11 +1168,14 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     ]
     await seansAc()
 
-    // Sunucudan bir FAZLASI isteniyor (aynı dakikaya denk gelen ikinci bir
-    // randevu `once` kesmesine takılıp da liste ikiye düşmesin diye).
+    // Sunucudan TAM OLARAK gösterilecek kadar isteniyor. Eskiden bir
+    // fazlası isteniyordu ve gerekçesi "aynı dakikaya denk gelen ikinci
+    // randevuyu telafi et"ti; o telafi çalışmıyordu (kesme SQL'de, düşen
+    // not geri gelmiyor) ve yanındaki `appointment_id` süzgeci de hiçbir
+    // zaman bir şey elemiyordu — ikisi de kaldırıldı (dal incelemesi M1).
     expect(
       istekler.some((i) =>
-        i.yol.startsWith('/api/danisanlar/1/notlar?limit=4'),
+        i.yol.startsWith('/api/danisanlar/1/notlar?limit=3'),
       ),
     ).toBe(true)
 
@@ -1324,6 +1372,8 @@ describe('AnaEkran — seans geçişi × uçuştaki istek (Görev 9)', () => {
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      const ekUc = ekUcYaniti(yol)
+      if (ekUc) return ekUc
       const method = secenekler?.method ?? 'GET'
       const govde = secenekler?.body ? JSON.parse(String(secenekler.body)) : null
       const kapi = gecikmeler[`${method} ${yol}`]
@@ -1425,6 +1475,17 @@ describe('AnaEkran — seans geçişi × uçuştaki istek (Görev 9)', () => {
 describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   const gercekFetch = globalThis.fetch
 
+  // Danışan 1'in ek dosyaları; DELETE sunucuda gerçekten siliyor.
+  let sunucuEkleri: {
+    id: number
+    client_id: number
+    dosya_adi: string
+    mime: string
+    tur: string
+    boyut: number
+    eklenme_zamani: string
+  }[] = []
+
   const kartDanisanlari = [
     { id: 1, ad_soyad: 'Ayşe Yılmaz', telefon: null, durum: 'aktif' },
     { id: 2, ad_soyad: 'Mehmet Demir', telefon: null, durum: 'aktif' },
@@ -1514,6 +1575,12 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     istekYollari = []
     gecikmeler = {}
     uretilenBloblar = []
+    sunucuEkleri = [
+      {
+        id: 77, client_id: 1, dosya_adi: 'onam-formu.pdf', mime: 'application/pdf',
+        tur: 'onam', boyut: 1024, eklenme_zamani: '2026-03-01T09:00:00Z',
+      },
+    ]
     // jsdom `createObjectURL`i uygulamıyor; taklit ediliyor VE üretilen Blob
     // yakalanıyor (`DanisanKarti.test.tsx` ile aynı desen).
     URL.createObjectURL = vi.fn((b: Blob) => {
@@ -1537,6 +1604,9 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
       const method = secenekler?.method ?? 'GET'
+      // Bu blokta `ekUcYaniti` KAYITTAN SONRA cagriliyor (digerlerinde
+      // once): "saklama listesi yalnizca bir kez soruluyor mu" iddiasi
+      // istegin `istekYollari`na dusmesini gerektiriyor.
       istekYollari.push(`${method} ${yol}`)
       const gecikme = gecikmeler[`${method} ${yol}`]
       if (gecikme) await gecikme
@@ -1548,13 +1618,25 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
         } as unknown as Response
       }
 
+      const ekUc = ekUcYaniti(yol)
+      if (ekUc) return ekUc
+
       const notlar = notYaniti(yol, method, null)
       if (notlar) return notlar
 
       if (yol.startsWith('/api/ara')) return jsonYanit(aramaSonuclari)
 
+      // Ek SILME: sunucu satiri gercekten kaldiriyor, boylece "kart
+      // yeniden cekildi mi" iddiasi ekrandan olculebiliyor.
+      const ekSilme = /^\/api\/ekler\/(\d+)$/.exec(yol)
+      if (ekSilme && method === 'DELETE') {
+        const id = Number(ekSilme[1])
+        sunucuEkleri = sunucuEkleri.filter((e) => e.id !== id)
+        return jsonYanit({})
+      }
+
       const ekler = /^\/api\/danisanlar\/(\d+)\/ekler$/.exec(yol)
-      if (ekler) return jsonYanit([])
+      if (ekler) return jsonYanit(Number(ekler[1]) === 1 ? sunucuEkleri : [])
 
       // Dal incelemesi C1: disa aktarim denetim kaydi. ACIKCA karsilaniyor;
       // asagidaki `/api/danisanlar` on ek eslesmesine birakilsaydi, yolu
@@ -2024,5 +2106,108 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     const sorguTasiyanlar = istekYollari.filter((y) => y.includes('kaygi'))
     expect(sorguTasiyanlar).toHaveLength(1)
     expect(sorguTasiyanlar[0]).toContain('/api/ara?q=kaygi')
+  })
+  // -------------------------------------------------------------------
+  // Dal incelemesi: HTTP -> arayüz yönü. Üç uç noktanın istemcide hiçbir
+  // çağrı yeri yoktu; aşağıdaki testler o çağrı yerlerini ölçüyor.
+  // -------------------------------------------------------------------
+
+  it('saklama suresi dolan dosyalar ANA EKRANDA listelenir ve tiklaninca kart acilir', async () => {
+    // Tasarım §7: "süresi dolan dosyalar ana ekranda hatırlatma olarak
+    // listelenir". Kart içindeki tekil gösterge bunun yerini tutmuyordu:
+    // bir dosyanın süresinin dolduğunu görmek için o dosyayı AÇMAK
+    // gerekiyordu, yani soru ekranda hiç sorulmuyordu.
+    sunucuSaklamaDolanlar = [{ id: 3, ad_soyad: 'Zeynep Kaya', telefon: null, durum: 'aktif' }]
+    render(<AnaEkran kilitle={vi.fn()} />)
+
+    const bolum = await screen.findByRole('region', { name: 'Saklama süresi dolan dosyalar' })
+    expect(bolum.textContent).toContain('Zeynep Kaya')
+    // İmha kararı insanın: bölüm bunu YAZMALI ve bir silme düğmesi
+    // İÇERMEMELİ (plan global kısıtı).
+    expect(bolum.textContent).toMatch(/kendiliğinden silinmez/i)
+    expect(within(bolum).queryByRole('button', { name: /sil/i })).toBeNull()
+
+    // İstek yerel takvim gününü taşımalı: karşılaştırma duvar saatine göre
+    // ve UTC'den türetmek sınırdaki bir dosyayı listeden düşürürdü.
+    expect(istekYollari).toContain('GET /api/saklama-suresi-dolanlar?bugun=2026-09-09')
+
+    await userEvent.click(
+      within(bolum).getByRole('button', { name: 'Zeynep Kaya dosyasını aç (saklama süresi doldu)' }),
+    )
+    await screen.findByRole('heading', { name: 'Zeynep Kaya' })
+  })
+
+  it('EKSI YON: suresi dolan dosya yoksa hatirlatma HIC gorunmez', async () => {
+    // Bu olmadan "her zaman bir bant bas" mutasyonu üstteki testi geçerdi.
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+    expect(screen.queryByRole('region', { name: 'Saklama süresi dolan dosyalar' })).toBeNull()
+  })
+
+  it('saklama listesi hafta degisiminde YENIDEN sorulmaz (silinemez log satiri)', async () => {
+    // `clients::saklama_suresi_dolanlar` her çağrıda `LogHacmi::HerCagri`
+    // ile SİLİNEMEZ bir `goruntuleme` satırı yazıyor. Liste gün içinde
+    // değişmez; her hafta okunda yeniden sormak, hiçbir kazanç sağlamadan
+    // kalıcı satır biriktirmek olurdu (`durumDegis`/`sil` ile aynı karar).
+    sunucuSaklamaDolanlar = [{ id: 3, ad_soyad: 'Zeynep Kaya', telefon: null, durum: 'aktif' }]
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('region', { name: 'Saklama süresi dolan dosyalar' })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
+    await waitFor(() =>
+      expect(istekYollari.some((y) => y.includes('baslangic=2026-09-14'))).toBe(true),
+    )
+
+    expect(istekYollari.filter((y) => y.includes('/api/saklama-suresi-dolanlar'))).toHaveLength(1)
+  })
+
+  it('depolama esigi asilinca uyari gorunur; asilmayinca GORUNMEZ', async () => {
+    // Plan global kısıtındaki 500 MB eşiği HTTP'de vardı, üründe yoktu:
+    // ekler 20 MB'a kadar BLOB tutuyor ve terapist veritabanı şişerken
+    // hiçbir uyarı almıyordu.
+    sunucuDepolama = { toplam_boyut: 600 * 1024 * 1024, esik: 500 * 1024 * 1024, uyari: true }
+    const { unmount } = render(<AnaEkran kilitle={vi.fn()} />)
+
+    const uyari = await screen.findByText(/uyarı eşiğini aştı/i)
+    // Eşik ve toplam SUNUCUDAN gelen sayılarla basılıyor; istemcide ikinci
+    // bir kopya tutmak iki sayının sessizce ayrışması demekti.
+    expect(uyari.textContent).toContain('600,0 MB')
+    expect(uyari.textContent).toContain('500,0 MB')
+    // Engellemiyor, bildiriyor.
+    expect(uyari.textContent).toMatch(/engellenmiyor/i)
+
+    unmount()
+
+    // ARTI/EKSI YON: eşik aşılmamışken hiçbir bant yok. Bu olmadan "her
+    // zaman uyar" mutasyonu yukarıdaki iddiayı geçerdi.
+    sunucuDepolama = { toplam_boyut: 1024, esik: 500 * 1024 * 1024, uyari: false }
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+    expect(screen.queryByText(/uyarı eşiğini aştı/i)).toBeNull()
+  })
+
+  it('ek silme DELETE atar ve kart YENIDEN cekilir', async () => {
+    // Uç nokta Görev 7'de yazılmıştı ama çağrı yeri yoktu: yanlış danışana
+    // yüklenen bir onam PDF'i silinemiyordu.
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
+    // Ad iki yerde birden geciyor (ek listesi + riza belgesi secici):
+    // indirme BAGLANTISI uzerinden aranmali.
+    await screen.findByRole('link', { name: 'onam-formu.pdf' })
+
+    await userEvent.click(screen.getByRole('button', { name: 'onam-formu.pdf dosyasını sil' }))
+    // İKİ ADIMLI: ilk tıklama HİÇBİR istek atmaz.
+    expect(istekYollari.some((y) => y.startsWith('DELETE /api/ekler'))).toBe(false)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Evet, sil' }))
+    await waitFor(() => expect(istekYollari).toContain('DELETE /api/ekler/77'))
+
+    // Kart YENİDEN ÇEKİLİYOR (yalnızca yerel listeden düşürülmüyor):
+    // sunucu aynı transaction'da `riza_dosya_id`'yi de temizliyor ve iki
+    // kaynağın tutarlılığı ancak birlikte çekilerek korunur.
+    await waitFor(() =>
+      expect(screen.queryByRole('link', { name: 'onam-formu.pdf' })).toBeNull(),
+    )
+    expect(istekYollari.filter((y) => y === 'GET /api/danisanlar/1').length).toBeGreaterThan(1)
   })
 })

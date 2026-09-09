@@ -98,6 +98,23 @@ export type EkBilgisi = {
 export const EK_TURLERI = ['onam', 'test', 'diger'] as const
 
 /**
+ * `GET /api/depolama-durumu` yanıtı (sunucudaki `DepolamaDurumu`).
+ *
+ * Eşik sunucudan geliyor ve burada **sabitlenmiyor**: iki kopya sessizce
+ * ayrışırdı (`AZAMI_EK_BOYUTU`'nun aksine — o, isteği hiç atmadan reddedebilmek
+ * için istemcide de duruyor ve sunucu testiyle eşitliği pinleniyor; bu ise
+ * yalnızca gösterim için).
+ */
+export type DepolamaDurumu = {
+  /** Tüm eklerin toplam boyutu (bayt). */
+  toplam_boyut: number
+  /** Uyarı eşiği (bayt) — plan global kısıtı: 500 MB. */
+  esik: number
+  /** `toplam_boyut > esik`. **Hiçbir işlemi durdurmaz**, yalnızca bildirir. */
+  uyari: boolean
+}
+
+/**
  * Dosya başına üst sınır — sunucudaki `AZAMI_DOSYA_BOYUTU` ile **aynı**.
  *
  * İstemci tarafında da kontrol ediliyor çünkü sunucu sınırı `axum`'un
@@ -524,6 +541,57 @@ export const danisanApi = {
       body: dosya,
     })
   },
+  /**
+   * Ek dosyayı **kalıcı olarak** siler (`DELETE /api/ekler/{id}`).
+   *
+   * # Neden var (dal incelemesi)
+   *
+   * Uç nokta Görev 7'de yazıldı ve test edildi ama arayüzde hiçbir çağrı yeri
+   * yoktu: yanlış danışana yüklenen bir onam PDF'i **silinemiyordu**. Bu, bu
+   * kod tabanının tekrar eden "kodda var, üründe yok" örüntüsünün HTTP →
+   * arayüz yönündeki hâli; `notlar_api.rs::her_http_ucunun_bir_istemci_cagri_
+   * yeri_var` artık o yönü de tarıyor.
+   *
+   * # Geri alınamaz
+   *
+   * Dosya BLOB'u gider; yedek dışında geri dönüşü yoktur. Çağıran taraf
+   * (`DanisanKarti`) bu yüzden iki adımlı onay gösterir. Sunucudaki
+   * `attachments::sil` ayrıca **sarkan `clients.riza_dosya_id`'yi aynı
+   * transaction'da temizler** (`riza_tarihi` korunur) — onay metni bunu
+   * söylemek zorunda, çünkü silinen dosya rıza belgesiyse danışanın rıza
+   * bölümündeki bağ da kopar.
+   */
+  ekSil: (ekId: number) =>
+    istek<Record<string, never>>(`/api/ekler/${ekId}`, { method: 'DELETE' }),
+  /**
+   * Saklama süresi dolmuş danışanlar (`GET /api/saklama-suresi-dolanlar`).
+   *
+   * **SİLME YOK**: uç nokta yalnızca listeler, imha kararı her zaman
+   * insanındır (plan global kısıtı). Tasarım §7 bunu "ana ekranda hatırlatma
+   * olarak listelenir" diye tanımlıyordu; kart içindeki tekil gösterge o
+   * hatırlatmanın yerini tutmaz — bir dosyanın süresinin dolduğunu görmek
+   * için o dosyayı açmak gerekiyordu.
+   *
+   * `bugun` istemcinin **yerel** takvim günü (`YYYY-AA-GG`): karşılaştırma
+   * duvar saatine göre yapılıyor ve UTC'den türetmek 00:00–03:00 arasında
+   * sınırdaki bir dosyayı listeden düşürürdü (bkz. `AnaEkran::yerelGun` ve
+   * sunucudaki `saklama_listesi` gerekçesi).
+   *
+   * DİKKAT — çağrı sayısı: sunucudaki depo fonksiyonu her çağrıda
+   * `LogHacmi::HerCagri` ile **silinemez** bir `goruntuleme` satırı yazar.
+   * Bu yüzden ana ekran onu yalnızca ilk yüklemede çağırır, her hafta
+   * değişiminde değil.
+   */
+  saklamaSuresiDolanlar: (bugun: string) =>
+    istek<Danisan[]>(`/api/saklama-suresi-dolanlar?bugun=${encodeURIComponent(bugun)}`),
+  /**
+   * Toplam ek boyutu ve 500 MB uyarı eşiği (`GET /api/depolama-durumu`).
+   *
+   * Çekirdek de sunucu da **log yazmaz** (bir sayıdan ibaret durum sorgusu,
+   * `cakisanlari_bul` ile aynı sınıf), dolayısıyla ekran yenilendikçe
+   * çağrılabilir. Engellemez: `uyari` doğruyken yükleme çalışmaya devam eder.
+   */
+  depolamaDurumu: () => istek<DepolamaDurumu>('/api/depolama-durumu'),
 }
 
 /**

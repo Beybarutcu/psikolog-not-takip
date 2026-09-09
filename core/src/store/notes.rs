@@ -448,10 +448,17 @@ pub fn ozel_not_kaydet(
 /// konuşulan" diye okuyordu.
 ///
 /// Kesme **kesin küçüktür**: aynı `baslangic`'e sahip bir randevu "önce"
-/// sayılmaz, dolayısıyla seansın kendi notu bu listeye giremez. Aynı
-/// dakikaya denk gelen ikinci bir randevu da düşer; çağıran taraf bunu
-/// telafi etmek için bir fazlasını isteyip kendi kimliğini eleyebilir
-/// (arayüz öyle yapıyor).
+/// sayılmaz, dolayısıyla seansın kendi notu bu listeye giremez — çağıran
+/// tarafın ayrıca kendi kimliğini elemesine gerek yoktur (arayüz bir
+/// zamanlar eliyordu; süzgeç hiçbir zaman bir şey elemedi ve kaldırıldı).
+///
+/// Aynı dakikaya denk gelen **ikinci** bir randevunun notu da düşer ve bu
+/// bilinen bir sınırdır: kayıp SQL seviyesinde olduğu için çağıran taraf
+/// "bir fazlasını isteyerek" onu geri getiremez (bir fazlası yalnızca bir
+/// tane daha ESKİ not verir). Aynı dakikada iki seans olağan bir durum
+/// değil; düzeltmek kesmeyi `<=` yapıp seansın kendi notunu elemeyi
+/// çağırana yüklemek olurdu ve o, buradaki güvenceyi bir filtreye
+/// devrederdi.
 ///
 /// `None` ise kesme uygulanmaz: danışanın tüm notları (veri raporu bunu
 /// istiyor — KVKK md. 11 "elimdeki her şey" demek, "şu tarihe kadarkiler"

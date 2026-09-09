@@ -1859,3 +1859,244 @@ async fn kilitliyken_rapor_kaydi_401_doner_ve_log_yazmaz() {
     // oturum satiri disinda buyumemesidir.
     assert_eq!(sonra.len(), once + 2, "yalnizca cikis + giris satirlari eklenmeli");
 }
+
+// =====================================================================
+// HTTP -> ARAYUZ: her ucun bir ISTEMCI CAGRI YERI var mi?
+// =====================================================================
+//
+// # Bulgu (dal incelemesi): tarama TEK YONLU yapilmisti
+//
+// Görev 7 "çağrı yeri olmayan çekirdek" taramasını **çekirdek → HTTP**
+// yönünde eksiksiz yaptı (`backup`, `seriyi_sil`, `arsivle`,
+// `depolama_durumu` o taramayla bulundu) ve sınıfı kapalı ilan etti.
+// **HTTP → arayüz** yönü hiç taranmadı. Sonuç: üç uç noktanın
+// `web/src/api.ts` içinde karşılığı yoktu ve bu üründe üç somut eksik
+// demekti -- `GET /api/saklama-suresi-dolanlar` (tasarım §7'nin ana ekran
+// hatırlatması), `GET /api/depolama-durumu` (500 MB eşiği "kodda var,
+// üründe yok"), `DELETE /api/ekler/{id}` (yanlış danışana yüklenen bir
+// onam PDF'i silinemiyordu).
+//
+// Taramanın VARLIĞI, sınıfın kapalı olduğu izlenimini üretmişti. Bu test o
+// izlenimi bir ölçüme çevirir ve sınıfın bir daha sessizce açılmasını
+// engeller.
+//
+// # Nasıl ölçüyor
+//
+// `server/src/lib.rs::api_router`'dan `(METOT, yol)` çiftleri,
+// `web/src/api.ts` içindeki `/api/...` dizgilerinden de aynı biçimde
+// `(METOT, yol)` çiftleri çıkarılır ve **iki yönlü** karşılaştırılır. Yol
+// parametreleri (`{id}` / `${id}`) `{}` olarak normalleştirilir; sorgu
+// dizgisi atılır.
+//
+// Ters yön de gerçek bir hata: arayüzün var olmayan bir yola attığı istek
+// `api_bulunamadi`'ya düşer ve kullanıcı "Bilinmeyen API yolu." görür.
+
+/// `//` satırları ve `/* ... */` blokları atılmış kaynak.
+///
+/// Zorunlu: `api.ts`'in JSDoc başlıkları uç noktaları **adıyla** anıyor
+/// (`GET /api/danisanlar/{id}/ekler` yanıtı…). Yorumlar elenmezse bir uç
+/// nokta, hakkında yazılmış bir yorum sayesinde "çağrı yeri var" sayılırdı
+/// -- ölçüm tam da yakalaması gereken şeyi kaçırırdı.
+fn yorumsuz(kaynak: &str) -> String {
+    let mut bloksuz = String::with_capacity(kaynak.len());
+    let mut kalan = kaynak;
+    while let Some(bas) = kalan.find("/*") {
+        bloksuz.push_str(&kalan[..bas]);
+        match kalan[bas + 2..].find("*/") {
+            Some(son) => kalan = &kalan[bas + 2 + son + 2..],
+            None => {
+                kalan = "";
+                break;
+            }
+        }
+    }
+    bloksuz.push_str(kalan);
+    bloksuz
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+const METOTLAR: [&str; 5] = ["get", "post", "patch", "put", "delete"];
+
+/// `metot(` geçişi -- öncesinde harf/rakam/alt çizgi olmamalı, yani bir
+/// sabitin (`AZAMI_GOVDE_BOYUTU`) içinde kalan hece sayılmasın.
+fn metot_cagrisi_var(metin: &str, metot: &str) -> bool {
+    let desen = format!("{metot}(");
+    let mut arama = 0usize;
+    while let Some(yer) = metin[arama..].find(&desen) {
+        let mutlak = arama + yer;
+        let onceki = metin[..mutlak].chars().next_back();
+        if !matches!(onceki, Some(k) if k.is_alphanumeric() || k == '_') {
+            return true;
+        }
+        arama = mutlak + desen.len();
+    }
+    false
+}
+
+/// `{id}` / `${danisanId}` gibi parametreleri `{}`'ye indirger.
+fn yolu_normallestir(yol: &str) -> String {
+    let mut cikti = String::with_capacity(yol.len());
+    let mut kalan = yol;
+    while let Some(bas) = kalan.find('{') {
+        cikti.push_str(kalan[..bas].trim_end_matches('$'));
+        cikti.push_str("{}");
+        match kalan[bas..].find('}') {
+            Some(son) => kalan = &kalan[bas + son + 1..],
+            None => {
+                kalan = "";
+                break;
+            }
+        }
+    }
+    cikti.push_str(kalan);
+    cikti
+}
+
+/// `api_router`'ın tanımladığı `(METOT, yol)` çiftleri.
+fn sunucu_rotalari() -> Vec<(String, String)> {
+    let kaynak =
+        std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"))
+            .expect("server/src/lib.rs okunamadi");
+    let kod = yorumsuz(&kaynak);
+    let govde = kod
+        .split("fn api_router")
+        .nth(1)
+        .expect("api_router bulunamadi")
+        .split("pub fn router")
+        .next()
+        .expect("bolme her zaman parca verir")
+        .to_string();
+
+    let mut rotalar: Vec<(String, String)> = Vec::new();
+    for parca in govde.split(".route(").skip(1) {
+        let bas = parca.find('"').expect("rota yolu tirnak icinde olmali");
+        let son = parca[bas + 1..].find('"').expect("rota yolu kapanmali");
+        let yol = format!("/api{}", &parca[bas + 1..bas + 1 + son]);
+        let kalan = &parca[bas + 1 + son + 1..];
+        for metot in METOTLAR {
+            if metot_cagrisi_var(kalan, metot) {
+                rotalar.push((metot.to_uppercase(), yolu_normallestir(&yol)));
+            }
+        }
+    }
+    rotalar.sort();
+    rotalar.dedup();
+    // Ayristirma bozulursa BOS bir kume her iddiayi saglardi -- sessiz yesil.
+    assert!(rotalar.len() >= 20, "rota tablosu ayristirilamadi: {rotalar:?}");
+    rotalar
+}
+
+/// `web/src/api.ts`'in gerçekten kurduğu `(METOT, yol)` çiftleri.
+///
+/// Metot, yol dizgisinden **sonraki** pencerede aranır (`istek(...)`
+/// çağrısının seçenek nesnesi orada); bulunmazsa `GET` -- `fetch`/`istek`
+/// varsayılanı budur.
+fn istemci_cagrilari() -> Vec<(String, String)> {
+    let kaynak = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../web/src/api.ts"),
+    )
+    .expect("web/src/api.ts okunamadi");
+    let k: Vec<char> = yorumsuz(&kaynak).chars().collect();
+    const ONEK: [char; 4] = ['/', 'a', 'p', 'i'];
+
+    // Once TUM `/api...` baslangiclari: metot penceresi "bir sonraki yol
+    // dizgisine kadar" olacak, boylece bir cagrinin metodu komsusuna
+    // atfedilemez.
+    let baslangiclar: Vec<usize> =
+        (0..k.len().saturating_sub(4)).filter(|&i| k[i..i + 4] == ONEK).collect();
+
+    let mut cagrilar: Vec<(String, String)> = Vec::new();
+    for (sira, &bas) in baslangiclar.iter().enumerate() {
+        let mut yol = String::new();
+        let mut j = bas;
+        while j < k.len() {
+            let c = k[j];
+            if c == '`' || c == '\'' || c == '"' || c == '?' {
+                break;
+            }
+            if c == '$' && k.get(j + 1) == Some(&'{') {
+                // `${encodeURIComponent(id)}` -> `{}`; ic ice suslu de olabilir.
+                let mut derinlik = 1usize;
+                let mut i = j + 2;
+                while i < k.len() && derinlik > 0 {
+                    if k[i] == '{' {
+                        derinlik += 1;
+                    } else if k[i] == '}' {
+                        derinlik -= 1;
+                    }
+                    i += 1;
+                }
+                yol.push_str("{}");
+                j = i;
+                continue;
+            }
+            yol.push(c);
+            j += 1;
+        }
+
+        let sinir = baslangiclar
+            .get(sira + 1)
+            .copied()
+            .unwrap_or(k.len())
+            .min(j.saturating_add(400))
+            .min(k.len())
+            .max(j);
+        let pencere: String = k[j..sinir].iter().collect();
+        let metot = pencere
+            .split("method: '")
+            .nth(1)
+            .and_then(|p| p.split('\'').next())
+            .map(|m| m.trim().to_uppercase())
+            .unwrap_or_else(|| "GET".to_string());
+
+        cagrilar.push((metot, yolu_normallestir(&yol)));
+    }
+    cagrilar.sort();
+    cagrilar.dedup();
+    assert!(cagrilar.len() >= 20, "api.ts ayristirilamadi: {cagrilar:?}");
+    cagrilar
+}
+
+/// Arayüzden bilinçli olarak çağrılmayan uç noktalar.
+///
+/// **Bugün boş.** Boş kalması bir hedef değil, bir ölçüm: bir uç nokta
+/// buraya yazılacaksa gerekçesi de buraya yazılır ve o gerekçe kod
+/// incelemesine düşer. Sessizce bağlanmamış bir uç nokta ile bilinçli
+/// olarak bağlanmamış bir uç nokta arasındaki fark tam olarak budur.
+const ISTEMCISIZ_UCLAR: [(&str, &str); 0] = [];
+
+#[test]
+fn her_http_ucunun_bir_istemci_cagri_yeri_var() {
+    let rotalar = sunucu_rotalari();
+    let cagrilar = istemci_cagrilari();
+
+    // ON KOSUL: istisna listesi bayat olmasin -- listedeki her uc GERCEKTEN
+    // sunucuda tanimli olmali.
+    for (metot, yol) in ISTEMCISIZ_UCLAR {
+        assert!(
+            rotalar.contains(&(metot.to_string(), yol.to_string())),
+            "istisna listesi bayat: {metot} {yol} artik bir rota degil"
+        );
+    }
+
+    let bagsiz: Vec<&(String, String)> = rotalar
+        .iter()
+        .filter(|(m, y)| {
+            !cagrilar.contains(&(m.clone(), y.clone()))
+                && !ISTEMCISIZ_UCLAR.iter().any(|(im, iy)| im == m && iy == y)
+        })
+        .collect();
+    assert!(
+        bagsiz.is_empty(),
+        "bu uc noktalarin `web/src/api.ts` icinde hicbir cagri yeri yok \
+         (kodda var, URUNDE yok): {bagsiz:?}"
+    );
+
+    // TERS YON: arayuzun var olmayan bir yola attigi istek `api_bulunamadi`ya
+    // duser ve kullanici "Bilinmeyen API yolu." gorur.
+    let hayali: Vec<&(String, String)> = cagrilar.iter().filter(|c| !rotalar.contains(c)).collect();
+    assert!(hayali.is_empty(), "arayuz sunucuda OLMAYAN uclara istek atiyor: {hayali:?}");
+}

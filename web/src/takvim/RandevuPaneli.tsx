@@ -1,7 +1,30 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Danisan, SeriCakismasi } from '../api'
+import type { Danisan, SeriCakismasi, SeriSilmeOnizlemesi } from '../api'
 import type { Randevu } from './HaftalikTakvim'
 import { dakikaFarki, yerelZaman, zamandanDate } from './hafta'
+
+/**
+ * # Silme onayı NOTLARI da söyler (dal incelemesi I2)
+ *
+ * `progress_notes.appointment_id` ve `private_notes.appointment_id`
+ * `ON DELETE CASCADE` taşıyor (`schema::V3`): bir randevu silinince o
+ * seansın notu ve terapistin özel notu da yok olur. Onay metni bunu hiç
+ * söylemiyordu — "Bu randevu kalıcı olarak silinsin mi?" — ve seri iptali
+ * metni de yalnızca randevulardan söz ediyordu. 52 haftalık bir serinin
+ * gelecekteki seanslarına not yazılmışsa hepsi tek tıkla gidiyordu.
+ *
+ * Bu, kod tabanının kendi ilkesiyle çelişiyordu: arşivleme onayı "geçmiş
+ * randevuları, notları ve dosyaları silinmez" diye açıkça yazıyor ve
+ * `clients::saklama_suresi_dolanlar` "SİLME YOK: imha kararı her zaman
+ * insanındır" diyor. İnsan burada **randevuyu** silmeye karar verdi, klinik
+ * kaydı değil — o hâlde neyin gideceği ona söylenmeli.
+ *
+ * Onay bu yüzden iki adımlı kalıyor ama artık **sayıyı sunucudan alıyor**
+ * (seri onayındaki adetle aynı emsal): "Sil"e basmak önce sayıyı sorar,
+ * onay kutusu sonra açılır. Not varsa uyarı ayrıca güçlenir (ayrı,
+ * vurgulu bir satır) — sıfırsa o satır YOKTUR, yoksa her silmede çıkan bir
+ * uyarı okunmaz hâle gelirdi.
+ */
 
 const VARSAYILAN_SURE_DK = 60
 // Çakışma kontrolü sunucuya her tuş vuruşunda gidiyordu (Görev 5'te bu uç
@@ -29,8 +52,11 @@ type Props = {
   // Serideki bu randevudan İTİBAREN gelen tüm tekrarları siler; geçmiş
   // korunur (bkz. sunucudaki `seriyi_sil`).
   onSeriSil: (seriId: string, buTarihtenItibaren: string) => Promise<void>
-  // Onay metnindeki sayıyı üretir: kaç randevu silinecek.
-  seriSayisiAl: (seriId: string, buTarihtenItibaren: string) => Promise<number>
+  // Onay metnindeki sayıları üretir: kaç randevu VE kaç not silinecek.
+  seriSayisiAl: (seriId: string, buTarihtenItibaren: string) => Promise<SeriSilmeOnizlemesi>
+  // Tekil silme onayındaki sayı: bu randevuyla birlikte kaç not gidecek
+  // (cascade). Bkz. modül başlığı.
+  silinecekNotSayisiAl: (id: number) => Promise<number>
   onKapat: () => void
   cakismaKontrol: (
     baslangic: string,
@@ -69,7 +95,7 @@ function tldenKurusa(tl: string): number | null {
 
 export function RandevuPaneli({
   zaman, randevu, danisanlar, onKaydet, onDurumDegis, onSil, onSeriSil, seriSayisiAl,
-  onKapat, cakismaKontrol,
+  silinecekNotSayisiAl, onKapat, cakismaKontrol,
 }: Props) {
   const baslangic = randevu?.baslangic ?? zaman
   const [clientId, setClientId] = useState<number | ''>(randevu?.client_id ?? '')
@@ -81,11 +107,14 @@ export function RandevuPaneli({
   const [haftaSayisi, setHaftaSayisi] = useState('8')
   const [cakisma, setCakisma] = useState<SeriCakismasi | null>(null)
   const [hata, setHata] = useState<string | null>(null)
-  const [silOnayi, setSilOnayi] = useState(false)
-  // Seri silme onayı: `null` = onay açık değil, sayı = kaç randevu
-  // silinecek (sunucudan alındı). Silme geri alınamaz olduğu için tekil
+  // Tekil silme onayı: `null` = onay açık değil, sayı = bu randevuyla
+  // birlikte gidecek NOT sayısı (sunucudan alındı — bkz. modül başlığı).
+  // Düz bir `boolean` iken onay metni notlardan hiç söz edemiyordu.
+  const [silOnayi, setSilOnayi] = useState<number | null>(null)
+  // Seri silme onayı: `null` = onay açık değil, nesne = kaç randevu ve kaç
+  // not silinecek (sunucudan alındı). Silme geri alınamaz olduğu için tekil
   // silmedeki iki adımlı onay deseni burada da uygulanıyor.
-  const [seriSilOnayi, setSeriSilOnayi] = useState<number | null>(null)
+  const [seriSilOnayi, setSeriSilOnayi] = useState<SeriSilmeOnizlemesi | null>(null)
   const [islemSuruyor, setIslemSuruyor] = useState(false)
 
   // onKaydet/onDurumDegis/onSil (ör. kayıt işlemi) tamamlanmadan panel başka
@@ -307,9 +336,22 @@ export function RandevuPaneli({
             ))}
           </div>
 
-          {silOnayi ? (
+          {silOnayi !== null ? (
             <div className="mt-3 rounded bg-red-50 p-2">
               <p className="text-sm text-red-800">Bu randevu kalıcı olarak silinsin mi?</p>
+              {/* NOTLAR — cascade. Sayı sıfırsa bu satır YOKTUR: her
+                  silmede çıkan bir uyarı okunmaz hâle gelir ve gerçekten
+                  not olan durumda işe yaramaz. */}
+              {silOnayi > 0 ? (
+                <p className="mt-1 rounded border border-red-400 bg-red-100 p-2 text-sm font-medium text-red-900">
+                  Bu randevuya bağlı {silOnayi} not (seans notu ve/veya özel notunuz) da kalıcı
+                  olarak silinecek. Notlar geri getirilemez.
+                </p>
+              ) : (
+                <p className="mt-1 text-sm text-red-800">
+                  Bu randevuya bağlı seans notu veya özel not yok.
+                </p>
+              )}
               <div className="mt-2 flex gap-2">
                 <button
                   className="rounded bg-red-700 px-3 py-1 text-sm text-white disabled:opacity-50"
@@ -320,7 +362,7 @@ export function RandevuPaneli({
                 </button>
                 <button
                   className="rounded border px-3 py-1 text-sm"
-                  onClick={() => setSilOnayi(false)}
+                  onClick={() => setSilOnayi(null)}
                   disabled={islemSuruyor}
                 >
                   Vazgeç
@@ -329,8 +371,18 @@ export function RandevuPaneli({
             </div>
           ) : (
             <button
-              className="mt-3 w-full text-sm text-red-700 underline"
-              onClick={() => setSilOnayi(true)}
+              className="mt-3 w-full text-sm text-red-700 underline disabled:opacity-50"
+              disabled={islemSuruyor}
+              onClick={() =>
+                // Onay metnindeki sayı sunucudan alınır (seri onayıyla aynı
+                // desen): kaç NOT gidecek. Sorgu başarısız olursa onay
+                // kutusu AÇILMAZ ve hata gösterilir -- ne gideceğini
+                // söyleyemeyen bir onay, onay değildir.
+                void islemCalistir(async () => {
+                  const notAdedi = await silinecekNotSayisiAl(randevu.id)
+                  if (gecerli.current) setSilOnayi(notAdedi)
+                })
+              }
             >
               Sil
             </button>
@@ -341,13 +393,27 @@ export function RandevuPaneli({
               (`seriyi_sil` yazılmış ama hiçbir çağrı yeri yoktu — bkz. dal
               incelemesi I4a). Kullanıcı artık "bu randevu" ile "bu ve
               sonraki tüm tekrarlar" arasında seçim yapıyor. */}
-          {randevu.seri_id && !silOnayi && (
+          {randevu.seri_id && silOnayi === null && (
             seriSilOnayi !== null ? (
               <div className="mt-3 rounded bg-red-50 p-2">
                 <p className="text-sm text-red-800">
-                  Bu randevu ve sonraki {seriSilOnayi - 1} tekrarı ({seriSilOnayi} randevu)
-                  kalıcı olarak silinsin mi? Geçmiş randevular silinmez.
+                  Bu randevu ve sonraki {seriSilOnayi.adet - 1} tekrarı ({seriSilOnayi.adet}{' '}
+                  randevu) kalıcı olarak silinsin mi? Geçmiş randevular silinmez.
                 </p>
+                {/* Notlar da cascade ile gidiyor ve seri, ekrandaki
+                    haftanın çok ötesine uzanabiliyor: 52 haftalık bir
+                    serinin gelecekteki tüm notları tek tıkla giderdi. */}
+                {seriSilOnayi.notAdedi > 0 ? (
+                  <p className="mt-1 rounded border border-red-400 bg-red-100 p-2 text-sm font-medium text-red-900">
+                    Bu randevulara bağlı {seriSilOnayi.notAdedi} not (seans notları ve/veya özel
+                    notlarınız) da kalıcı olarak silinecek. Notlar geri getirilemez; geçmiş
+                    randevuların notları korunur.
+                  </p>
+                ) : (
+                  <p className="mt-1 text-sm text-red-800">
+                    Silinecek randevulara bağlı seans notu veya özel not yok.
+                  </p>
+                )}
                 <div className="mt-2 flex gap-2">
                   <button
                     className="rounded bg-red-700 px-3 py-1 text-sm text-white disabled:opacity-50"
@@ -375,13 +441,14 @@ export function RandevuPaneli({
                 disabled={islemSuruyor}
                 onClick={() =>
                   void islemCalistir(async () => {
-                    // Onay metnindeki sayı sunucudan alınır: seri ekrandaki
-                    // haftanın çok ötesine uzanabilir.
-                    const adet = await seriSayisiAl(
+                    // Onay metnindeki sayılar sunucudan alınır: seri
+                    // ekrandaki haftanın çok ötesine uzanabilir. İki sayı
+                    // (randevu + not) TEK istekte gelir.
+                    const onizleme = await seriSayisiAl(
                       randevu.seri_id as string,
                       randevu.baslangic,
                     )
-                    if (gecerli.current) setSeriSilOnayi(adet)
+                    if (gecerli.current) setSeriSilOnayi(onizleme)
                   })
                 }
               >

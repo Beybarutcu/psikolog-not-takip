@@ -5,3 +5,6 @@ pub mod zaman;
 pub mod audit;
 pub mod clients;
 pub mod appointments;
+pub mod notes;
+pub mod attachments;
+pub mod search;

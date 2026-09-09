@@ -3,7 +3,7 @@ use crate::state::{AppState, KeystoreDurumu};
 use axum::{extract::State, http::StatusCode, Json};
 use psikolog_core::crypto::keyring::CryptoError;
 use psikolog_core::store::{
-    audit::{kaydet, Cihaz, Eylem},
+    audit::{kaydet, Cihaz, Eylem, LogHacmi},
     db::open_existing,
     keystore,
     schema::migrate,
@@ -121,7 +121,7 @@ pub async fn kilit_ac(
             // Erişim VEREN bir işlem: audit yazımı başarısız olursa erişim de
             // verilmez (fail-closed) -- bkz. routes::setup::kurulum'daki aynı
             // gerekçe. Kaydedemediğimiz bir erişimi vermeyiz.
-            if let Err(e) = kaydet(&conn, Eylem::Giris, "session", "-", Cihaz::Masaustu, None) {
+            if let Err(e) = kaydet(&conn, Eylem::Giris, "session", "-", Cihaz::Masaustu, None, LogHacmi::HerCagri) {
                 eprintln!("kilit-ac: erişim kaydı yazılamadı: {e}");
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -170,7 +170,7 @@ pub async fn kilitle(State(s): State<AppState>) -> (StatusCode, Json<serde_json:
             // aşağıda koşulsuz kilitlenir ve uç nokta `200` döner. (Karşıt
             // karar -- fail-closed -- için bkz. yukarıdaki `kilit_ac` ve
             // `routes::setup::kurulum`.)
-            let _ = kaydet(&conn, Eylem::Cikis, "session", "-", Cihaz::Masaustu, None);
+            let _ = kaydet(&conn, Eylem::Cikis, "session", "-", Cihaz::Masaustu, None, LogHacmi::HerCagri);
         }
     }
     s.oturum.lock().unwrap_or_else(|e| e.into_inner()).kilitle();

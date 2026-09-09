@@ -1,7 +1,7 @@
 use crate::state::{AppState, KeystoreDurumu};
 use axum::{extract::State, http::StatusCode, Json};
 use psikolog_core::store::{
-    audit::{kaydet, Ayrinti, Cihaz, Eylem},
+    audit::{kaydet, Ayrinti, Cihaz, Eylem, LogHacmi},
     db::open_encrypted,
     keystore,
     schema::migrate,
@@ -95,7 +95,15 @@ pub async fn kurulum(
     // Audit yazımı başarısız olursa erişim de verilmez (fail-closed) --
     // kaydedemediğimiz bir erişimi vermeyiz. (Karşıt karar için bkz.
     // routes::session::kilitle -- kilitleme her zaman fail-open'dır.)
-    if let Err(e) = kaydet(&conn, Eylem::Giris, "session", "-", Cihaz::Masaustu, Some(Ayrinti::IlkKurulum)) {
+    if let Err(e) = kaydet(
+        &conn,
+        Eylem::Giris,
+        "session",
+        "-",
+        Cihaz::Masaustu,
+        Some(Ayrinti::IlkKurulum),
+        LogHacmi::HerCagri,
+    ) {
         eprintln!("kurulum: erişim kaydı yazılamadı: {e}");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,

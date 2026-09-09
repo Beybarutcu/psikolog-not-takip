@@ -270,6 +270,136 @@ async fn danisan_eklenir_ve_listelenir() {
     assert_eq!(liste.as_array().unwrap().len(), 1);
 }
 
+// --- Plan 2'den devredilen madde 2: arsivleme rotasi ------------------
+
+#[tokio::test]
+async fn danisan_arsivlenir_ve_listeden_dusser_ama_silinmez() {
+    let (_d, s) = kurulu_state().await;
+    let (_, a) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Mehmet"}))).await;
+    let id = a["id"].as_i64().unwrap();
+
+    let (kod, _) = cagir(&s, "POST", &format!("/api/danisanlar/{id}/arsivle"), None).await;
+    assert_eq!(kod, StatusCode::OK);
+
+    let (_, liste) = cagir(&s, "GET", "/api/danisanlar", None).await;
+    assert_eq!(liste.as_array().unwrap().len(), 1, "arsivlenen danisan listede olmamali");
+    assert_eq!(liste[0]["ad_soyad"], "Mehmet");
+
+    // Arsivleme FIZIKSEL SILME DEGILDIR: kayit duruyor, yalnizca durumu
+    // degisti. Arayuz metni de bunu soyluyor -- burada dogrulanan sey o
+    // metnin dogru oldugudur.
+    let conn = acik_baglanti_ile(&s, Instant::now()).unwrap();
+    let (sayi, durum): (i64, String) = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM clients), durum FROM clients WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(sayi, 2, "arsivleme satiri SILMEMELI");
+    assert_eq!(durum, "arsiv");
+}
+
+#[tokio::test]
+async fn arsivlenen_danisan_randevu_secim_listesinde_gorunmez() {
+    // Devredilen maddenin somut sonucu: randevu acilir menusu sinirsiz
+    // buyuyordu. Menu `GET /api/danisanlar` ile besleniyor.
+    let (_d, s) = kurulu_state().await;
+    let (_, a) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let id = a["id"].as_i64().unwrap();
+    let (_, once) = cagir(&s, "GET", "/api/danisanlar", None).await;
+    assert_eq!(once.as_array().unwrap().len(), 1, "on kosul: danisan listede");
+
+    cagir(&s, "POST", &format!("/api/danisanlar/{id}/arsivle"), None).await;
+
+    let (_, sonra) = cagir(&s, "GET", "/api/danisanlar", None).await;
+    assert!(sonra.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn olmayan_danisanin_arsivlenmesi_404_doner() {
+    let (_d, s) = kurulu_state().await;
+    let (kod, json) = cagir(&s, "POST", "/api/danisanlar/9999/arsivle", None).await;
+    assert_eq!(kod, StatusCode::NOT_FOUND);
+    assert!(json.get("hata").is_some());
+}
+
+// Kilitli oturum korumasi: arsivleme de `guard::acik_baglanti` kapisindan
+// gecmeli. Bulgu 4 dersi geregi yalnizca 401'e degil, islemin GERCEKTEN
+// uygulanmamis olduguna da bakiliyor.
+#[tokio::test]
+async fn kilitliyken_danisan_arsivleme_401_doner_ve_arsivlemez() {
+    let (_d, s) = kurulu_state().await;
+    let (_, a) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Gizli Danisan"}))).await;
+    let id = a["id"].as_i64().unwrap();
+    cagir(&s, "POST", "/api/kilitle", None).await;
+
+    let (kod, json) = cagir(&s, "POST", &format!("/api/danisanlar/{id}/arsivle"), None).await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED);
+    assert!(json.get("hata").is_some());
+    assert!(
+        !json.to_string().contains("Gizli Danisan"),
+        "kilitliyken bilinen bir danisan adi govdede olmamali: {json}"
+    );
+
+    cagir(&s, "POST", "/api/kilit-ac", Some(json!({"parola":"gizliparola"}))).await;
+    let (_, liste) = cagir(&s, "GET", "/api/danisanlar", None).await;
+    assert_eq!(
+        liste.as_array().unwrap().len(),
+        1,
+        "kilitliyken yapilan arsivleme istegi uygulanmamis olmali"
+    );
+}
+
+// --- Plan 2'den devredilen madde 1: ad/telefon dogrulamasi HTTP'de ----
+
+#[tokio::test]
+async fn gecersiz_telefon_400_ve_alani_adlandiran_mesaj_doner() {
+    let (_d, s) = kurulu_state().await;
+    let (kod, json) = cagir(
+        &s, "POST", "/api/danisanlar",
+        Some(json!({"ad_soyad":"Ayse","telefon":"asdfgh"})),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::BAD_REQUEST);
+    // "Danisan eklenemedi" yeterli DEGIL: kullanici hangi alani duzeltecegini
+    // bilmeli (bu kod tabaninda "her hata parola hatasidir" sinifi dort
+    // katmanda ayri ayri bulundu).
+    let mesaj = json["hata"].as_str().unwrap();
+    assert!(mesaj.contains("Telefon"), "hata mesaji alani adlandirmali: {mesaj}");
+
+    let (_, liste) = cagir(&s, "GET", "/api/danisanlar", None).await;
+    assert!(liste.as_array().unwrap().is_empty(), "reddedilen kayit yazilmamis olmali");
+}
+
+#[tokio::test]
+async fn gecerli_telefon_hala_kabul_edilir() {
+    // Reddetme testinin ikizi: her seyi reddeden bir dogrulayici ustteki
+    // testi de gecerdi.
+    let (_d, s) = kurulu_state().await;
+    let (kod, olusan) = cagir(
+        &s, "POST", "/api/danisanlar",
+        Some(json!({"ad_soyad":"Ayse","telefon":"+90 (212) 555 12 34"})),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::CREATED);
+    assert_eq!(olusan["telefon"], "+90 (212) 555 12 34");
+}
+
+#[tokio::test]
+async fn cok_uzun_ad_400_doner() {
+    let (_d, s) = kurulu_state().await;
+    let (kod, json) = cagir(
+        &s, "POST", "/api/danisanlar",
+        Some(json!({"ad_soyad": "a".repeat(200)})),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::BAD_REQUEST);
+    let mesaj = json["hata"].as_str().unwrap();
+    assert!(mesaj.contains("adı"), "hata mesaji alani adlandirmali: {mesaj}");
+}
+
 #[tokio::test]
 async fn randevu_olusturulur_ve_hafta_sorgusunda_gorunur() {
     let (_d, s) = kurulu_state().await;
@@ -473,6 +603,30 @@ async fn seri_silinir_ve_gecmis_korunur() {
     assert_eq!(kalan.as_array().unwrap().len(), 2, "gecmis randevular silinmemeli");
     assert_eq!(kalan[0]["baslangic"], "2026-09-07T14:00");
     assert_eq!(kalan[1]["baslangic"], "2026-09-14T14:00");
+}
+
+#[tokio::test]
+async fn olmayan_seriyi_silme_404_doner_ve_log_yazmaz() {
+    // Cekirdek `DepoHatasi::Bulunamadi` donduruyor; bu ESLEMENIN rota
+    // seviyesinde testi yoktu -- `depo_hatasi` eslemesi degisirse sessizce
+    // 200'e donebilirdi ve "sildim" diyen bir yanitin arkasinda hicbir silme
+    // olmazdi. Ayrica 0 satir silen bir istek SILINEMEZ bir log satiri
+    // birakmamali (disaridan tetiklenebilir gurultu yolu).
+    let (_d, s) = kurulu_state().await;
+    let (_cid, _sid) = seri_kur(&s).await;
+
+    let (kod, json) = cagir(
+        &s, "DELETE",
+        "/api/randevular/seri/boyle-bir-seri-yok?bu_tarihten_itibaren=2026-09-01T00:00", None,
+    ).await;
+    assert_eq!(kod, StatusCode::NOT_FOUND);
+    assert!(json.get("silinen").is_none(), "silme olmadi, sonuc donmemeli");
+
+    let (_, kalan) = cagir(
+        &s, "GET",
+        "/api/randevular?baslangic=2026-09-01T00:00&bitis=2026-10-01T00:00", None,
+    ).await;
+    assert_eq!(kalan.as_array().unwrap().len(), 4, "var olan seri etkilenmemeli");
 }
 
 #[tokio::test]
@@ -763,4 +917,177 @@ async fn api_disindaki_bilinmeyen_yol_hala_arayuze_duser() {
         .unwrap();
     let yanit = router(s.clone()).oneshot(istek).await.unwrap();
     assert_eq!(yanit.status(), StatusCode::OK, "API disi bilinmeyen yol SPA'ya dusmeli");
+}
+
+// =====================================================================
+// DAL INCELEMESI I2 -- CASCADE SILINEN NOTLARIN ONIZLEMESI
+// =====================================================================
+//
+// Bulgu: `progress_notes` / `private_notes` `ON DELETE CASCADE` tasiyor;
+// randevu silinince notlar da gidiyordu ve onay metni bundan hic soz
+// etmiyordu. Onay metninin sayiyi soyleyebilmesi icin sunucuya sormasi
+// gerekiyor -- 52 haftalik bir serinin notlari ekrandaki haftanin cok
+// otesinde olabilir.
+
+/// Bir randevuya resmi + ozel not yazar.
+async fn iki_not_yaz(s: &AppState, randevu_id: i64) {
+    let (k1, _) = cagir(
+        s,
+        "PUT",
+        &format!("/api/randevular/{randevu_id}/not"),
+        Some(json!({"sablon":"dap","icerik":"seans notu"})),
+    )
+    .await;
+    assert_eq!(k1, StatusCode::OK, "kurulum: resmi not yazilmali");
+    let (k2, _) = cagir(
+        s,
+        "PUT",
+        &format!("/api/randevular/{randevu_id}/ozel-not"),
+        Some(json!({"icerik":"ozel not"})),
+    )
+    .await;
+    assert_eq!(k2, StatusCode::OK, "kurulum: ozel not yazilmali");
+}
+
+#[tokio::test]
+async fn silinecekler_not_sayisini_verir_ve_hicbir_sey_degistirmez() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let (_, olusan) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": d["id"], "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00"
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+
+    // ARTI YON once: notsuz randevu 0 verir. "Hep 2 don" diyen bir uygulama
+    // asagidaki iddiayi tek basina gecerdi.
+    let (kod, json) = cagir(&s, "GET", &format!("/api/randevular/{id}/silinecekler"), None).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(json["not_adedi"], 0);
+
+    iki_not_yaz(&s, id).await;
+
+    let (_, json) = cagir(&s, "GET", &format!("/api/randevular/{id}/silinecekler"), None).await;
+    assert_eq!(json["not_adedi"], 2, "resmi + ozel not sayilmali");
+
+    // Onizleme HICBIR SEY silmedi: randevu ve notu yerinde.
+    let (kod, not) = cagir(&s, "GET", &format!("/api/randevular/{id}/not"), None).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(not["icerik"], "seans notu");
+}
+
+#[tokio::test]
+async fn silinecekler_not_icerigini_dondurmez() {
+    // Onizleme bir SAYI ucudur. Not metnini dondurseydi, onay kutusunu
+    // hazirlamak icin danisan verisi ekrana/bellege gelmis olurdu.
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let (_, olusan) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": d["id"], "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00"
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+    cagir(
+        &s,
+        "PUT",
+        &format!("/api/randevular/{id}/not"),
+        Some(json!({"sablon":"dap","icerik":"GIZLI_NOT_ICERIGI"})),
+    )
+    .await;
+    cagir(
+        &s,
+        "PUT",
+        &format!("/api/randevular/{id}/ozel-not"),
+        Some(json!({"icerik":"GIZLI_OZEL_ICERIGI"})),
+    )
+    .await;
+
+    let (_, json) = cagir(&s, "GET", &format!("/api/randevular/{id}/silinecekler"), None).await;
+    let metin = json.to_string();
+    assert!(!metin.contains("GIZLI_NOT_ICERIGI"), "not icerigi donmemeli: {metin}");
+    assert!(!metin.contains("GIZLI_OZEL_ICERIGI"), "ozel not icerigi donmemeli: {metin}");
+    assert_eq!(json["not_adedi"], 2);
+}
+
+#[tokio::test]
+async fn kilitliyken_silinecekler_401_doner() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let (_, olusan) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": d["id"], "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00"
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+    iki_not_yaz(&s, id).await;
+    cagir(&s, "POST", "/api/kilitle", None).await;
+
+    let (kod, json) = cagir(&s, "GET", &format!("/api/randevular/{id}/silinecekler"), None).await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED);
+    assert!(json.get("not_adedi").is_none(), "kilitliyken sayi donmemeli");
+}
+
+#[tokio::test]
+async fn seri_adedi_silinecek_not_sayisini_da_verir() {
+    let (_d, s) = kurulu_state().await;
+    let (_cid, sid) = seri_kur(&s).await;
+
+    // Serinin tum uyelerini bul, son ikisine not yaz.
+    let (_, hepsi) = cagir(
+        &s, "GET",
+        "/api/randevular?baslangic=2026-09-01T00:00&bitis=2026-10-01T00:00", None,
+    ).await;
+    let uyeler = hepsi.as_array().unwrap();
+    assert_eq!(uyeler.len(), 4, "on kosul: dort haftalik seri");
+    // 07, 14, 21, 28 Eylul. Ilk (07) ve son (28) uyeye not yaz: kesme
+    // gercekten calisiyorsa yalnizca 28'inki sayilir.
+    iki_not_yaz(&s, uyeler[0]["id"].as_i64().unwrap()).await;
+    iki_not_yaz(&s, uyeler[3]["id"].as_i64().unwrap()).await;
+
+    let (kod, json) = cagir(
+        &s, "GET",
+        &format!("/api/randevular/seri/{sid}?bu_tarihten_itibaren=2026-09-21T00:00"), None,
+    ).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(json["adet"], 2, "21 ve 28 Eylul silinecek");
+    assert_eq!(
+        json["not_adedi"], 2,
+        "yalnizca 28 Eylul'un iki notu sayilmali -- 07 Eylul silinmiyor"
+    );
+
+    // Kesme geriye alininca dort not birden sayilir: sayi gercekten tarihe bagli.
+    let (_, json) = cagir(
+        &s, "GET",
+        &format!("/api/randevular/seri/{sid}?bu_tarihten_itibaren=2026-09-01T00:00"), None,
+    ).await;
+    assert_eq!(json["adet"], 4);
+    assert_eq!(json["not_adedi"], 4);
+}
+
+#[tokio::test]
+async fn seri_silme_gelecek_uyelerin_notlarini_da_siler() {
+    // Cascade davranisini HTTP seviyesinde sabitler: silinen uyenin notu
+    // artik okunamaz, KORUNAN uyenin notu yerinde.
+    let (_d, s) = kurulu_state().await;
+    let (_cid, sid) = seri_kur(&s).await;
+    let (_, hepsi) = cagir(
+        &s, "GET",
+        "/api/randevular?baslangic=2026-09-01T00:00&bitis=2026-10-01T00:00", None,
+    ).await;
+    let uyeler = hepsi.as_array().unwrap().clone();
+    let korunan = uyeler[0]["id"].as_i64().unwrap();
+    let silinen_id = uyeler[3]["id"].as_i64().unwrap();
+    iki_not_yaz(&s, korunan).await;
+    iki_not_yaz(&s, silinen_id).await;
+
+    let (kod, _) = cagir(
+        &s, "DELETE",
+        &format!("/api/randevular/seri/{sid}?bu_tarihten_itibaren=2026-09-21T00:00"), None,
+    ).await;
+    assert_eq!(kod, StatusCode::OK);
+
+    // Silinen uyenin randevusu yok -> notu da yok (404).
+    let (kod, _) = cagir(&s, "GET", &format!("/api/randevular/{silinen_id}/not"), None).await;
+    assert_eq!(kod, StatusCode::NOT_FOUND, "silinen uyenin notu okunamamali");
+    // Korunan uyenin notu YERINDE: "gecmis randevular silinmez" sozu
+    // notlar icin de gecerli.
+    let (kod, not) = cagir(&s, "GET", &format!("/api/randevular/{korunan}/not"), None).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(not["icerik"], "seans notu");
 }

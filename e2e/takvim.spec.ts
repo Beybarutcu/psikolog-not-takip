@@ -14,11 +14,18 @@ test('danisan ekle, randevu olustur, geldi isaretle', async ({ page }) => {
 
   // Izgarada bos bir saate tikla; hangi hafta olursa olsun ilk bos hucre yeterli.
   await page.locator('button[aria-label$="10:00 boş"]').first().click()
-  await page.getByLabel('Danışan').selectOption({ label: 'Ayşe Yılmaz' })
+  // `exact: true` sart: `getByLabel` varsayilan olarak ALT DIZGI arar ve
+  // danisan listesindeki "... adli danisani arsivle" dugmesi de eslesir.
+  // Aranan sey randevu panelindeki `<select id="danisan">` alani.
+  await page.getByLabel('Danışan', { exact: true }).selectOption({ label: 'Ayşe Yılmaz' })
   await page.getByLabel('Ücret (TL)').fill('450')
   await page.getByRole('button', { name: 'Kaydet' }).click()
 
-  const blok = page.getByRole('button', { name: 'Ayşe Yılmaz' }).first()
+  // `exact: true`: rol adi eslesmesi de varsayilan olarak ALT DIZGIDIR.
+  // Onsuz bu locator takvimdeki randevu blogunu degil, danisan listesindeki
+  // "Ayşe Yılmaz adlı danışanı arşivle" dugmesini bulur ve tiklama arsivleme
+  // onayini acar.
+  const blok = page.getByRole('button', { name: 'Ayşe Yılmaz', exact: true }).first()
   await expect(blok).toBeVisible()
 
   await blok.click()
@@ -42,10 +49,10 @@ test('kilitliyken randevu ucu veri sizdirmaz', async ({ page, request }) => {
   await expect(page.getByText('Zeynep Kaya')).toBeVisible()
 
   await page.locator('button[aria-label$="10:00 boş"]').first().click()
-  await page.getByLabel('Danışan').selectOption({ label: 'Zeynep Kaya' })
+  await page.getByLabel('Danışan', { exact: true }).selectOption({ label: 'Zeynep Kaya' })
   await page.getByLabel('Ücret (TL)').fill('300')
   await page.getByRole('button', { name: 'Kaydet' }).click()
-  await expect(page.getByRole('button', { name: 'Zeynep Kaya' }).first()).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Zeynep Kaya', exact: true }).first()).toBeVisible()
 
   await page.getByRole('button', { name: 'Kilitle' }).click()
 
@@ -70,14 +77,15 @@ test('mevcut randevunun ucreti guncellenir, kopya olusmaz', async ({ page }) => 
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
   await expect(page.getByText('Elif Şahin')).toBeVisible()
 
-  // Diger testlerin kullandigi 10:00 satirindan farkli bir saat secilir ki
-  // paylasilan sunucu durumundaki kayitlar birbirine karismasin.
+  // Bu dosyadaki diger testlerin kullandigi 10:00 satirindan farkli bir saat
+  // secilir: dosyalar arasi yalitim var (her spec kendi sunucusunda), ama
+  // dosya ICINDEKI testler ayni sunucuyu paylasiyor.
   await page.locator('button[aria-label$="11:00 boş"]').first().click()
-  await page.getByLabel('Danışan').selectOption({ label: 'Elif Şahin' })
+  await page.getByLabel('Danışan', { exact: true }).selectOption({ label: 'Elif Şahin' })
   await page.getByLabel('Ücret (TL)').fill('450')
   await page.getByRole('button', { name: 'Kaydet' }).click()
 
-  const bloklar = page.getByRole('button', { name: 'Elif Şahin' })
+  const bloklar = page.getByRole('button', { name: 'Elif Şahin', exact: true })
   await expect(bloklar).toHaveCount(1)
 
   // Randevuyu ac, ucreti degistir, Guncelle'ye bas.
@@ -122,12 +130,12 @@ test('seri kurulur ve tek adimda iptal edilir', async ({ page }) => {
   await expect(page.getByText('Deniz Arslan')).toBeVisible()
 
   await page.locator('button[aria-label$="12:00 boş"]').first().click()
-  await page.getByLabel('Danışan').selectOption({ label: 'Deniz Arslan' })
+  await page.getByLabel('Danışan', { exact: true }).selectOption({ label: 'Deniz Arslan' })
   await page.getByLabel('Her hafta tekrarla').check()
   await page.getByLabel('Kaç hafta').fill('3')
   await page.getByRole('button', { name: 'Kaydet' }).click()
 
-  const bloklar = page.getByRole('button', { name: 'Deniz Arslan' })
+  const bloklar = page.getByRole('button', { name: 'Deniz Arslan', exact: true })
   await expect(bloklar).toHaveCount(1) // bu haftada serinin ilk uyesi
 
   await bloklar.first().click()

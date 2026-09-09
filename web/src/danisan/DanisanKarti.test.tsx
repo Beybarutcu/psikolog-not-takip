@@ -425,7 +425,31 @@ describe('DanisanKarti — kapanış ve gizlilik', () => {
 
 // Dördüncü ve beşinci biçim: bileşen testleri hep TEMİZ MOUNT yapıyorsa,
 // bir danışandan diğerine sızan state hiçbir zaman görünmez.
-describe('DanisanKarti — danışan değişimi (kiplerin kesişimi)', () => {
+// UYARI — bu blok ÜRETİMDE ULAŞILAMAYAN bir durumu ölçer.
+//
+// Buradaki `rerender`, AYNI `DanisanKarti` örneğine farklı bir `danisan.id`
+// veriyor. Üretimde bu OLUŞAMAZ: `AnaEkran` kartı
+// `kart = kartVerisi.id === seciliDanisanId ? kartVerisi : BOS_KART` ile
+// türetiyor, danışan değişince `kart.dosya` `null` olur ve kart
+// `{kart.dosya !== null && <DanisanKarti … />}` koşulundan düşerek UNMOUNT
+// EDİLİR. Yani monte bir kartın `danisan.id`'si hiçbir zaman değişmez.
+//
+// Aynı endişe için dört savunma var ve YALNIZCA BİRİNCİSİ yük taşıyor:
+//   1. `AnaEkran`'daki `kart` türetmesi + koşullu render — BİRİNCİL HAT.
+//      Ölçüldüğü yer: `AnaEkran.test.tsx` > "baska danisana gecince onceki
+//      kartin verisi EKRANDA KALMAZ" (uçuşta bekletilen bir istekle, yani
+//      sıfırlamayı bir efekte bırakan mutasyonu da yakalayarak).
+//   2. `AnaEkran`'daki `key={danisan-…}`,
+//   3. `DanisanKarti`'nın `gorunenRapor` / `ekForm` türetmeleri,
+//   4. `RizaBolumu`'nün `key`'i
+//      — üçü de (1) çalışırken erişilemez; derinlemesine savunma olarak
+//      meşru ama birincil hat DEĞİL.
+//
+// Aşağıdaki üç test tam olarak şunu ölçüyor: "(1) unutulur ya da bir gün
+// kart monte kalacak biçimde değiştirilirse, kartın kendi türetmeleri ne
+// kadarını kurtarır". Bu değerli bir sorudur; "bugün üretimde şu koruma
+// çalışıyor" DEĞİLDİR.
+describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender`)', () => {
   it('A icin hazirlanan rapor baglantisi B secilince EKRANDA KALMAZ', async () => {
     const digeri: DanisanDosyasi = {
       ...danisan,

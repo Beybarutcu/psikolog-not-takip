@@ -36,6 +36,24 @@ import { veriRaporuMetni } from './veriRaporu'
  * söylemeyen bir "Bakiye: 0,00 ₺", ücreti hiç girilmemiş bir dosyada
  * "borcu yok" diye okunur.
  *
+ * # Kartın danışanı ÜRETİMDE DEĞİŞMEZ
+ *
+ * `AnaEkran` kartı `kart = kartVerisi.id === seciliDanisanId ? kartVerisi :
+ * BOS_KART` ile türetiyor ve `{kart.dosya !== null && <DanisanKarti … />}`
+ * ile basıyor. Danışan değiştiği anda `kart.dosya` `null` olur ve bu
+ * bileşen UNMOUNT edilir; yani monte bir kartın `danisan.id`'si hiçbir
+ * zaman değişmez.
+ *
+ * Bunun sonucu, bu dosyadaki "danışan değişimi" savunmalarının
+ * (`gorunenRapor` ve `ekForm` türetmeleri, `RizaBolumu`'nün `key`'i)
+ * bugün **ulaşılamaz** olmasıdır. Bilerek duruyorlar — birincil hat
+ * gevşetilirse yük taşımaya başlarlar — ama bir koruma sözü olarak
+ * sayılmamalılar: koruma `AnaEkran`'daki türetmenin kendisidir ve
+ * `AnaEkran.test.tsx` > "baska danisana gecince onceki kartin verisi
+ * EKRANDA KALMAZ" testinde ölçülür. Buradaki sentetik `rerender` testleri
+ * "birincil hat unutulursa ne kalır" sorusunu ölçüyor, "bugün ne çalışıyor"
+ * sorusunu değil.
+ *
  * # Veri raporu programatik olarak İNDİRİLMEZ
  *
  * "Dışa aktar"a basmak raporu hazırlar ve bir indirme **bağlantısı**
@@ -96,6 +114,8 @@ export function DanisanKarti({
   // ekler — yanlış danışanın dosyasına belge. Sıfırlamayı bir efekte
   // bırakmak, seçim değişimi ile efekt arasındaki karede aynı riski açık
   // bırakırdı (`AnaEkran`'daki `seansVerisi` ile aynı gerekçe).
+  //
+  // İKİNCİL HAT — `gorunenRapor` ile aynı durumda (bkz. modül başlığı).
   const [ekFormu, setEkFormu] = useState<{
     danisanId: number
     dosya: File | null
@@ -112,6 +132,11 @@ export function DanisanKarti({
   // danışana aitse yok sayılır. Sıfırlamayı efekte bırakmak, seçim değişimi
   // ile efektin çalışması arasındaki karede ÖNCEKİ danışanın raporunu yeni
   // kartta göstermek olurdu (`AnaEkran`'daki `seansVerisi` ile aynı desen).
+  //
+  // İKİNCİL HAT: `AnaEkran` danışan değişince bu kartı zaten UNMOUNT ediyor
+  // (bkz. modül başlığındaki "Kartın danışanı üretimde değişmez"), yani bu
+  // türetme bugün erişilemez. Ölçüldüğü tek yer sentetik `rerender`
+  // testleri (`DanisanKarti.test.tsx` > "ikincil hat").
   const gorunenRapor = rapor !== null && rapor.danisanId === danisan.id ? rapor : null
 
   // Danışan değiştiğinde `rapor` state'i BİLEREK silinmiyor; türetme onu
@@ -223,8 +248,13 @@ export function DanisanKarti({
           // `key`: rıza formu prop'lardan İLK MOUNT'ta dolduruluyor. Danışan
           // değişip bileşen yeniden mount edilmezse A'nın rıza tarihi B'nin
           // formunda durur ve "Kaydet" B'ye A'nın tarihini yazardı.
-          // Çağıran taraf (`AnaEkran`) karta zaten `key` veriyor; bu ikinci
-          // savunma hattı (`SeansPaneli`/`NotEditoru` ile aynı ilke).
+          //
+          // İKİNCİL HAT — bugün ULAŞILAMAZ: bu kartın kendisi danışan
+          // değişince unmount ediliyor (bkz. modül başlığı), dolayısıyla
+          // `RizaBolumu` de her seferinde taze mount oluyor ve bu `key`
+          // hiçbir zaman değişmiyor. Ölçüldüğü tek yer sentetik `rerender`
+          // testi (`DanisanKarti.test.tsx` > "A nin riza tarihi B nin
+          // formunda KALMAZ").
           key={`riza-${danisan.id}`}
           rizaTarihi={danisan.riza_tarihi}
           rizaDosyaId={danisan.riza_dosya_id}

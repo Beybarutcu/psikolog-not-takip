@@ -907,9 +907,21 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
         ) : (
           kart.dosya !== null && (
             <DanisanKarti
-              // Danışan değişince kart yeniden mount edilmeli: hazırlanmış
-              // rapor bağlantısı ve seçilmiş dosya bir danışandan diğerine
-              // sızmamalı (`SeansPaneli`'nin `key` gerekçesiyle aynı sınıf).
+              // İKİNCİL HAT — bugün ULAŞILAMAZ, bilerek duruyor.
+              //
+              // Birincil hat yukarıdaki `kart` türetmesi + bu koşullu
+              // render: danışan değişince `kart.dosya` `null` olur ve kart
+              // zaten UNMOUNT edilir, yani bu `key` hiçbir zaman değişerek
+              // bir remount tetiklemez (kaldırıldığında hiçbir test
+              // kırılmaz — ölçülmüş). Birincil hattın ölçüldüğü yer:
+              // `AnaEkran.test.tsx` > "baska danisana gecince onceki kartin
+              // verisi EKRANDA KALMAZ".
+              //
+              // Satır yine de duruyor: türetme bir gün "kartı monte tut,
+              // yalnızca içeriği değiştir" biçiminde gevşetilirse `key` o
+              // anda yük taşımaya başlar ve maliyeti sıfır. Sentetik
+              // `rerender` testleri (`DanisanKarti.test.tsx` > "ikincil
+              // hat") tam olarak o senaryoyu ölçüyor.
               key={`danisan-${kart.dosya.id}`}
               danisan={kart.dosya}
               ekler={kart.ekler}

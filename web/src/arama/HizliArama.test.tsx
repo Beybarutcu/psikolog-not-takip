@@ -110,6 +110,31 @@ describe('HizliArama — açılış ve kapanış', () => {
     expect(document.body.textContent).not.toContain('uyku düzeni ve kaygı')
   })
 
+  it('kapaninca sonuclar STATE ten de silinir, ekrandan gizlenmekle kalmaz', async () => {
+    // Türetme (sonuçlar sorguya bağlı) kapalıyken listeyi zaten gizler —
+    // yani "gizlendi mi" testi, `setYanit(null)`'ı kaldıran bir mutasyonu
+    // YAKALAMAZ. Gözlemlenebilir hâli: aynı sorguyla yeniden açmak. Bayat
+    // yanıt state'te durursa yeni istek daha dönmeden ESKİ not parçası
+    // ekrana gelir.
+    let ikinciTur = false
+    const ara = vi.fn(async () =>
+      // İkinci turda arama hiç bitmiyor: ekranda ne varsa bayat olandır.
+      ikinciTur ? new Promise<AramaSonucu[]>(() => {}) : [notSonucu],
+    )
+    kur({ ara })
+    await ac()
+    await userEvent.type(kutu(), 'kaygi')
+    await screen.findByText(/uyku düzeni ve kaygı üzerine konuşuldu/)
+
+    await userEvent.keyboard('{Escape}')
+    ikinciTur = true
+    await ac()
+    await userEvent.type(kutu(), 'kaygi')
+
+    expect(await screen.findByText(/aranıyor/i)).toBeDefined()
+    expect(document.body.textContent).not.toContain('uyku düzeni ve kaygı')
+  })
+
   it('kapat dugmesi de ayni temizligi yapar', async () => {
     kur()
     await ac()

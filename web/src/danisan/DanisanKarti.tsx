@@ -98,9 +98,13 @@ export function DanisanKarti({
   // kartta göstermek olurdu (`AnaEkran`'daki `seansVerisi` ile aynı desen).
   const gorunenRapor = rapor !== null && rapor.danisanId === danisan.id ? rapor : null
 
-  useEffect(() => {
-    if (rapor !== null && rapor.danisanId !== danisan.id) setRapor(null)
-  }, [danisan.id, rapor])
+  // Danışan değiştiğinde `rapor` state'i BİLEREK silinmiyor; türetme onu
+  // zaten gizliyor. Bir efektle sıfırlamak iki mekanizmayı üst üste koyar
+  // ve o durumda yukarıdaki türetmeyi kaldıran bir mutasyon hiçbir testi
+  // kırmaz (efekt aynı işi bir kare gecikmeyle yapar, RTL o kareyi
+  // göremez) — yani türetme "test yeşil ama korumuyor" durumuna düşerdi.
+  // Yan etkisi: aynı karta geri dönüldüğünde hazırlanmış rapor bağlantısı
+  // hâlâ geçerlidir; bu bir kayıp değil, kazanç.
 
   // Blob URL rapor değiştiğinde ve kart kaldırıldığında serbest bırakılır:
   // rapor kişisel veri taşıyor, sayfa ömrü boyunca canlı bir URL bırakmak

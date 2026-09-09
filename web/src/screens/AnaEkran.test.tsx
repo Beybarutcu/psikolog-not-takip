@@ -1242,17 +1242,32 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
 
   let yetkisiz: boolean
   let istekYollari: string[]
+  // Belirli bir isteği açıkça salınana kadar bekletir (Görev 9'daki
+  // `kapi()` deseninin aynısı): "yeni veri gelene kadar öncekinin ekranda
+  // kalmadığı" ancak bekleyen bir istekle ölçülebilir.
+  let gecikmeler: Record<string, Promise<void>>
+
+  function kapi() {
+    let ac!: () => void
+    const bekle = new Promise<void>((coz) => {
+      ac = coz
+    })
+    return { bekle, ac }
+  }
 
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(2026, 8, 9, 12, 0))
     yetkisiz = false
     istekYollari = []
+    gecikmeler = {}
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
       const method = secenekler?.method ?? 'GET'
       istekYollari.push(`${method} ${yol}`)
+      const gecikme = gecikmeler[`${method} ${yol}`]
+      if (gecikme) await gecikme
 
       if (yetkisiz) {
         return {
@@ -1316,18 +1331,39 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
     await screen.findByText('RISK-NOTU-KANARYA')
 
-    await userEvent.click(cip('Mehmet Demir'))
-    // Mehmet'in dosyası gelene kadar bile Ayşe'nin risk notu görünmemeli:
-    // sıfırlama render sırasında türetiliyor, bir efekte bırakılmıyor.
-    expect(document.body.textContent).not.toContain('RISK-NOTU-KANARYA')
+    // Mehmet'in dosyası UÇUŞTA kalsın: sıfırlama bir efekte bırakılsaydı,
+    // o efekt çalışana kadar Ayşe'nin risk notu Mehmet'in kartında dururdu.
+    // Bekleyen bir istek olmadan bu kare hiç görünmez ve test, korumayı
+    // kaldıran mutasyonu YAKALAYAMAZ.
+    const m = kapi()
+    gecikmeler['GET /api/danisanlar/2'] = m.bekle
 
-    // ARTI YÖN: Mehmet'in kendi kartı gerçekten açılıyor (hiçbir şey
-    // göstermeyen bir ekran da üstteki iddiayı geçerdi).
+    await userEvent.click(cip('Mehmet Demir'))
+    expect(document.body.textContent).not.toContain('RISK-NOTU-KANARYA')
+    // Ayşe'nin telefonu da gitti (kartın tamamı boşaldı, tek alan değil).
+    expect(document.body.textContent).not.toContain('0555 111 22 33')
+
+    // ARTI YÖN: veri gelince Mehmet'in kendi kartı gerçekten açılıyor
+    // (hiçbir şey göstermeyen bir ekran da üstteki iddiayı geçerdi).
+    m.ac()
     expect(
       (await screen.findAllByRole('alert')).some((u) =>
         /açık rıza kaydı yok/i.test(u.textContent ?? ''),
       ),
     ).toBe(true)
+  })
+
+  it('veri raporu icin notlar SUNUCUNUN ust siniriyla (200) cekilir', async () => {
+    // Rapor KVKK md. 11 kapsamında "elimdeki her şey" demektir. Daha düşük
+    // bir limit, eksik olduğunu SÖYLEMEDEN eksik bir rapor üretirdi.
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
+    await screen.findByText('RISK-NOTU-KANARYA')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
+    await waitFor(() =>
+      expect(istekYollari).toContain('GET /api/danisanlar/1/notlar?limit=200'),
+    )
   })
 
   it('Ctrl+K ile acilan aramadan seans secilince O HAFTAYA gidilir ve panel acilir', async () => {

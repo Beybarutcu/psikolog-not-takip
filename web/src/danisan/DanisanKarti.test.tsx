@@ -412,6 +412,13 @@ describe('DanisanKarti — danışan değişimi (kiplerin kesişimi)', () => {
     expect(
       screen.getAllByRole('alert').some((u) => /açık rıza kaydı yok/i.test(u.textContent ?? '')),
     ).toBe(true)
+
+    // ARTI YÖN: A'ya dönülünce A'nın raporu yine geçerli. Bu yarı olmadan
+    // "raporu hiç göstermeyen" bir sürüm de üstteki iddiayı geçerdi.
+    rerender(<DanisanKarti danisan={danisan} {...ortak} />)
+    expect(screen.getByRole('link', { name: /raporu indir/i }).getAttribute('href')).toBe(
+      'blob:rapor-1',
+    )
   })
 
   it('A icin secilmis dosya B nin kartinda B ye YUKLENMEZ', async () => {

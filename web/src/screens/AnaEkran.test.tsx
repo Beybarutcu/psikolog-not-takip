@@ -1176,3 +1176,261 @@ describe('AnaEkran — seans geçişi × uçuştaki istek (Görev 9)', () => {
     expect(alan().value).toBe('B METNI')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Görev 10: danışan kartı + hızlı arama
+//
+// Bu testler AnaEkran seviyesinde çünkü ölçtükleri şey ÇAĞRI NOKTASINDA:
+// `DanisanKarti.test.tsx` ve `HizliArama.test.tsx` her zaman temiz bir mount
+// yapar ve "arama açık × sonuç var × 401 × danışan değişimi" kesişimlerini
+// göremez (dördüncü ve beşinci biçim).
+// ---------------------------------------------------------------------------
+
+describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
+  const gercekFetch = globalThis.fetch
+
+  const kartDanisanlari = [
+    { id: 1, ad_soyad: 'Ayşe Yılmaz', telefon: null, durum: 'aktif' },
+    { id: 2, ad_soyad: 'Mehmet Demir', telefon: null, durum: 'aktif' },
+  ]
+
+  // Bu hafta (2026-09-07 Pazartesi) ve GELECEK hafta bir randevu: aramadan
+  // seansa gitmek gerçekten hafta değiştirmeyi gerektirsin.
+  const buHafta = {
+    id: 201, client_id: 1, danisan_adi: 'Ayşe Yılmaz',
+    baslangic: '2026-09-07T10:00', bitis: '2026-09-07T11:00',
+    durum: 'planlandi', ucret: null, odendi: false, seri_id: null,
+  }
+  const gelecekHafta = {
+    id: 202, client_id: 1, danisan_adi: 'Ayşe Yılmaz',
+    baslangic: '2026-09-14T10:00', bitis: '2026-09-14T11:00',
+    durum: 'geldi', ucret: 45000, odendi: false, seri_id: null,
+  }
+  // BAŞKA danışanın ödenmemiş seansı: bakiyeye karışmamalı.
+  const baskasininki = {
+    id: 203, client_id: 2, danisan_adi: 'Mehmet Demir',
+    baslangic: '2026-09-07T13:00', bitis: '2026-09-07T14:00',
+    durum: 'geldi', ucret: 99900, odendi: false, seri_id: null,
+  }
+  const tumRandevular = [buHafta, gelecekHafta, baskasininki]
+
+  const dosyalar: Record<number, unknown> = {
+    1: {
+      id: 1, ad_soyad: 'Ayşe Yılmaz', telefon: '0555 111 22 33', durum: 'aktif',
+      dogum_tarihi: '1990-04-15', basvuru_nedeni: 'Yoğun kaygı',
+      risk_notu: 'RISK-NOTU-KANARYA', riza_tarihi: '2026-03-01', riza_dosya_id: null,
+      son_temas: '2026-09-07', saklama_bitis: '2033-09-07',
+    },
+    2: {
+      id: 2, ad_soyad: 'Mehmet Demir', telefon: null, durum: 'aktif',
+      dogum_tarihi: null, basvuru_nedeni: null, risk_notu: null,
+      riza_tarihi: null, riza_dosya_id: null, son_temas: null, saklama_bitis: null,
+    },
+  }
+
+  const aramaSonuclari = [
+    {
+      tur: 'danisan', client_id: 1, danisan_adi: 'Ayşe Yılmaz',
+      appointment_id: null, tarih: null, parca: 'Ayşe Yılmaz',
+    },
+    {
+      tur: 'not', client_id: 1, danisan_adi: 'Ayşe Yılmaz',
+      appointment_id: 202, tarih: '2026-09-14T10:00',
+      parca: 'ARAMA-PARCASI-KANARYA',
+    },
+  ]
+
+  let yetkisiz: boolean
+  let istekYollari: string[]
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 9, 12, 0))
+    yetkisiz = false
+    istekYollari = []
+
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
+      const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      const method = secenekler?.method ?? 'GET'
+      istekYollari.push(`${method} ${yol}`)
+
+      if (yetkisiz) {
+        return {
+          ok: false, status: 401,
+          json: async () => ({ hata: 'Oturum zaman aşımına uğradı.' }),
+        } as unknown as Response
+      }
+
+      const notlar = notYaniti(yol, method, null)
+      if (notlar) return notlar
+
+      if (yol.startsWith('/api/ara')) return jsonYanit(aramaSonuclari)
+
+      const ekler = /^\/api\/danisanlar\/(\d+)\/ekler$/.exec(yol)
+      if (ekler) return jsonYanit([])
+
+      const dosya = /^\/api\/danisanlar\/(\d+)$/.exec(yol)
+      if (dosya) return jsonYanit(dosyalar[Number(dosya[1])])
+
+      if (yol.startsWith('/api/danisanlar')) return jsonYanit(kartDanisanlari)
+
+      // Aralık SÜZÜLÜYOR: "hafta gerçekten değişti mi" ancak böyle ölçülür.
+      const aralik = /^\/api\/randevular\?baslangic=([^&]+)&bitis=([^&]+)/.exec(yol)
+      if (aralik) {
+        const bas = decodeURIComponent(aralik[1])
+        const bit = decodeURIComponent(aralik[2])
+        return jsonYanit(tumRandevular.filter((r) => r.baslangic >= bas && r.baslangic < bit))
+      }
+      if (yol.startsWith('/api/randevular')) return jsonYanit([])
+
+      throw new Error(`beklenmeyen istek: ${yol}`)
+    }) as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    globalThis.fetch = gercekFetch
+    vi.restoreAllMocks()
+  })
+
+  const cip = (ad: string) => screen.getByRole('button', { name: `${ad} dosyasını aç` })
+
+  async function aramayiAc() {
+    await userEvent.click(screen.getByRole('button', { name: 'Hızlı arama (Ctrl+K)' }))
+  }
+
+  it('danisan cipine tiklayinca kart acilir; bakiye YALNIZCA o danisanin seanslarindan', async () => {
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
+
+    expect(await screen.findByText('0555 111 22 33')).toBeDefined()
+    // Ayşe: gelecek haftaki 450 TL'lik seans "geldi" ve ödenmemiş.
+    // Mehmet'in 999 TL'lik ödenmemiş seansı bu sayıya KARIŞMAMALI —
+    // aralık uç noktası danışan süzgeci sunmuyor, süzgeç istemcide.
+    expect(screen.getByText('450,00 ₺')).toBeDefined()
+    expect(document.body.textContent).not.toContain('999,00 ₺')
+  })
+
+  it('baska danisana gecince onceki kartin verisi EKRANDA KALMAZ', async () => {
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
+    await screen.findByText('RISK-NOTU-KANARYA')
+
+    await userEvent.click(cip('Mehmet Demir'))
+    // Mehmet'in dosyası gelene kadar bile Ayşe'nin risk notu görünmemeli:
+    // sıfırlama render sırasında türetiliyor, bir efekte bırakılmıyor.
+    expect(document.body.textContent).not.toContain('RISK-NOTU-KANARYA')
+
+    // ARTI YÖN: Mehmet'in kendi kartı gerçekten açılıyor (hiçbir şey
+    // göstermeyen bir ekran da üstteki iddiayı geçerdi).
+    expect(
+      (await screen.findAllByRole('alert')).some((u) =>
+        /açık rıza kaydı yok/i.test(u.textContent ?? ''),
+      ),
+    ).toBe(true)
+  })
+
+  it('Ctrl+K ile acilan aramadan seans secilince O HAFTAYA gidilir ve panel acilir', async () => {
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+
+    // Görünen hafta 07–13 Eylül: hedef randevu (14 Eylül) ekranda YOK.
+    expect(screen.queryByRole('button', { name: 'Ayşe Yılmaz' })).toBeDefined()
+
+    await userEvent.keyboard('{Control>}k{/Control}')
+    await userEvent.type(
+      screen.getByRole('searchbox', { name: 'Danışan adı veya not içeriği' }),
+      'kaygi',
+    )
+    await userEvent.click(
+      await screen.findByRole('button', { name: /14\.09\.2026 10:00 seansına git/ }),
+    )
+
+    // Seans paneli hedef randevuyla açıldı: başlıkta o seansın saati var.
+    expect(await screen.findByText(/Ayşe Yılmaz — 14 Eylül 2026, 10:00/)).toBeDefined()
+    // Arama kapandı ve not parçası ekranda kalmadı.
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.body.textContent).not.toContain('ARAMA-PARCASI-KANARYA')
+  })
+
+  it('aramadan danisan secilince kart acilir', async () => {
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+
+    await aramayiAc()
+    await userEvent.type(
+      screen.getByRole('searchbox', { name: 'Danışan adı veya not içeriği' }),
+      'ayse',
+    )
+    await userEvent.click(
+      await screen.findByRole('button', { name: /Ayşe Yılmaz — danışan dosyasını aç/ }),
+    )
+
+    expect(await screen.findByText('RISK-NOTU-KANARYA')).toBeDefined()
+  })
+
+  it('kart acikken 401 gelirse kart KAPANIR ve icerigi ekranda kalmaz', async () => {
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
+    await screen.findByText('RISK-NOTU-KANARYA')
+
+    // Oturum kilitlendi; sonraki her istek 401. Haftayı değiştirmek
+    // `yukle`'yi tetikler.
+    yetkisiz = true
+    await userEvent.click(screen.getByRole('button', { name: /önceki hafta/i }))
+
+    await waitFor(() => expect(document.body.textContent).not.toContain('RISK-NOTU-KANARYA'))
+    expect(document.body.textContent).not.toContain('0555 111 22 33')
+  })
+
+  it('401 kart YUKLENIRKEN gelirse yarim kart acilmaz', async () => {
+    // Yarı dolu bir danışan kartı (rıza alanı boş görünen) "rıza alınmamış"
+    // diye okunurdu — dosya aslında dolu olabilir.
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+    yetkisiz = true
+    await userEvent.click(cip('Ayşe Yılmaz'))
+
+    await waitFor(() => expect(document.body.textContent).not.toContain('RISK-NOTU-KANARYA'))
+    expect(
+      screen.queryAllByRole('alert').some((u) => /açık rıza kaydı yok/i.test(u.textContent ?? '')),
+    ).toBe(false)
+  })
+
+  it('kart acikken aramadan seansa gidilince kart KAPANIR', async () => {
+    // Kiplerin kesişimi: kart + arama + seans paneli aynı ekranda.
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
+    await screen.findByText('RISK-NOTU-KANARYA')
+
+    await aramayiAc()
+    await userEvent.type(
+      screen.getByRole('searchbox', { name: 'Danışan adı veya not içeriği' }),
+      'kaygi',
+    )
+    await userEvent.click(
+      await screen.findByRole('button', { name: /14\.09\.2026 10:00 seansına git/ }),
+    )
+
+    await screen.findByText(/Ayşe Yılmaz — 14 Eylül 2026, 10:00/)
+    expect(document.body.textContent).not.toContain('RISK-NOTU-KANARYA')
+  })
+
+  it('arama sorgusu HICBIR istek yolunda not iceriğiyle birlikte tasinmaz; yalniz /api/ara', async () => {
+    // Sorgu metni sunucuda loga yazılmıyor; arayüz de onu başka bir uç
+    // noktaya taşımamalı (ör. "danışanları sorguyla filtrele" gibi bir
+    // kolaylık eklenirse sorgu ikinci bir yola daha düşerdi).
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+    await aramayiAc()
+    await userEvent.type(
+      screen.getByRole('searchbox', { name: 'Danışan adı veya not içeriği' }),
+      'kaygi',
+    )
+    await waitFor(() => expect(istekYollari.some((y) => y.includes('/api/ara'))).toBe(true))
+
+    const sorguTasiyanlar = istekYollari.filter((y) => y.includes('kaygi'))
+    expect(sorguTasiyanlar).toHaveLength(1)
+    expect(sorguTasiyanlar[0]).toContain('/api/ara?q=kaygi')
+  })
+})

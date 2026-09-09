@@ -1,13 +1,19 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
+  aramaApi,
+  danisanApi,
   notApi,
   ozelNotApi,
   takvimApi,
   YetkisizHata,
   type Danisan,
+  type DanisanDosyasi,
+  type EkBilgisi,
   type OzelNot,
   type SeansNotu,
 } from '../api'
+import { HizliArama } from '../arama/HizliArama'
+import { DanisanKarti } from '../danisan/DanisanKarti'
 import { SeansPaneli } from '../seans/SeansPaneli'
 import { HaftalikTakvim, type Randevu } from '../takvim/HaftalikTakvim'
 import { haftaGunleri, haftaninBasi, yerelZaman } from '../takvim/hafta'
@@ -46,6 +52,54 @@ const BOS_SEANS: SeansVerisi = {
   hata: null,
 }
 
+/**
+ * Veri raporuna alınacak en fazla resmî not sayısı.
+ *
+ * Sunucu `?limit=`i `1..=200` aralığına kırpıyor; buradaki değer o üst
+ * sınırdır çünkü rapor KVKK md. 11 kapsamında "elimdeki her şey" demektir —
+ * "son 50 not" diyen bir rapor, eksik olduğunu söylemeden eksik olurdu.
+ * (Daha fazlası olan bir dosyada rapor yine kırpılır; bu Plan 4'ün sunucu
+ * tarafında çözeceği bilinen bir sınırdır, bkz. görev raporu.)
+ */
+const RAPOR_NOT_SINIRI = 200
+
+/**
+ * Danışan kartındaki bakiye için randevu penceresi.
+ *
+ * Bakiye "gelinmiş ama ödenmemiş seansların toplamı"dır ve bu, GÖRÜNEN
+ * HAFTAYLA sınırlı hesaplanamaz: o sayı neredeyse her zaman yanlış olurdu ve
+ * para söz konusuyken yanlış bir sayı, hiç sayı olmamasından kötüdür. Uç
+ * nokta yalnızca tarih aralığıyla süzüyor (danışan süzgeci yok), bu yüzden
+ * geniş bir pencere çekilip istemcide `client_id`'ye göre süzülüyor.
+ *
+ * Denetim kaydı açısından ek yük yok: `appointments::aralik_getir` tek bir
+ * `goruntuleme` satırı yazar ve o satır 5 dakikalık pencerede haftalık
+ * yüklemeyle **birleşir** (`LogHacmi::OturumBasi`).
+ */
+const TUM_ZAMAN_BASI = '2000-01-01T00:00'
+const TUM_ZAMAN_SONU = '2100-01-01T00:00'
+
+/** Açık danışan kartının verisi. `id`, verinin HANGİ danışana ait olduğunu
+ * söyler (aynı gerekçe `SeansVerisi`'nde). */
+type KartVerisi = {
+  id: number | null
+  dosya: DanisanDosyasi | null
+  ekler: EkBilgisi[]
+  randevular: Randevu[]
+  hata: string | null
+}
+
+const BOS_KART: KartVerisi = { id: null, dosya: null, ekler: [], randevular: [], hata: null }
+
+/** Yerel takvim günü (`YYYY-AA-GG`). Sunucunun `saklama-suresi-dolanlar`
+ * uç noktası da `bugun`'ü istemciden alıyor: karşılaştırma duvar saatine
+ * göre yapılıyor ve UTC'den türetmek sınırdaki bir dosyayı bir gün
+ * kaydırırdı. */
+function yerelGun(tarih: Date): string {
+  const iki = (n: number) => String(n).padStart(2, '0')
+  return `${tarih.getFullYear()}-${iki(tarih.getMonth() + 1)}-${iki(tarih.getDate())}`
+}
+
 export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   const [haftaBasi, setHaftaBasi] = useState(() => haftaninBasi(new Date()))
   const [randevular, setRandevular] = useState<Randevu[]>([])
@@ -75,6 +129,17 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   // Aşağıda `seansId` ile karşılaştırılarak RENDER SIRASINDA türetiliyor.
   const [seansVerisi, setSeansVerisi] = useState<SeansVerisi>(BOS_SEANS)
   const [seansTazeleme, setSeansTazeleme] = useState(0)
+  // Açık danışan kartı. Seans panelindeki desenle aynı: state HANGİ danışana
+  // ait olduğunu taşır ve ekrana giden veri render sırasında türetilir.
+  const [seciliDanisanId, setSeciliDanisanId] = useState<number | null>(null)
+  const [kartVerisi, setKartVerisi] = useState<KartVerisi>(BOS_KART)
+  const [kartTazeleme, setKartTazeleme] = useState(0)
+  // Aramadan gelen "şu seansa git" isteği. Hedef randevu başka bir haftada
+  // olabilir; hafta değiştirilir, randevu listesi yeniden yüklenir ve seçim
+  // ANCAK O LİSTEDEN yapılır — ekranda görünmeyen bir randevuya bağlı bir
+  // not editörü açmak, kaydı belirsiz bir kimliğe göndermek olurdu.
+  // `ref`: `yukle`'nin bağımlılıklarını (dolayısıyla kimliğini) değiştirmesin.
+  const bekleyenSeansId = useRef<number | null>(null)
 
   const yukle = useCallback(async () => {
     const gunler = haftaGunleri(haftaBasi)
@@ -99,9 +164,16 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
       // iptali bu randevuyu da kapsadı) ya da başka bir haftaya bakılıyordur.
       // Her iki durumda da ekranda görünmeyen bir randevuya bağlı bir not
       // editörü açık tutmak, kaydı belirsiz bir kimliğe göndermek olurdu.
-      setSeciliRandevu((secili) =>
-        secili === null ? null : (gelen.find((r) => r.id === secili.id) ?? null),
-      )
+      //
+      // Aramadan bir seans istendiyse hedef O'dur: `bekleyenSeansId`
+      // tüketilir ve seçim yeni listeden kurulur.
+      const bekleyen = bekleyenSeansId.current
+      bekleyenSeansId.current = null
+      setSeciliRandevu((secili) => {
+        const hedefId = bekleyen ?? secili?.id ?? null
+        if (hedefId === null) return null
+        return gelen.find((r) => r.id === hedefId) ?? null
+      })
       setHata(null)
     } catch (e) {
       if (e instanceof YetkisizHata) {
@@ -119,6 +191,11 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
         // geri yükleniyor (bkz. `NotEditoru`'nun 401 kararı).
         setSeciliRandevu(null)
         setSeciliBosSaat(null)
+        // Danışan kartı da kapatılıyor: kart danışanın adını, telefonunu,
+        // başvuru nedenini ve risk notunu taşıyor — randevu listesini
+        // temizlemek tek başına ekranı boşaltmıyordu.
+        setSeciliDanisanId(null)
+        setKartVerisi(BOS_KART)
       }
       setHata(e instanceof Error ? e.message : 'Randevular yüklenemedi.')
     }
@@ -215,6 +292,56 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
     [seansId],
   )
 
+  // Danışan kartı verisi. Seans verisiyle aynı desen: `id` ile eşleşmeyen
+  // state boş sayılır (render sırasında), böylece bir danışandan diğerine
+  // geçerken ÖNCEKİNİN dosyası bir kare bile görünmez.
+  const kart = kartVerisi.id === seciliDanisanId ? kartVerisi : BOS_KART
+
+  useEffect(() => {
+    if (seciliDanisanId === null) return
+    let iptal = false
+
+    void (async () => {
+      try {
+        // Üçü birlikte: ek listesi ayrı yakalanıp yutulsaydı, başarısızlık
+        // "bu danışanın dosyası yok" diye görünürdü — dosyası olan bir
+        // danışan için sessiz bir yalan (`seansVerisi` ile aynı gerekçe).
+        const [dosya, ekler, tumRandevular] = await Promise.all([
+          danisanApi.dosyaGetir(seciliDanisanId),
+          danisanApi.ekleriGetir(seciliDanisanId),
+          takvimApi.randevulariGetir(TUM_ZAMAN_BASI, TUM_ZAMAN_SONU),
+        ])
+        if (iptal) return
+        setKartVerisi({
+          id: seciliDanisanId,
+          dosya,
+          ekler,
+          randevular: tumRandevular.filter((r) => r.client_id === seciliDanisanId),
+          hata: null,
+        })
+      } catch (e) {
+        if (iptal) return
+        if (e instanceof YetkisizHata) {
+          setRandevular([])
+          setSeciliRandevu(null)
+          setSeciliBosSaat(null)
+          setSeciliDanisanId(null)
+          setKartVerisi(BOS_KART)
+          return
+        }
+        setKartVerisi({
+          ...BOS_KART,
+          id: seciliDanisanId,
+          hata: e instanceof Error ? e.message : 'Danışan dosyası yüklenemedi.',
+        })
+      }
+    })()
+
+    return () => {
+      iptal = true
+    }
+  }, [seciliDanisanId, kartTazeleme])
+
   const ozelNotKaydet = useCallback(
     async (icerik: string) => {
       if (seansId === null) return
@@ -245,6 +372,36 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   function panelKapat() {
     setSeciliRandevu(null)
     setSeciliBosSaat(null)
+  }
+
+  function danisanKartiAc(clientId: number) {
+    setArsivBilgisi(null)
+    setSeciliDanisanId(clientId)
+  }
+
+  function danisanKartiKapat() {
+    setSeciliDanisanId(null)
+    // Veri de siliniyor, yalnızca panel gizlenmiyor: kart risk notu ve rıza
+    // bilgisi taşıyor ve kapalı bir bileşenin state'inde duran veri, bir
+    // sonraki açılışta yanlış danışanın kartında görünebilirdi.
+    setKartVerisi(BOS_KART)
+  }
+
+  /**
+   * Aramadan seçilen seansa gider.
+   *
+   * Randevu başka bir haftada olabilir; hafta değiştirilir ve seçim
+   * `yukle` içinde, SUNUCUDAN GELEN listeden yapılır (bkz.
+   * `bekleyenSeansId`). `haftaninBasi` her çağrıda yeni bir `Date`
+   * döndürdüğü için hedef hafta zaten görünen haftaysa bile efekt yeniden
+   * çalışır ve bekleyen seçim tüketilir.
+   */
+  function seansaGit(appointmentId: number, tarih: string) {
+    bekleyenSeansId.current = appointmentId
+    setSeciliBosSaat(null)
+    danisanKartiKapat()
+    const [yil, ay, gun] = tarih.slice(0, 10).split('-').map(Number)
+    setHaftaBasi(haftaninBasi(new Date(yil, (ay ?? 1) - 1, gun ?? 1)))
   }
 
   async function danisanEkle() {
@@ -300,6 +457,32 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
     } finally {
       setArsivSuruyor(false)
     }
+  }
+
+  // Rıza kaydı ve ek yükleme başarılı olunca kart YENİDEN ÇEKİLİYOR.
+  // `durumDegis`/`sil`'deki "sonucu yerel olarak uygula" kararı burada
+  // GEÇERSİZ: `PATCH` sunucudan dönen dosyayı verse bile, ek yükleme
+  // `saklama_bitis` gibi türetilmiş alanları etkilemez ve iki kaynağın
+  // (ekler + dosya) tutarlılığı yalnızca birlikte çekilerek korunur.
+  // Denetim kaydı hacmi burada sorun değil: ikisi de seyrek, kullanıcı
+  // tarafından başlatılan işlemler.
+  async function rizaKaydet(alan: { riza_tarihi: string; riza_dosya_id: number | null }) {
+    if (seciliDanisanId === null) return
+    await danisanApi.rizaKaydet(seciliDanisanId, alan)
+    setKartTazeleme((n) => n + 1)
+  }
+
+  async function ekYukle(dosya: File, tur: string) {
+    if (seciliDanisanId === null) return
+    await danisanApi.ekYukle(seciliDanisanId, dosya, tur)
+    setKartTazeleme((n) => n + 1)
+  }
+
+  // Rapor için not çekmenin TEK yolu `notApi` — yani yalnızca resmî notlar.
+  // `ozelNotApi` bu bileşende de ayrı bir nesnedir ve karta hiç geçmez.
+  async function raporNotlariGetir(): Promise<SeansNotu[]> {
+    if (seciliDanisanId === null) return []
+    return notApi.danisanNotlari(seciliDanisanId, RAPOR_NOT_SINIRI)
   }
 
   async function kaydet(kayit: {
@@ -412,9 +595,19 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
     <div className="p-8">
       <div className="mb-4 flex items-center justify-between">
         <h1 className="text-2xl font-semibold">Terapi Notları</h1>
-        <button className="rounded-lg border px-4 py-2" onClick={kilitle}>
-          Kilitle
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Hızlı arama her zaman monte: Ctrl+K dinleyicisi bileşenin
+              kendi içinde. Kapalıyken yalnızca kısayolu duyuran bir düğme
+              basar; hiçbir istek atmaz. */}
+          <HizliArama
+            ara={aramaApi.ara}
+            onDanisanSec={danisanKartiAc}
+            onSeansSec={seansaGit}
+          />
+          <button className="rounded-lg border px-4 py-2" onClick={kilitle}>
+            Kilitle
+          </button>
+        </div>
       </div>
 
       <div className="mb-4">
@@ -480,7 +673,19 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
                 key={d.id}
                 className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1"
               >
-                <span>{d.ad_soyad}</span>
+                {/* Erişilebilir ad "Ayşe Yılmaz dosyasını aç": takvimdeki
+                    randevu bloğunun adı düz "Ayşe Yılmaz" ve iki özdeş adlı
+                    düğme hem ekran okuyucu kullanıcısını hem de ada göre
+                    arayan testleri belirsiz bırakırdı (aynı gerekçe
+                    yanındaki "Arşivle" düğmesinde). */}
+                <button
+                  type="button"
+                  className="underline"
+                  aria-label={`${d.ad_soyad} dosyasını aç`}
+                  onClick={() => danisanKartiAc(d.id)}
+                >
+                  {d.ad_soyad}
+                </button>
                 {/* Erişilebilir ad danışanın ADINI taşır. Önceki hâlinde her
                     satırdaki düğmenin adı yalnızca "Arşivle" idi: listede on
                     danışan varken ekran okuyucu kullanıcısı on özdeş düğme
@@ -575,6 +780,42 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
           />
         )}
       </div>
+
+      {seciliDanisanId !== null &&
+        (kart.hata !== null ? (
+          // Yükleme başarısızsa kart AÇILMAZ: yarı dolu bir danışan kartı
+          // (rıza alanı boş görünen) "rıza alınmamış" diye okunurdu.
+          <div role="alert" className="mt-4 rounded border border-red-300 bg-red-50 p-3">
+            <p className="text-sm text-red-800">Danışan dosyası yüklenemedi. {kart.hata}</p>
+            <button
+              type="button"
+              className="mt-2 rounded border border-red-300 px-2 py-1 text-sm"
+              onClick={() => {
+                setKartVerisi(BOS_KART)
+                setKartTazeleme((n) => n + 1)
+              }}
+            >
+              Yeniden dene
+            </button>
+          </div>
+        ) : (
+          kart.dosya !== null && (
+            <DanisanKarti
+              // Danışan değişince kart yeniden mount edilmeli: hazırlanmış
+              // rapor bağlantısı ve seçilmiş dosya bir danışandan diğerine
+              // sızmamalı (`SeansPaneli`'nin `key` gerekçesiyle aynı sınıf).
+              key={`danisan-${kart.dosya.id}`}
+              danisan={kart.dosya}
+              ekler={kart.ekler}
+              randevular={kart.randevular}
+              bugun={yerelGun(new Date())}
+              notlariGetir={raporNotlariGetir}
+              ekYukle={ekYukle}
+              onRizaKaydet={rizaKaydet}
+              onKapat={danisanKartiKapat}
+            />
+          )
+        ))}
 
       {/* Seans paneli YALNIZCA mevcut bir randevu seçiliyken açılır: boş bir
           saatte henüz bir `appointment_id` yok ve not ona bağlanır. */}

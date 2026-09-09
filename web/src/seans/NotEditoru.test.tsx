@@ -115,6 +115,63 @@ describe('NotEditoru — otomatik kaydın iki yönü', () => {
   })
 })
 
+// Kayıt kararı `imza()` ile veriliyor ve `imza()` BİLEREK şablonu da içeriyor.
+// Gerekçesi fonksiyonun üstünde yazılıydı ama YAZILI GEREKÇE BİR KORUMA
+// DEĞİLDİR: `imza`'yı yalnızca içeriğe indirgemek (`[kayit.icerik]`) tüm
+// seans testlerini yeşil bırakıyordu. Zarar somut: terapist dolu bir notta
+// DAP→SOAP seçer, içerik değişmez, imza aynı kalır, efekt hemen döner —
+// taslak yazılmaz, zamanlayıcı kurulmaz, gösterge boş kalır. Ekranda SOAP,
+// veritabanında `dap`; bir sonraki açılışta seçim sessizce geri döner.
+describe('NotEditoru — sablon-yalniz degisim', () => {
+  it('dolu notta yalnizca sablon degisimi de kaydedilir', async () => {
+    const props = kur({ baslangicIcerik: 'gecen haftadan kalan not', gecikmeMs: 20 })
+
+    // TEK eylem şablon seçimi: tuşa basılmıyor, içerik hiç değişmiyor.
+    await userEvent.selectOptions(screen.getByLabelText('Şablon'), 'soap')
+
+    await waitFor(() => expect(props.onKaydet).toHaveBeenCalledTimes(1))
+    expect(props.onKaydet).toHaveBeenCalledWith({
+      sablon: 'soap',
+      icerik: 'gecen haftadan kalan not',
+    })
+    // Gösterge de sessiz kalmamalı: kullanıcı bir şeyin olduğunu görmeli.
+    expect(await screen.findByText(/kaydedildi/i)).toBeDefined()
+  })
+
+  it('sablon-yalniz degisim 401 aninda da taslakta korunur ve geri yuklendigi SOYLENIR', async () => {
+    // Kesişim testi: şablon-yalnız değişim × 401. `baslangicDurumu`'ndaki
+    // `farkli` karşılaştırması da şablonu içerir; yalnızca içeriğe
+    // bakılsaydı (`taslak.icerik !== sunucuIcerik`) kurtarılan şablon
+    // "kurtarılacak bir şey yok" sayılıp depodan DÜŞÜRÜLÜR, kullanıcıya
+    // hiçbir şey söylenmez ve seçim sessizce eski hâline dönerdi.
+    const kilitli = vi.fn().mockRejectedValue(new YetkisizHata('Oturum kilitli.'))
+    const ortak = {
+      baslangicIcerik: 'gecen haftadan kalan not',
+      baslangicSablon: 'dap',
+      gecikmeMs: 20,
+      taslakAnahtari: 'not-77',
+    }
+    const { unmount } = render(<NotEditoru {...ortak} onKaydet={kilitli} />)
+
+    await userEvent.selectOptions(screen.getByLabelText('Şablon'), 'soap')
+    await waitFor(() => expect(kilitli).toHaveBeenCalled())
+    unmount()
+
+    // Kilit açıldı. Sunucu hâlâ ESKİ şablonu döndürüyor (kayıt olmamıştı).
+    const acik = vi.fn().mockResolvedValue(undefined)
+    render(<NotEditoru {...ortak} onKaydet={acik} />)
+
+    expect((screen.getByLabelText('Şablon') as HTMLSelectElement).value).toBe('soap')
+    expect(screen.getByText(/geri yüklendi/i)).toBeDefined()
+    await waitFor(() =>
+      expect(acik).toHaveBeenCalledWith({
+        sablon: 'soap',
+        icerik: 'gecen haftadan kalan not',
+      }),
+    )
+  })
+})
+
 // Bu planın bağlayıcı kısıtı: otomatik kayıt sırasında 401 gelirse yazılmamış
 // not içeriği SESSİZCE DÜŞÜRÜLEMEZ. `api.ts` 401'de merkezi dinleyicileri
 // tetikler, `App` `AnaEkran`'ı GERÇEKTEN unmount eder — yani editörün React

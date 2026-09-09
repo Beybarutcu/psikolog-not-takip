@@ -801,10 +801,16 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
   // isteğinin başarısızlığı yutulmuyor" iddiası ancak diğer iki istek
   // BAŞARILIYKEN ölçülebilir.
   let gecmisSunucuHatasi = false
+  // Yalnızca ÖZEL NOTUN YAZMA isteğini 401'e düşüren bayrak. Planın en
+  // sert kısıtı ("otomatik kayıt sırasında 401 gelirse yazılmamış içerik
+  // düşürülemez") özel not için hiç koşulmamıştı.
+  let ozelYazmaYetkisiz = false
 
   const notGetSayisi = (id: number) =>
     istekler.filter((i) => i.yol === `/api/randevular/${id}/not` && i.method === 'GET').length
   const yazmalar = (yol: string) => istekler.filter((i) => i.yol === yol && i.method === 'PUT')
+  const ozelGetleri = () =>
+    istekler.filter((i) => /\/ozel-not$/.test(i.yol) && i.method === 'GET')
 
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] })
@@ -813,6 +819,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     notSunucuHatasi = false
     notYetkisiz = false
     gecmisSunucuHatasi = false
+    ozelYazmaYetkisiz = false
     sunucuOzelNotlari = { [randevuA.id]: GIZLI }
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
@@ -821,6 +828,13 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
       const govde = secenekler?.body ? JSON.parse(String(secenekler.body)) : null
       istekler.push({ yol, method, govde })
 
+      if (ozelYazmaYetkisiz && method === 'PUT' && /\/ozel-not$/.test(yol)) {
+        return {
+          ok: false,
+          status: 401,
+          json: async () => ({ hata: 'Oturum zaman aşımına uğradı.' }),
+        } as unknown as Response
+      }
       const notYolu = /\/(ozel-)?not$/.test(yol) || /\/notlar/.test(yol)
       if (notYolu && notYetkisiz) {
         return {
@@ -970,11 +984,57 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     )
   })
 
-  it('resmi not ve gecmis istekleri ozel yoluna HIC gitmez', async () => {
+  // ESKİ HÂLİ TOTOLOJİKTİ (birinci biçim): "resmî istek"i
+  // `/\/not$/ || /\/notlar/` ile TANIMLIYORDU ve `/ozel-not` o filtreye
+  // zaten takılmadığı için döngü boş, iddia boş doğruydu — `notApi.notGetir`
+  // yolunu `/ozel-not`'a çeviren mutasyon 8 test kırdı ama o testi
+  // kırmadı. Yerine geçen iddia filtresiz: panel açılıp resmî sekmede
+  // KALINDIĞINDA atılan İSTEKLERİN HİÇBİRİ özel yola gitmez.
+  it('resmi sekmede kalinirken atilan HICBIR istek ozel yola gitmez', async () => {
     await seansAc()
-    const resmiIstekler = istekler.filter((i) => /\/not$/.test(i.yol) || /\/notlar/.test(i.yol))
-    expect(resmiIstekler.length).toBeGreaterThan(0)
-    for (const i of resmiIstekler) expect(i.yol).not.toContain('ozel')
+    // Ön koşul: gerçekten istek atıldı (boş liste tatmin etmesin).
+    expect(istekler.filter((i) => /\/(not|notlar)/.test(i.yol)).length).toBeGreaterThan(0)
+    for (const i of istekler) expect(i.yol).not.toContain('ozel')
+
+    // ARTI YÖN: özel sekmeye geçilince gerçekten özel yola gidiliyor —
+    // "hiçbir yere gitmeyen" bir uygulama üsttekini de geçerdi.
+    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+    await screen.findByLabelText('Özel notum')
+    expect(istekler.some((i) => i.yol.includes('ozel-not'))).toBe(true)
+  })
+
+  // Denetim kaydı: `ozel_not_getir` her çağrıda SİLİNEMEZ bir
+  // `goruntuleme | private_note | <id>` satırı yazıyor. Panel her
+  // açıldığında bu satırı bastırmak, kullanıcının hiç yapmadığı bir
+  // eylemi kalıcı olarak bildirmek olurdu.
+  it('ozel sekmeye GIRILMEDEN ozel not istegi HIC atilmaz', async () => {
+    await seansAc()
+    expect(ozelGetleri()).toHaveLength(0)
+
+    // Sekmeler arasında gidip gelmek de yeni satır üretmemeli: giriş
+    // BİR kez yükler.
+    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+    await screen.findByLabelText('Özel notum')
+    expect(ozelGetleri()).toHaveLength(1)
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Seans Notu' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+    await screen.findByLabelText('Özel notum')
+    expect(ozelGetleri()).toHaveLength(1)
+  })
+
+  it('ozel sekme istegi SEANSA bagli: onceki seansta girilmis olmasi yenisini yuklemez', async () => {
+    await seansAc()
+    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+    await screen.findByLabelText('Özel notum')
+    expect(ozelGetleri()).toHaveLength(1)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await screen.findByLabelText('Seans notu')
+
+    // B'nin özel notu İSTENMEDİ: "istendi" bayrağı seans kimliği taşıyor.
+    expect(ozelGetleri().filter((i) => i.yol.includes(String(randevuB.id)))).toHaveLength(0)
+    expect(ozelGetleri()).toHaveLength(1)
   })
 
   it('resmi sekmede yazilan metin YALNIZCA /not adresine PUT edilir', async () => {
@@ -1113,8 +1173,10 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Geldi' }))
 
     expect(notGetSayisi(randevuA.id)).toBe(1)
-    expect(istekler.filter((i) => /\/ozel-not$/.test(i.yol) && i.method === 'GET')).toHaveLength(1)
     expect(istekler.filter((i) => /\/notlar/.test(i.yol))).toHaveLength(1)
+    // Özel sekmeye girilmediği için özel not isteği HİÇ atılmadı (aşağıdaki
+    // denetim kaydı testlerine bakın); "Geldi" de bunu değiştirmemeli.
+    expect(ozelGetleri()).toHaveLength(0)
     // İşlem gerçekten yapıldı: "hiçbir şey yapmayan" kod da üsttekileri geçerdi.
     expect(screen.getByRole('button', { name: 'Ayşe Yılmaz' }).getAttribute('data-durum')).toBe(
       'geldi',
@@ -1131,6 +1193,62 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await new Promise((coz) => setTimeout(coz, 30))
     expect(yazmalar(`/api/randevular/${randevuA.id}/not`)).toHaveLength(0)
   })
+
+  // Planın en sert kısıtı özel not için hiç koşulmamıştı: `NotEditoru`
+  // 401 kurtarmasını yalnızca `not-1` anahtarıyla test ediyordu. Burası
+  // ÇAĞRI NOKTASINDAN uçtan uca koşuyor — taslak anahtarı `ozel-<id>` ve
+  // kurtarılan metin RESMÎ nota değil, özel nota yazılmalı.
+  it('ozel not kaydedilirken 401 gelirse metin kaybolmaz ve kilit acilinca OZEL nota yazilir', async () => {
+    const ozelYol = `/api/randevular/${randevuA.id}/ozel-not`
+    ozelYazmaYetkisiz = true
+
+    const { unmount } = render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByLabelText('Seans notu')
+    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+    await userEvent.type(await screen.findByLabelText('Özel notum'), '-KAYBOLMAMALI')
+
+    // Kayıt denendi ve 401 aldı; kullanıcıya söylendi. Bekleme payı
+    // editörün varsayılan gecikmesinden (2000 ms) uzun: bu test bilerek
+    // GERÇEK otomatik kaydı bekliyor, unmount tahliyesini değil — 401'in
+    // geldiği an üretimde budur.
+    await waitFor(() => expect(yazmalar(ozelYol).length).toBeGreaterThanOrEqual(1), {
+      timeout: 4000,
+    })
+    expect(await screen.findByText(/kaydedilemedi/i)).toBeDefined()
+
+    // App'in 401'de yaptığı şey görsel bir perde değil, GERÇEK unmount.
+    unmount()
+    ozelYazmaYetkisiz = false
+    const oncekiYazmaSayisi = yazmalar(ozelYol).length
+
+    // Kilit açıldı: AnaEkran yeniden mount edildi, kullanıcı aynı seansı
+    // ve aynı sekmeyi açtı.
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByLabelText('Seans notu')
+    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+
+    const alan = (await screen.findByLabelText('Özel notum')) as HTMLTextAreaElement
+    expect(alan.value).toContain('-KAYBOLMAMALI')
+    expect(screen.getByText(/geri yüklendi/i)).toBeDefined()
+
+    // Ekranda kalmakla yetinmiyor: ilk fırsatta SUNUCUYA yazılıyor.
+    await waitFor(
+      () => expect(yazmalar(ozelYol).length).toBeGreaterThan(oncekiYazmaSayisi),
+      { timeout: 4000 },
+    )
+    expect(
+      (yazmalar(ozelYol).at(-1)!.govde as { icerik: string }).icerik,
+    ).toContain('-KAYBOLMAMALI')
+    // Ve kurtarılan ÖZEL metin resmî nota HİÇ yazılmadı.
+    expect(yazmalar(`/api/randevular/${randevuA.id}/not`)).toHaveLength(0)
+    // Süre sınırı yükseltildi: bu test editörün GERÇEK gecikmesini
+    // (2000 ms) iki kez bekliyor. Gecikmeyi kısaltmak için prop geçmek,
+    // ölçülen yolu (çağrı noktasının kurduğu editör) değiştirmek olurdu.
+  }, 20000)
 
   it('not yuklenirken 401 gelirse panel kapanir', async () => {
     notYetkisiz = true

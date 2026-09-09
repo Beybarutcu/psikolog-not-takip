@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { OzelNot, SeansNotu } from '../api'
 import type { Randevu } from '../takvim/HaftalikTakvim'
 import { AYLAR } from '../takvim/hafta'
@@ -29,6 +29,19 @@ import { sablonMetni } from './sablon'
  * OLMASA BİLE ayırt edici rengini taşır (kullanıcı tıklamadan önce de
  * ayırt edebilmeli) ve sekmenin içinde kalıcı bir uyarı şeridi durur.
  *
+ * # Özel not sekmeye GEÇİLİNCE yüklenir
+ *
+ * Panel açılışında iki istek gider (resmî not + geçmiş), üçüncüsü değil.
+ * Sunucudaki `ozel_not_getir` her çağrıda `goruntuleme | private_note |
+ * <randevu>` satırı yazar ve `audit_log` **silinemez**: kullanıcı özel
+ * sekmeye hiç girmeden o satırı bastırmak, olmayan bir eylemi kalıcı
+ * olarak bildirmek olurdu. Denetim kaydının değeri "yazılanın gerçekten
+ * olmuş olması"dır.
+ *
+ * Hacim kuralı bozulmuyor: sekmeye girildiğinde tek satır yazılır ve aynı
+ * seansın tekrar tekrar açılması (`LogHacmi::OturumBasi`) yine tek satır
+ * kalır.
+ *
  * # `key` zorunlu, `NotEditoru`'nun kendi sıfırlaması yeterli değil
  *
  * Editörün içindeki `anahtar !== taslakAnahtari` sıfırlaması bir İKİNCİ
@@ -48,9 +61,27 @@ type Props = {
   gecmisNotlar: SeansNotu[]
   /** `null` = henüz yükleniyor. Editör, içerik gelmeden mount EDİLMEZ. */
   not: SeansNotu | null
+  /**
+   * `null` = henüz İSTENMEDİ ya da yükleniyor. Özel not, sekmeye
+   * geçilmeden yüklenmez (bkz. modül başlığındaki denetim kaydı bölümü),
+   * bu yüzden panel açılışında burası her zaman `null`'dır.
+   */
   ozelNot: OzelNot | null
+  /** Özel notun yüklenmesi başarısız olduysa mesajı. */
+  ozelHata?: string | null
   onNotKaydet: (kayit: NotKaydi) => Promise<void>
   onOzelNotKaydet: (icerik: string) => Promise<void>
+  /**
+   * "Özel Notlarım" sekmesine geçildi — özel notu YÜKLE.
+   *
+   * Panel açılışında çağrılmaz: sunucudaki `ozel_not_getir` **silinemez**
+   * bir `goruntuleme | private_note | <id>` satırı yazar ve o satırı
+   * kullanıcı sekmeye hiç girmeden bastırmak, olmayan bir eylemi
+   * bildirmek olurdu.
+   */
+  onOzelSekme: () => void
+  /** Özel not yüklenemediyse yeniden dene. */
+  onOzelYenidenDene?: () => void
   onKapat: () => void
 }
 
@@ -83,12 +114,57 @@ export function SeansPaneli({
   gecmisNotlar,
   not,
   ozelNot,
+  ozelHata = null,
   onNotKaydet,
   onOzelNotKaydet,
+  onOzelSekme,
+  onOzelYenidenDene,
   onKapat,
 }: Props) {
   const [sekme, setSekme] = useState<'resmi' | 'ozel'>('resmi')
   const ozelAcik = sekme === 'ozel'
+  const resmiSekmeRef = useRef<HTMLButtonElement>(null)
+  const ozelSekmeRef = useRef<HTMLButtonElement>(null)
+
+  function ozelSekmeyeGec() {
+    setSekme('ozel')
+    // Her geçişte çağrılıyor, yalnızca ilkinde değil: çağıran taraf
+    // "istendi" bayrağını SEANSA bağlı tutuyor ve aynı değere yapılan
+    // ikinci bir `setState` yeni bir istek üretmiyor. Burada "ilk kez mi"
+    // muhasebesi tutmak aynı bilgiyi iki yerde saklamak olurdu.
+    onOzelSekme()
+  }
+
+  /**
+   * Sekmeler arasında ok tuşlarıyla gezinme (WAI-ARIA tab deseni).
+   *
+   * Otomatik etkinleştirme: ok tuşu hem odağı hem seçimi taşır. İki
+   * sekmeli ve içeriği hazır bir yapıda doğru olan budur; "önce odaklan,
+   * sonra Enter" gereksiz bir tuş daha isterdi. Odak da taşınıyor —
+   * seçili sekme değişip odak eskisinde kalsaydı bir sonraki ok tuşu
+   * yanlış yerden hesaplanırdı.
+   */
+  function sekmeTusu(olay: React.KeyboardEvent<HTMLDivElement>) {
+    const yonTusu =
+      olay.key === 'ArrowRight' ||
+      olay.key === 'ArrowDown' ||
+      olay.key === 'ArrowLeft' ||
+      olay.key === 'ArrowUp'
+    const basa = olay.key === 'Home'
+    const sona = olay.key === 'End'
+    if (!yonTusu && !basa && !sona) return
+    olay.preventDefault()
+    // İki sekme var: her yön tuşu ötekine geçer (döngüsel). Home ilkine,
+    // End sonuncusuna.
+    const ozele = sona || (basa ? false : !ozelAcik)
+    if (ozele) {
+      ozelSekmeyeGec()
+      ozelSekmeRef.current?.focus()
+    } else {
+      setSekme('resmi')
+      resmiSekmeRef.current?.focus()
+    }
+  }
 
   return (
     <section
@@ -118,13 +194,28 @@ export function SeansPaneli({
         </div>
 
         <div className="flex-1">
-          <div role="tablist" aria-label="Not türü" className="flex gap-1">
+          <div
+            role="tablist"
+            aria-label="Not türü"
+            className="flex gap-1"
+            onKeyDown={sekmeTusu}
+          >
             <button
+              ref={resmiSekmeRef}
               type="button"
               role="tab"
               id="sekme-resmi"
               aria-selected={!ozelAcik}
-              aria-controls="panel-resmi"
+              // `aria-controls` YALNIZCA seçiliyken veriliyor: aynı anda
+              // tek bir `tabpanel` render ediliyor, seçili olmayan
+              // sekmenin işaret ettiği id ekranda YOK. Var olmayan bir
+              // id'yi göstermek ekran okuyucuya kırık bir bağ vermektir.
+              aria-controls={ozelAcik ? undefined : 'panel-resmi'}
+              // Dönen tabindex (roving): sekme şeridi klavyede TEK durak,
+              // içinde ok tuşlarıyla gezilir. İkisi de sekmelenebilir
+              // olsaydı Tab kullanıcısı burada iki kez durur, ok tuşları
+              // ise hiçbir şey yapmazdı.
+              tabIndex={ozelAcik ? -1 : 0}
               className={
                 'rounded-t border border-b-0 px-3 py-1 text-sm ' +
                 (ozelAcik ? 'border-slate-200 bg-slate-50' : 'border-slate-300 bg-white font-medium')
@@ -134,18 +225,20 @@ export function SeansPaneli({
               Seans Notu
             </button>
             <button
+              ref={ozelSekmeRef}
               type="button"
               role="tab"
               id="sekme-ozel"
               aria-selected={ozelAcik}
-              aria-controls="panel-ozel"
+              aria-controls={ozelAcik ? 'panel-ozel' : undefined}
+              tabIndex={ozelAcik ? 0 : -1}
               // Ayırt edici renk SEÇİLİ OLMASA DA taşınıyor.
               className={
                 'rounded-t border border-b-0 px-3 py-1 text-sm ' +
                 OZEL_SEKME_SINIFI +
                 (ozelAcik ? ' font-medium' : '')
               }
-              onClick={() => setSekme('ozel')}
+              onClick={ozelSekmeyeGec}
             >
               Özel Notlarım
             </button>
@@ -164,7 +257,23 @@ export function SeansPaneli({
               <p className="mb-2 rounded border border-violet-400 bg-white p-2 text-sm text-violet-900">
                 {OZEL_UYARISI}
               </p>
-              {ozelNot === null ? (
+              {ozelHata !== null ? (
+                // Yükleme başarısızsa BOŞ EDİTÖR açılmaz: boş bir alan
+                // sunucudaki özel notu "yok" diye gösterir ve üstüne
+                // yazılan metin var olanı ezerdi.
+                <div role="alert" className="rounded border border-red-300 bg-red-50 p-2">
+                  <p className="text-sm text-red-800">Özel not yüklenemedi. {ozelHata}</p>
+                  {onOzelYenidenDene !== undefined && (
+                    <button
+                      type="button"
+                      className="mt-2 rounded border border-red-300 px-2 py-1 text-sm"
+                      onClick={onOzelYenidenDene}
+                    >
+                      Yeniden dene
+                    </button>
+                  )}
+                </div>
+              ) : ozelNot === null ? (
                 <p className="text-sm text-slate-600">Özel not yükleniyor…</p>
               ) : (
                 <NotEditoru

@@ -41,7 +41,17 @@ const GECMIS_SEANS_SAYISI = 3
 type SeansVerisi = {
   id: number | null
   not: SeansNotu | null
+  /**
+   * Özel not. Panel açılışında YÜKLENMEZ (bkz. `ozelNotIstenen`), bu
+   * yüzden `null` burada "istenmedi ya da yükleniyor" demektir.
+   */
   ozelNot: OzelNot | null
+  /**
+   * Özel notun kendi hatası. Panelin genel `hata`sından AYRI: özel not
+   * gelmediği için tüm paneli kapatmak, kullanıcının o an yazdığı resmî
+   * notu ekrandan silmek olurdu.
+   */
+  ozelHata: string | null
   gecmisNotlar: SeansNotu[]
   hata: string | null
 }
@@ -50,6 +60,7 @@ const BOS_SEANS: SeansVerisi = {
   id: null,
   not: null,
   ozelNot: null,
+  ozelHata: null,
   gecmisNotlar: [],
   hata: null,
 }
@@ -131,6 +142,18 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
   // Aşağıda `seansId` ile karşılaştırılarak RENDER SIRASINDA türetiliyor.
   const [seansVerisi, setSeansVerisi] = useState<SeansVerisi>(BOS_SEANS)
   const [seansTazeleme, setSeansTazeleme] = useState(0)
+  // Özel notu HANGİ seans için istedik. Panel açılışında özel not
+  // yüklenmiyor: sunucudaki `ozel_not_getir` her çağrıda SİLİNEMEZ bir
+  // `goruntuleme | private_note | <id>` satırı yazar ve kullanıcı özel
+  // sekmeye hiç girmemişken o satırı bastırmak, olmayan bir eylemi kalıcı
+  // olarak bildirmek olur (bkz. `SeansPaneli` modül başlığı).
+  //
+  // Değer bir bayrak değil SEANS KİMLİĞİ: başka bir seansa geçildiğinde
+  // eski kimlik yeni seansla eşleşmez, dolayısıyla "önceki seansta özel
+  // sekmeye girmiştim" hâli yeni seansa sızıp orada istenmemiş bir
+  // görüntüleme satırı yazdırmaz.
+  const [ozelNotIstenen, setOzelNotIstenen] = useState<number | null>(null)
+  const [ozelTazeleme, setOzelTazeleme] = useState(0)
   // Açık danışan kartı. Seans panelindeki desenle aynı: state HANGİ danışana
   // ait olduğunu taşır ve ekrana giden veri render sırasında türetilir.
   const [seciliDanisanId, setSeciliDanisanId] = useState<number | null>(null)
@@ -239,12 +262,14 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
 
     void (async () => {
       try {
-        // Üçü birlikte: geçmiş notların isteği ayrı yakalanıp yutulsaydı,
+        // İkisi birlikte: geçmiş notların isteği ayrı yakalanıp yutulsaydı,
         // başarısızlık "bu danışanın önceki notu yok" diye görünürdü —
         // notu olan bir danışan için sessiz bir yalan.
-        const [gelenNot, gelenOzel, gelenGecmis] = await Promise.all([
+        //
+        // Özel not burada YOK: o, sekmeye geçilince ayrı bir efektte
+        // yükleniyor (bkz. `ozelNotIstenen`).
+        const [gelenNot, gelenGecmis] = await Promise.all([
           notApi.notGetir(seansId),
-          ozelNotApi.getir(seansId),
           // `once` ZORUNLU: bu panelin başlığı "Önceki seans notları" ve
           // kesme olmadan liste, açık seanstan SONRAKİ seansların notlarını
           // da içeriyordu. Terapist takvimde hafta hafta geriye gidip eski
@@ -257,7 +282,8 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
         setSeansVerisi({
           id: seansId,
           not: gelenNot,
-          ozelNot: gelenOzel,
+          ozelNot: null,
+          ozelHata: null,
           // Bu seansın KENDİ notu geçmiş listesine girmez: üstte düzenlenen
           // metnin bayat bir kopyası, "geçen seansta ne konuşulmuştu"
           // sorusuna cevap değil. Sunucudaki `once` kesmesi (KESİN küçük)
@@ -291,6 +317,46 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
       iptal = true
     }
   }, [seansId, seansDanisanId, seansBaslangici, seansTazeleme])
+
+  // Özel not: YALNIZCA sekmeye geçilince. Efektin bağımlılığı
+  // `ozelNotIstenen` olduğu için sekme değişimi dışında hiçbir şey
+  // (hafta değişimi, "Geldi", kayıt) bu isteği tetikleyemez.
+  useEffect(() => {
+    if (seansId === null || ozelNotIstenen !== seansId) return
+    let iptal = false
+
+    void (async () => {
+      try {
+        const gelen = await ozelNotApi.getir(seansId)
+        if (iptal) return
+        // Geciken bir yanıt başka bir seansın panelini doldurmasın.
+        setSeansVerisi((onceki) =>
+          onceki.id === seansId ? { ...onceki, ozelNot: gelen, ozelHata: null } : onceki,
+        )
+      } catch (e) {
+        if (iptal) return
+        if (e instanceof YetkisizHata) {
+          // Kilit: ekranda danışan adı kalmasın (aynı gerekçe `yukle`'de).
+          setRandevular([])
+          setSeciliRandevu(null)
+          setSeciliBosSaat(null)
+          return
+        }
+        setSeansVerisi((onceki) =>
+          onceki.id === seansId
+            ? {
+                ...onceki,
+                ozelHata: e instanceof Error ? e.message : 'Özel not yüklenemedi.',
+              }
+            : onceki,
+        )
+      }
+    })()
+
+    return () => {
+      iptal = true
+    }
+  }, [seansId, ozelNotIstenen, ozelTazeleme])
 
   // Kayıt, editörün BAĞLI OLDUĞU randevunun kimliğine gider; `seciliRandevu`
   // okunmuyor. Unmount tahliyesi (seans değişiminde) bu fonksiyonu çağırdığı
@@ -846,8 +912,14 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
             gecmisNotlar={seans.gecmisNotlar}
             not={seans.not}
             ozelNot={seans.ozelNot}
+            ozelHata={seans.ozelHata}
             onNotKaydet={notKaydet}
             onOzelNotKaydet={ozelNotKaydet}
+            onOzelSekme={() => setOzelNotIstenen(seciliRandevu.id)}
+            onOzelYenidenDene={() => {
+              setSeansVerisi((onceki) => ({ ...onceki, ozelHata: null }))
+              setOzelTazeleme((n) => n + 1)
+            }}
             onKapat={panelKapat}
           />
         ) : (

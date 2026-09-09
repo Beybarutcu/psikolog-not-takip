@@ -88,6 +88,7 @@ function kur(ozel: Partial<React.ComponentProps<typeof SeansPaneli>> = {}) {
     ozelNot,
     onNotKaydet: vi.fn().mockResolvedValue(undefined),
     onOzelNotKaydet: vi.fn().mockResolvedValue(undefined),
+    onOzelSekme: vi.fn(),
     onKapat: vi.fn(),
     ...ozel,
   }
@@ -197,6 +198,114 @@ describe('SeansPaneli — geçmiş bağlam', () => {
     kur({ gecmisNotlar: [] })
     expect(screen.getByText(/önceki seanslarından kayıtlı not yok/i)).toBeDefined()
     expect(screen.getByText(/İlk seans ise/i)).toBeDefined()
+  })
+
+  // Modül başlığındaki "DOM sırası da öyle" iddiasının testi yoktu
+  // (onuncu biçim: gerekçe yorumunun testin yerine geçmesi). Sıra ekran
+  // okuyucu ve klavye kullanıcısı için önemli: bağlam önce gelmeli.
+  // CSS sırasını değiştiren bir `order-` sınıfı bu iddiayı bozmadan
+  // görüntüyü değiştirebilir; ölçülen şey DOM.
+  it('gecmis bolumu DOM sirasinda sekmelerden ONCE gelir', () => {
+    kur()
+    const gecmis = screen.getByRole('region', { name: 'Önceki seans notları' })
+    const sekmeler = screen.getByRole('tablist')
+    // DOCUMENT_POSITION_FOLLOWING = 4: `sekmeler`, `gecmis`'ten SONRA.
+    expect(gecmis.compareDocumentPosition(sekmeler) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .toBeTruthy()
+  })
+})
+
+// WAI-ARIA tab deseni: sekme şeridi klavyede tek durak, içinde ok
+// tuşlarıyla gezilir. Ayrıca aynı anda TEK `tabpanel` render edildiği
+// için `aria-controls` yalnızca seçili sekmede olabilir — seçili
+// olmayanınki var olmayan bir id'yi gösterirdi.
+describe('SeansPaneli — sekme klavye erişimi', () => {
+  it('secili olmayan sekmenin aria-controls u VAR OLMAYAN bir id gostermez', () => {
+    kur()
+    // Resmî sekme seçili: onun hedefi ekranda VAR.
+    const resmiHedef = resmiSekme().getAttribute('aria-controls')
+    expect(resmiHedef).toBe('panel-resmi')
+    expect(document.getElementById(resmiHedef!)).not.toBeNull()
+
+    // Özel sekme seçili DEĞİL: ya hedefi yok ya da hedefi ekranda var.
+    const ozelHedef = ozelSekme().getAttribute('aria-controls')
+    if (ozelHedef !== null) expect(document.getElementById(ozelHedef)).not.toBeNull()
+    else expect(ozelHedef).toBeNull()
+  })
+
+  it('ok tusu sekmeyi degistirir ve odak da tasinir', async () => {
+    kur()
+    resmiSekme().focus()
+    await userEvent.keyboard('{ArrowRight}')
+
+    expect(ozelSekme().getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(ozelSekme())
+    expect(await screen.findByLabelText('Özel notum')).toBeDefined()
+
+    // Ters yön: geri dönebilmeli (tek yönlü bir uygulama yarım olurdu).
+    await userEvent.keyboard('{ArrowLeft}')
+    expect(resmiSekme().getAttribute('aria-selected')).toBe('true')
+    expect(document.activeElement).toBe(resmiSekme())
+  })
+
+  it('Home ilk sekmeye, End son sekmeye gider', async () => {
+    kur()
+    resmiSekme().focus()
+    await userEvent.keyboard('{End}')
+    expect(ozelSekme().getAttribute('aria-selected')).toBe('true')
+    await userEvent.keyboard('{Home}')
+    expect(resmiSekme().getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('serit klavyede TEK durak: secili olmayan sekme sekmelenebilir degil', async () => {
+    kur()
+    expect(resmiSekme().getAttribute('tabindex')).toBe('0')
+    expect(ozelSekme().getAttribute('tabindex')).toBe('-1')
+
+    await userEvent.click(ozelSekme())
+    expect(ozelSekme().getAttribute('tabindex')).toBe('0')
+    expect(resmiSekme().getAttribute('tabindex')).toBe('-1')
+  })
+
+  it('ilgisiz tuslar sekmeyi degistirmez', async () => {
+    // Yalnızca "ok tuşu çalışıyor" diyen bir test, HER tuşta sekme
+    // değiştiren bir uygulamayı da geçerdi.
+    kur()
+    resmiSekme().focus()
+    await userEvent.keyboard('a')
+    expect(resmiSekme().getAttribute('aria-selected')).toBe('true')
+  })
+})
+
+// Özel not artık sekmeye geçilince yükleniyor; yüklenemezse BOŞ EDİTÖR
+// açılmamalı — boş bir alan sunucudaki notu "yok" diye gösterir ve
+// üstüne yazılan metin var olanı ezerdi.
+describe('SeansPaneli — özel not yüklenemedi', () => {
+  it('hata gosterilir, bos editor ACILMAZ', async () => {
+    const yenidenDene = vi.fn()
+    kur({ ozelNot: null, ozelHata: 'Veritabanı okunamadı.', onOzelYenidenDene: yenidenDene })
+    await userEvent.click(ozelSekme())
+
+    const uyari = screen.getByRole('alert')
+    expect(uyari.textContent).toContain('Özel not yüklenemedi')
+    expect(uyari.textContent).toContain('Veritabanı okunamadı.')
+    expect(screen.queryByLabelText('Özel notum')).toBeNull()
+
+    await userEvent.click(within(uyari).getByRole('button', { name: 'Yeniden dene' }))
+    expect(yenidenDene).toHaveBeenCalledTimes(1)
+  })
+
+  it('sekmeye gecilince onOzelSekme cagrilir; acilista CAGRILMAZ', async () => {
+    const { onOzelSekme } = kur({ ozelNot: null })
+    // Panel açılışında özel not istenmez: sunucudaki `ozel_not_getir`
+    // SİLİNEMEZ bir `goruntuleme | private_note` satırı yazar.
+    expect(onOzelSekme).not.toHaveBeenCalled()
+
+    await userEvent.click(ozelSekme())
+    expect(onOzelSekme).toHaveBeenCalled()
+    // İçerik gelmeden editör MOUNT EDİLMEZ.
+    expect(screen.queryByLabelText('Özel notum')).toBeNull()
+    expect(screen.getByText(/Özel not yükleniyor/)).toBeDefined()
   })
 })
 
@@ -373,6 +482,7 @@ function Harness() {
       onOzelNotKaydet={async (icerik) => {
         setOzel((o) => ({ ...o, icerik }))
       }}
+      onOzelSekme={vi.fn()}
       onKapat={vi.fn()}
     />
   )
@@ -438,6 +548,7 @@ describe('SeansPaneli — seans değişimi (`key` yolu, ikincil hat)', () => {
         ozelNot={ozelNot}
         onNotKaydet={kaydetA}
         onOzelNotKaydet={vi.fn()}
+        onOzelSekme={vi.fn()}
         onKapat={vi.fn()}
       />,
     )
@@ -452,6 +563,7 @@ describe('SeansPaneli — seans değişimi (`key` yolu, ikincil hat)', () => {
         ozelNot={{ ...ozelNot, appointment_id: 102, icerik: '' }}
         onNotKaydet={kaydetB}
         onOzelNotKaydet={vi.fn()}
+        onOzelSekme={vi.fn()}
         onKapat={vi.fn()}
       />,
     )
@@ -485,6 +597,7 @@ describe('SeansPaneli — seans değişimi (`key` yolu, ikincil hat)', () => {
         ozelNot={o}
         onNotKaydet={vi.fn().mockResolvedValue(undefined)}
         onOzelNotKaydet={kaydet}
+        onOzelSekme={vi.fn()}
         onKapat={vi.fn()}
       />
     )

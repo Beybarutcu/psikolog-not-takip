@@ -32,8 +32,10 @@
 //! geçilmeli?
 //!
 //! **Ölçüldü, sonra karar verildi.** `tests::baglanti_omru_olcumu` art arda
-//! 30 otomatik kaydı (aç + yaz + kapat) simüle eder ve aynı işi TEK bir
-//! bağlantıyla tekrarlayıp iki süreyi karşılaştırır. Ölçüm makinesi:
+//! 30 otomatik kaydı (aç + yaz + kapat) simüle eder, aynı işi TEK bir
+//! bağlantıyla tekrarlayıp süreleri karşılaştırır ve — dal incelemesinden
+//! beri — aynı ölçümü **20 MB'lık ekler yazma yolundayken** de yapar (bkz.
+//! aşağıdaki "Koşul GERÇEKLEŞTİ" başlığı). Ölçüm makinesi:
 //! Windows 11, debug profili (yani gerçek dağıtımdan yavaş), SQLCipher ham
 //! hex anahtarla (KDF maliyeti YOK -- `db::anahtar_ayarla_ve_hazirla`
 //! `PRAGMA key = x'<hex>'` kullanır, parola türetmez).
@@ -71,11 +73,50 @@
 //!    `unchecked_transaction` kullanan her depo fonksiyonu ya `&mut
 //!    Connection` almalı ya da transaction'ı dışarıdan almalıdır.
 //!
+//! # Koşul GERÇEKLEŞTİ: ekler yazma yoluna girdi (dal incelemesi)
+//!
+//! Yukarıdaki karar şartlıydı: *"yeniden gözden geçirilmelidir eğer … ekli
+//! dosyalar (20 MB'a kadar BLOB) yazma yoluna girip her isteğin WAL'ını
+//! büyütürse"*. Ekler Görev 5+7'de tam olarak o yola girdi
+//! (`POST /api/danisanlar/{id}/ekler` → `acik_baglanti` → 20 MB'lık BLOB) ve
+//! **ölçüm tekrarlanmadı**: tetikleyici bir koruma değil, bir cümleydi. Bu
+//! sınıfın kendisi de düzeltildi — koşul artık
+//! `tests::ekler_yazma_yolundaysa_olcum_blob_senaryosunu_da_icermeli` ile
+//! **çalıştırılabilir**: ekler yazma yolundan çıkarsa da, ölçümden BLOB
+//! senaryosu silinirse de test kırılır.
+//!
+//! **Ölçüm BLOB'lu senaryoyla tekrarlandı** (aynı makine ve profil, dört
+//! ardışık koşu; `--nocapture` çıktısı için bkz. dal-incelemesi raporu):
+//!
+//! | Senaryo                                          | ölçülen            |
+//! |--------------------------------------------------|--------------------|
+//! | Küçük yazma, taze bağlantı — ekler YOKKEN         | 5,36-6,14 ms/yazma |
+//! | Küçük yazma, tek bağlantı                        | 0,57-0,62 ms/yazma |
+//! | 20 MB ek yazma, taze bağlantı                    | 297-362 ms/ek      |
+//! | Küçük yazma, taze bağlantı — ~40 MB ek VARKEN    | 5,40-6,24 ms/yazma |
+//!
+//! **Karar: değişmiyor** — ve gerekçe "hâlâ geçerli" demek değil, ölçülen
+//! şudur:
+//!
+//! 1. **Otomatik kaydın maliyeti değişmedi.** Veritabanı ~40 MB'lık iki ek
+//!    aldıktan sonra da yazma başına süre aynı bandta kaldı (5,4-6,2 ms;
+//!    ölçüm gürültüsünün içinde). Beklenen sonuç bu: her istek kendi
+//!    bağlantısını kapatıyor, kapanışta checkpoint çalışıyor ve WAL
+//!    **küçülüyor** — yani "her isteğin WAL'ı büyür" korkusu tam olarak
+//!    taze bağlantı düzeninde gerçekleşmiyor. Havuzlanmış bir bağlantıda
+//!    ise WAL, checkpoint'e kadar birikirdi; bu ölçüm havuzlama lehine
+//!    değil, **aleyhine** bir bulgu.
+//! 2. **20 MB'lık ek yazmanın kendisi pahalı (~0,3 sn)** ama bu maliyet
+//!    bağlantı açmaktan gelmiyor: 5 ms'lik bağlantı bedeli o sürenin
+//!    %1,5'i. Havuzlama bu işlemi ölçülebilir biçimde hızlandırmazdı.
+//!    Ayrıca ek yükleme **kullanıcı tetiklemeli ve seyrek** bir işlem
+//!    (dosya seç → Yükle), 2 saniyede bir çalışan bir arka plan işi değil.
+//!
 //! Bu karar yeniden gözden geçirilmelidir eğer: otomatik kayıt aralığı 2
-//! saniyenin çok altına inerse, ekli dosyalar (20 MB'a kadar BLOB) yazma
-//! yoluna girip her isteğin WAL'ını büyütürse, ya da ölçüm yavaş bir diskte
-//! (ağ sürücüsü, senkronizasyon klasörü) tekrarlandığında yazma başına fark
-//! 100 ms'yi aşarsa.
+//! saniyenin çok altına inerse, ham gövde (`Bytes`) alan **yeni** bir rota
+//! modülü yazma yoluna girerse (yukarıdaki test bunu yakalar), ya da ölçüm
+//! yavaş bir diskte (ağ sürücüsü, senkronizasyon klasörü) tekrarlandığında
+//! yazma başına fark 100 ms'yi aşarsa.
 
 use crate::state::AppState;
 use axum::{
@@ -198,8 +239,21 @@ pub fn depo_hatasi(e: psikolog_core::store::clients::DepoHatasi) -> ApiHata {
 mod tests {
     use super::*;
     use psikolog_core::crypto::keyring::{generate_data_key, KdfParams};
+    use psikolog_core::store::attachments::AZAMI_DOSYA_BOYUTU;
+    use psikolog_core::store::audit::Cihaz;
+    use psikolog_core::store::clients::YeniDanisan;
     use psikolog_core::store::{db::open_encrypted, schema::migrate};
     use std::time::Duration;
+
+    /// Ölçümdeki ek dosyanın boyutu — sınırın (`AZAMI_DOSYA_BOYUTU`, 20 MB)
+    /// hemen altı. "20 MB'a kadar BLOB" koşulunun EN KÖTÜ hâli ölçülmeli;
+    /// küçük bir dosyayla yapılan ölçüm soruyu yanıtlamazdı.
+    const BLOB_BOYUTU: usize = AZAMI_DOSYA_BOYUTU - 1024;
+
+    /// Kaç ek yazılacağı. Sayı küçük, çünkü ölçülen şey "kaç ek" değil,
+    /// **eklerin varlığının küçük yazmaların maliyetini değiştirip
+    /// değiştirmediği**; iki ek zaten ~40 MB'lık bir veritabanı üretiyor.
+    const BLOB_YAZMA: usize = 2;
 
     /// Not editörünün 2 saniyede bir yapacağı otomatik kaydın maliyeti.
     ///
@@ -295,5 +349,211 @@ mod tests {
             })
             .unwrap();
         assert_eq!(kalici as usize, YAZMA, "taze baglantiyla yazilanlar kalici olmali");
+        drop(c);
+
+        // =============================================================
+        // (3) EKLER YAZMA YOLUNDA -- kararin KOSULU gerceklesti
+        // =============================================================
+        //
+        // Modul basligindaki karar sartliydi: *"yeniden gozden gecirilmelidir
+        // eger ... ekli dosyalar (20 MB'a kadar BLOB) yazma yoluna girip her
+        // istegin WAL'ini buyuturse"*. Gorev 5+7'de tam olarak o oldu ve
+        // olcum tekrarlanmadi -- cunku tetikleyici bir koruma degil, bir
+        // CUMLEYDI. Asagisi o cumlenin calistirilabilir hali; kardes test
+        // (`ekler_yazma_yolundaysa_olcum_blob_senaryosunu_da_icermeli`) bu
+        // blogun varligini kosula BAGLAR.
+        let conn = acik_baglanti(&state).unwrap();
+        let cid = psikolog_core::store::clients::ekle(
+            &conn,
+            &YeniDanisan { ad_soyad: "Olcum Danisani".into(), telefon: None },
+            Cihaz::Masaustu,
+        )
+        .unwrap()
+        .id;
+        drop(conn);
+
+        let icerik = vec![0x41u8; BLOB_BOYUTU];
+        let t2 = Instant::now();
+        for i in 0..BLOB_YAZMA {
+            let conn = acik_baglanti(&state).expect("oturum acik olmali");
+            psikolog_core::store::attachments::ekle(
+                &conn,
+                cid,
+                &format!("olcum-{i}.pdf"),
+                "application/pdf",
+                "diger",
+                &icerik,
+                Cihaz::Masaustu,
+            )
+            .unwrap();
+            drop(conn);
+        }
+        let blob: Duration = t2.elapsed();
+
+        // (4) ASIL SORU: ekler veritabanindayken, not editorunun 2 sn'lik
+        // otomatik kaydi pahalilasti mi? (1) ile BIREBIR ayni is, yalnizca
+        // veritabani artik ~40 MB.
+        let t3 = Instant::now();
+        for i in 0..YAZMA {
+            let conn = acik_baglanti(&state).expect("oturum acik olmali");
+            conn.execute(
+                "INSERT INTO app_meta (anahtar, deger) VALUES (?1, 'x')
+                 ON CONFLICT(anahtar) DO UPDATE SET deger=excluded.deger",
+                [format!("blob_sonrasi_{i}")],
+            )
+            .unwrap();
+            drop(conn);
+        }
+        let taze_blob_sonrasi: Duration = t3.elapsed();
+
+        // Etiket DIZGI OLARAK burada duruyor (sabite dolayli
+        // gonderme degil): kardes tetikleyici test olcum govdesini bu
+        // dizgiyle ariyor ve bir sabite yapilan gonderme, govdeden
+        // gorunmezdi.
+        println!("--- ekler yazma yolunda (20 MB BLOB) olcumu ---");
+        println!(
+            "{BLOB_YAZMA} x {:.1} MB ek (taze baglanti) : {:>8.2?} toplam, {:>8.3?} / ek",
+            BLOB_BOYUTU as f64 / (1024.0 * 1024.0),
+            blob,
+            blob / BLOB_YAZMA as u32
+        );
+        println!(
+            "ekler yazildiktan SONRA {YAZMA} kucuk yazma: {:>8.2?} toplam, {:>8.3?} / yazma",
+            taze_blob_sonrasi,
+            taze_blob_sonrasi / YAZMA as u32
+        );
+        println!(
+            "otomatik kayit maliyetindeki degisim : {:>8.3?} / yazma (once {:>8.3?})",
+            taze_blob_sonrasi / YAZMA as u32,
+            taze / YAZMA as u32
+        );
+
+        // Olcumun gercekten 40 MB yazdigini kanitlar: BLOB'lar diskte ve
+        // TAM boyutunda. Bu olmadan yukaridaki sureler bos bir donguyu
+        // olcuyor olabilirdi (ayni gerekce (1) icin de yazilmisti).
+        let c = open_encrypted(&state.db_yolu(), &anahtar).unwrap();
+        let (adet, toplam_bayt): (i64, i64) = c
+            .query_row("SELECT COUNT(*), COALESCE(SUM(boyut), 0) FROM attachments", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(adet as usize, BLOB_YAZMA, "ekler gercekten yazilmali");
+        assert_eq!(
+            toplam_bayt as usize,
+            BLOB_BOYUTU * BLOB_YAZMA,
+            "olculen sey gercekten ~40 MB'lik BLOB olmali"
+        );
+        let sonraki: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM app_meta WHERE anahtar LIKE 'blob_sonrasi_%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sonraki as usize, YAZMA, "BLOB sonrasi kucuk yazmalar da kalici olmali");
+    }
+
+    /// **Koşullu kararın tetikleyicisi ÇALIŞTIRILABİLİR olmalı.**
+    ///
+    /// # Bulgu (dal incelemesi, on üçüncü biçim)
+    ///
+    /// Bağlantı ömrü kararı (Görev 2) şöyle şartlandırılmıştı: *"Bu karar
+    /// yeniden gözden geçirilmelidir eğer … ekli dosyalar (20 MB'a kadar
+    /// BLOB) yazma yoluna girip her isteğin WAL'ını büyütürse."* Ekler Görev
+    /// 5+7'de tam olarak o yola girdi. Ölçüm tekrarlanmadı, kimse fark
+    /// etmedi, ledger'da iz kalmadı — çünkü tetikleyicinin kendisi bir
+    /// koruma değil, bir **cümleydi**.
+    ///
+    /// # Kurulan yöntem
+    ///
+    /// Bu kod tabanı kararlarını yorumlara yazıyor ve bu genelde işe
+    /// yarıyor. Ama **koşullu** bir karar yazıldığında koşulun kendisi de
+    /// çalıştırılabilir olmalı. Aşağıdaki test tam olarak bunu yapar ve iki
+    /// tarafı da sabitler:
+    ///
+    /// 1. **Koşul bugün doğru mu?** Rota katmanında ham gövde (`Bytes`)
+    ///    alıp `acik_baglanti` yazma yolundan geçen bir modül var mı? Bugün
+    ///    `routes/attachments.rs`. Küme `server/src/routes/` **dizininden**
+    ///    okunuyor, yani yarın eklenecek bir `import.rs` de koşulu
+    ///    tetikler (kardeş yapısal testlerle aynı gerekçe).
+    /// 2. **Koşul doğruysa ölçüm BLOB senaryosunu içeriyor mu?**
+    ///
+    /// İki yön de kırılabilir: ekler yazma yolundan çıkarsa (1) kırılır ve
+    /// karar metni yeniden gözden geçirilmeye zorlanır; ölçümden BLOB
+    /// senaryosu silinirse (2) kırılır.
+    #[test]
+    fn ekler_yazma_yolundaysa_olcum_blob_senaryosunu_da_icermeli() {
+        let dizin = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes");
+        let mut ham_govde_yazanlar: Vec<String> = Vec::new();
+        let mut dosya_sayisi = 0usize;
+        for girdi in std::fs::read_dir(&dizin).expect("routes dizini okunamadi") {
+            let yol = girdi.expect("dizin girdisi").path();
+            if yol.extension().and_then(|u| u.to_str()) != Some("rs") {
+                continue;
+            }
+            let ad = yol.file_name().unwrap().to_string_lossy().into_owned();
+            if ad == "mod.rs" {
+                continue;
+            }
+            dosya_sayisi += 1;
+            let kaynak = std::fs::read_to_string(&yol).expect("rota kaynagi okunamadi");
+            // Yorumlar kuralin KENDISINDEN bahsedebilir (kardes yapisal
+            // testlerle ayni eleme).
+            let kod: String = kaynak
+                .lines()
+                .filter(|l| !l.trim_start().starts_with("//"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            if kod.contains("acik_baglanti") && kod.contains("Bytes") {
+                ham_govde_yazanlar.push(ad);
+            }
+        }
+        assert!(dosya_sayisi >= 8, "rota dizini turetilememis");
+
+        // (1) KOSUL: bugun DOGRU. Yanlisa donerse -- ekler yazma yolundan
+        // cikarsa -- karar metnindeki gerekce de yeniden yazilmali; bu
+        // satir o ani yakalar.
+        assert_eq!(
+            ham_govde_yazanlar,
+            vec!["attachments.rs".to_string()],
+            "ham govde (`Bytes`) yazma yoluna giren rota modulleri degisti: karar \
+             metnindeki kosul ve `baglanti_omru_olcumu` birlikte gozden gecirilmeli"
+        );
+
+        // (2) YUKUMLULUK: kosul dogruysa olcum BLOB senaryosunu da olcmeli.
+        //
+        // BLOB senaryosunun olcum ciktisindaki etiketi.
+        const BLOB_SENARYO_ETIKETI: &str = "ekler yazma yolunda (20 MB BLOB) olcumu";
+
+        // YALNIZCA olcum fonksiyonunun govdesi taranir, dosyanin tamami
+        // DEGIL: bu testin kendi iddia dizgileri (yukaridaki sabit,
+        // `"attachments::ekle"`) dosyada zaten geciyor ve tam dosya
+        // taramasi kendi kendini dogrulayan bir TOTOLOJI olurdu -- olcum
+        // tumuyle silinse bile test gecerdi. Sinir: olcum fonksiyonunun
+        // basindan BIR SONRAKI `#[test]`e kadar.
+        let bu_dosya = include_str!("guard.rs");
+        let olcum = bu_dosya
+            .split("fn baglanti_omru_olcumu")
+            .nth(1)
+            .expect("`baglanti_omru_olcumu` bulunamadi -- olcum tumuyle silinmis")
+            .split("#[test]")
+            .next()
+            .expect("bolme her zaman en az bir parca verir");
+        // Sinir gercekten tuttu mu: olcum govdesi bu testin KENDISINI
+        // kapsamamali, yoksa tarama yine totolojiye donerdi.
+        assert!(
+            !olcum.contains("fn ekler_yazma_yolundaysa"),
+            "olcum govdesi ayiklanamadi (sinir kaydi); tarama totolojiye donusurdu"
+        );
+
+        assert!(
+            olcum.contains(BLOB_SENARYO_ETIKETI),
+            "ekler yazma yolunda ama `baglanti_omru_olcumu` BLOB senaryosunu olcmuyor"
+        );
+        // Etiket tek basina yeterli degil: olcum gercekten ek YAZMALI.
+        assert!(
+            olcum.contains("attachments::ekle") && olcum.contains("BLOB_BOYUTU"),
+            "BLOB senaryosu etiketi var ama gercek bir ek yazmiyor"
+        );
     }
 }

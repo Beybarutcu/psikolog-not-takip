@@ -1219,6 +1219,60 @@ mod tests {
     }
 
     #[test]
+    fn log_yazilamazsa_yedek_geri_alinmaz_ama_hata_doner() {
+        // Karar: fail-OPEN, ama SESSIZ DEGIL (bkz. `YedekHatasi::KayitYazilamadi`).
+        //
+        // `attachments::icerik_getir` fail-closed davranir cunku orada geri
+        // alinacak bir sey yoktur -- icerik dondurulmez, konu kapanir.
+        // Burada geri almak, diskteki GECERLI BIR YEDEGI silmek demektir ve
+        // bu urunun ucuncu basari olcutu "bilgisayar bozulursa veri
+        // kaybolmasin". Bir log satiri yazilamadi diye kullanicinin tek
+        // kopyasini yok etmek o olcutun dogrudan ihlali olurdu.
+        let d = tempfile::tempdir().unwrap();
+        let hedef = d.path().join("yedekler");
+        let key = generate_data_key();
+        let db = ornek_db(d.path(), &key);
+        let ks = sahte_keystore(d.path());
+
+        // `audit_log` tablosu OLMAYAN bir baglanti: `kaydet` basarisiz olur.
+        let semasiz = open_encrypted(&d.path().join("semasiz.db"), &key).unwrap();
+        assert!(
+            crate::store::audit::kaydet(
+                &semasiz,
+                crate::store::audit::Eylem::DisaAktarma,
+                VARLIK,
+                "2026-09-07",
+                crate::store::audit::Cihaz::Masaustu,
+                None,
+                crate::store::audit::LogHacmi::HerCagri,
+            )
+            .is_err(),
+            "on kosul: bu baglantiya log yazilamiyor olmali"
+        );
+
+        let hata = yedek_al_ve_kaydet(
+            &semasiz,
+            &db,
+            &ks,
+            &hedef,
+            "2026-09-07",
+            &key,
+            crate::store::audit::Cihaz::Masaustu,
+        )
+        .unwrap_err();
+
+        // SESSIZ DEGIL: cagirana hata donuyor.
+        assert!(matches!(hata, YedekHatasi::KayitYazilamadi(_)), "gelen: {hata:?}");
+        assert!(hata.to_string().contains("geri alınmadı"), "mesaj ne OLMADIGINI da soylemeli");
+
+        // GERI ALINMADI: cift diskte ve gercekten geri yuklenebilir.
+        let yedek = hedef.join("yedek-2026-09-07.db");
+        assert!(yedek.exists(), "yedek silinmemeli -- log hatasi veriyi yok etmemeli");
+        assert!(keystore_yedek_yolu(&yedek).exists(), "cift eksiksiz kalmali");
+        assert_eq!(yedekleri_listele(&hedef).unwrap().len(), 1, "yedek listelenebilir olmali");
+    }
+
+    #[test]
     fn yedek_log_satiri_hedef_dizin_yolunu_tasimaz() {
         // Hedef dizin kullanicinin ev dizinini (dolayisiyla ADINI) icerebilir
         // ve `audit_log` SILINEMEZ. Yol loga girmemeli.

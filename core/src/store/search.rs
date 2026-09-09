@@ -704,6 +704,92 @@ mod tests {
         );
     }
 
+    /// Özel not tablosuna **kod içinde** dokunmasına izin verilen depo
+    /// modülleri. Bunun dışındaki her modül için tablo adı bir ihlaldir.
+    ///
+    /// - `notes.rs`: `ozel_not_getir`/`ozel_not_kaydet`'in evi (tek yazma/
+    ///   okuma yolu).
+    /// - `schema.rs`: tabloyu ve indeksini YARATAN yer.
+    /// - `appointments.rs`: randevu silinince kaç notun cascade ile
+    ///   gideceğini sayar — **içeriğe hiç bakmaz**, yalnızca `COUNT(*)`
+    ///   (bkz. `silinecek_not_adedi`).
+    const OZEL_NOTA_DOKUNABILEN: [&str; 3] = ["notes.rs", "schema.rs", "appointments.rs"];
+
+    /// Özel not sızıntısının **depo katmanı genelindeki** yapısal karşılığı.
+    ///
+    /// # Bulgu (dal incelemesi): tarama kendi dosyasıyla sınırlıydı
+    ///
+    /// `kaynak_kodda_private_notes_gecmez` yalnızca `search.rs`'i okuyordu.
+    /// İddia doğruydu ama kapsamı, ihlalin olabileceği kavşağı dışarıda
+    /// bırakıyordu: yarın eklenecek bir `store/export.rs` (ya da
+    /// `reports.rs`, `backup_export.rs`) `private_notes` tablosuna
+    /// baktığında hiçbir test kırılmazdı — oysa "özel not hiçbir dışa
+    /// aktarıma, rapora veya aramaya girmez" sözü tam olarak o dosyalar
+    /// hakkında.
+    ///
+    /// Bu test kümeyi `core/src/store/` **dizininden** türetir: yeni bir
+    /// modül eklendiğinde hiçbir şey yapılmadan kapsama girer. Elle kalan
+    /// tek şey `OZEL_NOTA_DOKUNABILEN` izin listesidir ve her girdisi için
+    /// iki yönlü ön koşul var — dosya diskte var mı, ve izin GERÇEKTEN
+    /// gerekli mi (üretim kodunda tabloyu fiilen anıyor mu). Bayat bir izin,
+    /// kuralı bir modülden sessizce kaldırırdı.
+    #[test]
+    fn depo_katmaninda_ozel_not_tablosu_yalnizca_izinli_modullerde_gecer() {
+        let dizin = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/store");
+        let mut dosyalar: Vec<(String, String)> = std::fs::read_dir(&dizin)
+            .unwrap_or_else(|e| panic!("{} okunamadi: {e}", dizin.display()))
+            .map(|girdi| girdi.expect("dizin girdisi okunamadi").path())
+            .filter(|yol| yol.extension().and_then(|u| u.to_str()) == Some("rs"))
+            .map(|yol| {
+                let ad = yol.file_name().unwrap().to_string_lossy().into_owned();
+                let ham = std::fs::read_to_string(&yol)
+                    .unwrap_or_else(|e| panic!("{ad} okunamadi: {e}"));
+                (ad, uretim_kodunu_ayikla(&ham))
+            })
+            .collect();
+        dosyalar.sort();
+
+        // Dizin okunamaz hale gelirse her iddia BOS kume uzerinde saglanirdi.
+        assert!(
+            dosyalar.len() >= 10,
+            "depo dizini beklenenden kucuk, kume turetilememis: {:?}",
+            dosyalar.iter().map(|(a, _)| a).collect::<Vec<_>>()
+        );
+
+        for izinli in OZEL_NOTA_DOKUNABILEN {
+            let (_, uretim) = dosyalar
+                .iter()
+                .find(|(ad, _)| ad == izinli)
+                .unwrap_or_else(|| panic!("izin listesi bayat: `{izinli}` artik yok"));
+            // ON KOSUL: izin GERCEKTEN gerekli. Modul tabloya dokunmayi
+            // birakirsa listeden de dusmeli; yoksa liste zamanla "kimin
+            // dokunabildigini" degil "kimin bir zamanlar dokundugunu"
+            // anlatir ve gercek bir izni sessizce genisletir.
+            assert!(
+                uretim.contains("private_notes"),
+                "{izinli}: izin listesinde ama uretim kodunda private_notes gecmiyor -- \
+                 liste bayatladi"
+            );
+        }
+
+        for (ad, uretim) in &dosyalar {
+            if OZEL_NOTA_DOKUNABILEN.contains(&ad.as_str()) {
+                continue;
+            }
+            assert!(
+                !uretim.contains("private_notes"),
+                "{ad}: ozel not tablosuna erisim yalnizca {OZEL_NOTA_DOKUNABILEN:?} \
+                 modullerinde olabilir -- yeni bir disa aktarim/rapor modulu \
+                 ozel notu kendi sorgusuna aliyor"
+            );
+            // Parcalanmis dizgi kacamagi burada da gorunur olmali.
+            assert!(
+                !dizgi_parcalari_birlestir(uretim).contains("private_notes"),
+                "{ad}: parcalanmis dizgiyle de olsa private_notes gecmemeli"
+            );
+        }
+    }
+
     /// Uretim kodu: test blogu ve YORUMLAR cikarilmis kaynak.
     ///
     /// Yorum filtresi hem `//` satirlarini hem `/* ... */` bloklarini atar.
@@ -712,10 +798,14 @@ mod tests {
     /// `private_notes` gecisleri zaten `//!` ile basliyor, ama bir blok
     /// yorumu icine yazilan bir SQL parcasi filtreden kacardi.
     fn uretim_kodu() -> String {
-        let ham = include_str!("search.rs")
-            .split("#[cfg(test)]")
-            .next()
-            .expect("kaynak bos olamaz");
+        uretim_kodunu_ayikla(include_str!("search.rs"))
+    }
+
+    /// `uretim_kodu`'nun kaynağı dışarıdan alan hâli — kardeş test
+    /// (`depo_katmaninda_ozel_not_tablosu_...`) dizindeki her dosyayı aynı
+    /// elemeden geçirmek zorunda: iki ayrı eleme, iki ayrı kaçamak demekti.
+    fn uretim_kodunu_ayikla(kaynak: &str) -> String {
+        let ham = kaynak.split("#[cfg(test)]").next().expect("kaynak bos olamaz");
 
         let mut bloksuz = String::with_capacity(ham.len());
         let mut kalan = ham;

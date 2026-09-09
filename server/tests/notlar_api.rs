@@ -1405,30 +1405,144 @@ async fn eksik_sorgu_parametresi_turkce_json_hata_dondurur() {
     }
 }
 
+// =====================================================================
+// YAPISAL GUVENCELERIN DOSYA KUMESI -- DIZINDEN TURETILIR
+// =====================================================================
+//
+// # Bulgu (dal incelemesi): iddia doğru, kapsamı yanlış
+//
+// Aşağıdaki dört yapısal test "yarın eklenecek handler'ı yakalamak" için
+// yazılmıştı ama dosya listesini **elle** taşıyordu. `include_str!` derleme
+// zamanında sabit bir yol ister, dolayısıyla liste ancak insan eliyle
+// büyür. Sonuç: Plan 4'ün ekleyeceği `routes/export.rs` (ya da
+// `payments.rs`, `devices.rs`)
+//
+//   - `acik_baglanti` kapısını atlarsa YAKALANMAZDI (`toplam == 27`
+//     iddiası ancak liste elle güncellenirse artar);
+//   - `store::notes::ozel_*` içe aktarırsa YAKALANMAZDI -- ki
+//     `routes::private_notes` modül başlığının tarif ettiği tehlike tam
+//     olarak budur: *"ileride eklenecek bir dışa aktarım/rapor ucu liste
+//     handler'ını yeniden kullanır."*
+//
+// Yani yapısal iddianın dosya kümesi, ihlalin gerçekleşebileceği kavşağı
+// dışarıda bırakıyordu.
+//
+// # Düzeltme: küme `server/src/routes/` dizininden okunuyor
+//
+// `include_str!` yerine çalışma zamanında `std::fs` kullanılıyor
+// (`CARGO_MANIFEST_DIR` = `server/`). Yeni bir rota modülü eklendiğinde
+// **hiçbir şey yapılmadan** dört iddianın da kapsamına girer.
+//
+// Emsal: `playwright.config.ts` aynı tuzağı (listeye eklenmemiş spec
+// sessizce koşulmaz) `e2e/` dizinini listeyle karşılaştırıp hata fırlatarak
+// kapatıyor. Buradaki fark, listeyi tümüyle ortadan kaldırabilmemiz.
+//
+// Geriye yalnızca **istisnalar** elle yazılı kaldı ve her istisna için iki
+// yönlü ön koşul var: dosya gerçekten var mı, ve istisna gerçekten
+// gerekiyor mu (yani dosya kuralı fiilen ihlal ediyor mu). Bir istisna
+// bayatlarsa test bunu söyler.
+
+/// `server/src/routes/` altındaki her `.rs` dosyası (`mod.rs` hariç),
+/// `(dosya adı, kaynak)` çifti olarak, ada göre sıralı.
+fn rota_kaynaklari() -> Vec<(String, String)> {
+    let dizin = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes");
+    let mut liste: Vec<(String, String)> = std::fs::read_dir(&dizin)
+        .unwrap_or_else(|e| panic!("{} okunamadi: {e}", dizin.display()))
+        .map(|girdi| girdi.expect("dizin girdisi okunamadi").path())
+        .filter(|yol| yol.extension().and_then(|u| u.to_str()) == Some("rs"))
+        .map(|yol| {
+            let ad = yol.file_name().unwrap().to_string_lossy().into_owned();
+            let kaynak = std::fs::read_to_string(&yol)
+                .unwrap_or_else(|e| panic!("{ad} okunamadi: {e}"));
+            (ad, kaynak)
+        })
+        .filter(|(ad, _)| ad != "mod.rs")
+        .collect();
+    liste.sort();
+    // Dizin okunamaz hale gelirse (yol degisti, calisma dizini farkli) her
+    // iddia BOS bir kume uzerinde saglanirdi -- sessiz yesil.
+    assert!(
+        liste.len() >= 8,
+        "rota dizini beklenenden kucuk, dosya kumesi turetilememis: {:?}",
+        liste.iter().map(|(a, _)| a).collect::<Vec<_>>()
+    );
+    liste
+}
+
+/// Yorum satırları elenmiş kaynak: kuralların KENDİSİ yorumlarda geçer.
+fn kod_satirlari(kaynak: &str) -> String {
+    kaynak
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Veri handler'ı **olmayan** rota modülleri.
+///
+/// `session.rs` (durum/kilit-aç/kilitle) ve `setup.rs` (kurulum) danışan
+/// verisine hiç dokunmaz: birincisi oturumun kendisini yönetir, ikincisi
+/// keystore'u kurar. `acik_baglanti` kapısı onlar için anlamsızdır (kilitli
+/// oturumda çalışmaları GEREKİR) ve denetim kaydını da **kendileri** yazar
+/// -- `giris`/`cikis`/`kurulum` satırlarını yazacak bir çekirdek çağrısı
+/// yok, kaynak onlar.
+const VERI_DISI_ROTALAR: [&str; 2] = ["session.rs", "setup.rs"];
+
+/// İstisna listesinin bayatlamadığını doğrular: adı yazılı her dosya
+/// gerçekten diskte olmalı. Dosya yeniden adlandırılırsa istisna sessizce
+/// etkisizleşir ve o modül **kurala tabi olmadığı hâlde** kurala tabi
+/// sayılırdı (ya da tersi).
+fn istisnalar_gercek_mi(kaynaklar: &[(String, String)], istisnalar: &[&str]) {
+    for istisna in istisnalar {
+        assert!(
+            kaynaklar.iter().any(|(ad, _)| ad == istisna),
+            "istisna listesi bayat: `{istisna}` artik server/src/routes/ altinda yok"
+        );
+    }
+}
+
+/// `routes/` dizini ile `routes/mod.rs` **birebir** örtüşmeli.
+///
+/// İki yön de gerçek bir hata: `mod.rs`'e yazılmayan bir dosya hiç
+/// derlenmez (yazılan kod ölüdür, hiçbir test onu çalıştırmaz ve
+/// geliştirici "eklemiştim" sanır); `mod.rs`'te olup diskte olmayan bir
+/// modül zaten derlenmez. `playwright.config.ts`'in `e2e/` kontrolüyle aynı
+/// desen -- orada da sessizlik bir hataya çevrilmişti.
+#[test]
+fn rota_dizini_ve_mod_rs_birebir_ortusur() {
+    let dizindeki: Vec<String> =
+        rota_kaynaklari().into_iter().map(|(ad, _)| ad).collect();
+    let mod_rs = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes/mod.rs"),
+    )
+    .expect("routes/mod.rs okunamadi");
+    let bildirilen: Vec<String> = kod_satirlari(&mod_rs)
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("pub mod ")?.strip_suffix(';').map(str::to_string))
+        .map(|ad| format!("{ad}.rs"))
+        .collect();
+
+    let bildirilmeyen: Vec<&String> =
+        dizindeki.iter().filter(|a| !bildirilen.contains(a)).collect();
+    let kayip: Vec<&String> = bildirilen.iter().filter(|a| !dizindeki.contains(a)).collect();
+    assert!(
+        bildirilmeyen.is_empty() && kayip.is_empty(),
+        "routes/mod.rs dizinle uyumsuz. `pub mod` yazilmamis (derlenmeyen) dosyalar: \
+         {bildirilmeyen:?}. Bildirilip diskte olmayanlar: {kayip:?}"
+    );
+}
+
 /// Rota katmanında çıplak `Query` kalmamalı: hepsi `guard::Sorgu`'dan geçer.
 ///
 /// Davranışsal tablo elle bakımlıdır; yarın eklenecek bir handler oraya
 /// yazılmayı unutabilir. Bu test, kuralın kaynak üzerinde **yapısal**
-/// karşılığıdır.
+/// karşılığıdır. Dosya kümesi dizinden gelir (bkz. yukarıdaki başlık).
 #[test]
 fn rota_modulleri_ciplak_query_kullanmaz() {
-    for (ad, kaynak) in [
-        ("notes.rs", include_str!("../src/routes/notes.rs")),
-        ("search.rs", include_str!("../src/routes/search.rs")),
-        ("clients.rs", include_str!("../src/routes/clients.rs")),
-        ("appointments.rs", include_str!("../src/routes/appointments.rs")),
-        ("private_notes.rs", include_str!("../src/routes/private_notes.rs")),
-        ("attachments.rs", include_str!("../src/routes/attachments.rs")),
-        ("session.rs", include_str!("../src/routes/session.rs")),
-        ("setup.rs", include_str!("../src/routes/setup.rs")),
-    ] {
+    for (ad, kaynak) in rota_kaynaklari() {
         // Yorumlar kuralin KENDISINDEN bahsedebilir (kardes yapisal testlerle
         // ayni eleme).
-        let kod: String = kaynak
-            .lines()
-            .filter(|l| !l.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let kod = kod_satirlari(&kaynak);
         assert!(
             !kod.contains("Query"),
             "{ad}: ciplak `axum::extract::Query` yerine `guard::Sorgu` kullanilmali; \
@@ -1449,28 +1563,25 @@ fn rota_modulleri_ciplak_query_kullanmaz() {
 /// da yakalar.
 #[test]
 fn rota_katmani_ozel_nota_yapisal_olarak_ayri_erisir() {
-    const OZEL: &str = include_str!("../src/routes/private_notes.rs");
-    let digerleri: [(&str, &str); 5] = [
-        ("notes.rs", include_str!("../src/routes/notes.rs")),
-        ("attachments.rs", include_str!("../src/routes/attachments.rs")),
-        ("search.rs", include_str!("../src/routes/search.rs")),
-        ("clients.rs", include_str!("../src/routes/clients.rs")),
-        ("appointments.rs", include_str!("../src/routes/appointments.rs")),
-    ];
+    const AYRILMIS: &str = "private_notes.rs";
+    let kaynaklar = rota_kaynaklari();
+    let ozel = &kaynaklar
+        .iter()
+        .find(|(ad, _)| ad == AYRILMIS)
+        .unwrap_or_else(|| panic!("{AYRILMIS} bulunamadi"))
+        .1;
 
     // On kosul: ayrilmis modul gercekten ozel not fonksiyonlarini CAGIRIYOR.
     // Yoksa asagidaki "digerlerinde yok" iddiasi, hicbir yerde cagrilmayan
     // bir fonksiyon icin de gecerdi (totoloji).
-    assert!(OZEL.contains("ozel_not_getir") && OZEL.contains("ozel_not_kaydet"));
+    assert!(ozel.contains("ozel_not_getir") && ozel.contains("ozel_not_kaydet"));
 
-    for (ad, kaynak) in digerleri {
+    // DIGERLERI dizinden geliyor: yarin eklenecek bir `export.rs` de
+    // hicbir sey yapilmadan bu iddianin kapsamina girer.
+    for (ad, kaynak) in kaynaklar.iter().filter(|(ad, _)| ad != AYRILMIS) {
         // Yorum satirlari kuralin KENDISINDEN bahsedebilir; yalnizca kod
         // satirlarina bakiyoruz.
-        let kod: String = kaynak
-            .lines()
-            .filter(|l| !l.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let kod = kod_satirlari(kaynak);
         assert!(
             !kod.contains("ozel_not_"),
             "{ad}: ozel not fonksiyonlari yalnizca private_notes.rs'ten cagrilmali"
@@ -1483,11 +1594,7 @@ fn rota_katmani_ozel_nota_yapisal_olarak_ayri_erisir() {
 
     // Ve hicbir rota modulu `private_notes` tablosuna elle SQL yazmiyor:
     // ozel nota erisimin tek kapisi depo fonksiyonlaridir.
-    let ozel_kod: String = OZEL
-        .lines()
-        .filter(|l| !l.trim_start().starts_with("//"))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let ozel_kod = kod_satirlari(ozel);
     assert!(
         !ozel_kod.contains("SELECT") && !ozel_kod.contains("INSERT"),
         "private_notes.rs de elle SQL yazmamali; yalnizca depo fonksiyonlarini cagirmali"
@@ -1495,20 +1602,28 @@ fn rota_katmani_ozel_nota_yapisal_olarak_ayri_erisir() {
 }
 
 /// Rota katmanı ikinci bir denetim kaydı satırı yazmaz.
+///
+/// Dosya kümesi dizinden gelir; istisna `VERI_DISI_ROTALAR`'dır ve o
+/// istisnanın **gerekli olduğu** aşağıda ayrıca doğrulanır (bayat bir
+/// istisna, kuralı sessizce bir modülden kaldırırdı).
 #[test]
 fn rota_modulleri_audit_kaydet_cagirmaz() {
-    for (ad, kaynak) in [
-        ("notes.rs", include_str!("../src/routes/notes.rs")),
-        ("private_notes.rs", include_str!("../src/routes/private_notes.rs")),
-        ("attachments.rs", include_str!("../src/routes/attachments.rs")),
-        ("search.rs", include_str!("../src/routes/search.rs")),
-        ("clients.rs", include_str!("../src/routes/clients.rs")),
-    ] {
-        let kod: String = kaynak
-            .lines()
-            .filter(|l| !l.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n");
+    let kaynaklar = rota_kaynaklari();
+    istisnalar_gercek_mi(&kaynaklar, &VERI_DISI_ROTALAR);
+
+    for (ad, kaynak) in &kaynaklar {
+        let kod = kod_satirlari(kaynak);
+        if VERI_DISI_ROTALAR.contains(&ad.as_str()) {
+            // ON KOSUL: istisna GERCEKTEN gerekli. `session.rs`/`setup.rs`
+            // giris/cikis/kurulum satirlarinin KAYNAGI; yazmayi birakirlarsa
+            // istisna listesinden de dusmeleri gerekir.
+            assert!(
+                kod.contains("kaydet("),
+                "{ad}: veri disi rota artik denetim kaydi yazmiyor -- \
+                 VERI_DISI_ROTALAR istisnasi bayatladi"
+            );
+            continue;
+        }
         assert!(
             !kod.contains("audit::kaydet") && !kod.contains("audit::{kaydet"),
             "{ad}: cekirdek hacim kararini zaten verdi; rota ikinci bir SILINEMEZ satir yazmamali"
@@ -1543,38 +1658,45 @@ fn rota_modulleri_audit_kaydet_cagirmaz() {
 /// her parçanın gövdesinin **ilk satırının** kapı olduğu iddia edilir —
 /// sayım değil, **bire bir eşleme**. Kapının parça başına tam bir kez geçmesi
 /// de ayrıca iddia edilir, böylece (b) tipi telafi imkânsızdır.
+///
+/// **Dal incelemesi (üçüncü kusur): modül listesi elle yazılıydı.** Modül
+/// başına beklenen handler sayısı tutuluyordu ve yeni bir rota dosyası
+/// (Plan 4'ün `export.rs`'i) listeye eklenmedikçe iddia onu hiç görmezdi.
+/// Artık küme `server/src/routes/` dizininden okunuyor: kapısız bir
+/// `pub async fn` içeren yeni bir dosya, listeye eklenmeden de bu testi
+/// kırar. Elle kalan tek şey `VERI_DISI_ROTALAR` istisnası ve o istisnanın
+/// **gerekli olduğu** burada iki yönlü doğrulanıyor.
 #[test]
 fn her_veri_handleri_acik_baglantidan_gecer() {
     const KAPI: &str = "let conn = acik_baglanti(&s)?;";
-    let moduller: [(&str, &str, usize); 6] = [
-        ("notes.rs", include_str!("../src/routes/notes.rs"), 3),
-        ("private_notes.rs", include_str!("../src/routes/private_notes.rs"), 2),
-        ("attachments.rs", include_str!("../src/routes/attachments.rs"), 5),
-        ("search.rs", include_str!("../src/routes/search.rs"), 1),
-        // clients.rs: liste, olustur, arsivle_uc (eski 3) + getir_uc,
-        // guncelle_uc, saklama_listesi (Gorev 7'nin 3'u) + rapor_kaydi_uc
-        // (dal incelemesi C1).
-        ("clients.rs", include_str!("../src/routes/clients.rs"), 7),
-        // Gorev 7 oncesi 11 veri handler'i vardi (clients 3 + appointments 8);
-        // dal incelemesi I2 `silinecekler` onizlemesini ekledi -> 9.
-        ("appointments.rs", include_str!("../src/routes/appointments.rs"), 9),
-    ];
+    let kaynaklar = rota_kaynaklari();
+    istisnalar_gercek_mi(&kaynaklar, &VERI_DISI_ROTALAR);
 
     let mut toplam = 0;
-    for (ad, kaynak, beklenen) in moduller {
+    for (ad, kaynak) in &kaynaklar {
         // Yorum satirlari kuralin KENDISINDEN bahsedebilir; yalnizca kod
         // satirlarina bakiyoruz (kardes yapisal testlerle ayni eleme).
-        let kod: String = kaynak
-            .lines()
-            .filter(|l| !l.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let kod = kod_satirlari(kaynak);
+
+        if VERI_DISI_ROTALAR.contains(&ad.as_str()) {
+            // ON KOSUL: istisna GERCEKTEN gerekli. Bu modul kapiyi bir gun
+            // kullanmaya baslarsa artik "veri disi" degildir ve istisna
+            // listesinden dusmelidir -- o an bu iddia kirilir.
+            assert!(
+                !kod.contains("acik_baglanti"),
+                "{ad}: veri disi rota kapiyi kullaniyor -- VERI_DISI_ROTALAR \
+                 istisnasi bayatladi, modul artik veri handler'i tasiyor"
+            );
+            continue;
+        }
 
         let parcalar: Vec<&str> = kod.split("pub async fn ").skip(1).collect();
-        assert_eq!(
-            parcalar.len(),
-            beklenen,
-            "{ad}: handler sayisi degistiyse bu test guncellenmeli"
+        // Bos bir veri rota modulu, "hicbir handler yok" diyerek her iddiayi
+        // sessizce saglardi.
+        assert!(
+            !parcalar.is_empty(),
+            "{ad}: veri rota modulu en az bir `pub async fn` icermeli \
+             (icermiyorsa VERI_DISI_ROTALAR'a yazilmali)"
         );
 
         for parca in &parcalar {
@@ -1606,6 +1728,10 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
         }
         toplam += parcalar.len();
     }
+    // Ikinci ag: sayi degisirse (handler eklendi/silindi) bu satir kirilir ve
+    // degisiklik BILINCLI olarak onaylanir. Birincil koruma artik yukaridaki
+    // bire bir esleme -- sayiyi guncellemek tek basina bir kapiyi geri
+    // getirmez.
     assert_eq!(toplam, 27, "toplam veri handler'i sayisi 27 olmali");
 }
 

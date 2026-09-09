@@ -433,13 +433,25 @@ describe('HizliArama — sonuçlar', () => {
     // Türetilen liste yanıt gelene kadar boş; ayrım yapılmasaydı ekranda
     // henüz sorulmamış bir sorunun cevabı görünürdü.
     let coz: (s: AramaYaniti) => void = () => {}
-    kur({ ara: vi.fn(() => new Promise<AramaYaniti>((c) => { coz = c })) })
+    const ara = vi.fn(() => new Promise<AramaYaniti>((c) => { coz = c }))
+    kur({ ara })
     await ac()
     await userEvent.type(kutu(), 'kaygi')
 
     expect(await screen.findByText(/aranıyor/i)).toBeDefined()
     expect(screen.queryByText(/sonuç bulunamadı/i)).toBeNull()
 
+    // SENKRONİZASYON BARİYERİ (dal incelemesi M6 ile aynı sınıf, altıncı
+    // biçim). "Aranıyor…" metni istek ATILMADAN da görünür: `bekleniyor`
+    // yalnızca "sorgu yeterince uzun ve yanıt yok" demek. Yüklü bir
+    // makinede `userEvent.type` tuşlar arasında gerçekten bekliyor,
+    // 5 ms'lik debounce ARA bir önek için ('ka') dolabiliyor ve son
+    // sorgunun ('kaygi') zamanlayıcısı hâlâ beklerken `coz` o ara isteğe
+    // işaret ediyor. O hâlde `coz(...)` BAYAT bir sorguyu çözer, ekranda
+    // hiçbir şey değişmez ve test **ürün doğru çalıştığı hâlde** kırılır
+    // (tam paket koşusunda bir kez oldu). Bariyer, çözülecek isteğin
+    // gerçekten SON sorguya ait olmasını garanti eder.
+    await waitFor(() => expect(ara).toHaveBeenCalledWith('kaygi'))
     coz(yanit([]))
     expect(await screen.findByText(/sonuç bulunamadı/i)).toBeDefined()
   })

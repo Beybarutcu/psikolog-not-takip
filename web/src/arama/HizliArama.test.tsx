@@ -1,3 +1,4 @@
+import aramaKaynagi from './HizliArama.tsx?raw'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -346,6 +347,36 @@ describe('HizliArama — gizlilik', () => {
     await userEvent.keyboard('{Escape}')
 
     for (const casus of casuslar) expect(casus).not.toHaveBeenCalled()
+  })
+
+  // Sunucudaki `store::search::kaynak_kodda_private_notes_gecmez` testinin
+  // istemci karşılığı. Davranışsal testler "bugün sızmıyor" der; bu test
+  // "sızdırabilecek bir yol EKLENEMEZ" der — sızıntının en olası biçimi,
+  // ileride birinin aramaya "bir de özel notlara bakalım" diye ikinci bir
+  // kaynak eklemesidir.
+  describe('kaynak kodda özel nota giden bir yol YOKTUR', () => {
+    it('kaynak gercekten okundu', () => {
+      // Boş bir okuma, aşağıdaki iddiayı hiçbir şeyi sınamayan bir yeşile
+      // çevirirdi.
+      expect(aramaKaynagi.length).toBeGreaterThan(500)
+      expect(aramaKaynagi).toContain('export function HizliArama')
+    })
+
+    it('kod bolumunde `ozelNotApi` / `ozel-not` gecmiyor', () => {
+      // Yorumlar hariç tutuluyor: bu dosyanın başlığı özel notlardan
+      // BAHSEDİYOR (neden gelmediklerini anlatıyor) ve bir yorum, kodun
+      // yapısı hakkındaki iddiayı tatmin edemez — dokuzuncu biçim.
+      const kod = aramaKaynagi
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '')
+      expect(kod).not.toContain('ozelNotApi')
+      expect(kod).not.toContain('ozel-not')
+      expect(kod).not.toContain('private_notes')
+      // ARTI YÖN: yorum ayıklama kodu boşaltmadı (boş bir dizgi yukarıdaki
+      // üç iddiayı da geçerdi).
+      expect(kod).toContain('ARAMA_SINIRI')
+      expect(kod).toContain('export function HizliArama')
+    })
   })
 
   it('ekranda gorunen her sey YALNIZCA `ara` sonucundan gelir', async () => {

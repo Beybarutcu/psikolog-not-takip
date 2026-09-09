@@ -1,3 +1,5 @@
+import raporKaynagi from './veriRaporu.ts?raw'
+import kartKaynagi from './DanisanKarti.tsx?raw'
 import { describe, expect, it } from 'vitest'
 import type { DanisanDosyasi, EkBilgisi, SeansNotu } from '../api'
 import { veriRaporuMetni } from './veriRaporu'
@@ -109,5 +111,46 @@ describe('veriRaporuMetni', () => {
     expect(metin).not.toContain('undefined')
     expect(metin).toContain('(kayıtlı değil)')
     expect(metin).toContain('SEANS NOTLARI (0)')
+  })
+})
+
+// Sunucudaki `store::search::kaynak_kodda_private_notes_gecmez` testinin
+// dışa aktarım tarafındaki karşılığı. Davranışsal testler "bugünkü rapor
+// özel not içermiyor" der; bu test "içerebilecek bir yol EKLENEMEZ" der.
+// Sızıntının en olası biçimi, ileride birinin rapora "bir de terapistin
+// kendi notlarını ekleyelim" diye ikinci bir kaynak koymasıdır.
+describe('dışa aktarım kaynağında özel nota giden bir yol YOKTUR', () => {
+  function kodu(kaynak: string): string {
+    // Yorumlar ayıklanıyor: iki dosyanın da başlığı özel notlardan
+    // BAHSEDİYOR (neden dahil olmadıklarını anlatıyor) ve bir yorum, kodun
+    // yapısı hakkındaki iddiayı tatmin edemez.
+    return kaynak.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+  }
+
+  it('kaynaklar gercekten okundu', () => {
+    // Boş bir okuma aşağıdaki iddiaları hiçbir şeyi sınamayan yeşile
+    // çevirirdi.
+    expect(kodu(raporKaynagi)).toContain('export function veriRaporuMetni')
+    expect(kodu(kartKaynagi)).toContain('export function DanisanKarti')
+  })
+
+  it('ne rapor uretici ne kart `ozelNotApi` / `ozel-not` gecirir', () => {
+    for (const kod of [kodu(raporKaynagi), kodu(kartKaynagi)]) {
+      expect(kod).not.toContain('ozelNotApi')
+      expect(kod).not.toContain('ozel-not')
+      expect(kod).not.toContain('OzelNot')
+      expect(kod).not.toContain('private_notes')
+    }
+  })
+
+  it('rapor uretici danisan nesnesini TOPLUCA dokumlemiyor', () => {
+    // `JSON.stringify(danisan)` ya da `Object.entries(danisan)` bugün
+    // risk notunu, yarın eklenen her yeni alanı sessizce rapora sokardı.
+    // Alanların TEK TEK yazılması bilinçli bir karar.
+    const kod = kodu(raporKaynagi)
+    expect(kod).not.toContain('JSON.stringify')
+    expect(kod).not.toContain('Object.entries')
+    expect(kod).not.toContain('Object.values')
+    expect(kod).not.toContain('...danisan')
   })
 })

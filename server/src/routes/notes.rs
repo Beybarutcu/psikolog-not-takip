@@ -143,11 +143,28 @@ mod tests {
         assert_eq!(limiti_kirp(Some(i64::MIN)), 1);
     }
 
+    /// Sabitin KENDISI duz sayiyla pinlenir.
+    ///
+    /// Bunun oncesinde her iddia sabite GORELIYDI (`AZAMI_NOT_LIMITI + 1` ->
+    /// `AZAMI_NOT_LIMITI`), yani sabit degisince iddialar kendilerini
+    /// ayarliyordu: `200`'u `1_000_000` yapan mutasyon hicbir testi kirmadi --
+    /// oysa o deger, tek yanitta donebilecek seans notu sayisini (dolayisiyla
+    /// yanit boyutunu) belirleyen bir sozlesmedir. Kod tabani kardes sabitleri
+    /// zaten literal'e pinliyor (`AZAMI_GOVDE_BOYUTU == 20 * 1024 * 1024`,
+    /// `AZAMI_SONUC == 50`); istisna buydu.
+    #[test]
+    fn limit_sabitleri_duz_sayiyla_pinlenir() {
+        assert_eq!(AZAMI_NOT_LIMITI, 200, "azami not limiti sozlesmesi 200'dur");
+        assert_eq!(VARSAYILAN_NOT_LIMITI, 50, "varsayilan not limiti sozlesmesi 50'dir");
+        assert!(VARSAYILAN_NOT_LIMITI < AZAMI_NOT_LIMITI);
+    }
+
     #[test]
     fn limit_ust_uctan_kirpilir() {
-        assert_eq!(limiti_kirp(Some(AZAMI_NOT_LIMITI + 1)), AZAMI_NOT_LIMITI);
-        assert_eq!(limiti_kirp(Some(1_000_000)), AZAMI_NOT_LIMITI);
-        assert_eq!(limiti_kirp(Some(i64::MAX)), AZAMI_NOT_LIMITI);
+        // Duz sayiyla: sabit degisirse bu iddia kendini AYARLAMAZ, kirilir.
+        assert_eq!(limiti_kirp(Some(201)), 200);
+        assert_eq!(limiti_kirp(Some(1_000_000)), 200);
+        assert_eq!(limiti_kirp(Some(i64::MAX)), 200);
     }
 
     #[test]
@@ -156,7 +173,7 @@ mod tests {
         // ust/alt sinir testleri yazilsaydi, limiti hep 1 yapan bir uygulama
         // ikisini de gecerdi.
         assert_eq!(limiti_kirp(Some(3)), 3);
-        assert_eq!(limiti_kirp(Some(AZAMI_NOT_LIMITI)), AZAMI_NOT_LIMITI);
-        assert_eq!(limiti_kirp(None), VARSAYILAN_NOT_LIMITI);
+        assert_eq!(limiti_kirp(Some(200)), 200);
+        assert_eq!(limiti_kirp(None), 50);
     }
 }

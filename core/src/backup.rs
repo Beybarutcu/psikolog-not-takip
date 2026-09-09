@@ -1161,18 +1161,26 @@ mod tests {
     fn ard_arda_iki_yedek_iki_satir_yazar() {
         // `attachments::icerik_getir` ile ayni gerekce: birlestirilseydi iki
         // yedekten biri gorunmez olurdu. `LogHacmi::HerCagri` secimini
-        // KANITLAYAN test budur -- `OturumBasi(5)` mutasyonu burada kirilir.
+        // KANITLAYAN test budur.
+        //
+        // AYNI DAMGA bilerek: birlestirme anahtari
+        // `(eylem, varlik, varlik_id, cihaz)` dortlusudur ve `varlik_id`
+        // damgadir. Iki FARKLI gunle olculseydi `OturumBasi(5)` mutasyonu
+        // hayatta kalirdi -- iki farkli `varlik_id` zaten birlesmez.
+        // "Simdi yedek al"a ayni gun iki kez basmak gercek bir kullanici
+        // eylemi (ornegin dosyalari harici diske kopyalamadan once) ve
+        // ikisi de hesabi verilmesi gereken birer disa aktarmadir.
         let o = kur("parola123");
         let c = open_encrypted(&o.db, &o.key).unwrap();
         let once = log_satirlari(&c).len();
 
-        for gun in ["2026-09-07", "2026-09-08"] {
+        for _ in 0..2 {
             yedek_al_ve_kaydet(
                 &c,
                 &o.db,
                 &o.keystore_yolu,
                 &o.hedef,
-                gun,
+                "2026-09-07",
                 &o.key,
                 crate::store::audit::Cihaz::Masaustu,
             )
@@ -1181,6 +1189,10 @@ mod tests {
 
         let sonra = log_satirlari(&c);
         assert_eq!(sonra.len(), once + 2, "her yedek ayri satir yazmali -- {sonra:?}");
+        assert_eq!(
+            sonra.iter().filter(|s| *s == "disa_aktarma|backup|2026-09-07").count(),
+            2
+        );
     }
 
     #[test]

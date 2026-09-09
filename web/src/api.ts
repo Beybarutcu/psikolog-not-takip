@@ -350,6 +350,36 @@ export const danisanApi = {
     }),
   ekleriGetir: (id: number) => istek<EkBilgisi[]>(`/api/danisanlar/${id}/ekler`),
   /**
+   * Veri raporu dışa aktarımını denetim kaydına yazdırır
+   * (`POST /api/danisanlar/{id}/rapor-kaydi`).
+   *
+   * # Neden bu çağrı var
+   *
+   * Rapor tamamen İSTEMCİDE üretiliyor (`veriRaporu.ts` + `Blob`), yani
+   * sunucu dosyanın diske yazıldığını başka hiçbir yerden göremez. Rapor
+   * için çekilen not listesi (`notApi.danisanNotlari`) `goruntuleme` yazıyor
+   * ve 5 dakikalık pencerede **birleşiyor** — seans paneli aynı danışan için
+   * açıldıysa dışa aktarım denetim kaydında hiç iz bırakmıyordu. Tasarım §4
+   * dışa aktarmayı açıkça sayıyor; emsal `attachments::icerik_getir` (tek
+   * bir ek indirmesi bile `DisaAktarma` + `HerCagri`).
+   *
+   * # ÖNCE çağrılır — fail-closed
+   *
+   * `DanisanKarti::raporHazirla` bunu notları çekmeden ÖNCE `await` eder;
+   * reddedilirse (kilitli oturum → 401, bilinmeyen danışan → 404, disk
+   * hatası → 500) rapor **hiç üretilmez**. Plan 1'in kurulum/kilit-açma
+   * kararıyla aynı gerekçe: kaydedilemeyecek bir erişime izin verilmez.
+   *
+   * Gövde bilerek boş: rapor içeriği (ad, not metni, dosya adları) sunucuya
+   * ve loga ASLA gitmez.
+   *
+   * PLAN 4: dışa aktarım sunucuya taşınıp parola korumalı üretildiğinde
+   * (tasarım §10) raporu üreten uç noktanın kendisi loglayacak ve bu çağrı
+   * kaldırılacak.
+   */
+  raporKaydiOlustur: (id: number) =>
+    istek<Record<string, never>>(`/api/danisanlar/${id}/rapor-kaydi`, { method: 'POST' }),
+  /**
    * Ek dosya yükler (`POST /api/danisanlar/{id}/ekler`).
    *
    * # Sözleşme standart DEĞİL ve bilerek öyle

@@ -345,7 +345,34 @@ describe('danışan dosyası uç noktalarında 401', () => {
       'dosyaGetir',
       'rizaKaydet',
       'ekleriGetir',
+      // Dal incelemesi C1: disa aktarimin denetim kaydi. Veri GETIRMEZ --
+      // govdesi bos bir POST'tur ve yaniti kullanilmaz; nesnenin gizlilik
+      // sozunu genisletmez.
+      'raporKaydiOlustur',
       'ekYukle',
     ])
+  })
+
+  it('raporKaydiOlustur tam olarak POST /api/danisanlar/{id}/rapor-kaydi eder', async () => {
+    // Yol duz literal ve govde BOS: rapor icerigi (ad, not metni, dosya
+    // adlari) sunucuya ve loga ASLA gitmez.
+    await danisanApi.raporKaydiOlustur(7)
+    expect(cagrilar).toEqual([
+      { yol: '/api/danisanlar/7/rapor-kaydi', method: 'POST', govde: null },
+    ])
+  })
+
+  it('raporKaydiOlustur 401de YetkisizHata firlatir (fail-closed dayanagi)', async () => {
+    // Kart bu firlatmaya guveniyor: sessizce basarili donseydi kilitli
+    // oturumda KAYITSIZ bir rapor uretilebilirdi.
+    sunucu(() => ({ ok: false, status: 401, govde: { hata: 'Oturum kilitli.' } }))
+    await expect(danisanApi.raporKaydiOlustur(7)).rejects.toBeInstanceOf(YetkisizHata)
+  })
+
+  it('raporKaydiOlustur 404te de firlatir', async () => {
+    // 401 disindaki redler de fail-closed olmali: 404/500 alinip yine de
+    // rapor uretilirse kayitsiz bir kopya olusur.
+    sunucu(() => ({ ok: false, status: 404, govde: { hata: 'Kayıt bulunamadı.' } }))
+    await expect(danisanApi.raporKaydiOlustur(7)).rejects.toThrow('Kayıt bulunamadı.')
   })
 })

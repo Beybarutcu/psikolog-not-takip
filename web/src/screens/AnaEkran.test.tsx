@@ -1556,6 +1556,11 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
       const ekler = /^\/api\/danisanlar\/(\d+)\/ekler$/.exec(yol)
       if (ekler) return jsonYanit([])
 
+      // Dal incelemesi C1: disa aktarim denetim kaydi. ACIKCA karsilaniyor;
+      // asagidaki `/api/danisanlar` on ek eslesmesine birakilsaydi, yolu
+      // yanlis yazan bir mutasyon (or. `.../rapor` ) yine yesil gecerdi.
+      if (/^\/api\/danisanlar\/\d+\/rapor-kaydi$/.test(yol)) return jsonYanit({})
+
       const dosya = /^\/api\/danisanlar\/(\d+)$/.exec(yol)
       if (dosya) return jsonYanit(dosyalar[Number(dosya[1])])
 
@@ -1652,6 +1657,53 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     await waitFor(() =>
       expect(istekYollari).toContain('GET /api/danisanlar/1/notlar?limit=200'),
     )
+  })
+
+  // Dal incelemesi C1: dışa aktarım DENETİM KAYDI bırakır — ve önce onu
+  // bırakır. Rapor tamamen istemcide üretildiği için sunucu bu isteği
+  // görmezse dışa aktarımdan haberi olmaz; not listesi ise `goruntuleme`
+  // yazıp 5 dakikalık pencerede birleşir (seans paneli aynı danışan için
+  // açıldıysa iz SIFIRDIR).
+  it('veri raporu disa aktarimi ONCE rapor-kaydi ucunu POST eder', async () => {
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
+    await screen.findByText('0555 111 22 33')
+
+    // ÖN KOŞUL: kart açılışı bu ucu kendiliğinden çağırmıyor — çağırsaydı
+    // aşağıdaki iddia "zaten öyleydi" ile tatmin olurdu.
+    expect(istekYollari).not.toContain('POST /api/danisanlar/1/rapor-kaydi')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
+    await screen.findByRole('link', { name: /raporu indir/i })
+
+    const kayit = istekYollari.indexOf('POST /api/danisanlar/1/rapor-kaydi')
+    const notlar = istekYollari.indexOf('GET /api/danisanlar/1/notlar?limit=200')
+    expect(kayit, 'rapor-kaydi ucu cagrilmali').toBeGreaterThan(-1)
+    // SIRA: kayıt notlardan ÖNCE. Kaydı sona koyan bir sürüm "ikisi de
+    // çağrıldı" iddiasını geçerdi ama fail-closed sözünü tutmazdı.
+    expect(kayit).toBeLessThan(notlar)
+  })
+
+  it('rapor kaydi REDDEDILIRSE hicbir rapor uretilmez (fail-closed)', async () => {
+    // Kilitli oturumda kayıt yazılamaz; o hâlde dosya da diske yazılmamalı.
+    // Ölçülen şey ekrandaki mesaj değil, Blob'un HİÇ üretilmemesi.
+    render(<AnaEkran kilitle={vi.fn()} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
+    await screen.findByText('0555 111 22 33')
+
+    yetkisiz = true
+    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
+
+    await waitFor(() =>
+      expect(screen.getByText('Oturum zaman aşımına uğradı.')).toBeDefined(),
+    )
+    expect(uretilenBloblar).toHaveLength(0)
+    expect(screen.queryByRole('link', { name: /raporu indir/i })).toBeNull()
+    // Notlar bile çekilmedi: kayıt kapısı ilk sıradaydı.
+    const kayitSonrasi = istekYollari.slice(
+      istekYollari.indexOf('POST /api/danisanlar/1/rapor-kaydi') + 1,
+    )
+    expect(kayitSonrasi.some((y) => y.includes('/notlar?limit=200'))).toBe(false)
   })
 
   // C1 — DAVRANIŞSAL katman. `veriRaporu.test.ts` ve `DanisanKarti.test.tsx`

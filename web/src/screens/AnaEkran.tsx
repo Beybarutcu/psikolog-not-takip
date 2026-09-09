@@ -615,6 +615,25 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
     return notApi.danisanNotlari(seciliDanisanId, RAPOR_NOT_SINIRI)
   }
 
+  // Dışa aktarımın DENETİM KAYDI — kart bunu notları çekmeden ÖNCE çağırır
+  // (bkz. `DanisanKarti` modül başlığı "Dışa aktarım önce KAYDEDİLİR").
+  //
+  // Bu fonksiyon BİLEREK `raporNotlariGetir`'in dışında duruyor: o gövde
+  // raporun NOT KAYNAĞINI seçen kavşaktır ve `AnaEkran.test.tsx` onu
+  // satır satır tarıyor ("gövdede özel nota giden hiçbir yol YOKTUR").
+  // İkinci bir sorumluluğu oraya taşımak o taramanın ölçtüğü şeyi
+  // bulanıklaştırırdı.
+  //
+  // Danışan seçili değilse fırlatır, sessizce başarılı olmaz: kartın
+  // fail-closed sırası ancak "kayıt gerçekten yazıldı" güvencesi varsa
+  // anlamlıdır — burada `return` etmek, kayıtsız bir raporu üretilebilir
+  // kılardı. (Kart yalnızca `seciliDanisanId !== null` iken render
+  // edildiği için bu dal bugün ulaşılamaz; ikincil hat.)
+  async function raporKaydiOlustur(): Promise<void> {
+    if (seciliDanisanId === null) throw new Error('Danışan seçili değil; rapor kaydı yazılamadı.')
+    await danisanApi.raporKaydiOlustur(seciliDanisanId)
+  }
+
   async function kaydet(kayit: {
     client_id: number
     baslangic: string
@@ -953,6 +972,7 @@ export function AnaEkran({ kilitle }: { kilitle: () => void }) {
               bugun={yerelGun(new Date())}
               notlariGetir={raporNotlariGetir}
               notSiniri={RAPOR_NOT_SINIRI}
+              raporKaydiOlustur={raporKaydiOlustur}
               ekYukle={ekYukle}
               onRizaKaydet={rizaKaydet}
               onKapat={danisanKartiKapat}

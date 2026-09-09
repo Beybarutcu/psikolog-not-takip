@@ -65,6 +65,10 @@ fn api_router() -> Router<AppState> {
         // Görev 7'nin ekleyeceği `/danisanlar/{id}` ile çakışmaz -- bu üç
         // segmentli.
         .route("/danisanlar/{id}/arsivle", post(routes::clients::arsivle_uc))
+        // Veri raporu disa aktariminin denetim kaydi (C1). Uc segmentli,
+        // `.../arsivle` ile ayni sinifta: yan etkisi olan bir islem, bu
+        // yuzden `POST`. Gerekce icin bkz. `routes::clients::rapor_kaydi_uc`.
+        .route("/danisanlar/{id}/rapor-kaydi", post(routes::clients::rapor_kaydi_uc))
         .route(
             "/randevular",
             get(routes::appointments::liste).post(routes::appointments::olustur),
@@ -90,7 +94,8 @@ fn api_router() -> Router<AppState> {
         //
         // Asagidaki on dort handler'in da ilk satiri `guard::acik_baglanti`:
         // kilitliyken 401, govdede veri yok, islem uygulanmaz. Toplam veri
-        // handler'i sayisi 11 -> 25.
+        // handler'i sayisi 11 -> 25 (dal incelemesi C1'in ekledigi
+        // `rapor-kaydi` ile 26).
         //
         // `/danisanlar/{id}` iki segmentlidir; uc segmentli
         // `/danisanlar/{id}/arsivle`, `.../notlar` ve `.../ekler` ile

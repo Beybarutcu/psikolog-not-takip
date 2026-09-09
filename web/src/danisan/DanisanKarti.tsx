@@ -69,6 +69,30 @@ import { veriRaporuMetni } from './veriRaporu'
  * başvuru nedenini ve tüm resmî not içeriklerini taşıyan düz bir metin
  * dosyasıdır — diske yazılmasının bir tıkla daha ayrılması, kazara üretilen
  * bir kopyayı önler. Üretilen blob URL'i kart kapanınca serbest bırakılır.
+ *
+ * # Dışa aktarım önce KAYDEDİLİR (fail-closed) — dal incelemesi C1
+ *
+ * Rapor tamamen burada, istemcide üretiliyor; sunucu dosyanın diske
+ * yazıldığını başka hiçbir yerden göremez. Rapor için çekilen not listesi
+ * (`GET /api/danisanlar/{id}/notlar`) `goruntuleme` yazıyor ve 5 dakikalık
+ * pencerede **birleşiyor** — seans paneli aynı danışan için az önce
+ * açıldıysa dışa aktarım silinemez denetim kaydında **hiçbir iz
+ * bırakmıyordu**. Oysa tasarım §4 dışa aktarmayı açıkça sayıyor ve kod
+ * tabanı doğrusunu zaten biliyor: tek bir ek indirmesi bile
+ * `Eylem::DisaAktarma` + `LogHacmi::HerCagri` ile yazılıyor.
+ *
+ * Bu yüzden `raporHazirla`'nın İLK adımı `raporKaydiOlustur()`'dur ve
+ * **sıra bir güvencedir**: kayıt reddedilirse (kilitli oturum, bilinmeyen
+ * danışan, disk hatası) rapor hiç üretilmez — ne notlar çekilir, ne metin
+ * kurulur, ne indirme bağlantısı görünür. Plan 1'in kurulum/kilit-açma
+ * kararıyla aynı gerekçe: *kaydedilemeyecek bir erişime izin verilmez.*
+ * Ters sıra ("önce üret, sonra kaydet") kaydın başarısız olduğu durumda
+ * kullanıcının elinde kayıtsız bir kopya bırakırdı.
+ *
+ * PLAN 4 NOTU: dışa aktarım sunucu tarafına taşınacak ve parola korumalı
+ * üretilecek (tasarım §10); o zaman raporu ÜRETEN uç nokta kendi kaydını
+ * yazacak ve bu iki adımlı düzen kaldırılacak. Bugünkü hâl, o güne kadarki
+ * asgari doğru davranıştır.
  */
 type Props = {
   danisan: DanisanDosyasi
@@ -88,6 +112,13 @@ type Props = {
    * bkz. `HizliArama`).
    */
   notSiniri: number
+  /**
+   * Dışa aktarımı **denetim kaydına** yazdırır; `raporHazirla`'nın İLK adımı.
+   *
+   * Bkz. modül başlığındaki "Dışa aktarım önce KAYDEDİLİR" bölümü ve
+   * `danisanApi.raporKaydiOlustur`.
+   */
+  raporKaydiOlustur: () => Promise<void>
   ekYukle: (dosya: File, tur: string) => Promise<void>
   onRizaKaydet: (alan: { riza_tarihi: string; riza_dosya_id: number | null }) => Promise<void>
   onKapat: () => void
@@ -110,6 +141,7 @@ export function DanisanKarti({
   bugun,
   notlariGetir,
   notSiniri,
+  raporKaydiOlustur,
   ekYukle,
   onRizaKaydet,
   onKapat,
@@ -186,6 +218,12 @@ export function DanisanKarti({
     setRaporSuruyor(true)
     setRaporHatasi(null)
     try {
+      // SIRA ÖNEMLİ — bkz. modül başlığı "Dışa aktarım önce KAYDEDİLİR".
+      // Kayıt başarısız olursa (kilitli oturum → 401, bilinmeyen danışan →
+      // 404, disk hatası → 500) `await` fırlatır, `catch`'e düşülür ve
+      // AŞAĞIDAKİ HİÇBİR SATIR ÇALIŞMAZ: notlar çekilmez, metin üretilmez,
+      // Blob oluşmaz, indirme bağlantısı gösterilmez. Fail-closed.
+      await raporKaydiOlustur()
       const notlar = await notlariGetir()
       const kirpilmisOlabilir = notlar.length >= notSiniri
       const metin = veriRaporuMetni(danisan, notlar, ekler, kirpilmisOlabilir)

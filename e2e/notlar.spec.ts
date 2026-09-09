@@ -156,7 +156,17 @@ test('ozel not danisan raporuna girmez, resmi not girer', async ({ page }) => {
   // durumda mümkün. Paneli önce kapatan bir test, ölçmek istediği kavşağı
   // ulaşılamaz kılardı.
   await danisanKartiAc(page, ad)
+
+  // Dal incelemesi C1: dışa aktarım silinemez denetim kaydına bir
+  // `disa_aktarma` satırı yazdırır ve bunu notları çekmeden ÖNCE yapar
+  // (fail-closed). Arayüz ile sunucu arasındaki YOL uyuşmazlığı yalnızca
+  // burada görünür: uç nokta yanlış yazılsaydı `POST` 404 döner, kayıt
+  // reddedilir ve aşağıdaki indirme bağlantısı HİÇ basılmazdı.
+  const kayitIstegi = page.waitForResponse(
+    (y) => /\/api\/danisanlar\/\d+\/rapor-kaydi$/.test(y.url()) && y.request().method() === 'POST',
+  )
   await page.getByRole('button', { name: 'Veri raporu dışa aktar' }).click()
+  expect((await kayitIstegi).status(), 'rapor kaydi ucu 200 donmeli').toBe(200)
 
   // BARİYER: bağlantı ancak `notlariGetir` çözüldükten ve Blob üretildikten
   // sonra basılıyor.

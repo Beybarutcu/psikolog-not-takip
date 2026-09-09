@@ -100,6 +100,7 @@ function kur(ozel: Partial<React.ComponentProps<typeof DanisanKarti>> = {}) {
     bugun: '2026-09-09',
     notlariGetir: vi.fn().mockResolvedValue(resmiNotlar),
     notSiniri: 200,
+    raporKaydiOlustur: vi.fn().mockResolvedValue(undefined),
     ekYukle: vi.fn().mockResolvedValue(undefined),
     onRizaKaydet: vi.fn().mockResolvedValue(undefined),
     onKapat: vi.fn(),
@@ -416,6 +417,51 @@ describe('DanisanKarti — veri raporu (KVKK md. 11)', () => {
     expect(screen.queryByText(/rapora girmemiş olabilir/i)).toBeNull()
   })
 
+  // --- Dal incelemesi C1: dışa aktarım ÖNCE kaydedilir (fail-closed) ---
+
+  it('disa aktarim, notlar cekilmeden ONCE denetim kaydini yazdirir', async () => {
+    // Sıra bir güvence: kayıt yazılamıyorsa rapor da üretilmemeli. Bunu
+    // ölçmenin tek yolu çağrı SIRASINI görmek — "ikisi de çağrıldı"
+    // iddiası, kaydı en sona koyan bir sürümü de geçerdi.
+    const sira: string[] = []
+    const raporKaydiOlustur = vi.fn().mockImplementation(async () => {
+      sira.push('kayit')
+    })
+    const notlariGetir = vi.fn().mockImplementation(async () => {
+      sira.push('notlar')
+      return resmiNotlar
+    })
+    kur({ raporKaydiOlustur, notlariGetir })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
+    await screen.findByRole('link', { name: /raporu indir/i })
+
+    expect(raporKaydiOlustur).toHaveBeenCalledTimes(1)
+    expect(sira).toEqual(['kayit', 'notlar'])
+  })
+
+  it('FAIL-CLOSED: kayit basarisiz olursa rapor URETILMEZ', async () => {
+    // KVKK 2018/10'un istediği kaydın var olma sebebi tam olarak bu: bir
+    // danışanın tüm klinik dosyasını diske yazan işlem, silinemez kayıtta
+    // iz bırakmadan gerçekleşmemeli. Kayıt yazılamıyorsa (kilitli oturum →
+    // 401, disk hatası → 500) dışa aktarım da yapılmaz.
+    const raporKaydiOlustur = vi
+      .fn()
+      .mockRejectedValue(new Error('Oturum kilitli. Lütfen parolanızı girin.'))
+    const notlariGetir = vi.fn().mockResolvedValue(resmiNotlar)
+    kur({ raporKaydiOlustur, notlariGetir })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
+    await waitFor(() =>
+      expect(screen.getByText('Oturum kilitli. Lütfen parolanızı girin.')).toBeDefined(),
+    )
+
+    // Rapor hiçbir aşamada üretilmedi: notlar bile çekilmedi.
+    expect(notlariGetir).not.toHaveBeenCalled()
+    expect(uretilenBloblar).toHaveLength(0)
+    expect(screen.queryByRole('link', { name: /raporu indir/i })).toBeNull()
+  })
+
   it('rapor hazirlanamazsa baglanti verilmez, hata gosterilir', async () => {
     // Boş bir rapor indirtmek "bu danışanın notu yok" diye okunurdu.
     const notlariGetir = vi.fn().mockRejectedValue(new Error('Notlar alınamadı.'))
@@ -499,6 +545,7 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
       bugun: '2026-09-09',
       notlariGetir: vi.fn().mockResolvedValue(resmiNotlar),
       notSiniri: 200,
+      raporKaydiOlustur: vi.fn().mockResolvedValue(undefined),
       ekYukle: vi.fn().mockResolvedValue(undefined),
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),
       onKapat: vi.fn(),
@@ -544,6 +591,7 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
       bugun: '2026-09-09',
       notlariGetir: vi.fn().mockResolvedValue(resmiNotlar),
       notSiniri: 200,
+      raporKaydiOlustur: vi.fn().mockResolvedValue(undefined),
       ekYukle,
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),
       onKapat: vi.fn(),
@@ -576,6 +624,7 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
       bugun: '2026-09-09',
       notlariGetir: vi.fn().mockResolvedValue(resmiNotlar),
       notSiniri: 200,
+      raporKaydiOlustur: vi.fn().mockResolvedValue(undefined),
       ekYukle: vi.fn().mockResolvedValue(undefined),
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),
       onKapat: vi.fn(),
@@ -608,6 +657,7 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
       bugun: '2026-09-09',
       notlariGetir: vi.fn().mockResolvedValue(resmiNotlar),
       notSiniri: 200,
+      raporKaydiOlustur: vi.fn().mockResolvedValue(undefined),
       ekYukle: vi.fn().mockResolvedValue(undefined),
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),
       onKapat: vi.fn(),

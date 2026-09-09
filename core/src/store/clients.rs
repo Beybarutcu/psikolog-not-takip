@@ -582,6 +582,71 @@ pub fn arsivle(conn: &Connection, id: i64, cihaz: Cihaz) -> Result<(), DepoHatas
     Ok(())
 }
 
+/// Danışanın **tüm dosyasının dışa aktarıldığını** denetim kaydına yazar
+/// (KVKK md. 11 veri raporu).
+///
+/// # Neden ayrı bir fonksiyon var — rapor İSTEMCİDE üretiliyor
+///
+/// Veri raporu bugün tamamen arayüzde birleştiriliyor (`veriRaporu.ts`,
+/// `Blob`): kimlik alanları + tüm resmî notlar + ek dosya listesi tek bir
+/// `.txt` olarak diske yazılıyor. Sunucuya giden tek istek
+/// `GET /api/danisanlar/{id}/notlar` idi ve o yol `goruntuleme` yazıp
+/// 5 dakikalık pencerede **birleşiyor** (`LogHacmi::OturumBasi`) — aynı
+/// danışan için seans paneli az önce açıldıysa dışa aktarım denetim
+/// kaydında **hiçbir iz bırakmıyordu**. Tasarım §4 ise "her görüntüleme,
+/// düzenleme, **dışa aktarma** ve silme loglanır" diyor.
+///
+/// # `HerCagri` — emsal `attachments::icerik_getir`
+///
+/// Tek bir ek indirmesi `Eylem::DisaAktarma` + `LogHacmi::HerCagri` ile
+/// yazılıyor, gerekçesi orada yazılı: "birleştirilseydi on indirmenin
+/// dokuzu görünmezdi". Danışanın **tüm dosyasını** diske yazan işlem için
+/// aynı muhakeme daha da güçlü geçerlidir; birleştirme burada üst üste
+/// yapılan iki dışa aktarımdan birini gizlerdi.
+///
+/// # Var olmayan danışan: `Bulunamadi` ve LOG YAZILMAZ
+///
+/// `danisan_notlari` ve `attachments::icerik_getir` ile aynı sıra: önce
+/// varlık kontrolü, sonra log. Aksi hâlde uydurma bir kimlikle atılan her
+/// istek silinemez bir satır düşürürdü (`seriyi_sil`'de bizzat yaşanan
+/// hata sınıfı).
+///
+/// # PLAN 4 NOTU — bu, o güne kadarki ASGARİ doğru davranış
+///
+/// Plan 4 dışa aktarımı sunucu tarafına taşıyacak ve şifreli üretecek
+/// (tasarım §10: "dışa aktarımlar her zaman parola korumalı üretilir"). O
+/// zaman raporu ÜRETEN uç noktanın kendisi loglayacak ve bu ayrı kayıt
+/// fonksiyonu gereksizleşecek — istemcinin "kaydettim" demesine güvenmek
+/// yerine sunucu fiilen ürettiğini loglayacak. Bugünkü hâlde kayıt ile
+/// üretimin **sırası** güvencedir (bkz. `DanisanKarti::raporHazirla`):
+/// kayıt başarısız olursa dışa aktarım yapılmaz.
+pub fn veri_raporu_kaydi(
+    conn: &Connection,
+    client_id: i64,
+    cihaz: Cihaz,
+) -> Result<(), DepoHatasi> {
+    let var: Option<i64> = conn
+        .query_row("SELECT id FROM clients WHERE id = ?1", [client_id], |r| r.get(0))
+        .optional()?;
+    if var.is_none() {
+        return Err(DepoHatasi::Bulunamadi);
+    }
+
+    // Ayrinti YOK: rapor icerigi (ad, not metni, dosya adlari) loga ASLA
+    // girmez -- yalnizca "hangi danisanin dosyasi, ne zaman, hangi cihazdan
+    // disa aktarildi" (bkz. `store::audit` hassas veri kurali).
+    kaydet(
+        conn,
+        Eylem::DisaAktarma,
+        "client",
+        &client_id.to_string(),
+        cihaz,
+        None,
+        LogHacmi::HerCagri,
+    )?;
+    Ok(())
+}
+
 /// Son temas tarihini yazar ve `saklama_bitis`'i yeniden hesaplar.
 ///
 /// # Neden `Cihaz` almıyor / neden loglamıyor
@@ -1464,5 +1529,98 @@ mod tests {
         let dolanlar = saklama_suresi_dolanlar(&c, "2026-09-07", Cihaz::Masaustu).unwrap();
         assert_eq!(dolanlar.len(), 1);
         assert_eq!(dolanlar[0].durum, "arsiv");
+    }
+
+    // --- C1: veri raporu disa aktarimi denetim kaydi ---------------------
+
+    fn log_satirlari(c: &rusqlite::Connection) -> Vec<String> {
+        son_kayitlar(c, 100)
+            .unwrap()
+            .into_iter()
+            .map(|k| format!("{}|{}|{}", k.eylem, k.varlik, k.varlik_id))
+            .collect()
+    }
+
+    #[test]
+    fn veri_raporu_kaydi_disa_aktarma_satiri_yazar() {
+        let (_d, c) = baglanti();
+        let d = ekle(&c, &yeni("Ayse Yilmaz"), Cihaz::Masaustu).unwrap();
+
+        // ON KOSUL: heniz hicbir disa_aktarma satiri yok -- yoksa asagidaki
+        // iddia "zaten oyleydi" ile tatmin olurdu.
+        assert!(
+            !log_satirlari(&c).iter().any(|s| s.starts_with("disa_aktarma")),
+            "on kosul: log disa_aktarma satiri icermemeli"
+        );
+
+        veri_raporu_kaydi(&c, d.id, Cihaz::Masaustu).unwrap();
+
+        let satirlar = log_satirlari(&c);
+        assert!(
+            satirlar.contains(&format!("disa_aktarma|client|{}", d.id)),
+            "veri raporu disa aktarimi loga girmeli: {satirlar:?}"
+        );
+    }
+
+    #[test]
+    fn veri_raporu_kaydi_her_cagrida_ayri_satir_yazar() {
+        // KRITIK: birlestirilseydi ard arda yapilan iki disa aktarimdan biri
+        // gorunmez olurdu (`attachments::icerik_getir` ile ayni gerekce).
+        // Ayrica ayni danisan icin AYNI pencerede yazilmis bir `goruntuleme`
+        // satiri da bu satiri gizlememeli.
+        let (_d, c) = baglanti();
+        let d = ekle(&c, &yeni("Ayse Yilmaz"), Cihaz::Masaustu).unwrap();
+        getir(&c, d.id, Cihaz::Masaustu).unwrap();
+
+        for _ in 0..3 {
+            veri_raporu_kaydi(&c, d.id, Cihaz::Masaustu).unwrap();
+        }
+
+        let adet = log_satirlari(&c)
+            .iter()
+            .filter(|s| *s == &format!("disa_aktarma|client|{}", d.id))
+            .count();
+        assert_eq!(adet, 3, "her disa aktarim ayri bir satir yazmali");
+    }
+
+    #[test]
+    fn veri_raporu_kaydi_farkli_danisani_gizlemez() {
+        let (_d, c) = baglanti();
+        let a = ekle(&c, &yeni("Ayse"), Cihaz::Masaustu).unwrap();
+        let b = ekle(&c, &yeni("Mehmet"), Cihaz::Masaustu).unwrap();
+
+        veri_raporu_kaydi(&c, a.id, Cihaz::Masaustu).unwrap();
+        veri_raporu_kaydi(&c, b.id, Cihaz::Masaustu).unwrap();
+
+        let satirlar = log_satirlari(&c);
+        assert!(satirlar.contains(&format!("disa_aktarma|client|{}", a.id)));
+        assert!(satirlar.contains(&format!("disa_aktarma|client|{}", b.id)));
+    }
+
+    #[test]
+    fn olmayan_danisan_icin_veri_raporu_kaydi_log_yazmaz() {
+        // Uydurma bir kimlikle atilan istek silinemez bir satir dusurmemeli
+        // (`seriyi_sil`'de bizzat yasanan hata sinifi).
+        let (_d, c) = baglanti();
+        let onceki = son_kayitlar(&c, 100).unwrap().len();
+
+        assert!(matches!(
+            veri_raporu_kaydi(&c, 999, Cihaz::Masaustu),
+            Err(DepoHatasi::Bulunamadi)
+        ));
+        assert_eq!(son_kayitlar(&c, 100).unwrap().len(), onceki, "log satiri eklenmemeli");
+    }
+
+    #[test]
+    fn veri_raporu_kaydi_ayrinti_yazmaz() {
+        // Rapor icerigi (ad, not metni, dosya adlari) loga ASLA girmez.
+        let (_d, c) = baglanti();
+        let d = ekle(&c, &yeni("Ayse Yilmaz"), Cihaz::Masaustu).unwrap();
+        veri_raporu_kaydi(&c, d.id, Cihaz::Masaustu).unwrap();
+
+        let kayit = son_kayitlar(&c, 1).unwrap().remove(0);
+        assert_eq!(kayit.eylem, "disa_aktarma");
+        assert_eq!(kayit.ayrinti, None, "ayrinti alani bos olmali");
+        assert_eq!(kayit.varlik_id, d.id.to_string(), "varlik_id yalnizca sayisal kimlik");
     }
 }

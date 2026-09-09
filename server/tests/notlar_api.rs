@@ -139,8 +139,9 @@ async fn ek_yukle(s: &AppState, cid: i64, ad_kodlu: &str, icerik: &[u8]) -> i64 
 // 1. KILITLI OTURUM -- ISTISNASIZ
 // =====================================================================
 
-/// Görev 7'nin eklediği **on dört** uç noktanın hepsi kilitliyken `401`
-/// döner ve gövdesinde hiçbir veri taşımaz.
+/// Görev 7'nin eklediği on dört uç nokta (+ dal incelemesi C1'in eklediği
+/// `rapor-kaydi`, toplam **on beş**) kilitliyken `401` döner ve gövdesinde
+/// hiçbir veri taşımaz.
 ///
 /// Tablo halinde yazılmıştır ki yeni bir uç nokta eklendiğinde satır
 /// eklemeyi unutmak zorlaşsın; sayı ayrıca `assert_eq!` ile pinlenir.
@@ -188,8 +189,12 @@ async fn kilitliyken_gorev7_uclarinin_hepsi_401_doner_ve_veri_sizdirmaz() {
         ("GET", "/api/ara?q=GIZLI".to_string(), None),
         ("GET", "/api/saklama-suresi-dolanlar?bugun=2030-01-01".to_string(), None),
         ("GET", "/api/depolama-durumu".to_string(), None),
+        // Dal incelemesi C1: veri raporu disa aktarim kaydi da ayni kapidan
+        // gecer -- kilitliyken bir danisanin dosyasi disa aktarilamaz,
+        // dolayisiyla o kaydin yazilmasi da reddedilir.
+        ("POST", format!("/api/danisanlar/{cid}/rapor-kaydi"), None),
     ];
-    assert_eq!(uclar.len(), 13, "POST /ekler ile birlikte on dort uc kapsanmali");
+    assert_eq!(uclar.len(), 14, "POST /ekler ile birlikte on bes uc kapsanmali");
 
     for (metot, yol, govde) in &uclar {
         let (kod, json) = cagir(&s, metot, yol, govde.clone()).await;
@@ -203,7 +208,7 @@ async fn kilitliyken_gorev7_uclarinin_hepsi_401_doner_ve_veri_sizdirmaz() {
         assert!(!json.is_array(), "{metot} {yol}: basarili liste yaniti dizidir");
     }
 
-    // On dorduncu uc: POST /api/danisanlar/{id}/ekler (ham govde).
+    // On besinci uc: POST /api/danisanlar/{id}/ekler (ham govde).
     let (kod, _b, govde) = cagir_ham(
         &s,
         "POST",
@@ -1547,8 +1552,9 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
         ("attachments.rs", include_str!("../src/routes/attachments.rs"), 5),
         ("search.rs", include_str!("../src/routes/search.rs"), 1),
         // clients.rs: liste, olustur, arsivle_uc (eski 3) + getir_uc,
-        // guncelle_uc, saklama_listesi (yeni 3).
-        ("clients.rs", include_str!("../src/routes/clients.rs"), 6),
+        // guncelle_uc, saklama_listesi (Gorev 7'nin 3'u) + rapor_kaydi_uc
+        // (dal incelemesi C1).
+        ("clients.rs", include_str!("../src/routes/clients.rs"), 7),
         // Gorev 7 oncesi 11 veri handler'i vardi (clients 3 + appointments 8).
         ("appointments.rs", include_str!("../src/routes/appointments.rs"), 8),
     ];
@@ -1599,5 +1605,130 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
         }
         toplam += parcalar.len();
     }
-    assert_eq!(toplam, 25, "toplam veri handler'i sayisi 25 olmali");
+    assert_eq!(toplam, 26, "toplam veri handler'i sayisi 26 olmali");
+}
+
+// =====================================================================
+// DAL INCELEMESI C1 -- VERI RAPORU DISA AKTARIMI DENETIM KAYDI
+// =====================================================================
+//
+// Bulgu: rapor tamamen ISTEMCIDE uretiliyor ve sunucuya giden tek istek
+// `GET /api/danisanlar/{id}/notlar` idi. O yol `goruntuleme` yazip 5
+// dakikalik pencerede BIRLESIYOR; seans paneli ayni danisan icin acilmissa
+// disa aktarim SIFIR satir uretiyordu. Olculen log su idi:
+//
+//   ["goruntuleme|progress_note|liste:1", "duzenleme|progress_note|1",
+//    "ekleme|appointment|1", "ekleme|client|1"]   -- hic `disa_aktarma` yok
+//
+// Asagidaki testler tam olarak o olcumu HTTP seviyesinde tekrarlar.
+
+/// Oturumun anahtariyla `audit_log`'u okur ve `eylem|varlik|varlik_id`
+/// uclusunu dondurur. Testler dogrudan veriye bakar, yanit sekline degil.
+async fn log_satirlari(s: &AppState) -> Vec<String> {
+    use psikolog_server::guard::acik_baglanti_ile;
+    let conn = acik_baglanti_ile(s, std::time::Instant::now())
+        .expect("log okumak icin oturum acik olmali");
+    psikolog_core::store::audit::son_kayitlar(&conn, 200)
+        .unwrap()
+        .into_iter()
+        .map(|k| format!("{}|{}|{}", k.eylem, k.varlik, k.varlik_id))
+        .collect()
+}
+
+#[tokio::test]
+async fn rapor_kaydi_uc_noktasi_disa_aktarma_satiri_yazar() {
+    let (_d, s, cid, rid) = dolu_state().await;
+
+    // Arayuzun disa aktarimdan ONCE yaptigi seyi birebir taklit et: seans
+    // paneli ayni danisan icin acilmis (not listesi cekilmis) olsun. Bulgu
+    // TAM OLARAK bu durumda ortaya cikiyordu.
+    cagir(
+        &s,
+        "PUT",
+        &format!("/api/randevular/{rid}/not"),
+        Some(json!({"sablon":"dap","icerik":"seans notu"})),
+    )
+    .await;
+    cagir(&s, "GET", &format!("/api/danisanlar/{cid}/notlar?limit=200"), None).await;
+
+    // ON KOSUL -- bulgunun kendisi: not listesi hicbir `disa_aktarma`
+    // satiri uretmez. Bu iddia olmasa asagidaki artı yon "zaten oyleydi"
+    // ile tatmin olabilirdi.
+    let panel_sonrasi = log_satirlari(&s).await;
+    assert!(
+        !panel_sonrasi.iter().any(|x| x.starts_with("disa_aktarma")),
+        "on kosul: not listesi disa_aktarma yazmaz -- {panel_sonrasi:?}"
+    );
+
+    let (kod, _) = cagir(&s, "POST", &format!("/api/danisanlar/{cid}/rapor-kaydi"), None).await;
+    assert_eq!(kod, StatusCode::OK);
+
+    let rapor_sonrasi = log_satirlari(&s).await;
+    assert!(
+        rapor_sonrasi.contains(&format!("disa_aktarma|client|{cid}")),
+        "veri raporu disa aktarimi silinemez kayitta gorunmeli -- {rapor_sonrasi:?}"
+    );
+    assert_eq!(
+        rapor_sonrasi.len(),
+        panel_sonrasi.len() + 1,
+        "TAM OLARAK bir satir eklenmeli (ne sifir, ne iki)"
+    );
+}
+
+#[tokio::test]
+async fn ard_arda_iki_disa_aktarim_iki_satir_yazar() {
+    // `attachments::icerik_getir` ile ayni gerekce: birlestirilseydi iki
+    // disa aktarimdan biri gorunmez olurdu. `goruntuleme` yolundan farkli
+    // oldugunu kanitlayan sey bu testtir.
+    let (_d, s, cid, _rid) = dolu_state().await;
+    let once = log_satirlari(&s).await.len();
+
+    for _ in 0..2 {
+        let (kod, _) = cagir(&s, "POST", &format!("/api/danisanlar/{cid}/rapor-kaydi"), None).await;
+        assert_eq!(kod, StatusCode::OK);
+    }
+
+    let sonra = log_satirlari(&s).await;
+    assert_eq!(sonra.len(), once + 2, "her disa aktarim ayri satir yazmali");
+    assert_eq!(
+        sonra.iter().filter(|x| *x == &format!("disa_aktarma|client|{cid}")).count(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn olmayan_danisan_icin_rapor_kaydi_404_doner_ve_log_yazmaz() {
+    // Uydurma bir kimlikle atilan istek, silinemez loga disaridan
+    // tetiklenebilir bir gurultu satiri dusurmemeli (`seriyi_sil` dersi).
+    let (_d, s, _cid, _rid) = dolu_state().await;
+    let once = log_satirlari(&s).await.len();
+
+    let (kod, json) = cagir(&s, "POST", "/api/danisanlar/9999/rapor-kaydi", None).await;
+    assert_eq!(kod, StatusCode::NOT_FOUND);
+    assert!(json.get("hata").is_some());
+
+    assert_eq!(log_satirlari(&s).await.len(), once, "404 log satiri birakmamali");
+}
+
+#[tokio::test]
+async fn kilitliyken_rapor_kaydi_401_doner_ve_log_yazmaz() {
+    // Fail-closed'un sunucu tarafi: kilitli oturumda kayit YAZILAMAZ,
+    // dolayisiyla (arayuzdeki siralama geregi) disa aktarim da yapilamaz.
+    let (_d, s, cid, _rid) = dolu_state().await;
+    let once = log_satirlari(&s).await.len();
+
+    kilitle(&s).await;
+    let (kod, _) = cagir(&s, "POST", &format!("/api/danisanlar/{cid}/rapor-kaydi"), None).await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED);
+
+    kilit_ac(&s).await;
+    let sonra = log_satirlari(&s).await;
+    assert!(
+        !sonra.iter().any(|x| x.starts_with("disa_aktarma")),
+        "kilitliyken atilan istek disa_aktarma satiri birakmamali -- {sonra:?}"
+    );
+    // `kilitle`/`kilit_ac` kendi `cikis`/`giris` satirlarini yaziyor;
+    // olculen sey disa_aktarma satirinin YOKLUGU ve toplamın o iki
+    // oturum satiri disinda buyumemesidir.
+    assert_eq!(sonra.len(), once + 2, "yalnizca cikis + giris satirlari eklenmeli");
 }

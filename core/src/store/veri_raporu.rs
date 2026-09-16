@@ -139,7 +139,7 @@ fn tl_metni(kurus: i64) -> String {
     let lira = (mutlak / 100).to_string();
     let mut lira_metni = String::with_capacity(lira.len() + lira.len() / 3);
     for (i, k) in lira.chars().enumerate() {
-        if i > 0 && (lira.len() - i) % 3 == 0 {
+        if i > 0 && (lira.len() - i).is_multiple_of(3) {
             lira_metni.push('.');
         }
         lira_metni.push(k);

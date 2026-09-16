@@ -34,6 +34,26 @@ fn sunucuyu_baslat(veri_dizini: PathBuf) -> u16 {
     port
 }
 
+fn main() {
+    let port = sunucuyu_baslat(veri_dizini());
+    let adres = format!("http://{YEREL_ADRES}:{port}");
+
+    tauri::Builder::default()
+        .setup(move |app| {
+            tauri::WebviewWindowBuilder::new(
+                app,
+                "ana",
+                tauri::WebviewUrl::External(adres.parse().unwrap()),
+            )
+            .title("Terapi Notlari")
+            .inner_size(1280.0, 820.0)
+            .build()?;
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("uygulama baslatilamadi");
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
@@ -107,24 +127,4 @@ mod tests {
             );
         }
     }
-}
-
-fn main() {
-    let port = sunucuyu_baslat(veri_dizini());
-    let adres = format!("http://{YEREL_ADRES}:{port}");
-
-    tauri::Builder::default()
-        .setup(move |app| {
-            tauri::WebviewWindowBuilder::new(
-                app,
-                "ana",
-                tauri::WebviewUrl::External(adres.parse().unwrap()),
-            )
-            .title("Terapi Notlari")
-            .inner_size(1280.0, 820.0)
-            .build()?;
-            Ok(())
-        })
-        .run(tauri::generate_context!())
-        .expect("uygulama baslatilamadi");
 }

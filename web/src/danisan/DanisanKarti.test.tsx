@@ -208,7 +208,7 @@ describe('DanisanKarti — bakiye ne sayar, ne saymaz', () => {
     // "Bakiye: 0,00 ₺" tek başına, ücreti hiç girilmemiş bir dosyada
     // "borcu yok" diye okunur. Etiket kapsamı yazmazsa sayı yanıltıcıdır.
     kur()
-    expect(screen.getByText(/gelinmiş seansların ücret toplamı/i)).toBeDefined()
+    expect(screen.getByText(/gelinmiş ve ödenmemiş seanslar/i)).toBeDefined()
   })
 
   it('bakiye NEYI SAYMADIGINI da soyler', () => {
@@ -216,19 +216,25 @@ describe('DanisanKarti — bakiye ne sayar, ne saymaz', () => {
     // dışında ve bu, gelmeyen seansları ücretlendiren bir terapist için
     // sessizce eksik bir bakiyedir. Ekran o dışlamayı açıkça yazmalı.
     kur()
-    expect(screen.getByText(/gelmedi olarak işaretlenen seanslar bu sayıya girmez/i))
+    expect(screen.getByText(/'Gelmedi' olarak işaretlenen seanslar bu sayıya girmez/i))
       .toBeDefined()
   })
 
-  it('I1: etiket ODEME ISARETLEME YOLU OLMADIGINI da soyler', () => {
-    // `appointments.odendi` sutununun hicbir yazma yolu yok: bakiye
-    // odemelerle HIC azalmiyor ve eski etiket ("gelinmis ve ODENMEMIS")
-    // olmayan bir mekanizmayi ima ediyordu -- okuyan kisi odemeleri
-    // isaretledikce sayinin duseceğini sanardi.
+  it('Plan 4: etiket GERCEGI soyler -- odeme isaretleme yolu artik VAR', () => {
+    // Dal incelemesi I1'de etiket "işaretleme yolu henüz yok" diye
+    // dürüstleştirilmişti. Plan 4 Görev 2 seans panelinin alt satırına
+    // "Ödendi" kutusunu (`PATCH /api/randevular/{id}/odeme`) ekledi: sayı
+    // artık ödemelerle GERÇEKTEN azalıyor. O cümle kalsaydı, bu kez var
+    // olan bir mekanizmayı yok diye anlatırdı.
     kur()
-    expect(screen.getByText(/“ödendi” olarak işaretleme yolu henüz yok/i)).toBeDefined()
-    // EKSI YON: eski, yaniltici ibare ekranda KALMAMALI.
-    expect(document.body.textContent).not.toContain('gelinmiş ve ödenmemiş')
+    expect(
+      screen.getByText(
+        "Bakiye: gelinmiş ve ödenmemiş seanslar. 'Gelmedi' olarak işaretlenen seanslar bu sayıya girmez.",
+      ),
+    ).toBeDefined()
+    // EKSI YON: artık yanlış olan eski ibare ekranda KALMAMALI.
+    expect(document.body.textContent).not.toContain('işaretleme yolu henüz yok')
+    expect(document.body.textContent).not.toContain('bu tutardan düşmez')
   })
 })
 

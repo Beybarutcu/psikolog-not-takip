@@ -37,24 +37,18 @@ import { veriRaporuMetni } from './veriRaporu'
  * söylemeyen bir "Bakiye: 0,00 ₺", ücreti hiç girilmemiş bir dosyada
  * "borcu yok" diye okunur.
  *
- * # …ve neyi SAYAMADIĞINI da yazar (dal incelemesi I1)
+ * # "Ödenmemiş" artık gerçek (Plan 4 Görev 2)
  *
- * `appointments.odendi` sütununun **hiçbir yazma yolu yok**: `ekle` ve
- * `seri_ekle` onu `0` olarak yazıyor, hiçbir `UPDATE` ona dokunmuyor ve
- * ne HTTP'de ne arayüzde bir seansı "ödendi" işaretleme yolu var.
- * Dolayısıyla `!r.odendi` süzgeci **bugün hiçbir satırı elemiyor** ve
- * bakiye ödemelerle hiçbir zaman azalmıyor: sayı fiilen *bugüne kadar
- * gelinen tüm seansların ücret toplamıdır*.
+ * Dal incelemesi I1'de `appointments.odendi`'nin hiçbir yazma yolu yoktu;
+ * `!r.odendi` süzgeci hiçbir satırı elemiyordu ve etiket bunu açıkça
+ * söylüyordu. Plan 4 Görev 1 `PATCH /api/randevular/{id}/odeme`'yi, Görev 2
+ * seans panelinin alt satırındaki "Ödendi" kutusunu ekledi: süzgeç artık
+ * gerçekten eliyor ve açıklama "gelinmiş ve ödenmemiş seanslar" diyor.
  *
- * Eski etiket ("gelinmiş ve ödenmemiş seanslar") neyi saymadığını
- * (`gelmedi`) söylüyordu ama bunu söylemiyordu — ve okuyan kişi ödemeleri
- * işaretledikçe sayının düşeceğini sanırdı. Etiket artık ikisini de yazıyor.
- *
- * PLAN 4 NOTU: ödeme takibi (tasarım §8) Plan 4'ün konusu. Sütun ve süzgeç
- * **bilerek duruyor** — o gün gelen yazma yolu bakiyeyi hiçbir hesabı
- * değiştirmeden doğru kılacak; kaldırılmaları yalnızca aynı işi geri
- * eklemek olurdu. O yazma yolu geldiğinde bu başlık ve aşağıdaki iki metin
- * (etiket + açıklama) birlikte güncellenmeli.
+ * Sınır: kart açıkken bir seans "ödendi" işaretlenirse bu kartın
+ * `randevular` listesi kendiliğinden tazelenmez (kart kendi yüklemesini
+ * yapıyor; `durumDegis` için de aynısı geçerli). Kart yeniden açılınca
+ * doğru sayı gelir.
  *
  * # Risk notu KATLANMIŞ gösterilir
  *
@@ -254,10 +248,8 @@ export function DanisanKarti({
     }
   }, [rapor])
 
-  // `!r.odendi` BUGÜN hiçbir satırı elemiyor: `odendi` sütununun yazma yolu
-  // yok (bkz. modül başlığı "…ve neyi SAYAMADIĞINI da yazar"). Süzgeç Plan
-  // 4'ün ödeme takibi için duruyor; etiket ve açıklama metni bu durumu
-  // kullanıcıya söylüyor.
+  // Gelinmiş VE ödenmemiş (bkz. modül başlığı). `odendi` seans panelinin
+  // alt satırından yazılıyor (Plan 4 Görev 2).
   const bakiyeKurus = randevular
     .filter((r) => r.durum === 'geldi' && !r.odendi)
     .reduce((toplam, r) => toplam + (r.ucret ?? 0), 0)
@@ -386,26 +378,20 @@ export function DanisanKarti({
             </>
           )}
         </dd>
-        {/* Etiket kapsamı yazıyor; çıplak "Bakiye" yanıltıcı olurdu.
-            "ödenmemiş" ibaresi KALDIRILDI (dal incelemesi I1): ödeme
-            işaretleme yolu olmadığı için sayı ödemelerle azalmıyor ve
-            etiket, olmayan bir mekanizmayı ima ediyordu. */}
-        <dt className="font-medium text-slate-600">Bakiye (gelinmiş seansların ücret toplamı)</dt>
+        <dt className="font-medium text-slate-600">Bakiye</dt>
         <dd>{tlBicimle(bakiyeKurus)}</dd>
       </dl>
-      {/* Etiket neyi SAYDIĞINI yazıyordu, neyi SAYMADIĞINI yazmıyordu.
-          "Gelmedi" işaretli bir seansın ücretlendirilip
-          ücretlendirilmeyeceği terapistin politikasına bağlı ve uygulama o
-          politikayı bilmiyor; sayının dışında bırakıldığını söylememek,
-          gelmeyen seansları ücretlendiren bir terapiste sessizce eksik bir
-          bakiye göstermek olurdu.
-          İkinci cümle I1'in düzeltmesi: alınan ödemeler bu sayıdan
-          DÜŞMÜYOR, çünkü uygulamada bir seansı "ödendi" işaretleme yolu
-          henüz yok (bkz. modül başlığı). */}
+      {/* Açıklama hem neyi SAYDIĞINI hem neyi SAYMADIĞINI yazıyor; çıplak
+          "Bakiye" yanıltıcı olurdu. "Gelmedi" işaretli bir seansın
+          ücretlendirilip ücretlendirilmeyeceği terapistin politikasına bağlı
+          ve uygulama o politikayı bilmiyor; sayının dışında bırakıldığını
+          söylememek, gelmeyen seansları ücretlendiren bir terapiste sessizce
+          eksik bir bakiye göstermek olurdu.
+          "ödenmemiş" ibaresi I1'de kaldırılmıştı (o gün işaretleme yolu
+          yoktu); Plan 4 Görev 2 seans panelinin alt satırına "Ödendi"
+          kutusunu ekledi ve ibare GERİ GELDİ — artık doğru. */}
       <p className="mt-1 text-xs text-slate-500">
-        Gelmedi olarak işaretlenen seanslar bu sayıya girmez; ücretlendirme kararı sizindir.
-        Uygulamada seansı “ödendi” olarak işaretleme yolu henüz yok, bu yüzden aldığınız
-        ödemeler bu tutardan düşmez.
+        {"Bakiye: gelinmiş ve ödenmemiş seanslar. 'Gelmedi' olarak işaretlenen seanslar bu sayıya girmez."}
       </p>
 
       <div className="mt-3">

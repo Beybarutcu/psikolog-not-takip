@@ -80,8 +80,13 @@ const gecmisNotlar: SeansNotu[] = [
   },
 ]
 
-function kur(ozel: Partial<React.ComponentProps<typeof SeansPaneli>> = {}) {
-  const props = {
+type PanelProps = React.ComponentProps<typeof SeansPaneli>
+
+/** Alt satır testlerinin okuduğu ad; `randevu` ile aynı nesne. */
+const ornekRandevu = randevu
+
+function propsKur(ozel: Partial<PanelProps> = {}) {
+  return {
     randevu,
     gecmisNotlar,
     not: resmiNot,
@@ -90,8 +95,19 @@ function kur(ozel: Partial<React.ComponentProps<typeof SeansPaneli>> = {}) {
     onOzelNotKaydet: vi.fn().mockResolvedValue(undefined),
     onOzelSekme: vi.fn(),
     onKapat: vi.fn(),
+    onDurumDegis: vi.fn().mockResolvedValue(undefined),
+    onOdemeDegis: vi.fn().mockResolvedValue(undefined),
     ...ozel,
   }
+}
+
+/** `rerender` için: aynı varsayılanlarla kurulmuş panel ÖĞESİ. */
+function panel(ozel: Partial<PanelProps> = {}) {
+  return <SeansPaneli {...propsKur(ozel)} />
+}
+
+function kur(ozel: Partial<PanelProps> = {}) {
+  const props = propsKur(ozel)
   const sonuc = render(<SeansPaneli {...props} />)
   return { ...props, ...sonuc }
 }
@@ -484,6 +500,8 @@ function Harness() {
       }}
       onOzelSekme={vi.fn()}
       onKapat={vi.fn()}
+      onDurumDegis={vi.fn()}
+      onOdemeDegis={vi.fn()}
     />
   )
 }
@@ -550,6 +568,8 @@ describe('SeansPaneli — seans değişimi (`key` yolu, ikincil hat)', () => {
         onOzelNotKaydet={vi.fn()}
         onOzelSekme={vi.fn()}
         onKapat={vi.fn()}
+        onDurumDegis={vi.fn()}
+        onOdemeDegis={vi.fn()}
       />,
     )
 
@@ -565,6 +585,8 @@ describe('SeansPaneli — seans değişimi (`key` yolu, ikincil hat)', () => {
         onOzelNotKaydet={vi.fn()}
         onOzelSekme={vi.fn()}
         onKapat={vi.fn()}
+        onDurumDegis={vi.fn()}
+        onOdemeDegis={vi.fn()}
       />,
     )
 
@@ -599,6 +621,8 @@ describe('SeansPaneli — seans değişimi (`key` yolu, ikincil hat)', () => {
         onOzelNotKaydet={kaydet}
         onOzelSekme={vi.fn()}
         onKapat={vi.fn()}
+        onDurumDegis={vi.fn()}
+        onOdemeDegis={vi.fn()}
       />
     )
     const { rerender } = render(paneli(randevu, { ...ozelNot, icerik: 'A ozel' }, ozelA))
@@ -615,6 +639,98 @@ describe('SeansPaneli — seans değişimi (`key` yolu, ikincil hat)', () => {
 
     await waitFor(() => expect(ozelA).toHaveBeenCalledWith('A ozel BEKLEYEN'))
     expect(ozelB).not.toHaveBeenCalled()
+  })
+})
+
+// Plan 4 Görev 2 — tasarım §6: "Panelin altında tek satırda: geldi/gelmedi/
+// iptal + ücret + ödendi."
+describe('SeansPaneli — alt satır: durum, ücret, ödendi', () => {
+  it('odendi kutusu isaretlenince TEK istek gider ve kutu isaretli kalir', async () => {
+    const onOdemeDegis = vi.fn().mockResolvedValue(undefined)
+    kur({ randevu: { ...ornekRandevu, ucret: 45000, odendi: false }, onOdemeDegis })
+    const kutu = screen.getByRole('checkbox', { name: 'Ödendi' }) as HTMLInputElement
+    expect(kutu.checked).toBe(false)
+    await userEvent.click(kutu)
+    expect(onOdemeDegis).toHaveBeenCalledTimes(1)
+    expect(onOdemeDegis).toHaveBeenCalledWith(true)
+    expect(kutu.checked).toBe(true)
+  })
+
+  it('odeme istegi basarisiz olursa kutu ESKI haline doner ve hata duyurulur', async () => {
+    const onOdemeDegis = vi.fn().mockRejectedValue(new Error('Kayıt bulunamadı.'))
+    kur({ randevu: { ...ornekRandevu, ucret: 45000, odendi: false }, onOdemeDegis })
+    const kutu = screen.getByRole('checkbox', { name: 'Ödendi' }) as HTMLInputElement
+    await userEvent.click(kutu)
+    expect((await screen.findByRole('alert')).textContent).toContain('Kayıt bulunamadı.')
+    expect(kutu.checked).toBe(false)
+  })
+
+  it('ucret TL olarak gosterilir; ucret yoksa bunu soyler', () => {
+    const { rerender } = kur({ randevu: { ...ornekRandevu, ucret: 45050 } })
+    expect(screen.getByText('450,50 TL')).toBeDefined()
+    rerender(panel({ randevu: { ...ornekRandevu, ucret: null } }))
+    expect(screen.getByText('Ücret girilmemiş')).toBeDefined()
+  })
+
+  it('secili durum aria-pressed ile belirtilir', () => {
+    kur({ randevu: { ...ornekRandevu, durum: 'gelmedi' } })
+    expect(screen.getByRole('button', { name: 'Gelmedi' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Geldi' }).getAttribute('aria-pressed')).toBe('false')
+  })
+
+  // --- Brief'in dört iddiasının yanındakiler --------------------------------
+
+  it('isaretli kutunun isareti kaldirilinca false gider (iki yon)', async () => {
+    // Yalnızca `true` gönderen bir uygulama ilk testi geçerdi.
+    const onOdemeDegis = vi.fn().mockResolvedValue(undefined)
+    kur({ randevu: { ...ornekRandevu, ucret: 45000, odendi: true }, onOdemeDegis })
+    const kutu = screen.getByRole('checkbox', { name: 'Ödendi' }) as HTMLInputElement
+    expect(kutu.checked).toBe(true)
+    await userEvent.click(kutu)
+    expect(onOdemeDegis).toHaveBeenCalledExactlyOnceWith(false)
+    expect(kutu.checked).toBe(false)
+  })
+
+  it('istek suruyorken ikinci tiklama IKINCI istek uretmez', async () => {
+    // Denetim hacmi: bir ödeme işaretleme tek PATCH. Hızlı çift tıklama
+    // (işaretle + geri al) iki yazma ve iki silinemez satır bırakırdı.
+    let coz: () => void = () => {}
+    const onOdemeDegis = vi.fn(() => new Promise<void>((r) => { coz = r }))
+    kur({ randevu: { ...ornekRandevu, odendi: false }, onOdemeDegis })
+    const kutu = screen.getByRole('checkbox', { name: 'Ödendi' }) as HTMLInputElement
+    await userEvent.click(kutu)
+    await userEvent.click(kutu)
+    expect(onOdemeDegis).toHaveBeenCalledTimes(1)
+    coz()
+    await waitFor(() => expect(kutu.disabled).toBe(false))
+    expect(kutu.checked).toBe(true)
+  })
+
+  it('durum dugmesi onDurumDegis e kodu gecirir; hata alert ile duyurulur', async () => {
+    const onDurumDegis = vi
+      .fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('Randevu güncellenemedi.'))
+    kur({ onDurumDegis })
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Geldi' }))
+    expect(onDurumDegis).toHaveBeenCalledWith('geldi')
+
+    await userEvent.click(screen.getByRole('button', { name: 'İptal' }))
+    expect(onDurumDegis).toHaveBeenLastCalledWith('iptal')
+    expect((await screen.findByRole('alert')).textContent).toContain('Randevu güncellenemedi.')
+  })
+
+  it('durum prop u degisince (ayni seans) aria-pressed onu izler', () => {
+    // `useTakvimAkisi.durumDegis` seçili randevunun kopyasını AYNI kimlikle
+    // tazeliyor, panel yeniden mount EDİLMİYOR. Durum yerel bir kopyada
+    // tutulsaydı "Geldi"ye basınca vurgu eski düğmede kalırdı.
+    const { rerender } = kur({ randevu: { ...ornekRandevu, durum: 'planlandi' } })
+    expect(screen.getByRole('button', { name: 'Geldi' }).getAttribute('aria-pressed')).toBe('false')
+    rerender(panel({ randevu: { ...ornekRandevu, durum: 'geldi' } }))
+    expect(screen.getByRole('button', { name: 'Geldi' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Gelmedi' }).getAttribute('aria-pressed')).toBe('false')
   })
 })
 

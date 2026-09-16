@@ -51,6 +51,14 @@ import { sablonMetni } from './sablon'
  * (yalnızca taslakta kalır; kilit açılmadan kapatılan bir sekmede gider).
  * Bkz. `NotEditoru.test.tsx` içindeki "prop degisimi `key` yolunun yerini
  * TUTMAZ".
+ *
+ * # Alt satır: durum, ücret, ödendi (Plan 4 Görev 2)
+ *
+ * Tasarım §6: ödeme takibi ayrı bir modül değil, seansın alt satırı. Durum
+ * düğmeleri buraya `RandevuPaneli`'nden TAŞINDI (iki panel aynı anda açık).
+ * Seçili durum ve ücret prop'tan okunur; "Ödendi" kutusu iyimserdir ve
+ * reddedilirse geri döner — işaretli kalan bir kutu, sunucuda olmayan bir
+ * ödemeyi "alındı" diye gösterirdi.
  */
 
 type NotKaydi = { sablon: string; icerik: string }
@@ -83,6 +91,31 @@ type Props = {
   /** Özel not yüklenemediyse yeniden dene. */
   onOzelYenidenDene?: () => void
   onKapat: () => void
+  /**
+   * Alt satırdaki durum düğmesi (`geldi` / `gelmedi` / `iptal`). Seçili
+   * düğme `randevu.durum`'dan okunur, yerel kopyadan DEĞİL: çağıran taraf
+   * başarıda seçili randevunun kopyasını aynı kimlikle tazeliyor ve panel
+   * yeniden mount edilmiyor.
+   */
+  onDurumDegis: (durum: string) => Promise<void>
+  /**
+   * Alt satırdaki "Ödendi" kutusu. Reddedilirse kutu eski hâline döner ve
+   * hata `role="alert"` ile duyurulur.
+   */
+  onOdemeDegis: (odendi: boolean) => Promise<void>
+}
+
+const DURUMLAR = [
+  ['Geldi', 'geldi'],
+  ['Gelmedi', 'gelmedi'],
+  ['İptal', 'iptal'],
+] as const
+
+const TL = new Intl.NumberFormat('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+/** Kuruş -> "450,00 TL". */
+function ucretMetni(kurus: number | null): string {
+  return kurus === null ? 'Ücret girilmemiş' : `${TL.format(kurus / 100)} TL`
 }
 
 const OZEL_UYARISI = 'Bu notlar dışa aktarımlara ve danışan raporuna dahil edilmez.'
@@ -120,11 +153,46 @@ export function SeansPaneli({
   onOzelSekme,
   onOzelYenidenDene,
   onKapat,
+  onDurumDegis,
+  onOdemeDegis,
 }: Props) {
   const [sekme, setSekme] = useState<'resmi' | 'ozel'>('resmi')
   const ozelAcik = sekme === 'ozel'
   const resmiSekmeRef = useRef<HTMLButtonElement>(null)
   const ozelSekmeRef = useRef<HTMLButtonElement>(null)
+
+  // "Ödendi" kutusunun EKRANDAKİ değeri. İyimser: tıklanınca hemen değişir,
+  // istek reddedilirse eski değere döner. İlk değer prop'tan, yalnızca
+  // MOUNT'ta okunur — seans değişince sıfırlanması `AnaEkran`'daki
+  // `key={seans-${id}}`'ye bağlı (ölçen test: `AnaEkran.test.tsx` > "seans
+  // degisince Odendi kutusu YENI randevunun degerini gosterir").
+  const [odendi, setOdendi] = useState(randevu.odendi)
+  // Durum ya da ödeme isteği uçuşta: alt satırın denetimleri kilitli. Hızlı
+  // bir çift tıklama iki yazma (ve sunucuda iki silinemez denetim satırı)
+  // üretemesin.
+  const [altIslemSuruyor, setAltIslemSuruyor] = useState(false)
+  const [altHata, setAltHata] = useState<string | null>(null)
+
+  async function altIslem(islem: () => Promise<void>, geriAl?: () => void) {
+    setAltHata(null)
+    setAltIslemSuruyor(true)
+    try {
+      await islem()
+    } catch (e) {
+      geriAl?.()
+      setAltHata(e instanceof Error ? e.message : 'İşlem tamamlanamadı.')
+    } finally {
+      setAltIslemSuruyor(false)
+    }
+  }
+
+  function odemeDegis(yeni: boolean) {
+    const eski = odendi
+    setOdendi(yeni)
+    // Geri alma ZORUNLU: istek reddedildiğinde kutu işaretli kalsaydı ekran
+    // sunucuda olmayan bir ödemeyi "alındı" diye gösterirdi.
+    void altIslem(() => onOdemeDegis(yeni), () => setOdendi(eski))
+  }
 
   function ozelSekmeyeGec() {
     setSekme('ozel')
@@ -324,6 +392,43 @@ export function SeansPaneli({
             </div>
           )}
         </div>
+      </div>
+
+      {/* Alt satır (tasarım §6): "geldi/gelmedi/iptal + ücret + ödendi" tek
+          satırda. Ödeme takibi ayrı bir modül değil, seansın parçası. */}
+      <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-200 pt-3">
+        <div role="group" aria-label="Seans durumu" className="flex gap-1">
+          {DURUMLAR.map(([etiket, kod]) => (
+            <button
+              key={kod}
+              type="button"
+              aria-pressed={randevu.durum === kod}
+              className={
+                'rounded border px-3 py-1 text-sm disabled:opacity-50 ' +
+                (randevu.durum === kod ? 'border-slate-900 bg-slate-900 text-white' : 'border-slate-300')
+              }
+              disabled={altIslemSuruyor}
+              onClick={() => void altIslem(() => onDurumDegis(kod))}
+            >
+              {etiket}
+            </button>
+          ))}
+        </div>
+        <span className="text-sm text-slate-700">{ucretMetni(randevu.ucret)}</span>
+        <label className="flex items-center gap-1 text-sm">
+          <input
+            type="checkbox"
+            checked={odendi}
+            disabled={altIslemSuruyor}
+            onChange={(olay) => odemeDegis(olay.target.checked)}
+          />
+          Ödendi
+        </label>
+        {altHata !== null && (
+          <p role="alert" className="w-full text-sm text-red-700">
+            {altHata}
+          </p>
+        )}
       </div>
     </section>
   )

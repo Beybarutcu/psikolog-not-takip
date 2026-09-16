@@ -241,12 +241,10 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
       setRandevular((onceki) => onceki.map((r) => (r.id === id ? { ...r, durum } : r)))
       // Panel açık kalır ve elindeki `randevu` nesnesi bu state'tir; o kopya
       // güncellenmezse `seciliRandevu.durum` sunucudaki gerçekten sessizce
-      // ayrışır. Bugün görünür bir etkisi YOK — `RandevuPaneli` `durum`
-      // alanını hiçbir yerde render etmiyor ve `key` değişmediği için remount
-      // da olmuyor (bu satırın eski gerekçesi "kullanıcı işaretlediği durumu
-      // panelde göremez" idi; yanlıştı, silindi). Satır yine de duruyor çünkü
-      // paneldeki kopyanın listedeki satırdan ayrışması, panel ileride
-      // `durum`'u okuduğu anda bayat veri gösterirdi.
+      // ayrışır. Plan 4 Görev 2'den beri bu satır YÜK TAŞIYOR: `SeansPaneli`
+      // alt satırı seçili düğmeyi (`aria-pressed`) `randevu.durum`'dan okuyor
+      // ve `key` değişmediği için remount olmuyor — bu tazeleme olmasaydı
+      // "Geldi"ye basınca vurgu eski düğmede kalırdı.
       //
       // Nesne tazeleniyor ama KİMLİK aynı kalıyor: seans notu efektleri
       // `seansId`/`seansDanisanId`/`seansBaslangici` ilkel değerlerine bağlı,
@@ -255,6 +253,29 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
       setSeciliRandevu((secili) => (secili && secili.id === id ? { ...secili, durum } : secili))
     } catch (e) {
       setHata(e instanceof Error ? e.message : 'Randevu güncellenemedi.')
+      throw e
+    }
+  }
+
+  // "Ödendi" işareti — `durumDegis` ile AYNI karar ve aynı gerekçe: sonuç
+  // yerel olarak kesin biçimde bilinir (tek satır, tek boolean), bu yüzden
+  // `yukle()` ÇAĞRILMAZ; çağrılsaydı her işaretleme sunucuda silinemez bir
+  // `goruntuleme` satırı daha bırakırdı. Seçili randevunun kopyası AYNI
+  // kimlikle tazelenir: not efektleri ilkel kimliklere bağlı, yeni istek
+  // atılmaz. Ölçen test: `AnaEkran.test.tsx` > "\"Ödendi\" isaretlemek
+  // YALNIZCA tek PATCH /odeme uretir".
+  //
+  // Liste de tazeleniyor, yalnızca seçili kopya değil: kullanıcı başka bir
+  // seansa geçip geri döndüğünde panel randevuyu LİSTEDEN alır ve bayat
+  // `odendi` ile açılırdı.
+  async function odemeDegis(id: number, odendi: boolean) {
+    try {
+      await takvimApi.odemeGuncelle(id, odendi)
+      setHata(null)
+      setRandevular((onceki) => onceki.map((r) => (r.id === id ? { ...r, odendi } : r)))
+      setSeciliRandevu((secili) => (secili && secili.id === id ? { ...secili, odendi } : secili))
+    } catch (e) {
+      setHata(e instanceof Error ? e.message : 'Ödeme kaydedilemedi.')
       throw e
     }
   }
@@ -302,6 +323,7 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
     seansaGit,
     kaydet,
     durumDegis,
+    odemeDegis,
     sil,
     seriSil,
   }

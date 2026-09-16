@@ -47,7 +47,6 @@ type Props = {
   randevu: Randevu | null
   danisanlar: Danisan[]
   onKaydet: (kayit: Kayit) => Promise<void>
-  onDurumDegis: (id: number, durum: string) => Promise<void>
   onSil: (id: number) => Promise<void>
   // Serideki bu randevudan İTİBAREN gelen tüm tekrarları siler; geçmiş
   // korunur (bkz. sunucudaki `seriyi_sil`).
@@ -94,7 +93,7 @@ function tldenKurusa(tl: string): number | null {
 }
 
 export function RandevuPaneli({
-  zaman, randevu, danisanlar, onKaydet, onDurumDegis, onSil, onSeriSil, seriSayisiAl,
+  zaman, randevu, danisanlar, onKaydet, onSil, onSeriSil, seriSayisiAl,
   silinecekNotSayisiAl, onKapat, cakismaKontrol,
 }: Props) {
   const baslangic = randevu?.baslangic ?? zaman
@@ -117,7 +116,7 @@ export function RandevuPaneli({
   const [seriSilOnayi, setSeriSilOnayi] = useState<SeriSilmeOnizlemesi | null>(null)
   const [islemSuruyor, setIslemSuruyor] = useState(false)
 
-  // onKaydet/onDurumDegis/onSil (ör. kayıt işlemi) tamamlanmadan panel başka
+  // onKaydet/onSil (ör. kayıt işlemi) tamamlanmadan panel başka
   // bir randevuya/boş saate geçiş sonucu kaldırılırsa (kaydet çağrısı
   // AnaEkran'da paneli kapatıyor), aşağıdaki finally/catch bloklarının
   // kaldırılmış bileşende setState çağırmasını önler — cakismaKontrol
@@ -156,7 +155,7 @@ export function RandevuPaneli({
     }
   }, [baslangic, bitis, randevu?.id, sorulacakTekrar, cakismaKontrol])
 
-  // Kaydet/durum/sil işlemleri sürerken düğmeleri devre dışı bırakmak ve
+  // Kaydet/sil işlemleri sürerken düğmeleri devre dışı bırakmak ve
   // sunucudan dönen hatayı panelin içinde de göstermek için ortak sarmalayıcı.
   // Hızlı çift tıklama, düğme devre dışı kaldığı için ikinci bir çağrı
   // üretmiyor (bkz. RandevuPaneli.test.tsx).
@@ -315,27 +314,11 @@ export function RandevuPaneli({
         {randevu ? 'Güncelle' : 'Kaydet'}
       </button>
 
+      {/* Durum düğmeleri (Geldi/Gelmedi/İptal) Plan 4 Görev 2'de SEANS
+          PANELİNİN alt satırına taşındı (tasarım §6). İki panel aynı anda
+          açık; burada da kalsalardı ekranda iki "Geldi" olurdu. */}
       {randevu && (
         <>
-          <div className="mt-4 grid grid-cols-3 gap-1">
-            {(
-              [
-                ['Geldi', 'geldi'],
-                ['Gelmedi', 'gelmedi'],
-                ['İptal', 'iptal'],
-              ] as const
-            ).map(([etiket, kod]) => (
-              <button
-                key={kod}
-                className="rounded border py-1 text-sm disabled:opacity-50"
-                onClick={() => void islemCalistir(() => onDurumDegis(randevu.id, kod))}
-                disabled={islemSuruyor}
-              >
-                {etiket}
-              </button>
-            ))}
-          </div>
-
           {silOnayi !== null ? (
             <div className="mt-3 rounded bg-red-50 p-2">
               <p className="text-sm text-red-800">Bu randevu kalıcı olarak silinsin mi?</p>

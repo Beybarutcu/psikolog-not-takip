@@ -936,6 +936,14 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
   // sert kısıtı ("otomatik kayıt sırasında 401 gelirse yazılmamış içerik
   // düşürülemez") özel not için hiç koşulmamıştı.
   let ozelYazmaYetkisiz = false
+  // Ödeme işareti (Plan 4 Görev 2). Taklit `PATCH .../odeme`'yi GERÇEKTEN
+  // uygular: sonraki bir takvim yüklemesi sunucudaki değeri görür. Böylece
+  // "yerel kopya tazelendi" iddiası, taklidin her zaman `false` dönmesine
+  // yaslanmaz.
+  let sunucuOdendi: Record<number, boolean> = {}
+  // Kurulursa ödeme PATCH'i bu söz çözülene kadar yanıt vermez — "işlem
+  // BİTTİ" bariyeri kurabilmek için (altıncı biçim).
+  let odemeBekletici: Promise<void> | null = null
 
   const notGetSayisi = (id: number) =>
     istekler.filter((i) => i.yol === `/api/randevular/${id}/not` && i.method === 'GET').length
@@ -951,6 +959,8 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     notYetkisiz = false
     gecmisSunucuHatasi = false
     ozelYazmaYetkisiz = false
+    sunucuOdendi = {}
+    odemeBekletici = null
     sunucuOzelNotlari = { [randevuA.id]: GIZLI }
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
@@ -1004,9 +1014,19 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
           }),
         } as unknown as Response
       }
+      const odeme = /^\/api\/randevular\/(\d+)\/odeme$/.exec(yol)
+      if (odeme && method === 'PATCH') {
+        if (odemeBekletici) await odemeBekletici
+        sunucuOdendi[Number(odeme[1])] = (govde as { odendi: boolean }).odendi
+        return { ok: true, status: 204, json: async () => ({}) } as unknown as Response
+      }
       if (yol.startsWith('/api/randevular')) {
         if (method === 'GET') {
-          return { ok: true, json: async () => [randevuA, randevuB] } as unknown as Response
+          return {
+            ok: true,
+            json: async () =>
+              [randevuA, randevuB].map((r) => ({ ...r, odendi: sunucuOdendi[r.id] ?? r.odendi })),
+          } as unknown as Response
         }
         return { ok: true, json: async () => ({}) } as unknown as Response
       }
@@ -1019,6 +1039,8 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     globalThis.fetch = gercekFetch
     vi.restoreAllMocks()
   })
+
+  const odendiKutusu = () => screen.getByRole('checkbox', { name: 'Ödendi' }) as HTMLInputElement
 
   async function seansAc(ad = 'Ayşe Yılmaz') {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
@@ -1317,6 +1339,105 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     expect(screen.getByRole('button', { name: 'Ayşe Yılmaz' }).getAttribute('data-durum')).toBe(
       'geldi',
     )
+  })
+
+  // Kardeş test (Plan 4 Görev 2). Denetim hacmi: bir ödeme işaretleme TEK
+  // `PATCH` üretir. `odemeDegis` seçili randevuyu TAZE bir nesneyle
+  // değiştiriyor; not efektleri nesneye bağlansaydı üç GET daha, tazeleme
+  // yerine `yukle()` çağrılsaydı bir takvim GET'i daha giderdi.
+  it('"Ödendi" isaretlemek YALNIZCA tek PATCH /odeme uretir; not, gecmis ve takvim istekleri YENIDEN ATILMAZ', async () => {
+    await seansAc()
+    const kutu = odendiKutusu()
+    expect(kutu.checked).toBe(false)
+
+    let coz: () => void = () => {}
+    odemeBekletici = new Promise<void>((r) => { coz = r })
+    const oncekiSayi = istekler.length
+
+    await userEvent.click(kutu)
+    // İstek uçuşta: kutu kilitli (ikinci bir tıklama ikinci PATCH üretemez).
+    expect(kutu.disabled).toBe(true)
+    coz()
+    // BARİYER: işlem BİTTİ (kilit kalktı). Bu olmadan aşağıdaki "başka istek
+    // yok" iddiası, `yukle()` henüz tetiklenmeden anında tatmin olurdu.
+    await waitFor(() => expect(kutu.disabled).toBe(false))
+    // Tazeleme sonrası olası bir efektin/yeniden yüklemenin istek atmasına
+    // fırsat ver.
+    await new Promise((r) => setTimeout(r, 30))
+
+    // YOL + YÖNTEM + GÖVDE ile, tam eşitlik: "bir PATCH gitti" tek başına
+    // `{durum}` PATCH'ine giden bir çağrıyı da geçirirdi.
+    expect(istekler.slice(oncekiSayi)).toEqual([
+      { yol: `/api/randevular/${randevuA.id}/odeme`, method: 'PATCH', govde: { odendi: true } },
+    ])
+    expect(notGetSayisi(randevuA.id)).toBe(1)
+    expect(ozelGetleri()).toHaveLength(0)
+    // İşlem gerçekten yapıldı ve ekran onu söylüyor.
+    expect(sunucuOdendi[randevuA.id]).toBe(true)
+    expect(odendiKutusu().checked).toBe(true)
+  })
+
+  // Yük taşıyan `key={seans-${id}}`: kutunun iyimser yerel durumu seans
+  // değişince SIFIRLANMALI. Temiz mount değil, GERÇEK gezinme (A → B → A).
+  it('seans degisince Odendi kutusu YENI randevunun degerini gosterir; geri donunce A nin isareti korunur', async () => {
+    await seansAc()
+    await userEvent.click(odendiKutusu())
+    await waitFor(() => expect(sunucuOdendi[randevuA.id]).toBe(true))
+    await waitFor(() => expect(odendiKutusu().disabled).toBe(false))
+    expect(odendiKutusu().checked).toBe(true)
+
+    // B'ye geç: B ödenmemiş. `key` olmasaydı panel yeniden mount edilmez ve
+    // A'nın iyimser `true`'su B'nin kutusunda kalırdı — yanlış danışana
+    // "ödendi" görünür.
+    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await screen.findByText(/Mehmet Demir — /)
+    expect(odendiKutusu().checked).toBe(false)
+
+    // A'ya dön: takvim YENİDEN YÜKLENMEDİ, dolayısıyla A'nın `true`'su ancak
+    // yerel listedeki kopya tazelendiyse görünür.
+    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByText(/Ayşe Yılmaz — /)
+    expect(odendiKutusu().checked).toBe(true)
+    expect(
+      istekler.filter((i) => i.yol.startsWith('/api/randevular?') && i.method === 'GET'),
+    ).toHaveLength(1)
+  })
+
+  it('"Geldi" isaretlenince alt satirda SECILI gorunen dugme Geldi olur (panel remount olmadan)', async () => {
+    // `durumDegis` seçili randevunun kopyasını AYNI kimlikle tazeliyor; panel
+    // yeniden mount edilmiyor ve `aria-pressed` prop'tan okunuyor. O tazeleme
+    // kaldırılırsa vurgu "planlandi"da (hiçbir düğmede) kalır.
+    await seansAc()
+    const geldi = () => screen.getByRole('button', { name: 'Geldi' })
+    expect(geldi().getAttribute('aria-pressed')).toBe('false')
+    await userEvent.click(geldi())
+    await waitFor(() => expect(geldi().getAttribute('aria-pressed')).toBe('true'))
+    expect(screen.getByRole('button', { name: 'Gelmedi' }).getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('odeme istegi basarisiz olursa kutu geri doner ve hata alert ile duyurulur (cagri noktasindan)', async () => {
+    await seansAc()
+    const kutu = odendiKutusu()
+    // Sunucu reddediyor: bir sonraki PATCH /odeme 404.
+    const oncekiFetch = globalThis.fetch
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
+      const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      if (/\/odeme$/.test(yol)) {
+        istekler.push({ yol, method: secenekler?.method ?? 'GET', govde: null })
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({ hata: 'Kayıt bulunamadı.' }),
+        } as unknown as Response
+      }
+      return oncekiFetch(girdi, secenekler)
+    }) as unknown as typeof fetch
+
+    await userEvent.click(kutu)
+    const uyari = await within(screen.getByRole('region', { name: 'Seans' })).findByRole('alert')
+    expect(uyari.textContent).toContain('Kayıt bulunamadı.')
+    expect(odendiKutusu().checked).toBe(false)
+    expect(sunucuOdendi[randevuA.id]).toBeUndefined()
   })
 
   it('bos notta sablon basliklari gorunur ama HICBIR yazma uretilmez', async () => {

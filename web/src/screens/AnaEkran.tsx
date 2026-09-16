@@ -612,7 +612,6 @@ export function AnaEkran({
             randevu={seciliRandevu}
             danisanlar={liste.danisanlar}
             onKaydet={takvim.kaydet}
-            onDurumDegis={takvim.durumDegis}
             onSil={takvim.sil}
             onSeriSil={takvim.seriSil}
             seriSayisiAl={takvimApi.seriSayisi}
@@ -689,6 +688,13 @@ export function AnaEkran({
             onOzelSekme={seansAkisi.ozelSekmeAcildi}
             onOzelYenidenDene={seansAkisi.ozelYenidenDene}
             onKapat={takvim.panelKapat}
+            // Alt satır (Plan 4 Görev 2). Kimlik burada, render anında
+            // bağlanıyor: panel bu `key` ile yalnızca O randevu için mount
+            // edildiğinden closure'daki `id` panelin ömrü boyunca doğru.
+            // Her renderda taze closure'lar zararsız — panel bunları hiçbir
+            // efektin bağımlılığına koymuyor, yalnızca tıklamada çağırıyor.
+            onDurumDegis={(durum) => takvim.durumDegis(seciliRandevu.id, durum)}
+            onOdemeDegis={(odendi) => takvim.odemeDegis(seciliRandevu.id, odendi)}
           />
         ) : (
           // Yükleme başarısızsa panel AÇILMAZ: "yükleniyor…" yazan bir panel

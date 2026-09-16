@@ -9,6 +9,7 @@ import {
   ekIndirmeYolu,
   notApi,
   ozelNotApi,
+  takvimApi,
   veritabaniBozukOlunca,
   VeritabaniBozukHata,
   yedekApi,
@@ -171,6 +172,71 @@ describe('not uç noktalarında 401', () => {
     await expect(ozelNotApi.kaydet(7, 'gizli')).rejects.toBeInstanceOf(YetkisizHata)
     expect(dinleyici).toHaveBeenCalledTimes(1)
     birak()
+  })
+})
+
+// --- Plan 4 Görev 2: ödeme işareti ----------------------------------------
+//
+// İddialar YOL ve GÖVDEYLE kuruluyor, yalnızca yöntemle değil: Görev 1'de
+// yalnızca durum koduna bakan testlerin yol hiç yokken de geçebildiği
+// görüldü. `{durum}` PATCH'i ile aynı yöntemi paylaştığı için "bir PATCH
+// gitti" iddiası tek başına yanlış uca giden bir istemciyi de geçirirdi.
+describe('takvimApi.odemeGuncelle — ödendi işareti', () => {
+  it('PATCH ile TAM OLARAK /api/randevular/{id}/odeme adresine {odendi} gönderir', async () => {
+    await takvimApi.odemeGuncelle(7, true)
+    await takvimApi.odemeGuncelle(8, false)
+    // Tam eşitlik: fazladan bir `durum` alanı ya da yanlış yol (ör. `{durum}`
+    // PATCH'inin `/api/randevular/7`'si) burada kırılır.
+    expect(cagrilar).toEqual([
+      { yol: '/api/randevular/7/odeme', method: 'PATCH', govde: { odendi: true } },
+      { yol: '/api/randevular/8/odeme', method: 'PATCH', govde: { odendi: false } },
+    ])
+  })
+
+  it('204 (gövdesiz) yanıtı başarı sayar ve undefined döner', async () => {
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
+      cagrilar.push({
+        yol: String(girdi),
+        method: secenekler?.method ?? 'GET',
+        govde: JSON.parse(String(secenekler?.body)),
+      })
+      return {
+        ok: true,
+        status: 204,
+        json: async () => {
+          throw new SyntaxError('Unexpected end of JSON input')
+        },
+      } as unknown as Response
+    }) as unknown as typeof fetch
+    await expect(takvimApi.odemeGuncelle(7, true)).resolves.toBeUndefined()
+    expect(cagrilar).toEqual([
+      { yol: '/api/randevular/7/odeme', method: 'PATCH', govde: { odendi: true } },
+    ])
+  })
+
+  it('401de dinleyiciyi throwdan ÖNCE tetikler ve YetkisizHata fırlatır', async () => {
+    sunucu(() => ({ ok: false, status: 401, govde: { hata: 'Oturum kilitli.' } }))
+    const sira: string[] = []
+    const birak = yetkisizOlunca(() => sira.push('dinleyici'))
+
+    await expect(
+      takvimApi.odemeGuncelle(7, true).catch((e) => {
+        sira.push('throw')
+        throw e
+      }),
+    ).rejects.toBeInstanceOf(YetkisizHata)
+
+    expect(sira).toEqual(['dinleyici', 'throw'])
+    // İstek GERÇEKTEN doğru uca gitti ve 401'i oradan aldı.
+    expect(cagrilar).toEqual([
+      { yol: '/api/randevular/7/odeme', method: 'PATCH', govde: { odendi: true } },
+    ])
+    birak()
+  })
+
+  it('401 dışındaki ret (404) sunucunun mesajıyla fırlatır', async () => {
+    sunucu(() => ({ ok: false, status: 404, govde: { hata: 'Kayıt bulunamadı.' } }))
+    await expect(takvimApi.odemeGuncelle(7, true)).rejects.toThrow('Kayıt bulunamadı.')
   })
 })
 

@@ -2040,6 +2040,16 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   // `kapi()` deseninin aynısı): "yeni veri gelene kadar öncekinin ekranda
   // kalmadığı" ancak bekleyen bir istekle ölçülebilir.
   let gecikmeler: Record<string, Promise<void>>
+  // Dal incelemesi I1: sunucudaki durum/ödeme YAZMALARI. `GET /api/ay-ozeti`
+  // Ayşe'nin 202 numaralı seansının borcunu BUNLARDAN hesaplar — "özet
+  // tazelendi mi" ancak yazmadan sonra DEĞİŞEN bir yanıtla ölçülebilir.
+  // Randevu listesi GET'i bunları bilerek YANSITMAZ: kartın uçuş yarışı
+  // testi, yazmadan önce başlamış bir okumanın ESKİ değeri döndürmesine
+  // dayanıyor.
+  let sunucuOdemeleri: Record<number, boolean>
+  let sunucuDurumlari: Record<number, string>
+  /** Kurulursa `PATCH .../odeme` 500 döner ve sunucuda hiçbir şey değişmez. */
+  let odemeHatasi: boolean
 
   function kapi() {
     let ac!: () => void
@@ -2058,6 +2068,9 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     yetkisiz = false
     istekYollari = []
     gecikmeler = {}
+    sunucuOdemeleri = {}
+    sunucuDurumlari = {}
+    odemeHatasi = false
     uretilenBloblar = []
     raporGovdeleri = []
     sunucuEkleri = [
@@ -2105,10 +2118,37 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
 
       // Plan 4 Görev 4: ay sonu özeti. Borçlu Zeynep (id 3) — kartında
       // ayırt edici bir telefon var, "DOĞRU kart açıldı" ekrandan ölçülür.
+      const odemeYazmasi = /^\/api\/randevular\/(\d+)\/odeme$/.exec(yol)
+      if (odemeYazmasi && method === 'PATCH') {
+        if (odemeHatasi) return hataYaniti(500, 'ODEME-YAZILAMADI')
+        sunucuOdemeleri[Number(odemeYazmasi[1])] = (
+          JSON.parse(String(secenekler?.body)) as { odendi: boolean }
+        ).odendi
+        return jsonYanit({})
+      }
+      const durumYazmasi = /^\/api\/randevular\/(\d+)$/.exec(yol)
+      if (durumYazmasi && method === 'PATCH') {
+        sunucuDurumlari[Number(durumYazmasi[1])] = (
+          JSON.parse(String(secenekler?.body)) as { durum: string }
+        ).durum
+        return jsonYanit({})
+      }
+
+      // Ayşe'nin 202'si (geldi, 450 TL) yazmalara göre borçlu listesine girer
+      // ya da çıkar; tahsilat ve Zeynep sabit.
       if (yol.startsWith('/api/ay-ozeti')) {
+        const ayseBorclu =
+          (sunucuDurumlari[202] ?? gelecekHafta.durum) === 'geldi' &&
+          !(sunucuOdemeleri[202] ?? gelecekHafta.odendi)
         return jsonYanit({
-          ay: '2026-09', seans_sayisi: 4, tahsilat_kurus: 180000, bekleyen_kurus: 60000,
-          borclular: [{ client_id: 3, ad_soyad: 'Zeynep Kaya', borc_kurus: 123450, seans_sayisi: 1 }],
+          ay: '2026-09', seans_sayisi: 4, tahsilat_kurus: 180000,
+          bekleyen_kurus: 60000 + (ayseBorclu ? 45000 : 0),
+          borclular: [
+            ...(ayseBorclu
+              ? [{ client_id: 1, ad_soyad: 'Ayşe Yılmaz', borc_kurus: 45000, seans_sayisi: 1 }]
+              : []),
+            { client_id: 3, ad_soyad: 'Zeynep Kaya', borc_kurus: 123450, seans_sayisi: 1 },
+          ],
         })
       }
 
@@ -2243,6 +2283,98 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
       // `onDanisanAc` closure'u, yeni `bugun` dizgisi): özet yine TEK istek.
       expect(screen.getByRole('region', { name: 'Ay sonu özeti' })).toBeDefined()
       expect(ozetIstekleri()).toEqual(['GET /api/ay-ozeti?ay=2026-09'])
+    })
+
+    // Dal incelemesi I1 — AYNI borç iki ekranda farklıydı: özet açıkken
+    // "Ödendi" işaretlenince kart yerelde yamanıyor, özet eski yanıtı
+    // gösteriyordu. Kurulum: kart açık, özet açık, gelecek haftadaki 202
+    // (Ayşe, geldi, 450 TL, ödenmemiş) seçili.
+    const kartBakiyesi = () =>
+      screen.getAllByRole('term').find((e) => e.textContent === 'Bakiye')?.nextElementSibling
+        ?.textContent
+    const ozetDegeri = (etiket: string) =>
+      within(screen.getByRole('region', { name: 'Ay sonu özeti' }))
+        .getAllByRole('term')
+        .find((e) => e.textContent === etiket)?.nextElementSibling?.textContent
+    const odendiKutusu = () => screen.getByRole('checkbox', { name: 'Ödendi' }) as HTMLInputElement
+
+    async function seans202Ac() {
+      await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
+      await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+      await screen.findByLabelText('Seans notu')
+      // Ön bariyer: panelin gecikmeli çakışma sorgusu ölçüm penceresine düşmesin.
+      await waitFor(() =>
+        expect(istekYollari.filter((y) => y.startsWith('GET /api/cakisma?'))).toHaveLength(1),
+      )
+    }
+
+    async function ozetAcVeAyseBorcunuGor() {
+      await userEvent.click(screen.getByRole('button', { name: 'Ay sonu özeti' }))
+      const bolge = await screen.findByRole('region', { name: 'Ay sonu özeti' })
+      await within(bolge).findByRole('button', { name: /Ayşe Yılmaz — 450,00 TL/ })
+      expect(ozetDegeri('Bekleyen')).toBe('1.050,00 TL')
+      return bolge
+    }
+
+    it.each([
+      ['odeme', async () => userEvent.click(odendiKutusu())],
+      ['durum', async () => userEvent.click(screen.getByRole('button', { name: 'Gelmedi' }))],
+    ])(
+      'ozet ACIKKEN %s yazmasi basarili olunca ozet TEK yeni istekle tazelenir; kart ve ozet AYNI borcu gosterir',
+      async (_ad, yazmaEylemi) => {
+        render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+        await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
+        await screen.findByText('0555 111 22 33')
+        expect(kartBakiyesi()).toBe(BAKIYE_450)
+        const bolge = await ozetAcVeAyseBorcunuGor()
+        await seans202Ac()
+        expect(ozetIstekleri()).toHaveLength(1)
+
+        await yazmaEylemi()
+        // Kart ve özet AYNI şeyi söylüyor: Ayşe'nin borcu yok.
+        await waitFor(() => expect(kartBakiyesi()).toBe(BAKIYE_0))
+        await waitFor(() => expect(ozetDegeri('Bekleyen')).toBe('600,00 TL'))
+        expect(within(bolge).queryByRole('button', { name: /Ayşe Yılmaz/ })).toBeNull()
+        // Bariyer: satırın kilidi kalktı (işlem zinciri bitti) — ardından
+        // TAM BİR yeni özet isteği, aynı ay.
+        await waitFor(() => expect(odendiKutusu().disabled).toBe(false))
+        expect(ozetIstekleri()).toEqual([
+          'GET /api/ay-ozeti?ay=2026-09',
+          'GET /api/ay-ozeti?ay=2026-09',
+        ])
+      },
+    )
+
+    it('ozet KAPALIYKEN odeme isaretlenince ozet istegi YOK', async () => {
+      render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+      await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+      await seans202Ac()
+
+      await userEvent.click(odendiKutusu())
+      // BARİYER (biçim 6): PATCH yanıtı geldi ve kutunun kilidi kalktı.
+      await waitFor(() => expect(sunucuOdemeleri[202]).toBe(true))
+      await waitFor(() => expect(odendiKutusu().disabled).toBe(false))
+      expect(odendiKutusu().checked).toBe(true)
+      expect(istekYollari).toContain('PATCH /api/randevular/202/odeme')
+      expect(ozetIstekleri()).toEqual([])
+      expect(screen.queryByRole('region', { name: 'Ay sonu özeti' })).toBeNull()
+    })
+
+    it('odeme yazmasi REDDEDILIRSE acik ozet yeniden ISTENMEZ ve eski borcu gostermeye devam eder', async () => {
+      render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+      await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+      const bolge = await ozetAcVeAyseBorcunuGor()
+      await seans202Ac()
+      odemeHatasi = true
+
+      await userEvent.click(odendiKutusu())
+      // BARİYER (biçim 6): ret alt satıra ulaştı, kutu geri döndü, kilit kalktı.
+      expect((await screen.findByRole('alert')).textContent).toContain('ODEME-YAZILAMADI')
+      await waitFor(() => expect(odendiKutusu().disabled).toBe(false))
+      expect(odendiKutusu().checked).toBe(false)
+      expect(istekYollari).toContain('PATCH /api/randevular/202/odeme')
+      expect(ozetIstekleri()).toEqual(['GET /api/ay-ozeti?ay=2026-09'])
+      expect(within(bolge).getByRole('button', { name: /Ayşe Yılmaz — 450,00 TL/ })).toBeDefined()
     })
   })
 

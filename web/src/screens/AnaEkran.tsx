@@ -79,6 +79,13 @@ export function AnaEkran({
   // yazıyor ve açılışta kendiliğinden istek atan bir özet, terapistin hiç
   // bakmadığı bir görüntülemeyi silinemez biçimde kaydederdi.
   const [ozetAcik, setOzetAcik] = useState(false)
+  // Açık özetin DIŞARIDAN tazelenme sayacı (dal incelemesi I1). Kart
+  // bakiyesi durum/ödeme yazmasından sonra yerelde yamanıyor; özet ise
+  // yalnızca ay değişince istek atıyordu — özet açıkken "Ödendi" işaretlenince
+  // kart `0,00 TL`, özet aynı borcu hâlâ gösteriyordu. Özet kapalıyken sayaç
+  // artsa da istek GİTMEZ: `AyOzeti` monte değil, açıldığında zaten tek bir
+  // taze istek atar.
+  const [ozetTazeleme, setOzetTazeleme] = useState(0)
 
   const { seciliRandevu, seciliBosSaat } = takvim
   const { seciliDanisanId, kart } = dosya
@@ -116,15 +123,24 @@ export function AnaEkran({
    * randevudan hesaplandığı için kartın listesi burada yerelde yamanıyor
    * (Görev 2 inceleme M5 — kart yeniden çekilmez, bkz. `randevuYamala`).
    * Yama yalnızca istek BAŞARILIYSA: ret önce `await`ten fırlar.
+   *
+   * Açık AY SONU ÖZETİ ise yamanamaz (toplamlar sunucuda hesaplanıyor) ve
+   * YENİDEN İSTENİR: tek bir `GET /api/ay-ozeti`. Tazeleme de yalnızca
+   * başarıda — reddedilen bir yazma sunucuda hiçbir şeyi değiştirmedi.
+   * Ölçen testler: `AnaEkran.test.tsx` > "ozet ACIKKEN ... TEK yeni istekle
+   * tazelenir", "ozet KAPALIYKEN ... ozet istegi YOK", "odeme yazmasi
+   * REDDEDILIRSE ...".
    */
   async function durumDegis(id: number, durum: string) {
     await takvim.durumDegis(id, durum)
     dosya.randevuYamala(id, { durum })
+    setOzetTazeleme((n) => n + 1)
   }
 
   async function odemeDegis(id: number, odendi: boolean) {
     await takvim.odemeDegis(id, odendi)
     dosya.randevuYamala(id, { odendi })
+    setOzetTazeleme((n) => n + 1)
   }
 
   function veriRaporuIndir(danisanId: number, parola: string): Promise<void> {
@@ -161,7 +177,13 @@ export function AnaEkran({
       {/* Borçlu satırı GERÇEK danışan kartını açar: danışan çipiyle aynı
           `danisanKartiAc` yolu (`AnaEkran.test.tsx` "ay sonu ozeti" bloğu
           kartın isteğini ölçer). */}
-      {ozetAcik && <AyOzeti bugun={yerelGun(new Date())} onDanisanAc={danisanKartiAc} />}
+      {ozetAcik && (
+        <AyOzeti
+          bugun={yerelGun(new Date())}
+          disTazeleme={ozetTazeleme}
+          onDanisanAc={danisanKartiAc}
+        />
+      )}
 
       <div className="mb-4">
         <div className="flex items-center gap-3">

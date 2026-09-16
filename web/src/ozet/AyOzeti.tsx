@@ -49,9 +49,14 @@ type Sonuc = { ay: string; veri: AyOzetiVerisi } | { ay: string; hata: string }
  *
  * # Denetim hacmi
  *
- * Sunucu her özet görüntülemesini loglar. Efektin tek bağımlılığı İLKEL `ay`
- * dizgisi: üst bileşenin her render'da geçirdiği yeni `onDanisanAc` ya da
- * `bugun` istek ATTIRMAZ. `bugun` yalnızca açılış ayını belirler.
+ * Sunucu her özet görüntülemesini loglar. Efektin bağımlılıkları İLKEL: `ay`
+ * dizgisi ve iki sayaç (`tazeleme`, `disTazeleme`). Üst bileşenin her
+ * render'da geçirdiği yeni `onDanisanAc` ya da `bugun` istek ATTIRMAZ.
+ * `bugun` yalnızca açılış ayını belirler.
+ *
+ * `disTazeleme` ile gelen yanıtın sırası da (2) ile korunuyor: yazmadan
+ * ÖNCE başlamış bir istek iptal edilir, ekrana yalnızca yazmadan SONRA
+ * başlayan isteğin yanıtı gelir.
  *
  * # Hata sonrası "Yeniden dene" (Görev 4 inceleme M2)
  *
@@ -70,10 +75,19 @@ type Sonuc = { ay: string; veri: AyOzetiVerisi } | { ay: string; hata: string }
  */
 export function AyOzeti({
   bugun,
+  disTazeleme = 0,
   onDanisanAc,
 }: {
   /** `YYYY-AA-GG`; açılışta gösterilecek ayı belirler. */
   bugun: string
+  /**
+   * Üst bileşenin tazeleme sayacı (dal incelemesi I1): özet açıkken bir
+   * seansın durumu ya da ödemesi BAŞARIYLA yazılınca artar ve görünen ay
+   * TEK istekle yeniden istenir. Değeri önemsiz, yalnızca DEĞİŞMESİ.
+   * Eski sayılar yeni yanıt gelene kadar ekranda kalır (aynı ay; yazma
+   * öncesi hâl) — "…"ya düşürmek her işaretlemede özeti titretirdi.
+   */
+  disTazeleme?: number
   onDanisanAc: (id: number) => void
 }) {
   const [ay, setAy] = useState(() => bugun.slice(0, 7))
@@ -94,7 +108,7 @@ export function AyOzeti({
     return () => {
       iptal = true
     }
-  }, [ay, tazeleme])
+  }, [ay, tazeleme, disTazeleme])
 
   const guncel = sonuc !== null && sonuc.ay === ay ? sonuc : null
   const veri = guncel !== null && 'veri' in guncel ? guncel.veri : null

@@ -177,7 +177,7 @@ test('geldi + odendi isaretlenen seans ay sonu ozetinde tahsilata, odenmeyen bor
   const s2 = await seansAc(page, 'Borçlu Burak', '300,00 TL')
   await durumIsaretle(page, s2, r2, 'Borçlu Burak', 'Geldi', 'geldi')
 
-  let ozet = await ozetAc(page, ay)
+  const ozet = await ozetAc(page, ay)
   await expect(deger(ozet, 'Gelinen seans')).toHaveText('2')
   await expect(deger(ozet, 'Tahsilat')).toHaveText('450,00 TL')
   await expect(deger(ozet, 'Bekleyen')).toHaveText('300,00 TL')
@@ -187,13 +187,23 @@ test('geldi + odendi isaretlenen seans ay sonu ozetinde tahsilata, odenmeyen bor
   // Sayılar yüklendikten SONRA (yukarıdaki bariyerler): ödeyen borçlu değil.
   await expect(ozet.getByRole('listitem')).toHaveCount(1)
   await expect(ozet.getByText('Bu ay bekleyen ödeme yok.', { exact: true })).toHaveCount(0)
-  await ozetKapat(page)
 
-  // İkinci danışan da öder -> özet YENİDEN açılır (taze istek) ve DEĞİŞİR.
+  // İkinci danışan da öder — özet AÇIK KALIYOR (dal incelemesi I1). Eskiden
+  // bu adım özeti kapatıp açarak taze bir mount alıyordu ve açık özetin
+  // bayat kaldığı hata tam o atlatmanın arkasında duruyordu. Bariyer: PATCH
+  // BAŞARIYLA döndükten SONRA gelen bir `GET /api/ay-ozeti` yanıtı; sayılar
+  // ancak o isteğin sonucuyla değişebilir.
   const s2b = await seansAc(page, 'Borçlu Burak', '300,00 TL')
+  const tazelemeSozu = page.waitForResponse(
+    (y) => y.request().method() === 'GET' && new URL(y.url()).pathname === '/api/ay-ozeti',
+  )
   await odemeIsaretle(page, s2b, r2)
-
-  ozet = await ozetAc(page, ay)
+  expect((await tazelemeSozu).ok()).toBe(true)
+  await expect(page.getByRole('button', { name: 'Ay sonu özeti', exact: true })).toHaveAttribute(
+    'aria-expanded',
+    'true',
+  )
+  await expect(ozet.getByRole('heading', { level: 2 })).toHaveText(ayBasligi(ay))
   await expect(deger(ozet, 'Tahsilat')).toHaveText('750,00 TL')
   await expect(deger(ozet, 'Bekleyen')).toHaveText('0,00 TL')
   await expect(deger(ozet, 'Gelinen seans')).toHaveText('2')

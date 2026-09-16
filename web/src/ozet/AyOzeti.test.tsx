@@ -183,6 +183,30 @@ describe('AyOzeti', () => {
     expect(ayOzeti).toHaveBeenCalledExactlyOnceWith('2026-09')
   })
 
+  // Dal incelemesi I1: üst bileşen bir yazmadan sonra `disTazeleme`yi artırır.
+  // Geçiş `rerender` ile (biçim 4): sayaç DEĞİŞİNCE aynı ay TEK istekle
+  // yeniden istenir ve yeni yanıt ekrana gelir; AYNI değerle yeniden render
+  // istek atmaz.
+  it('disTazeleme degisince AYNI ay TEK istekle yeniden istenir; ayni degerle render istek atmaz', async () => {
+    const ayOzeti = vi
+      .fn()
+      .mockResolvedValueOnce({ ...bosOzet('2026-09'), bekleyen_kurus: 45000 })
+      .mockResolvedValueOnce(bosOzet('2026-09'))
+    const { rerender } = render(
+      <AyOzeti bugun="2026-09-16" disTazeleme={0} onDanisanAc={vi.fn()} />,
+      { ayOzeti },
+    )
+    await screen.findByText('450,00 TL')
+
+    rerender(<AyOzeti bugun="2026-09-16" disTazeleme={1} onDanisanAc={vi.fn()} />)
+    await waitFor(() => expect(deger('Bekleyen')).toBe('0,00 TL'))
+    expect(ayOzeti.mock.calls).toEqual([['2026-09'], ['2026-09']])
+
+    rerender(<AyOzeti bugun="2026-09-16" disTazeleme={1} onDanisanAc={vi.fn()} />)
+    await yanitlarAkti(Promise.resolve())
+    expect(ayOzeti).toHaveBeenCalledTimes(2)
+  })
+
   it('borclu satirina tiklamak danisani acar; borclu yoksa bunu soyler', async () => {
     const onDanisanAc = vi.fn()
     const ayOzeti = vi.fn().mockResolvedValue({

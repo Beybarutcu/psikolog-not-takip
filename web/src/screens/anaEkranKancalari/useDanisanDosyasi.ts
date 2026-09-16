@@ -171,6 +171,31 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
   // ama rıza bölümü hâlâ silinmiş dosyaya bağlı görünürdü — ekranda sessiz
   // bir yalan. İki kaynağın (dosya + ekler) tutarlılığı yalnızca birlikte
   // çekilerek korunur.
+  /**
+   * Kartın randevu listesini YERELDE yamar (Görev 2 inceleme M5).
+   *
+   * Kart ve seans paneli aynı anda açık olabiliyor. Panelin alt satırından
+   * bir seans "ödendi" ya da "gelmedi" işaretlenince kartın bakiyesi bayat
+   * kalıyordu. Kart YENİDEN ÇEKİLMİYOR: `dosyaGetir` her çağrıda sunucuda
+   * silinemez bir `goruntuleme` satırı daha yazar ve sonuç (tek satırın tek
+   * alanı) zaten kesin olarak biliniyor — `useTakvimAkisi.durumDegis` ile
+   * aynı gerekçe.
+   *
+   * Kart başka bir danışana aitse ya da o randevuyu içermiyorsa hiçbir şey
+   * değişmez. Ölçen test: `AnaEkran.test.tsx` > "kart ACIKKEN odeme ve durum
+   * isaretlenince kart bakiyesi YERELDE tazelenir".
+   */
+  const randevuYamala = useCallback(
+    (id: number, yama: Partial<Pick<Randevu, 'durum' | 'odendi'>>) => {
+      setKartVerisi((onceki) =>
+        onceki.randevular.some((r) => r.id === id)
+          ? { ...onceki, randevular: onceki.randevular.map((r) => (r.id === id ? { ...r, ...yama } : r)) }
+          : onceki,
+      )
+    },
+    [],
+  )
+
   async function ekSil(ekId: number) {
     await danisanApi.ekSil(ekId)
     setKartTazeleme((n) => n + 1)
@@ -186,5 +211,6 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
     rizaKaydet,
     ekYukle,
     ekSil,
+    randevuYamala,
   }
 }

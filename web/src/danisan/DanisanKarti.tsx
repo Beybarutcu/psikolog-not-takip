@@ -35,10 +35,10 @@ import { RizaBolumu } from './RizaBolumu'
  * seans panelinin alt satırındaki "Ödendi" kutusunu ekledi: süzgeç artık
  * gerçekten eliyor ve açıklama "gelinmiş ve ödenmemiş seanslar" diyor.
  *
- * Sınır: kart açıkken bir seans "ödendi" işaretlenirse bu kartın
- * `randevular` listesi kendiliğinden tazelenmez (kart kendi yüklemesini
- * yapıyor; `durumDegis` için de aynısı geçerli). Kart yeniden açılınca
- * doğru sayı gelir.
+ * Kart açıkken seans panelinin alt satırından bir seans "ödendi" ya da bir
+ * durum işaretlenirse, çağıran (`AnaEkran`) bu kartın `randevular` listesini
+ * YERELDE yamar (`useDanisanDosyasi.randevuYamala`); kart yeniden çekilmez
+ * (silinemez `goruntuleme` satırı). Bu bileşen yalnızca prop'tan hesaplar.
  *
  * # Risk notu KATLANMIŞ gösterilir
  *

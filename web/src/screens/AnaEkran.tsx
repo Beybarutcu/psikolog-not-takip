@@ -110,6 +110,23 @@ export function AnaEkran({
   // TIKLAMA ANINDA hesaplanır — kart gece yarısından önce açılıp sonra
   // kullanılırsa render anındaki `bugun` dünü taşırdı. Testli:
   // `AnaEkran.test.tsx` > "yerel gün: gece yarısı ile 03:00 arası".
+  /**
+   * Alt satırın durum/ödeme işlemleri. Takvim listesi ve seçili randevu
+   * `useTakvimAkisi`'nde tazeleniyor; AÇIK DANIŞAN KARTININ bakiyesi de aynı
+   * randevudan hesaplandığı için kartın listesi burada yerelde yamanıyor
+   * (Görev 2 inceleme M5 — kart yeniden çekilmez, bkz. `randevuYamala`).
+   * Yama yalnızca istek BAŞARILIYSA: ret önce `await`ten fırlar.
+   */
+  async function durumDegis(id: number, durum: string) {
+    await takvim.durumDegis(id, durum)
+    dosya.randevuYamala(id, { durum })
+  }
+
+  async function odemeDegis(id: number, odendi: boolean) {
+    await takvim.odemeDegis(id, odendi)
+    dosya.randevuYamala(id, { odendi })
+  }
+
   function veriRaporuIndir(danisanId: number, parola: string): Promise<void> {
     return danisanApi.veriRaporuIndir(danisanId, parola, yerelGun(new Date()))
   }
@@ -665,8 +682,8 @@ export function AnaEkran({
             // edildiğinden closure'daki `id` panelin ömrü boyunca doğru.
             // Her renderda taze closure'lar zararsız — panel bunları hiçbir
             // efektin bağımlılığına koymuyor, yalnızca tıklamada çağırıyor.
-            onDurumDegis={(durum) => takvim.durumDegis(seciliRandevu.id, durum)}
-            onOdemeDegis={(odendi) => takvim.odemeDegis(seciliRandevu.id, odendi)}
+            onDurumDegis={(durum) => durumDegis(seciliRandevu.id, durum)}
+            onOdemeDegis={(odendi) => odemeDegis(seciliRandevu.id, odendi)}
           />
         ) : (
           // Yükleme başarısızsa panel AÇILMAZ: "yükleniyor…" yazan bir panel
@@ -693,8 +710,8 @@ export function AnaEkran({
             <SeansAltSatiri
               key={`seans-alt-${seciliRandevu.id}`}
               randevu={seciliRandevu}
-              onDurumDegis={(durum) => takvim.durumDegis(seciliRandevu.id, durum)}
-              onOdemeDegis={(odendi) => takvim.odemeDegis(seciliRandevu.id, odendi)}
+              onDurumDegis={(durum) => durumDegis(seciliRandevu.id, durum)}
+              onOdemeDegis={(odendi) => odemeDegis(seciliRandevu.id, odendi)}
             />
           </div>
         ))}

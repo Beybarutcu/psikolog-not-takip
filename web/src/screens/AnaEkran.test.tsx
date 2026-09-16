@@ -1900,6 +1900,8 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     durum: 'geldi', ucret: 99900, odendi: false, seri_id: null,
   }
   const tumRandevular = [buHafta, gelecekHafta, baskasininki]
+  const BAKIYE_450 = '450,00 ₺'
+  const BAKIYE_0 = '0,00 ₺'
 
   const dosyalar: Record<number, unknown> = {
     1: {
@@ -2154,6 +2156,53 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     // aralık uç noktası danışan süzgeci sunmuyor, süzgeç istemcide.
     expect(screen.getByText('450,00 ₺')).toBeDefined()
     expect(document.body.textContent).not.toContain('999,00 ₺')
+  })
+
+  // Görev 2 inceleme M5: kart ve seans paneli aynı anda açık. Alt satırdan
+  // ödeme/durum işaretlenince kartın bakiyesi bayat kalıyordu. Çözüm kartı
+  // YENİDEN ÇEKMEK DEĞİL (silinemez `goruntuleme` satırı), listesini yerelde
+  // yamamak — iddia hem bakiyeyi hem "hiç GET yok"u ölçüyor.
+  it('kart ACIKKEN odeme ve durum isaretlenince kart bakiyesi YERELDE tazelenir; kart yeniden CEKILMEZ', async () => {
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
+    await screen.findByText('0555 111 22 33')
+    const bakiye = () => {
+      const dt = screen.getAllByRole('term').find((e) => e.textContent === 'Bakiye')
+      return dt?.nextElementSibling?.textContent
+    }
+    expect(bakiye()).toBe(BAKIYE_450)
+
+    // Gelecek haftadaki "geldi", 450 TL, ödenmemiş seansı (202) aç — kart açık kalıyor.
+    await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByLabelText('Seans notu')
+    // Ön bariyer: panelin gecikmeli çakışma sorgusu ölçüm penceresine düşmesin.
+    await waitFor(() =>
+      expect(istekYollari.filter((y) => y.startsWith('GET /api/cakisma?'))).toHaveLength(1),
+    )
+    expect(screen.getByText('0555 111 22 33')).toBeDefined()
+    const once = istekYollari.length
+    const kutu = () => screen.getByRole('checkbox', { name: 'Ödendi' }) as HTMLInputElement
+
+    await userEvent.click(kutu())
+    await waitFor(() => expect(bakiye()).toBe(BAKIYE_0))
+    await waitFor(() => expect(kutu().disabled).toBe(false))
+
+    // İki yön: işareti kaldırınca borç GERİ gelir.
+    await userEvent.click(kutu())
+    await waitFor(() => expect(bakiye()).toBe(BAKIYE_450))
+    await waitFor(() => expect(kutu().disabled).toBe(false))
+
+    // Durum da bakiyeyi etkiler: "gelmedi" sayılmaz.
+    await userEvent.click(screen.getByRole('button', { name: 'Gelmedi' }))
+    await waitFor(() => expect(bakiye()).toBe(BAKIYE_0))
+
+    // Kart yeniden ÇEKİLMEDİ, takvim de: pencerede yalnızca üç yazma var.
+    expect(istekYollari.slice(once)).toEqual([
+      'PATCH /api/randevular/202/odeme',
+      'PATCH /api/randevular/202/odeme',
+      'PATCH /api/randevular/202',
+    ])
   })
 
   it('baska danisana gecince onceki kartin verisi EKRANDA KALMAZ', async () => {

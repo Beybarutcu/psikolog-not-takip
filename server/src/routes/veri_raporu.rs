@@ -5,7 +5,10 @@
 //! # Sıra bir sözleşmedir
 //!
 //! 1. Kapı (`acik_baglanti`): kilitliyken `401`, hiçbir şey okunmaz.
-//! 2. Parola `ASGARI_PAROLA` karakterden kısaysa `400`.
+//! 2. Gövde `{"parola", "bugun"}`; `bugun` geçerli bir takvim günü değilse
+//!    `400` (dosya adına ve `Content-Disposition` başlığına yazılır — bkz.
+//!    `store::veri_raporu::rapor_dosya_adi`). Parola `ASGARI_PAROLA`
+//!    karakterden kısaysa `400`.
 //! 3. Parola **ana parolaysa** `400`: bu parola danışana verilir; ana parola
 //!    olsaydı danışan bütün kayıtları açan anahtarın sahibi olurdu. Argon2
 //!    maliyeti bilinçli olarak kabul edildi.
@@ -58,11 +61,17 @@ use serde_json::json;
 #[derive(Deserialize)]
 pub struct RaporIstegi {
     pub parola: String,
+    /// `YYYY-AA-GG` — istemcinin **yerel** takvim günü; yalnızca dosya adına
+    /// girer. Sunucunun UTC günü Türkiye'de 00:00–03:00 arasında dünü verirdi.
+    pub bugun: String,
 }
 
 impl std::fmt::Debug for RaporIstegi {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RaporIstegi").field("parola", &"<gizli>").finish()
+        f.debug_struct("RaporIstegi")
+            .field("parola", &"<gizli>")
+            .field("bugun", &self.bugun)
+            .finish()
     }
 }
 
@@ -78,7 +87,7 @@ fn hata(kod: StatusCode, mesaj: &str) -> ApiHata {
     (kod, Json(json!({ "hata": mesaj })))
 }
 
-/// `POST /api/danisanlar/{id}/veri-raporu` gövde `{"parola": "..."}`.
+/// `POST /api/danisanlar/{id}/veri-raporu` gövde `{"parola": "...", "bugun": "YYYY-AA-GG"}`.
 pub async fn veri_raporu(
     State(s): State<AppState>,
     Path(id): Path<i64>,
@@ -89,6 +98,8 @@ pub async fn veri_raporu(
     let Ok(Json(istek)) = govde else {
         return Err(hata(StatusCode::BAD_REQUEST, GOVDE_GECERSIZ_MESAJI));
     };
+    // Pahali isten (Argon2, PDF) ve log satirindan ONCE.
+    let dosya_adi = rapor_dosya_adi(&istek.bugun).map_err(depo_hatasi)?;
     if istek.parola.chars().count() < ASGARI_PAROLA {
         return Err(hata(StatusCode::BAD_REQUEST, KISA_PAROLA_MESAJI));
     }
@@ -105,7 +116,7 @@ pub async fn veri_raporu(
     let mut yanit = Response::new(Body::from(pdf));
     let b = yanit.headers_mut();
     b.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/pdf"));
-    let ek = HeaderValue::from_str(&format!("attachment; filename=\"{}\"", rapor_dosya_adi()))
+    let ek = HeaderValue::from_str(&format!("attachment; filename=\"{dosya_adi}\""))
         .map_err(|_| hata(StatusCode::INTERNAL_SERVER_ERROR, URETILEMEDI_MESAJI))?;
     b.insert(header::CONTENT_DISPOSITION, ek);
     b.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));

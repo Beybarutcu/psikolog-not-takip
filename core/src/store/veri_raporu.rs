@@ -268,20 +268,27 @@ pub fn disa_aktarim_kaydi(
 /// Danışan adı **bilerek yok**: dosya adları indirme geçmişine, son
 /// kullanılanlar listesine ve e-posta eklerine düşer.
 ///
-/// Tarih UTC takvim günüdür. Bu kod tabanının duvar saati sözleşmesinde
-/// "takvimi istemci bilir"; Türkiye'de 00:00-03:00 arasında alınan bir
-/// raporun adı bir önceki günü gösterir. Dosya adının içeriği etkilemediği
-/// için kabul edildi; bu davranış bir testle korunmuyor, yalnızca biçim
-/// (`dosya_adi_danisan_adi_tasimaz_ve_bicimi_sabittir`) korunuyor.
-pub fn rapor_dosya_adi() -> String {
-    let bugun = time::OffsetDateTime::now_utc().date();
-    format!(
-        "danisan-veri-raporu-{:04}-{:02}-{:02}.pdf",
-        bugun.year(),
-        u8::from(bugun.month()),
-        bugun.day()
-    )
+/// # Tarih istemcinin YEREL günüdür
+///
+/// Bu kod tabanının duvar saati sözleşmesinde "takvimi istemci bilir"
+/// (emsal `GET /api/saklama-suresi-dolanlar?bugun=`). Görev 6'da ad sunucunun
+/// UTC gününden üretiliyordu ve Türkiye'de 00:00–03:00 arasında alınan bir
+/// rapor önceki günün adını taşıyordu. Artık gün istek gövdesinden gelir.
+///
+/// Geçersiz gün (`zaman::tarih_gecerli_mi`) `GecersizVeri` döner: değer bir
+/// HTTP başlığına (`Content-Disposition`) yazılıyor, doğrulanmamış bir dizgi
+/// başlık enjeksiyonu kapısı olurdu. Uç nokta bunu raporu üretmeden ÖNCE
+/// çağırır (`gecersiz_bugun_400_doner_rapor_uretilmez_log_yazilmaz`).
+pub fn rapor_dosya_adi(bugun: &str) -> Result<String, DepoHatasi> {
+    if !crate::store::zaman::tarih_gecerli_mi(bugun) {
+        return Err(DepoHatasi::GecersizVeri(BUGUN_GECERSIZ_MESAJI.into()));
+    }
+    Ok(format!("danisan-veri-raporu-{bugun}.pdf"))
 }
+
+/// `rapor_dosya_adi`'nın geçersiz gün mesajı.
+pub const BUGUN_GECERSIZ_MESAJI: &str =
+    "Rapor tarihi YYYY-AA-GG biçiminde geçerli bir gün olmalı.";
 
 #[cfg(test)]
 mod tests {
@@ -573,13 +580,32 @@ mod tests {
     }
 
     #[test]
-    fn dosya_adi_danisan_adi_tasimaz_ve_bicimi_sabittir() {
-        let ad = rapor_dosya_adi();
-        let govde = ad
-            .strip_prefix("danisan-veri-raporu-")
-            .and_then(|s| s.strip_suffix(".pdf"))
-            .unwrap_or_else(|| panic!("bicim: {ad}"));
-        assert!(crate::store::zaman::tarih_gecerli_mi(govde), "tarih kismi gecerli olmali: {ad}");
+    fn dosya_adi_verilen_yerel_gunu_tasir_danisan_adi_tasimaz() {
+        // IKI farkli gun: sabit bir ad (or. sunucunun kendi gunu) ikisini
+        // birden tutturamaz.
+        assert_eq!(rapor_dosya_adi("2026-09-09").unwrap(), "danisan-veri-raporu-2026-09-09.pdf");
+        assert_eq!(rapor_dosya_adi("2031-01-02").unwrap(), "danisan-veri-raporu-2031-01-02.pdf");
+        // Artik yil sinirinda gecerli gun kabul edilir (her seyi reddeden
+        // bir dogrulayici da yukaridaki eksi yon testini gecerdi).
+        assert!(rapor_dosya_adi("2028-02-29").is_ok());
+    }
+
+    #[test]
+    fn dosya_adi_gecersiz_gunu_reddeder() {
+        for kotu in [
+            "",
+            "2026-02-30",
+            "2026-9-9",
+            "2026-09-09T00:00",
+            "2026-09-09\"\r\nX: y",
+            "../../../etc",
+            "bugun",
+        ] {
+            assert!(
+                matches!(rapor_dosya_adi(kotu), Err(DepoHatasi::GecersizVeri(_))),
+                "gecersiz gun kabul edildi: {kotu:?}"
+            );
+        }
     }
 
     #[test]

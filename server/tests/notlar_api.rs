@@ -196,7 +196,7 @@ async fn kilitliyken_gorev7_uclarinin_hepsi_401_doner_ve_veri_sizdirmaz() {
         (
             "POST",
             format!("/api/danisanlar/{cid}/veri-raporu"),
-            Some(json!({"parola":"danisan-parolasi-1"})),
+            Some(json!({"parola":"danisan-parolasi-1","bugun":"2026-09-16"})),
         ),
     ];
     assert_eq!(uclar.len(), 14, "POST /ekler ile birlikte on bes uc kapsanmali");
@@ -1933,6 +1933,9 @@ async fn audit_dokumu(s: &AppState) -> String {
 }
 
 const RAPOR_PAROLASI: &str = "danisan-parolasi-1";
+/// Istemcinin yerel gunu (Gorev 7). Sunucunun saatinden BILEREK farkli bir
+/// gun: dosya adi sunucu saatinden uretilseydi esitlik tutmazdi.
+const RAPOR_GUNU: &str = "2031-01-02";
 
 async fn rapor_iste(s: &AppState, cid: i64, govde: &str) -> (StatusCode, HeaderMap, Vec<u8>) {
     cagir_ham(
@@ -1950,7 +1953,7 @@ async fn rapor_parolayla(
     cid: i64,
     parola: &str,
 ) -> (StatusCode, HeaderMap, Vec<u8>) {
-    rapor_iste(s, cid, &json!({ "parola": parola }).to_string()).await
+    rapor_iste(s, cid, &json!({ "parola": parola, "bugun": RAPOR_GUNU }).to_string()).await
 }
 
 fn hata_metni(govde: &[u8]) -> String {
@@ -2005,11 +2008,7 @@ async fn veri_raporu_sifreli_pdf_doner_ve_disa_aktarma_loglanir() {
     let ek = basliklar.get("content-disposition").expect("content-disposition").to_str().unwrap();
     assert!(ek.starts_with("attachment;"), "{ek}");
     let dosya = ek.split("filename=\"").nth(1).and_then(|p| p.strip_suffix('"')).expect(ek);
-    let tarih = dosya
-        .strip_prefix("danisan-veri-raporu-")
-        .and_then(|p| p.strip_suffix(".pdf"))
-        .unwrap_or_else(|| panic!("dosya adi bicimi: {dosya}"));
-    assert!(psikolog_core::store::zaman::tarih_gecerli_mi(tarih), "{dosya}");
+    assert_eq!(dosya, format!("danisan-veri-raporu-{RAPOR_GUNU}.pdf"), "istemcinin yerel gunu");
     assert!(!ek.contains("Ayse") && !ek.contains("Yilmaz"), "dosya adinda danisan adi: {ek}");
     assert_eq!(basliklar.get("x-content-type-options").unwrap(), "nosniff");
 
@@ -2038,6 +2037,44 @@ async fn veri_raporu_sifreli_pdf_doner_ve_disa_aktarma_loglanir() {
     assert_eq!(sonra[0], format!("disa_aktarma|client|{cid}"), "en ustte disa aktarma satiri");
     let dokum = audit_dokumu(&s).await;
     assert!(dokum.lines().next().unwrap().ends_with("|None"), "ayrinti bos olmali: {dokum}");
+}
+
+/// Gorev 7: dosya adindaki tarih ISTEMCININ yerel gunudur (duvar saati
+/// sozlesmesi; emsal `saklama-suresi-dolanlar?bugun=`). Iki farkli gun:
+/// sunucunun kendi gunune donen bir uygulama ikisini birden tutturamaz.
+#[tokio::test]
+async fn dosya_adi_istemcinin_gonderdigi_yerel_gundur() {
+    let (_d, s, cid, _rid) = dolu_state().await;
+    for gun in ["2026-09-09", "2019-12-31"] {
+        let govde = json!({ "parola": RAPOR_PAROLASI, "bugun": gun }).to_string();
+        let (kod, basliklar, yanit) = rapor_iste(&s, cid, &govde).await;
+        assert_eq!(kod, StatusCode::OK, "{}", String::from_utf8_lossy(&yanit));
+        assert_eq!(
+            basliklar.get("content-disposition").unwrap(),
+            &format!("attachment; filename=\"danisan-veri-raporu-{gun}.pdf\""),
+        );
+    }
+}
+
+/// Gecersiz gun `400 {"hata"}`: PDF uretilmez, log satiri yazilmaz, deger
+/// basliga yansimaz (baslik enjeksiyonu denemesi dahil).
+#[tokio::test]
+async fn gecersiz_bugun_400_doner_rapor_uretilmez_log_yazilmaz() {
+    let (_d, s, cid, _rid) = dolu_state().await;
+    let once = log_satirlari(&s).await.len();
+    for kotu in ["2026-02-30", "2026-9-9", "", "2026-09-09\r\nX-Enjekte: 1", "../x"] {
+        let govde = json!({ "parola": RAPOR_PAROLASI, "bugun": kotu }).to_string();
+        let (kod, basliklar, yanit) = rapor_iste(&s, cid, &govde).await;
+        assert_eq!(kod, StatusCode::BAD_REQUEST, "{kotu:?}");
+        assert_eq!(
+            hata_metni(&yanit),
+            "Rapor tarihi YYYY-AA-GG biçiminde geçerli bir gün olmalı.",
+            "{kotu:?}"
+        );
+        assert!(!pdf_mi(&yanit) && basliklar.get("content-disposition").is_none(), "{kotu:?}");
+        assert!(basliklar.get("x-enjekte").is_none());
+    }
+    assert_eq!(log_satirlari(&s).await.len(), once, "red log satiri birakmamali");
 }
 
 #[tokio::test]
@@ -2162,7 +2199,14 @@ async fn kayit_yazilamazsa_500_doner_ve_pdf_verilmez() {
 #[tokio::test]
 async fn bozuk_govde_turkce_json_hata_doner() {
     let (_d, s, cid, _rid) = dolu_state().await;
-    for govde in ["{bozuk", "{}", r#"{"parola": 12345678}"#, ""] {
+    for govde in [
+        "{bozuk",
+        "{}",
+        r#"{"parola": 12345678, "bugun": "2026-09-16"}"#,
+        "",
+        // Gorev 7: `bugun` zorunlu.
+        r#"{"parola": "danisan-parolasi-1"}"#,
+    ] {
         let (kod, basliklar, yanit) = rapor_iste(&s, cid, govde).await;
         assert_eq!(kod, StatusCode::BAD_REQUEST, "{govde}");
         assert!(basliklar.get("content-type").unwrap().to_str().unwrap().contains("json"));
@@ -2192,11 +2236,14 @@ async fn parola_hicbir_log_satirinda_ve_hata_govdesinde_gecmez() {
         rapor_parolayla(&s, cid, "gizliparola").await,
         rapor_iste(&s, cid, &format!("{{\"parola\": \"{BOZUK_GOVDEDE}\"")).await,
         rapor_iste(&s, cid, &format!("{{\"parola\": [\"{BOZUK_GOVDEDE}\"]}}")).await,
+        // Gorev 7: gecersiz gun reddi de parolayi yansitmaz.
+        rapor_iste(&s, cid, &json!({ "parola": GECERLI, "bugun": "2026-02-30" }).to_string())
+            .await,
     ];
     // On kosul: her yol GERCEKTEN denendi (basari, 404, kisa, ana parola, iki
     // bozuk govde) -- yoksa tarama bos yanitlar uzerinde saglanirdi.
     let kodlar: Vec<u16> = yanitlar.iter().map(|(k, _, _)| k.as_u16()).collect();
-    assert_eq!(kodlar, [200, 404, 400, 400, 400, 400]);
+    assert_eq!(kodlar, [200, 404, 400, 400, 400, 400, 400]);
 
     kilitle(&s).await;
     yanitlar.push(rapor_parolayla(&s, cid, GECERLI).await);
@@ -2221,7 +2268,8 @@ async fn parola_hicbir_log_satirinda_ve_hata_govdesinde_gecmez() {
     }
 
     let istek: psikolog_server::routes::veri_raporu::RaporIstegi =
-        serde_json::from_str(&json!({ "parola": GECERLI }).to_string()).unwrap();
+        serde_json::from_str(&json!({ "parola": GECERLI, "bugun": "2026-09-16" }).to_string())
+            .unwrap();
     assert_eq!(istek.parola, GECERLI, "on kosul: parola gercekten tipte");
     assert!(!format!("{istek:?}").contains(GECERLI), "Debug parolayi basmamali");
 }

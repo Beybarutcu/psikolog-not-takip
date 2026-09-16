@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ekIndir, ekIndirmeYolu, EK_TURLERI, type DanisanDosyasi, type EkBilgisi } from '../api'
 import type { Randevu } from '../takvim/HaftalikTakvim'
 import { tlMetni } from '../para'
@@ -88,6 +88,11 @@ import { RizaBolumu } from './RizaBolumu'
  *   girişi olarak durur ve bir gün ana parola alanına kendiliğinden dolar.
  *   (Tarayıcılar `off`'u parola alanlarında her zaman onurlandırmaz; bu bir
  *   ipucudur, güvence değil. Güvence sunucunun ana parola reddidir.)
+ * - Form SATIR İÇİDİR (`role="group"`, modal değil): açılınca odak ilk
+ *   parola alanına geçer — açan düğme DOM'dan kalktığı için aksi hâlde odak
+ *   `body`'ye düşerdi —, Esc vazgeçer (istek uçuştayken değil), kapanınca
+ *   (Vazgeç, Esc, başarı) odak "Danışan veri raporu dışa aktar" düğmesine
+ *   döner.
  * - İndirmeyi, denetim kaydını ve 401 davranışını `danisanApi.veriRaporuIndir`
  *   ile sunucu üstleniyor; kart ne not çeker, ne metin kurar, ne Blob üretir.
  *   İstemcide rapor metni üretilemeyeceği `istemciRaporUretimi.test.ts`'te
@@ -157,6 +162,17 @@ export function DanisanKarti({
   const raporForm =
     raporFormu.danisanId === danisan.id ? raporFormu : bosRaporFormu(danisan.id)
   const [raporSuruyor, setRaporSuruyor] = useState(false)
+  // Odak yönetimi (bkz. modül başlığı). YALNIZCA açık/kapalı GEÇİŞİNDE
+  // odak taşınır: ilk mount'ta ya da hata sonrası form açık kalırken değil.
+  const raporDugmesi = useRef<HTMLButtonElement>(null)
+  const raporParolaAlani = useRef<HTMLInputElement>(null)
+  const raporOncekiAcik = useRef(raporForm.acik)
+  useEffect(() => {
+    if (raporForm.acik === raporOncekiAcik.current) return
+    raporOncekiAcik.current = raporForm.acik
+    if (raporForm.acik) raporParolaAlani.current?.focus()
+    else raporDugmesi.current?.focus()
+  }, [raporForm.acik])
   const [ekSuruyor, setEkSuruyor] = useState(false)
   // Ek indirme hatası. İndirme artık `fetch`'ten geçtiği için (bkz.
   // `api.ekIndir`) hata sessizce yutulamaz: eskiden tarayıcı gezinip ham
@@ -555,6 +571,7 @@ export function DanisanKarti({
         </p>
         {!raporForm.acik && (
           <button
+            ref={raporDugmesi}
             type="button"
             className="mt-2 rounded border px-3 py-1 text-sm disabled:opacity-50"
             disabled={raporSuruyor}
@@ -570,9 +587,15 @@ export function DanisanKarti({
         )}
         {raporForm.acik && (
           <form
-            role="dialog"
+            // Satır içi form: `dialog` değil (odak hapsi ve `aria-modal` yok).
+            role="group"
             aria-labelledby="veri-raporu-parola-basligi"
             className="mt-2 rounded border border-slate-300 p-3"
+            onKeyDown={(e) => {
+              if (e.key !== 'Escape' || raporSuruyor) return
+              e.preventDefault()
+              setRaporFormu(bosRaporFormu(danisan.id))
+            }}
             onSubmit={(e) => {
               e.preventDefault()
               void raporOlustur()
@@ -589,6 +612,7 @@ export function DanisanKarti({
               Rapor parolası
             </label>
             <input
+              ref={raporParolaAlani}
               id="rapor-parolasi"
               type="password"
               // Danışanın parolası: tarayıcı kaydetmesin (bkz. modül başlığı).

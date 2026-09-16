@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DanisanDosyasi, EkBilgisi } from '../api'
@@ -476,6 +476,9 @@ describe('DanisanKarti — ek silme (dal incelemesi: DELETE /api/ekler/{id})', (
   })
 })
 
+/** Rapor parola formunun erişilebilir adı (`role="group"`). */
+const FORM = { name: 'Rapor parolası belirleyin' }
+
 // Plan 4 Görev 7: rapor SUNUCUDA üretilir, parolalı PDF olarak iner. Kart
 // yalnızca parolayı toplar ve `veriRaporuIndir`'i çağırır; indirmenin kendisi
 // (401, Blob, dosya adı) `api.test.ts`'te, rapor İÇERİĞİ (özel not yok,
@@ -483,7 +486,11 @@ describe('DanisanKarti — ek silme (dal incelemesi: DELETE /api/ekler/{id})', (
 describe('DanisanKarti — veri raporu (KVKK md. 11, parolalı PDF)', () => {
   const ac = () =>
     userEvent.click(screen.getByRole('button', { name: 'Danışan veri raporu dışa aktar' }))
-  const diyalog = () => screen.getByRole('dialog', { name: 'Rapor parolası belirleyin' })
+  // Satır içi form: `role="group"` (M4). Sorgular ADIYLA: adsız bir
+  // `queryByRole('group')` başka bir grup yüzünden yanıltabilirdi.
+  const diyalog = () => screen.getByRole('group', FORM)
+  const disaAktarDugmesi = () =>
+    screen.getByRole('button', { name: 'Danışan veri raporu dışa aktar' })
   const parolaAlani = () => within(diyalog()).getByLabelText('Rapor parolası') as HTMLInputElement
   const tekrarAlani = () =>
     within(diyalog()).getByLabelText('Parolayı tekrar girin') as HTMLInputElement
@@ -493,8 +500,11 @@ describe('DanisanKarti — veri raporu (KVKK md. 11, parolalı PDF)', () => {
   it('dugme parola formunu acar: iki password alani, autocomplete off, aciklama', async () => {
     kur()
     // Form kapalı başlar: parola alanı ancak istenince DOM'a girer.
-    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByRole('group', FORM)).toBeNull()
     await ac()
+    expect(diyalog().tagName).toBe('FORM')
+    // Modal DEĞİL: `dialog` rolü odak hapsi ve `aria-modal` sözü verirdi.
+    expect(screen.queryByRole('dialog')).toBeNull()
     for (const alan of [parolaAlani(), tekrarAlani()]) {
       expect(alan.type).toBe('password')
       // Danışanın parolası: `new-password` tarayıcıya onu bu sitenin hesap
@@ -582,7 +592,7 @@ describe('DanisanKarti — veri raporu (KVKK md. 11, parolalı PDF)', () => {
 
     expect((await screen.findByRole('status')).textContent).toMatch(/şifreli PDF/)
     expect(veriRaporuIndir).toHaveBeenCalledTimes(1)
-    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByRole('group', FORM)).toBeNull()
     expect(document.body.innerHTML).not.toContain('danisan-parolasi-1')
     // Form yeniden açılınca alanlar BOŞ: parola gizli bir state'te de
     // kalmamış (kapalı formun state'i DOM'da görünmez; ancak böyle ölçülür).
@@ -618,9 +628,69 @@ describe('DanisanKarti — veri raporu (KVKK md. 11, parolalı PDF)', () => {
     await userEvent.type(parolaAlani(), 'vazgecilen-parola')
     await userEvent.click(within(diyalog()).getByRole('button', { name: 'Vazgeç' }))
     expect(veriRaporuIndir).not.toHaveBeenCalled()
-    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByRole('group', FORM)).toBeNull()
     await ac()
     expect(parolaAlani().value).toBe('')
+  })
+
+  it('odak: ilk mountta calinmaz, acilinca ilk parola alanina gecer, Vazgec dugmeye DONDURUR', async () => {
+    kur()
+    // EKSİ YÖN: kart açılışında odak kimseye zorla verilmez.
+    expect(document.activeElement).toBe(document.body)
+    await ac()
+    expect(document.activeElement).toBe(parolaAlani())
+    await userEvent.click(within(diyalog()).getByRole('button', { name: 'Vazgeç' }))
+    expect(screen.queryByRole('group', FORM)).toBeNull()
+    expect(document.activeElement).toBe(disaAktarDugmesi())
+  })
+
+  it('Esc vazgecer: istek yok, form kapanir, alanlar temizlenir, odak dugmeye doner', async () => {
+    const veriRaporuIndir = vi.fn()
+    kur({ veriRaporuIndir })
+    await ac()
+    await userEvent.type(parolaAlani(), 'esc-ile-vazgecilen')
+    await userEvent.type(tekrarAlani(), 'esc-ile-vazgecilen')
+    await userEvent.keyboard('{Escape}')
+    expect(veriRaporuIndir).not.toHaveBeenCalled()
+    expect(screen.queryByRole('group', FORM)).toBeNull()
+    expect(document.body.innerHTML).not.toContain('esc-ile-vazgecilen')
+    expect(document.activeElement).toBe(disaAktarDugmesi())
+    await ac()
+    expect(parolaAlani().value).toBe('')
+  })
+
+  it('istek UCUSTAYKEN Esc formu kapatmaz; basarida odak dugmeye doner', async () => {
+    let coz!: () => void
+    const veriRaporuIndir = vi.fn(() => new Promise<void>((c) => (coz = c)))
+    kur({ veriRaporuIndir })
+    await ac()
+    await userEvent.type(parolaAlani(), 'ucustaki-parola-1')
+    await userEvent.type(tekrarAlani(), 'ucustaki-parola-1')
+    await olustur()
+    expect(veriRaporuIndir).toHaveBeenCalledTimes(1)
+    // Alanlar kilitli; olay formun kendisine gönderiliyor.
+    fireEvent.keyDown(diyalog(), { key: 'Escape' })
+    expect(screen.queryByRole('group', FORM)).not.toBeNull()
+
+    coz()
+    await screen.findByRole('status')
+    expect(screen.queryByRole('group', FORM)).toBeNull()
+    expect(document.activeElement).toBe(disaAktarDugmesi())
+  })
+
+  it('hatada form acik kalir, odak dugmeye ZIPLAMAZ ve yeniden acilis sayilmaz', async () => {
+    const veriRaporuIndir = vi.fn().mockRejectedValue(new Error('Sunucu hatası.'))
+    kur({ veriRaporuIndir })
+    await ac()
+    await userEvent.type(parolaAlani(), 'hatali-istek-1')
+    await userEvent.type(tekrarAlani(), 'hatali-istek-1')
+    await olustur()
+    await within(diyalog()).findByRole('alert')
+    expect(screen.queryByRole('button', { name: 'Danışan veri raporu dışa aktar' })).toBeNull()
+    // Esc hata sonrasında da vazgeçer ve odağı düğmeye verir.
+    fireEvent.keyDown(diyalog(), { key: 'Escape' })
+    expect(screen.queryByRole('group', FORM)).toBeNull()
+    expect(document.activeElement).toBe(disaAktarDugmesi())
   })
 
   it('parola console a, localStorage a, sessionStorage a YAZILMAZ; kart Blob URETMEZ', async () => {
@@ -723,7 +793,7 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
     rerender(<DanisanKarti danisan={digeri} {...ortak} />)
 
     expect(document.body.innerHTML).not.toContain('A-NIN-PAROLASI')
-    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByRole('group', FORM)).toBeNull()
     // B için form açılınca boş gelir; "Raporu oluştur" A'nın parolasıyla
     // B'nin raporunu İSTEMEZ.
     await userEvent.click(screen.getByRole('button', { name: 'Danışan veri raporu dışa aktar' }))

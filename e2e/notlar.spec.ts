@@ -168,7 +168,7 @@ test('veri raporu SIFRELI PDF olarak iner, parola URLye girmez (icerik dogrulama
 
   // 1) ANA PAROLA reddedilir; mesaj arayüze olduğu gibi gelir, dosya inmez.
   await page.getByRole('button', { name: 'Danışan veri raporu dışa aktar' }).click()
-  const form = page.getByRole('dialog', { name: 'Rapor parolası belirleyin' })
+  const form = page.getByRole('group', { name: 'Rapor parolası belirleyin' })
   await formuDoldur('gizliparola')
   const redYaniti = page.waitForResponse((y) => /\/veri-raporu$/.test(y.url()))
   await form.getByRole('button', { name: 'Raporu oluştur' }).click()

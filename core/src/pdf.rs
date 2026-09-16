@@ -15,7 +15,9 @@
 //!
 //! # Hat
 //!
-//! `printpdf` (gömülü Noto Sans, alt kümelenmiş, ToUnicode haritalı) →
+//! `printpdf` (Noto Sans **tamamı** gömülü — `printpdf` `text_layout`
+//! özelliği olmadan alt kümeleme yapmaz, dosya başına ~320 KB; ToUnicode
+//! haritalı) →
 //! baytlar → `lopdf::Document::load_mem` → `encrypt(V5)` → `save_to`.
 //! `printpdf`'in kendi `lopdf` bağımlılığı farklı sürümde olduğu için
 //! belge nesnesi değil **baytlar** devredilir.
@@ -46,6 +48,13 @@ const GOVDE_PT: f32 = 11.0;
 const BOLUM_BASLIK_PT: f32 = 13.0;
 const RAPOR_BASLIK_PT: f32 = 16.0;
 const SATIR_ARALIGI: f32 = 1.4;
+
+/// Ardışık dikey boşluğun (boş satırlar + bölüm aralıkları) üst sınırı: üç
+/// gövde satırı. Karar: boşluk görsel biçimdir, veri değildir. Yapıştırılmış
+/// bir notta yüzlerce boş satır sayfalarca boş kâğıt ya da (eski hatada)
+/// sayfa dışına itilmiş, görünmez metin üretmemeli. Üç satır, paragrafları
+/// ayırmaya yeter; sayfa başında bekleyen boşluk ise tamamen yutulur.
+const AZAMI_BOSLUK_PT: f32 = 3.0 * GOVDE_PT * SATIR_ARALIGI;
 
 /// Rapora girecek düz içerik. `Debug` elle yazılmıştır: içerik basılmaz.
 pub struct RaporIcerigi {
@@ -94,12 +103,25 @@ pub enum PdfHatasi {
 /// Kullanıcı parolası = sahip parolası = `parola`. İzinler: yazdırma ve
 /// kopyalama açık, değiştirme kapalı. Dosya şifreleme anahtarı her çağrıda
 /// yeniden rastgele üretilir.
+///
+/// **CPU-yoğun ve eşzamanlıdır** (debug derlemede 20 000 satır ≈ 12 sn):
+/// async bağlamda doğrudan değil `tokio::task::spawn_blocking` içinde
+/// çağrılmalıdır, yoksa çalışma zamanı iş parçacığını bloklar.
+///
+/// # Bellekte kalan düz metin
+///
+/// Bizim tuttuğumuz şifresiz PDF baytları ve dosya anahtarı `Zeroizing`
+/// içindedir. Ancak **silinemeyen kopyalar vardır** ve bu fonksiyon onları
+/// sıfırladığını iddia etmez: `printpdf`'in ara yapıları, şifrelemeden önce
+/// düz nesneleri tutan `lopdf::Document`, `EncryptionState`'in içindeki
+/// anahtar kopyası ve parola türevleri bu kütüphanelerin bellek yönetimine
+/// bırakılmıştır.
 pub fn sifreli_pdf(icerik: &RaporIcerigi, parola: &str) -> Result<Vec<u8>, PdfHatasi> {
     if parola.chars().count() < ASGARI_PAROLA {
         return Err(PdfHatasi::ParolaCokKisa);
     }
 
-    let duz = duz_pdf(icerik)?;
+    let duz = Zeroizing::new(duz_pdf(icerik)?);
 
     let mut belge =
         lopdf::Document::load_mem(&duz).map_err(|e| PdfHatasi::Uretim(e.to_string()))?;
@@ -143,12 +165,19 @@ fn font() -> Result<&'static ParsedFont, PdfHatasi> {
 }
 
 /// Metnin verilen punto büyüklüğündeki genişliği (pt).
+///
+/// Fontta olmayan bir karakteri (emoji, CJK…) `printpdf` glif 0 olarak yazar
+/// ve `/W` tablosuna koymaz; okuyucu onu `/DW` = 1000, yani **1 em** genişlikte
+/// çizer. Sarma hesabı da aynı genişliği kullanır; aksi hâlde (eski `.notdef`
+/// / 0 genişlik) böyle bir satır hiç sarılmadan sağdan taşardı.
 fn genislik(font: &ParsedFont, metin: &str, punto: f32) -> f32 {
+    let em = u32::from(font.units_per_em.max(1));
     let birim: u32 = metin
         .chars()
         .map(|k| {
-            let gid = font.lookup_glyph_index(k as u32).unwrap_or(0);
-            u32::from(font.get_glyph_width(gid).unwrap_or(0))
+            font.lookup_glyph_index(k as u32)
+                .and_then(|gid| font.get_glyph_width(gid))
+                .map_or(em, u32::from)
         })
         .sum();
     birim as f32 / f32::from(font.units_per_em.max(1)) * punto
@@ -200,6 +229,9 @@ struct Dizgici<'a> {
     islemler: Vec<Op>,
     /// Bir sonraki satırın üst kenarı (pt, sayfanın altından).
     y: f32,
+    /// Boş satırlardan ve bölüm aralıklarından biriken, henüz uygulanmamış
+    /// dikey boşluk (pt).
+    bekleyen_bosluk: f32,
 }
 
 impl<'a> Dizgici<'a> {
@@ -236,16 +268,32 @@ impl<'a> Dizgici<'a> {
         }
     }
 
+    /// Metin satırı çizer. Boş satır yalnızca bekleyen boşluğa eklenir.
+    ///
+    /// Değişmez: `y` yalnızca bir çizim işlemiyle birlikte azalır. Böylece
+    /// `islemler` boşken `y == ust()` olur ve sayfaya sığmayan her satır
+    /// (boş olmayan sayfada) yeni sayfa açar; `y` hiçbir zaman alt kenarın
+    /// altına inmez.
     fn satir(&mut self, metin: &str, punto: f32) {
         let yukseklik = punto * SATIR_ARALIGI;
-        if self.y - yukseklik < Self::alt() && !self.islemler.is_empty() {
+        if metin.is_empty() {
+            self.bosluk(yukseklik);
+            return;
+        }
+        // Sayfa başındaki boşluk yutulur.
+        let bosluk = if self.islemler.is_empty() {
+            0.0
+        } else {
+            self.bekleyen_bosluk
+        };
+        self.bekleyen_bosluk = 0.0;
+        if self.y - bosluk - yukseklik < Self::alt() && !self.islemler.is_empty() {
             self.sayfayi_kapat();
+        } else {
+            self.y -= bosluk;
         }
         let taban = self.y - punto;
         self.y -= yukseklik;
-        if metin.is_empty() {
-            return;
-        }
         self.islemler.extend([
             Op::StartTextSection,
             Op::SetFont {
@@ -265,8 +313,10 @@ impl<'a> Dizgici<'a> {
         ]);
     }
 
+    /// Dikey boşluk hemen uygulanmaz; bir sonraki metin satırına kadar
+    /// bekler ve ardışık boşluklar `AZAMI_BOSLUK_PT`'de katlanır.
     fn bosluk(&mut self, pt: f32) {
-        self.y -= pt;
+        self.bekleyen_bosluk = (self.bekleyen_bosluk + pt).min(AZAMI_BOSLUK_PT);
     }
 }
 
@@ -283,6 +333,7 @@ fn duz_pdf(icerik: &RaporIcerigi) -> Result<Vec<u8>, PdfHatasi> {
         sayfalar: Vec::new(),
         islemler: Vec::new(),
         y: Dizgici::ust(),
+        bekleyen_bosluk: 0.0,
     };
 
     d.paragraf(&icerik.baslik, RAPOR_BASLIK_PT);
@@ -339,14 +390,279 @@ mod tests {
         doc.extract_text(&sayfalar).map_err(|e| e.to_string())
     }
 
+    /// Şifresi çözülmüş belgede bir metin gösterme işleminin (`Tj`/`TJ`)
+    /// **okuyucunun çizeceği** konumu.
+    #[derive(Debug)]
+    struct MetinIslemi {
+        sayfa: usize,
+        /// Taban çizgisinin başlangıcı (pt, sayfa kutusu koordinatları).
+        x0: f32,
+        y: f32,
+        /// Son glifin bittiği x (pt).
+        x1: f32,
+        sayfa_genislik: f32,
+        sayfa_yukseklik: f32,
+    }
+
+    /// CID fontun `/W` + `/DW` genişlik tablosu (1/1000 em). `printpdf`'in
+    /// ya da `genislik`'in değil, PDF okuyucusunun kullandığı ölçü budur.
+    fn cid_genislikleri(doc: &lopdf::Document, font: &lopdf::Dictionary) -> (BTreeMap<u16, f32>, f32) {
+        let coz = |o: &lopdf::Object| -> lopdf::Object {
+            match o {
+                lopdf::Object::Reference(id) => doc.get_object(*id).unwrap().clone(),
+                d => d.clone(),
+            }
+        };
+        let sayi = |o: &lopdf::Object| -> f32 {
+            match coz(o) {
+                lopdf::Object::Integer(i) => i as f32,
+                lopdf::Object::Real(r) => r,
+                d => panic!("sayi bekleniyordu: {d:?}"),
+            }
+        };
+        assert_eq!(font.get(b"Subtype").unwrap().as_name().unwrap(), b"Type0", "yalniz CID font olculur");
+        let torunlar = coz(font.get(b"DescendantFonts").unwrap());
+        let cid = coz(&torunlar.as_array().unwrap()[0]);
+        let cid = cid.as_dict().unwrap();
+        let dw = cid.get(b"DW").map(&sayi).unwrap_or(1000.0);
+        let mut tablo = BTreeMap::new();
+        if let Ok(w) = cid.get(b"W") {
+            let w = coz(w);
+            let w = w.as_array().unwrap();
+            let mut i = 0;
+            while i < w.len() {
+                let ilk = sayi(&w[i]) as u16;
+                match coz(&w[i + 1]) {
+                    lopdf::Object::Array(dizi) => {
+                        for (k, g) in dizi.iter().enumerate() {
+                            tablo.insert(ilk + k as u16, sayi(g));
+                        }
+                        i += 2;
+                    }
+                    son => {
+                        let son = sayi(&son) as u16;
+                        for g in ilk..=son {
+                            tablo.insert(g, sayi(&w[i + 2]));
+                        }
+                        i += 3;
+                    }
+                }
+            }
+        }
+        (tablo, dw)
+    }
+
+    /// Her sayfanın içerik akışını ayrıştırıp her metin işleminin başlangıç
+    /// konumunu ve bitiş x'ini çıkarır. Metin matrisi `BT`/`Td`/`Tm` ile izlenir;
+    /// ilerleme fontun PDF'teki `/W` tablosundan hesaplanır. Bu ayrıştırıcının
+    /// modellemediği bir işleç (`cm`, `Tc`, `Tw`, `Tz`, `T*`, `'`, `"`) görülürse
+    /// **panikler** — ölçmediği şeyi ölçmüş gibi yapmaz.
+    fn metin_islemleri(doc: &lopdf::Document) -> Vec<MetinIslemi> {
+        let mut sonuc = Vec::new();
+        for (sira, (_, sayfa_id)) in doc.get_pages().into_iter().enumerate() {
+            let sayfa = doc.get_dictionary(sayfa_id).unwrap();
+            let kutu: Vec<f32> = sayfa
+                .get(b"MediaBox")
+                .expect("sayfada MediaBox")
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|o| o.as_float().unwrap())
+                .collect();
+            assert_eq!((kutu[0], kutu[1]), (0.0, 0.0), "MediaBox orijini");
+            let (sayfa_genislik, sayfa_yukseklik) = (kutu[2], kutu[3]);
+
+            let fontlar: BTreeMap<Vec<u8>, (BTreeMap<u16, f32>, f32)> = doc
+                .get_page_fonts(sayfa_id)
+                .unwrap()
+                .into_iter()
+                .map(|(ad, f)| (ad, cid_genislikleri(doc, f)))
+                .collect();
+
+            let icerik = doc.get_and_decode_page_content(sayfa_id).unwrap();
+            // Metin matrisi [a b c d e f]; BT'de birim matris.
+            let mut tm = [1.0f32, 0.0, 0.0, 1.0, 0.0, 0.0];
+            let mut tlm = tm;
+            let mut font: Option<&(BTreeMap<u16, f32>, f32)> = None;
+            let mut punto = 0.0f32;
+            for islem in &icerik.operations {
+                let o = &islem.operands;
+                match islem.operator.as_str() {
+                    "BT" => {
+                        tm = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+                        tlm = tm;
+                    }
+                    "Tf" => {
+                        font = Some(&fontlar[o[0].as_name().unwrap()]);
+                        punto = o[1].as_float().unwrap();
+                    }
+                    "Td" => {
+                        let (tx, ty) = (o[0].as_float().unwrap(), o[1].as_float().unwrap());
+                        tlm[4] += tx * tlm[0] + ty * tlm[2];
+                        tlm[5] += tx * tlm[1] + ty * tlm[3];
+                        tm = tlm;
+                    }
+                    "Tm" => {
+                        for (k, d) in o.iter().enumerate() {
+                            tm[k] = d.as_float().unwrap();
+                        }
+                        tlm = tm;
+                    }
+                    "Tj" | "TJ" => {
+                        let (tablo, dw) = font.expect("Tf'siz metin");
+                        let mut birim = 0.0f32;
+                        let mut dizgiler = Vec::new();
+                        if islem.operator == "Tj" {
+                            dizgiler.push(&o[0]);
+                        } else {
+                            for p in o[0].as_array().unwrap() {
+                                match p {
+                                    lopdf::Object::String(..) => dizgiler.push(p),
+                                    kaydirma => birim -= kaydirma.as_float().unwrap(),
+                                }
+                            }
+                        }
+                        for d in dizgiler {
+                            for cift in d.as_str().unwrap().chunks(2) {
+                                let gid = u16::from_be_bytes([cift[0], cift[1]]);
+                                birim += tablo.get(&gid).copied().unwrap_or(*dw);
+                            }
+                        }
+                        assert_eq!((tm[1], tm[2]), (0.0, 0.0), "donuk/egik metin olculmuyor");
+                        let (x0, y) = (tm[4], tm[5]);
+                        let ilerleme = birim / 1000.0 * punto * tm[0];
+                        tm[4] += ilerleme;
+                        sonuc.push(MetinIslemi {
+                            sayfa: sira,
+                            x0,
+                            y,
+                            x1: x0 + ilerleme,
+                            sayfa_genislik,
+                            sayfa_yukseklik,
+                        });
+                    }
+                    op @ ("cm" | "Tc" | "Tw" | "Tz" | "TL" | "T*" | "'" | "\"") => {
+                        panic!("olcum ayristiricisi bu isleci modellemiyor: {op}")
+                    }
+                    _ => {}
+                }
+            }
+        }
+        sonuc
+    }
+
+    /// Her metin işlemi sayfa kutusunun içinde başlar ve biter.
+    fn hepsi_sayfa_icinde(islemler: &[MetinIslemi]) {
+        for m in islemler {
+            assert!(
+                (0.0..=m.sayfa_yukseklik).contains(&m.y)
+                    && (0.0..=m.sayfa_genislik).contains(&m.x0)
+                    && (0.0..=m.sayfa_genislik).contains(&m.x1),
+                "sayfa {} disinda metin: {m:?}",
+                m.sayfa + 1
+            );
+        }
+    }
+
+    fn cozulmus(ic: &RaporIcerigi) -> lopdf::Document {
+        parolayla_yukle(&sifreli_pdf(ic, "dogru-parola-123").unwrap(), "dogru-parola-123").unwrap()
+    }
+
+    /// İnceleme bulgusu I1: boş satırlar ve bölüm aralıkları çizim işlemi
+    /// eklemeden aşağı iniyordu; sayfa başında sayfa kırılmadığı için `y`
+    /// eksiye düşüyor, sonraki metin sayfanın altına (görünmez) yazılıyordu.
+    /// `extract_text` sayfa dışındaki metni de bulur; bu yüzden burada
+    /// metnin varlığı değil **koordinatı** ölçülür.
+    ///
+    /// Karar: ardışık dikey boşluk `AZAMI_BOSLUK_PT`'de katlanır ve sayfa
+    /// başında yutulur; incelemenin üç vakası bu yüzden tek sayfaya sığar.
+    /// Dördüncü vaka, sayfa sonuna denk gelen bekleyen boşluğu ölçer: orada
+    /// sayfa kutusu yetmez, taban çizgisinin alt kenar boşluğunun üstünde
+    /// kaldığı da iddia edilir.
     #[test]
-    fn dosya_sifrelidir_ve_ham_baytlarda_icerik_gecmez() {
+    fn ardisik_bos_satirlar_metni_sayfa_disina_itmez() {
+        let bolum = |satirlar: Vec<String>| RaporIcerigi {
+            baslik: "RAPOR".into(),
+            bolumler: vec![RaporBolumu { baslik: "B".into(), satirlar }],
+        };
+        let vakalar = [
+            (
+                "1 satir + 200 bos satir",
+                bolum(
+                    std::iter::once("ilk".to_string())
+                        .chain(std::iter::repeat_n(String::new(), 200))
+                        .chain(std::iter::once("BOSLUK-SONRASI-KANARYA".to_string()))
+                        .collect(),
+                ),
+                4,
+                Some(1),
+                "BOSLUK-SONRASI-KANARYA",
+            ),
+            (
+                "tek paragrafta 300 satir sonu",
+                bolum(vec![format!("ust{}ALT-KANARYA", "\n".repeat(300))]),
+                4,
+                Some(1),
+                "ALT-KANARYA",
+            ),
+            (
+                "bos baslik + 100 bos bolum",
+                RaporIcerigi {
+                    baslik: String::new(),
+                    bolumler: (0..100)
+                        .map(|_| RaporBolumu { baslik: String::new(), satirlar: vec![] })
+                        .chain(std::iter::once(RaporBolumu { baslik: "SON".into(), satirlar: vec![] }))
+                        .collect(),
+                },
+                1,
+                Some(1),
+                "SON",
+            ),
+            (
+                "her satirdan sonra 3 bos satir, 200 kez",
+                bolum(
+                    (0..200)
+                        .flat_map(|i| [format!("satir-{i}"), String::new(), String::new(), String::new()])
+                        .chain(std::iter::once("SAYFALI-KANARYA".to_string()))
+                        .collect(),
+                ),
+                203,
+                None,
+                "SAYFALI-KANARYA",
+            ),
+        ];
+        let alt_kenar = Pt::from(Mm(KENAR_MM)).0;
+        for (ad, ic, beklenen_islem, beklenen_sayfa, kanarya) in vakalar {
+            let doc = cozulmus(&ic);
+            let islemler = metin_islemleri(&doc);
+            // Boş bir liste "hepsi sayfa içinde" iddiasını kendiliğinden geçirir.
+            assert_eq!(islemler.len(), beklenen_islem, "{ad}: metin islemi sayisi");
+            hepsi_sayfa_icinde(&islemler);
+            for m in &islemler {
+                assert!(m.y >= alt_kenar, "{ad}: alt kenar boslugunun altinda metin: {m:?}");
+            }
+            let sayfa = doc.get_pages().len();
+            match beklenen_sayfa {
+                Some(n) => assert_eq!(sayfa, n, "{ad}: bosluk sayfa uretmemeli"),
+                None => assert!(sayfa > 1, "{ad}: vaka sayfa sonunu olcmeli"),
+            }
+            let sayfalar: Vec<u32> = doc.get_pages().keys().copied().collect();
+            assert!(doc.extract_text(&sayfalar).unwrap().contains(kanarya), "{ad}");
+        }
+    }
+
+    /// Yalnızca "geçerli PDF + `/Encrypt` sözlüğü var" ölçülür. Eskiden burada
+    /// ham baytlarda kanarya aranıyordu; içerik akışı sıkıştırılıp glif
+    /// kimliğine çevrildiği için o iddia **şifresiz** dosyada da geçiyordu
+    /// (inceleme M3) ve kaldırıldı. Şifrelemenin gerçekten içeriği kapattığını
+    /// `yanlis_parolayla_icerik_okunamaz` ve `baslik_ustverisi_de_ham_baytlarda_gecmez`
+    /// ölçer.
+    #[test]
+    fn dosya_gecerli_pdf_ve_sifreleme_sozlugu_tasir() {
         let pdf = sifreli_pdf(&icerik(), "dogru-parola-123").unwrap();
         assert!(pdf.starts_with(b"%PDF-"), "gecerli bir PDF olmali");
         let doc = lopdf::Document::load_mem(&pdf).unwrap();
         assert!(doc.is_encrypted(), "sifreleme sozlugu olmali");
-        let ham = String::from_utf8_lossy(&pdf);
-        assert!(!ham.contains(KANARYA), "icerik duz metin olarak dosyada gorunmemeli");
     }
 
     /// Belge başlığı `/Info` sözlüğüne **dizgi** olarak yazılır (içerik
@@ -411,16 +727,10 @@ mod tests {
         assert_eq!(sifre.get(b"R").unwrap().as_i64().unwrap(), 6);
     }
 
-    #[test]
-    fn her_uretimde_farkli_anahtar_kullanilir() {
-        let a = sifreli_pdf(&icerik(), "dogru-parola-123").unwrap();
-        let b = sifreli_pdf(&icerik(), "dogru-parola-123").unwrap();
-        assert_ne!(a, b, "ayni icerik ve parola ayni baytlari uretmemeli");
-    }
-
-    /// Üstteki bayt karşılaştırması tek başına anahtarı ölçmez: AES IV'leri
-    /// ve U/O tuzları zaten her seferinde rastgele, sabit bir anahtarla da
-    /// baytlar farklı çıkar. Burada **dosya şifreleme anahtarının kendisi**
+    /// İki çıktının baytlarını karşılaştırmak anahtarı ölçmez: AES IV'leri ve
+    /// U/O tuzları her seferinde rastgele, sabit bir anahtarla da baytlar
+    /// farklı çıkar (o test sabit anahtar mutasyonunda yeşil kaldığı için
+    /// silindi, inceleme M3). Burada **dosya şifreleme anahtarının kendisi**
     /// parolayla türetilip karşılaştırılır.
     #[test]
     fn dosya_sifreleme_anahtari_her_uretimde_yenidir() {
@@ -482,6 +792,7 @@ mod tests {
         let pdf = sifreli_pdf(&ic, "dogru-parola-123").unwrap();
         let doc = parolayla_yukle(&pdf, "dogru-parola-123").unwrap();
         assert!(doc.get_pages().len() > 1, "2000 kelimelik satir tek sayfaya sigmamali");
+        hepsi_sayfa_icinde(&metin_islemleri(&doc));
         assert!(metin_cikar(&pdf, "dogru-parola-123").unwrap().contains("SON-SATIR-KANARYASI"));
     }
 
@@ -494,20 +805,54 @@ mod tests {
         assert_eq!(metin.matches("uzun").count(), 2000);
     }
 
+    /// İnceleme bulgusu M1: önceki sürüm satırları `sar`'ın kendi kullandığı
+    /// `genislik` ile ölçüyordu (`genislik * 0.5` mutasyonunda yeşil kaldı).
+    /// Burada bitiş x'i üretilen PDF'in içerik akışından ve fontun PDF'teki
+    /// `/W` tablosundan, yani okuyucunun çizeceği gibi hesaplanır; sınır sağ
+    /// kenar boşluğudur (sayfa kenarından daha sıkı).
     #[test]
     fn sarilan_satirlar_sayfa_genisligini_asmaz() {
-        let font = font().unwrap();
-        let azami = Dizgici::azami_genislik();
-        let satirlar = sar(font, &"uzun ".repeat(2000), GOVDE_PT, azami);
-        assert!(satirlar.len() > 50);
-        for s in &satirlar {
-            assert!(genislik(font, s, GOVDE_PT) <= azami, "tasan satir: {s}");
+        let ic = RaporIcerigi {
+            baslik: "RAPOR".into(),
+            bolumler: vec![RaporBolumu {
+                baslik: "B".into(),
+                satirlar: vec!["uzun ".repeat(2000), "A".repeat(500), TURKCE.repeat(40)],
+            }],
+        };
+        let islemler = metin_islemleri(&cozulmus(&ic));
+        assert!(islemler.len() > 50, "sarma gercekten olmali");
+        hepsi_sayfa_icinde(&islemler);
+        let sag = Pt::from(Mm(SAYFA_GENISLIK_MM - KENAR_MM)).0;
+        for m in &islemler {
+            assert!(m.x1 <= sag + 0.01, "sag kenar boslugunu asan satir: {m:?}");
         }
         // Tek basina sigmayan kelime karakterlerine bolunur, karakter kaybolmaz.
+        let font = font().unwrap();
         let dev = "A".repeat(500);
-        let parcalar = sar(font, &dev, GOVDE_PT, azami);
+        let parcalar = sar(font, &dev, GOVDE_PT, Dizgici::azami_genislik());
         assert!(parcalar.len() > 1);
         assert_eq!(parcalar.concat(), dev);
+    }
+
+    /// İnceleme bulgusu M2: fontta olmayan bir karakter (emoji, CJK) sarma
+    /// hesabında okuyucunun çizdiğinden dar sayılırsa satır sağdan taşar.
+    /// `printpdf` böyle bir karakteri glif 0 olarak yazar ve `/W`'ye koymaz;
+    /// okuyucu `/DW` genişliğini kullanır. Ölçü yine içerik akışından.
+    #[test]
+    fn fontta_olmayan_glifler_de_sarilir() {
+        for (ad, satir) in [("emoji", "😀".repeat(500)), ("CJK", "漢".repeat(500))] {
+            let ic = RaporIcerigi {
+                baslik: "RAPOR".into(),
+                bolumler: vec![RaporBolumu { baslik: "B".into(), satirlar: vec![satir] }],
+            };
+            let islemler = metin_islemleri(&cozulmus(&ic));
+            assert!(islemler.len() > 3, "{ad}: 500 karakterlik satir sarilmali");
+            hepsi_sayfa_icinde(&islemler);
+            let sag = Pt::from(Mm(SAYFA_GENISLIK_MM - KENAR_MM)).0;
+            for m in &islemler {
+                assert!(m.x1 <= sag + 0.01, "{ad}: tasan satir: {m:?}");
+            }
+        }
     }
 
     #[test]

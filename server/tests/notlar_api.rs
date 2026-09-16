@@ -1923,6 +1923,204 @@ fn async_fn_parcalayici_gorunurlukten_bagimsizdir() {
 }
 
 // =====================================================================
+// DOSYA INDIREN UCLAR -- SIFRELI YA DA ADLI ISTISNA (dal incelemesi D3/I3)
+// =====================================================================
+
+/// Dosya indiren (yanıtına `Content-Disposition`/`attachment` koyan) ama
+/// yanıt gövdesini `pdf::sifreli_pdf`'ten ÜRETMEYEN handler'lar:
+/// `(rota dosyası, handler)`. Her girdinin gerekçesi yanında yazılır.
+///
+/// Tasarım §10 dışa aktarılan her dosyanın şifreli olmasını ister. Bu liste o
+/// kuralın **adlı ve çalıştırılabilir** istisnasıdır: listede olmayan yeni bir
+/// indirme ucu şifresizse `dosya_indiren_her_uc_sifreli_ya_da_adli_istisnadir`
+/// kırılır; listedeki bir girdi bayatlarsa (handler yok, artık indirmiyor ya
+/// da artık şifreliyor) yine kırılır.
+const SIFRESIZ_INDIRME_ISTISNALARI: [(&str, &str); 1] = [
+    // Terapistin kendi yüklediği kaynak belgeyi (onam formu, test sonucu)
+    // kendi makinesinde açması; rapor üretimi değil. Belge yüklenirken zaten
+    // terapistin elindeydi, şifrelemek yeni bir koruma katmaz ama parolasını
+    // unutulabilecek ikinci bir kopya üretir. Bkz. `routes::attachments::indir`.
+    ("attachments.rs", "indir"),
+];
+
+/// Kaynaktaki her `fn` öğesi (`async` olsun olmasın): `(ad, async mı, parça)`.
+/// Parça, fonksiyon adından bir sonraki `fn`'e kadar sürer. `FnOnce` gibi
+/// tanımlayıcı içindeki hece sayılmaz.
+fn fn_parcalari(kod: &str) -> Vec<(String, bool, &str)> {
+    fn tanimlayici(c: char) -> bool {
+        c.is_alphanumeric() || c == '_'
+    }
+    let mut baslar: Vec<(usize, String, bool)> = Vec::new();
+    let mut arama = 0usize;
+    while let Some(yer) = kod[arama..].find("fn") {
+        let bas = arama + yer;
+        arama = bas + 2;
+        if kod[..bas].chars().next_back().is_some_and(tanimlayici) {
+            continue;
+        }
+        let sonrasi = &kod[arama..];
+        let ad_bas = sonrasi.trim_start();
+        if ad_bas.len() == sonrasi.len() {
+            continue;
+        }
+        let ad: String = ad_bas.chars().take_while(|&c| tanimlayici(c)).collect();
+        if ad.is_empty() {
+            continue;
+        }
+        let once = kod[..bas].trim_end();
+        let asenkron = once.ends_with("async")
+            && !once[..once.len() - "async".len()].chars().next_back().is_some_and(tanimlayici);
+        baslar.push((bas, ad, asenkron));
+    }
+    baslar
+        .iter()
+        .enumerate()
+        .map(|(i, (b, ad, asenkron))| {
+            let son = baslar.get(i + 1).map_or(kod.len(), |x| x.0);
+            (ad.clone(), *asenkron, &kod[*b..son])
+        })
+        .collect()
+}
+
+/// Kodda dosya indirme başlığı kuruluyor mu. Yalnızca KOD satırlarına bakılır
+/// (çağıran `kod_satirlari` verir); `attachments::` modül yolu `"attachment`
+/// dizgi başlangıcıyla karışmaz.
+fn indirme_basligi_var(parca: &str) -> bool {
+    let kucuk = parca.to_lowercase();
+    kucuk.contains("content_disposition")
+        || kucuk.contains("content-disposition")
+        || kucuk.contains("\"attachment")
+}
+
+/// Bir rota dosyasında indirme başlığı kuran **kök** fonksiyonlar:
+/// `(ad, sifreli_pdf'e ulaşıyor mu)`. Başlığı doğrudan ya da dosya içi bir
+/// yardımcı üzerinden (geçişli) kuran ve dosyada başka hiçbir fonksiyonun
+/// çağırmadığı her fonksiyon köktür — `async fn` olması gerekmez, çünkü
+/// `impl Future` dönen düz bir `fn` de rotaya bağlanabilir.
+///
+/// Sınır (biçim 10 gereği açıkça): "şifreli" iddiası `sifreli_pdf` adının kök
+/// fonksiyonun geçişli çağrı kümesinde GEÇMESİDİR; baytların gerçekten o
+/// çıktıdan geldiği veri akışı analiz edilmez. Veri raporu için akış ayrıca
+/// davranışsal olarak ölçülüyor
+/// (`veri_raporu_sifreli_pdf_doner_ve_disa_aktarma_loglanir`: `is_encrypted`).
+fn indirme_kokleri(kod: &str) -> Vec<(String, bool)> {
+    let parcalar = fn_parcalari(kod);
+    let cagiriyor = |parca: &str, ad: &str| {
+        // Tanımın kendisi (`fn ad(`) çağrı sayılmaz.
+        parca.match_indices(&format!("{ad}(")).any(|(i, _)| {
+            !parca[..i].trim_end().ends_with("fn")
+                && !parca[..i].chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_')
+        })
+    };
+    // Gecisli kapanis: baslik kuran ve sifreli_pdf'e ulasan fonksiyon kumeleri.
+    let mut baslik: Vec<bool> = parcalar.iter().map(|(_, _, p)| indirme_basligi_var(p)).collect();
+    let mut sifreli: Vec<bool> = parcalar.iter().map(|(_, _, p)| p.contains("sifreli_pdf")).collect();
+    loop {
+        let mut degisti = false;
+        for i in 0..parcalar.len() {
+            for j in 0..parcalar.len() {
+                if i != j && cagiriyor(parcalar[i].2, &parcalar[j].0) {
+                    if baslik[j] && !baslik[i] {
+                        baslik[i] = true;
+                        degisti = true;
+                    }
+                    if sifreli[j] && !sifreli[i] {
+                        sifreli[i] = true;
+                        degisti = true;
+                    }
+                }
+            }
+        }
+        if !degisti {
+            break;
+        }
+    }
+    parcalar
+        .iter()
+        .enumerate()
+        .filter(|&(i, (ad, _, _))| {
+            baslik[i]
+                && !parcalar.iter().enumerate().any(|(j, (_, _, p))| j != i && cagiriyor(p, ad))
+        })
+        .map(|(i, (ad, _, _))| (ad.clone(), sifreli[i]))
+        .collect()
+}
+
+/// Dosya indiren her uç ya şifreli PDF üretir ya da adıyla istisnadır.
+///
+/// # Bulgu (dal incelemesi I3)
+///
+/// Çekirdek ek indirmeyi `DisaAktarma` sayıyordu ama baytları şifresiz
+/// veriyordu — tasarım §10 ("dışa aktarılan her dosya şifreli") ile çelişki.
+/// Karar D3: ek indirme şifresiz kalır, ama bu bir **adlı** istisnadır ve
+/// sunucuda "`Content-Disposition` dönen her uç şifreli olmalı" kuralı artık
+/// çalıştırılabilir. Küme `server/src/routes/` dizininden türetilir: yarın
+/// eklenecek bir CSV/yedek/özet indirme ucu hiçbir şey yapılmadan kapsama
+/// girer.
+#[test]
+fn dosya_indiren_her_uc_sifreli_ya_da_adli_istisnadir() {
+    let kaynaklar = rota_kaynaklari();
+    let mut kokler: Vec<(String, String, bool)> = Vec::new();
+    for (ad, kaynak) in &kaynaklar {
+        for (isim, sifreli) in indirme_kokleri(&kod_satirlari(kaynak)) {
+            kokler.push((ad.clone(), isim, sifreli));
+        }
+    }
+
+    // ON KOSUL (totoloji engeli): tarayici bugunku iki indirme ucunu GERCEKTEN
+    // buluyor -- biri sifreli (yardimci zinciri uzerinden), biri istisna.
+    assert!(
+        kokler.iter().any(|(a, i, s)| a == "veri_raporu.rs" && i == "veri_raporu" && *s),
+        "veri raporu sifreli indirme ucu olarak taninmadi: {kokler:?}"
+    );
+
+    let mut ihlaller = Vec::new();
+    for (ad, isim, sifreli) in &kokler {
+        let istisna = SIFRESIZ_INDIRME_ISTISNALARI.contains(&(ad.as_str(), isim.as_str()));
+        if !sifreli && !istisna {
+            ihlaller.push(format!(
+                "{ad}::{isim}: dosya indiriyor ama yanitini `pdf::sifreli_pdf`'ten uretmiyor \
+                 ve SIFRESIZ_INDIRME_ISTISNALARI'nda yok (tasarim §10)"
+            ));
+        }
+        if *sifreli && istisna {
+            ihlaller.push(format!(
+                "{ad}::{isim}: artik sifreli -- SIFRESIZ_INDIRME_ISTISNALARI girdisi bayat, silinmeli"
+            ));
+        }
+    }
+    // Bayatlik: listedeki her handler gercekten var ve gercekten indirme
+    // basligi kuruyor.
+    for (ad, isim) in SIFRESIZ_INDIRME_ISTISNALARI {
+        if !kokler.iter().any(|(a, i, _)| a == ad && i == isim) {
+            ihlaller.push(format!(
+                "SIFRESIZ_INDIRME_ISTISNALARI bayat: {ad}::{isim} yok ya da artik \
+                 Content-Disposition kurmuyor"
+            ));
+        }
+    }
+    assert!(ihlaller.is_empty(), "{} ihlal:\n{}", ihlaller.len(), ihlaller.join("\n"));
+}
+
+/// Tarayıcının kendisi, dosyalardan bağımsız: geçişli yardımcı, kök tespiti,
+/// `FnOnce` hecesi, `"attachment` ile `attachments::` ayrımı.
+#[test]
+fn indirme_koku_tarayicisi_yardimci_zincirini_izler() {
+    let kod = [
+        "use psikolog_core::store::attachments::liste;",
+        "fn baslik_koy(y: &mut R) { y.insert(header::CONTENT_DISPOSITION, v); }",
+        "fn akis<U: FnOnce()>(u: U) -> impl Future { async move { baslik_koy(&mut y) } }",
+        "pub async fn sifreli_uc(s: S) -> R { akis(sifreli_pdf) }",
+        "pub async fn duz_uc(s: S) -> R { let _ = \"attachment; filename=x\"; }",
+        "pub async fn liste_uc(s: S) -> R { liste(&c) }",
+    ]
+    .join("\n");
+    let mut kokler = indirme_kokleri(&kod);
+    kokler.sort();
+    assert_eq!(kokler, [("duz_uc".to_string(), false), ("sifreli_uc".to_string(), true)]);
+}
+
+// =====================================================================
 // PLAN 4 GOREV 6 -- DANISAN VERI RAPORU (sunucuda, AES-256 sifreli PDF)
 // =====================================================================
 //

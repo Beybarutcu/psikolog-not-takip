@@ -81,8 +81,13 @@ import { RizaBolumu } from './RizaBolumu'
  *   hatada da. Sunucunun `400` ana parola reddinde silinen şey terapistin
  *   ANA PAROLASIDIR; DOM'da (`value` özniteliği) fazladan kalmamalı. Hata
  *   metni olduğu gibi `role="alert"` ile gösterilir.
- * - Alanlar `autocomplete="new-password"`: tarayıcının kayıtlı ana parolayı
- *   bu alana kendiliğinden doldurmasını engeller.
+ * - Alanlar `autocomplete="off"`: bu parola kullanıcının DEĞİL, danışanın
+ *   parolasıdır. `new-password` tarayıcıya "bu site için yeni hesap parolası"
+ *   der ve tarayıcı onu uygulamanın adresine KAYDETMEYİ önerebilir; kabul
+ *   edilirse danışan parolası terapistin parola yöneticisinde bu uygulamanın
+ *   girişi olarak durur ve bir gün ana parola alanına kendiliğinden dolar.
+ *   (Tarayıcılar `off`'u parola alanlarında her zaman onurlandırmaz; bu bir
+ *   ipucudur, güvence değil. Güvence sunucunun ana parola reddidir.)
  * - İndirmeyi, denetim kaydını ve 401 davranışını `danisanApi.veriRaporuIndir`
  *   ile sunucu üstleniyor; kart ne not çeker, ne metin kurar, ne Blob üretir.
  *   İstemcide rapor metni üretilemeyeceği `istemciRaporUretimi.test.ts`'te
@@ -586,7 +591,8 @@ export function DanisanKarti({
             <input
               id="rapor-parolasi"
               type="password"
-              autoComplete="new-password"
+              // Danışanın parolası: tarayıcı kaydetmesin (bkz. modül başlığı).
+              autoComplete="off"
               className="mt-1 rounded border p-1"
               disabled={raporSuruyor}
               value={raporForm.parola}
@@ -600,7 +606,7 @@ export function DanisanKarti({
             <input
               id="rapor-parolasi-tekrar"
               type="password"
-              autoComplete="new-password"
+              autoComplete="off"
               className="mt-1 rounded border p-1"
               disabled={raporSuruyor}
               value={raporForm.tekrar}

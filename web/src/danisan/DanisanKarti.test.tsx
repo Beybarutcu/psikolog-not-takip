@@ -490,15 +490,16 @@ describe('DanisanKarti — veri raporu (KVKK md. 11, parolalı PDF)', () => {
   const olustur = () =>
     userEvent.click(within(diyalog()).getByRole('button', { name: 'Raporu oluştur' }))
 
-  it('dugme parola formunu acar: iki password alani, new-password, aciklama', async () => {
+  it('dugme parola formunu acar: iki password alani, autocomplete off, aciklama', async () => {
     kur()
     // Form kapalı başlar: parola alanı ancak istenince DOM'a girer.
     expect(screen.queryByRole('dialog')).toBeNull()
     await ac()
     for (const alan of [parolaAlani(), tekrarAlani()]) {
       expect(alan.type).toBe('password')
-      // Tarayıcı kayıtlı ANA parolayı buraya kendiliğinden doldurmasın.
-      expect(alan.getAttribute('autocomplete')).toBe('new-password')
+      // Danışanın parolası: `new-password` tarayıcıya onu bu sitenin hesap
+      // parolası olarak KAYDETMEYİ önerdirebilirdi (M7).
+      expect(alan.getAttribute('autocomplete')).toBe('off')
     }
     expect(diyalog().textContent).toContain(
       'Bu parolayı danışana ayrıca iletin. Ana parolanızı kullanmayın.',

@@ -950,6 +950,15 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
   // inceleme M4/M6: hatanın NEREDE ve KAÇ KEZ gösterildiği).
   let durumHatasi: string | null = null
   let odemeHatasi: string | null = null
+  // Uçuştaki yazma × hafta yüklemesi (Görev 2 inceleme M7). `durumBekletici`
+  // durum PATCH'ini, `haftaBekletici` takvim GET'ini kapıda tutar. Takvim
+  // yanıtı İSTEK ANINDA anlık görüntüyle kuruluyor (sunucu okumayı o an
+  // yaptı) ve `haftaSuzgeci` açıkken görünen aralığa göre süzülüyor —
+  // sonraki haftada A yok, panel gerçekten kapanıyor (üretimdeki akış).
+  let durumBekletici: Promise<void> | null = null
+  let haftaBekletici: Promise<void> | null = null
+  let haftaSuzgeci = false
+  let sunucuDurumu: Record<number, string> = {}
 
   const notGetSayisi = (id: number) =>
     istekler.filter((i) => i.yol === `/api/randevular/${id}/not` && i.method === 'GET').length
@@ -970,6 +979,10 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     odemeBekletici = null
     durumHatasi = null
     odemeHatasi = null
+    durumBekletici = null
+    haftaBekletici = null
+    haftaSuzgeci = false
+    sunucuDurumu = {}
     sunucuOzelNotlari = { [randevuA.id]: GIZLI }
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
@@ -1033,6 +1046,12 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
       if (durumHatasi && method === 'PATCH' && /^\/api\/randevular\/\d+$/.test(yol)) {
         return { ok: false, status: 500, json: async () => ({ hata: durumHatasi }) } as unknown as Response
       }
+      const durumYolu = /^\/api\/randevular\/(\d+)$/.exec(yol)
+      if (durumYolu && method === 'PATCH') {
+        if (durumBekletici) await durumBekletici
+        sunucuDurumu[Number(durumYolu[1])] = (govde as { durum: string }).durum
+        return { ok: true, json: async () => ({}) } as unknown as Response
+      }
       const odeme = /^\/api\/randevular\/(\d+)\/odeme$/.exec(yol)
       if (odeme && method === 'PATCH' && odemeHatasi) {
         return { ok: false, status: 500, json: async () => ({ hata: odemeHatasi }) } as unknown as Response
@@ -1044,11 +1063,22 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
       }
       if (yol.startsWith('/api/randevular')) {
         if (method === 'GET') {
-          return {
-            ok: true,
-            json: async () =>
-              [randevuA, randevuB].map((r) => ({ ...r, odendi: sunucuOdendi[r.id] ?? r.odendi })),
-          } as unknown as Response
+          const aralik = /^\/api\/randevular\?baslangic=([^&]+)&bitis=([^&]+)/.exec(yol)
+          const anlik = [randevuA, randevuB]
+            .filter(
+              (r) =>
+                !haftaSuzgeci ||
+                (aralik !== null &&
+                  r.baslangic >= decodeURIComponent(aralik[1]) &&
+                  r.baslangic < decodeURIComponent(aralik[2])),
+            )
+            .map((r) => ({
+              ...r,
+              odendi: sunucuOdendi[r.id] ?? r.odendi,
+              durum: sunucuDurumu[r.id] ?? r.durum,
+            }))
+          if (haftaBekletici) await haftaBekletici
+          return { ok: true, json: async () => anlik } as unknown as Response
         }
         return { ok: true, json: async () => ({}) } as unknown as Response
       }
@@ -1486,6 +1516,63 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await screen.findByText(/Ayşe Yılmaz — /)
     expect(odendiKutusu().checked).toBe(false)
   })
+
+  // Görev 2 inceleme M7: uçuştaki yazma × hafta yüklemesi. Takvim GET'i
+  // PATCH BİTMEDEN başlar (sunucu eski değeri okur) ve PATCH'ten SONRA
+  // dönerse, yanıt listeye ESKİ değeri yazıyordu: kullanıcı "ödendi"
+  // işaretler, haftalar arasında gidip gelir, kutu işaretsiz açılır — sunucu
+  // ise `true`. Akış üretimdeki gibi: A açık, yazma uçuşta, "Sonraki hafta"
+  // (A yok, panel kapanır), "Önceki hafta" (GET kapıda), yazma biter, GET
+  // döner, A yeniden açılır.
+  it.each([
+    [
+      'odeme',
+      async () => userEvent.click(odendiKutusu()),
+      () => expect(odendiKutusu().checked).toBe(true),
+      () => sunucuOdendi[randevuA.id] === true,
+    ],
+    [
+      'durum',
+      async () => userEvent.click(screen.getByRole('button', { name: 'Geldi' })),
+      () => {
+        expect(screen.getByRole('button', { name: 'Geldi' }).getAttribute('aria-pressed')).toBe('true')
+        expect(screen.getByRole('button', { name: 'Ayşe Yılmaz' }).getAttribute('data-durum')).toBe('geldi')
+      },
+      () => sunucuDurumu[randevuA.id] === 'geldi',
+    ],
+  ])(
+    'ucustaki %s yazmasi, ONCE baslayip SONRA donen hafta yuklemesinde ESKI degere donmez',
+    async (_ad, yazmaEylemi, yeniDegerGorunur, sunucuYazdi) => {
+      haftaSuzgeci = true
+      await seansAc()
+
+      let yazmayiBirak: () => void = () => {}
+      const yazmaKapisi = new Promise<void>((r) => { yazmayiBirak = r })
+      odemeBekletici = yazmaKapisi
+      durumBekletici = yazmaKapisi
+      await yazmaEylemi()
+
+      await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
+      await waitFor(() => expect(screen.queryByRole('region', { name: 'Seans' })).toBeNull())
+
+      let haftayiBirak: () => void = () => {}
+      haftaBekletici = new Promise<void>((r) => { haftayiBirak = r })
+      const getSayisi = () =>
+        istekler.filter((i) => i.yol.startsWith('/api/randevular?') && i.method === 'GET').length
+      const onceki = getSayisi()
+      await userEvent.click(screen.getByRole('button', { name: 'Önceki hafta' }))
+      // GET yola çıktı ve sunucu ESKİ değeri okudu (anlık görüntü).
+      await waitFor(() => expect(getSayisi()).toBe(onceki + 1))
+
+      yazmayiBirak()
+      await waitFor(() => expect(sunucuYazdi()).toBe(true))
+      haftayiBirak()
+
+      await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+      await screen.findByText(/Ayşe Yılmaz — /)
+      yeniDegerGorunur()
+    },
+  )
 
   it('"Geldi" isaretlenince alt satirda SECILI gorunen dugme Geldi olur (panel remount olmadan)', async () => {
     // `durumDegis` seçili randevunun kopyasını AYNI kimlikle tazeliyor; panel

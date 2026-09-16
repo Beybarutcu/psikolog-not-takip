@@ -681,7 +681,7 @@ describe('DanisanKarti — kapanış ve gizlilik', () => {
 //      kartin verisi EKRANDA KALMAZ" (uçuşta bekletilen bir istekle, yani
 //      sıfırlamayı bir efekte bırakan mutasyonu da yakalayarak).
 //   2. `AnaEkran`'daki `key={danisan-…}`,
-//   3. `DanisanKarti`'nın `gorunenRapor` / `ekForm` türetmeleri,
+//   3. `DanisanKarti`'nın `raporForm` / `ekForm` türetmeleri,
 //   4. `RizaBolumu`'nün `key`'i
 //      — üçü de (1) çalışırken erişilemez; derinlemesine savunma olarak
 //      meşru ama birincil hat DEĞİL.

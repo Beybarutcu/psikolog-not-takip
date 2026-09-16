@@ -2274,6 +2274,49 @@ async fn parola_hicbir_log_satirinda_ve_hata_govdesinde_gecmez() {
     assert!(!format!("{istek:?}").contains(GECERLI), "Debug parolayi basmamali");
 }
 
+/// Bir `Cargo.toml`'daki TEK `lopdf` bildiriminin surum dizgisi. Yorum
+/// satirlari elenir (kuralin kendisi yorumda geciyor); bildirim yoksa ya da
+/// birden fazlaysa test bos/yanlis bir esitlikle tatmin olmasin diye panik.
+fn lopdf_surumu(toml_yolu: &std::path::Path) -> String {
+    let metin = std::fs::read_to_string(toml_yolu)
+        .unwrap_or_else(|e| panic!("{} okunamadi: {e}", toml_yolu.display()));
+    let satirlar: Vec<&str> = metin
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with('#'))
+        .filter(|l| l.split('=').next().is_some_and(|ad| ad.trim() == "lopdf"))
+        .collect();
+    assert_eq!(satirlar.len(), 1, "{}: tam bir `lopdf` bildirimi olmali: {satirlar:?}", toml_yolu.display());
+    let deger = satirlar[0].split_once('=').unwrap().1.trim();
+    // Iki bicim: `lopdf = "=x"` ve `lopdf = { version = "=x", ... }`.
+    let surum_bolumu = match deger.find("version") {
+        Some(i) => &deger[i..],
+        None => deger,
+    };
+    let surum = surum_bolumu
+        .split('"')
+        .nth(1)
+        .unwrap_or_else(|| panic!("{}: lopdf surumu okunamadi: {deger}", toml_yolu.display()));
+    assert!(!surum.is_empty(), "{}: bos lopdf surumu", toml_yolu.display());
+    surum.to_string()
+}
+
+/// Bicim 13'un karsi ilaci: "test bagimliligi `lopdf` surumu `core`un
+/// sabitledigiyle ayni olmali" kurali eskiden yalnizca `server/Cargo.toml`
+/// yorumundaydi. Surumler ayrisirsa Cargo iki ayri `lopdf` derler ve HTTP
+/// testleri PDF'i **uretenden farkli** bir kutuphaneyle cozer -- sifreleme
+/// bicimi degisse bile testler eski okuyucuyla yesil kalabilirdi. Dizgi
+/// esitligi (`=` sabitlemesi dahil) iddia edilir; `"0.45"` gibi uyumlu ama
+/// sabitlenmemis bir yazim da kirilir.
+#[test]
+fn lopdf_test_surumu_core_ile_ayni() {
+    let kok = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sunucu = lopdf_surumu(&kok.join("Cargo.toml"));
+    let cekirdek = lopdf_surumu(&kok.join("../core/Cargo.toml"));
+    assert!(cekirdek.starts_with('='), "on kosul: core lopdf surumunu sabitliyor: {cekirdek}");
+    assert_eq!(sunucu, cekirdek, "server dev-dependency lopdf surumu core ile ayni olmali");
+}
+
 #[tokio::test]
 async fn eski_rapor_kaydi_ucu_artik_yok() {
     let (_d, s, cid, _rid) = dolu_state().await;

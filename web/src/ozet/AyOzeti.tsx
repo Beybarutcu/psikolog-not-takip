@@ -3,8 +3,16 @@ import { ozetApi, YetkisizHata, type AyOzeti as AyOzetiVerisi } from '../api'
 import { tlMetni } from '../para'
 import { AYLAR } from '../takvim/hafta'
 
+/**
+ * Özetin kapsam cümlesi (dal incelemesi D2). Sunucunun kuralıyla birebir:
+ * TAHSİLAT ayın ödendi işaretli BÜTÜN seansları (iptal edilmiş ama ücreti
+ * alınmış dahil); "Gelinen seans" yalnızca `geldi`; BEKLEYEN ve borçlular
+ * gelinmiş ve ödenmemiş seanslar. Cümle iki kuralı AYRI söylüyor: tek bir
+ * "yalnızca geldi sayılır" cümlesi, iptal edilip ödenmiş bir seansın
+ * tahsilatta görünmesini ekranda bir çelişki gibi okuturdu.
+ */
 export const KAPSAM_CUMLESI =
-  "Yalnızca 'geldi' olarak işaretlenen seanslar sayılır; 'gelmedi' ve 'iptal' dahil değildir."
+  "Tahsilat, ödendi olarak işaretlenen bütün seansları içerir. Bekleyen ödemeye yalnızca 'geldi' olarak işaretlenen seanslar girer; 'gelmedi' ve 'iptal' borç sayılmaz."
 
 /**
  * `YYYY-AA` ayını `fark` ay kaydırır; yıl iki yönde de devreder

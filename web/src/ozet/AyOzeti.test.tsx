@@ -242,7 +242,7 @@ describe('AyOzeti', () => {
     const cumle = () => screen.getByText(KAPSAM_CUMLESI)
 
     expect(KAPSAM_CUMLESI).toBe(
-      "Yalnızca 'geldi' olarak işaretlenen seanslar sayılır; 'gelmedi' ve 'iptal' dahil değildir.",
+      "Tahsilat, ödendi olarak işaretlenen bütün seansları içerir. Bekleyen ödemeye yalnızca 'geldi' olarak işaretlenen seanslar girer; 'gelmedi' ve 'iptal' borç sayılmaz.",
     )
     expect(cumle()).toBeDefined() // yüklenirken
     eylul.coz(bosOzet('2026-09'))

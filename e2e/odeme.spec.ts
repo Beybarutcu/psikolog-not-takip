@@ -14,8 +14,10 @@ import { kurulumYap } from './yardimcilar'
  * - İkinci test randevusunu 5 hafta SONRAKİ Pazartesi'ye koyar. İki Pazartesi
  *   arası 35 gün; hiçbir ay 31 günden uzun olmadığından iki tarih ASLA aynı
  *   aya düşemez — testin koşulduğu gerçek tarihten bağımsız.
- * - Üçüncü test özeti ekranda okumaz, yalnızca uç noktayı yoklar ve dosyada
- *   son sırada koşar.
+ * - Üçüncü test randevusunu 10 hafta SONRAKİ Pazartesi'ye koyar (ikinciden 35,
+ *   birinciden 70 gün sonra; aynı gerekçeyle ikisinin de ayından farklı).
+ * - Dördüncü test özeti ekranda okumaz, yalnızca uç noktayı yoklar ve dosyada
+ *   son sırada koşar (randevusu birinci testin ayına düşer, ondan SONRA).
  *
  * # Ay sınırı
  *
@@ -152,6 +154,22 @@ async function ozetKapat(page: Page) {
   await expect(page.getByRole('region', { name: 'Ay sonu özeti', exact: true })).toHaveCount(0)
 }
 
+/** Takvimi `n` hafta ileri götürür; her adımda başlığın DEĞİŞMESİNİ bekler. */
+async function haftaIlerle(page: Page, n: number) {
+  const haftaBasligi = page
+    .getByRole('button', { name: 'Önceki hafta', exact: true })
+    .locator('xpath=following-sibling::h2')
+  for (let i = 0; i < n; i++) {
+    const once = (await haftaBasligi.textContent()) ?? ''
+    await page.getByRole('button', { name: 'Sonraki hafta', exact: true }).click()
+    await expect(haftaBasligi).not.toHaveText(once)
+  }
+}
+
+/** Özetin kapsam cümlesi — `web/src/ozet/AyOzeti.tsx` `KAPSAM_CUMLESI` ile birebir (D2). */
+const KAPSAM_CUMLESI =
+  "Tahsilat, ödendi olarak işaretlenen bütün seansları içerir. Bekleyen ödemeye yalnızca 'geldi' olarak işaretlenen seanslar girer; 'gelmedi' ve 'iptal' borç sayılmaz."
+
 function deger(bolum: Locator, etiket: string): Locator {
   return bolum
     .locator('dl > div')
@@ -217,14 +235,7 @@ test('gelmedi isaretlenen seans ne tahsilata ne borca girer', async ({ page }) =
   await danisanEkle(page, 'Devamsız Cem')
 
   // 5 hafta ileri: birinci testin ayından kesinlikle farklı bir ay (başlık yorumu).
-  const haftaBasligi = page
-    .getByRole('button', { name: 'Önceki hafta', exact: true })
-    .locator('xpath=following-sibling::h2')
-  for (let i = 0; i < 5; i++) {
-    const once = (await haftaBasligi.textContent()) ?? ''
-    await page.getByRole('button', { name: 'Sonraki hafta', exact: true }).click()
-    await expect(haftaBasligi).not.toHaveText(once)
-  }
+  await haftaIlerle(page, 5)
 
   const r = await randevuOlustur(page, 'Devamsız Cem', '10:00', '450')
   const ay = r.baslangic.slice(0, 7)
@@ -251,6 +262,50 @@ test('gelmedi isaretlenen seans ne tahsilata ne borca girer', async ({ page }) =
   await expect(
     ozet.getByRole('button', { name: 'Devamsız Cem — 450,00 TL (1 seans)', exact: true }),
   ).toBeVisible()
+})
+
+// Dal incelemesi D2 — TAHSİLAT ayın ödendi işaretli BÜTÜN seanslarıdır (iptal
+// edilmiş ama ücreti alınmış dahil); BEKLEYEN yalnızca gelinmiş ve ödenmemiş.
+// Kural SUNUCUDA (çekirdek) uygulanıyor ve ayrı bir dalda: o dal birleşene
+// kadar bu test "Tahsilat 450,00 TL" iddiasında KIRMIZI kalır (eski kural
+// iptal+ödendi'yi saymıyor). Bilerek atlanmıyor.
+//
+// Özet ödeme işaretlenirken AÇIK kalıyor (I1): "Tahsilat artar" iddiası,
+// aynı açık özetin yazmadan SONRA gelen yanıtla değişmesini ölçer.
+test('iptal edilip odendi isaretlenen seans TAHSILATA girer, BEKLEYENE girmez', async ({ page }) => {
+  await kurulumYap(page)
+
+  await danisanEkle(page, 'İptalli İpek')
+  // 10 hafta ileri: önceki iki testin ayından kesinlikle farklı (başlık yorumu).
+  await haftaIlerle(page, 10)
+
+  const r = await randevuOlustur(page, 'İptalli İpek', '10:00', '450')
+  const ay = r.baslangic.slice(0, 7)
+
+  const satir = await seansAc(page, 'İptalli İpek', '450,00 TL')
+  await durumIsaretle(page, satir, r, 'İptalli İpek', 'İptal', 'iptal')
+
+  // ÖNCE: iptal ve ödenmemiş — hiçbir yerde sayılmaz. Kapsam cümlesi ekranda.
+  const ozet = await ozetAc(page, ay)
+  await expect(ozet.getByText(KAPSAM_CUMLESI, { exact: true })).toBeVisible()
+  await expect(deger(ozet, 'Gelinen seans')).toHaveText('0')
+  await expect(deger(ozet, 'Tahsilat')).toHaveText('0,00 TL')
+  await expect(deger(ozet, 'Bekleyen')).toHaveText('0,00 TL')
+
+  // SONRA: ücret alındı. Bariyer: PATCH başarılı + ardından gelen özet yanıtı.
+  const tazelemeSozu = page.waitForResponse(
+    (y) => y.request().method() === 'GET' && new URL(y.url()).pathname === '/api/ay-ozeti',
+  )
+  await odemeIsaretle(page, satir, r)
+  expect((await tazelemeSozu).ok()).toBe(true)
+  await expect(ozet.getByRole('heading', { level: 2 })).toHaveText(ayBasligi(ay))
+  await expect(deger(ozet, 'Tahsilat')).toHaveText('450,00 TL')
+  // Tahsilat değiştikten SONRA (yukarıdaki bariyer): bekleyen artmadı, borçlu yok,
+  // seans "gelinen" sayılmadı.
+  await expect(deger(ozet, 'Bekleyen')).toHaveText('0,00 TL')
+  await expect(deger(ozet, 'Gelinen seans')).toHaveText('0')
+  await expect(ozet.getByRole('listitem')).toHaveCount(0)
+  await expect(ozet.getByText('Bu ay bekleyen ödeme yok.', { exact: true })).toBeVisible()
 })
 
 test('kilitliyken ay ozeti ucu veri sizdirmaz', async ({ page, request }) => {

@@ -2196,6 +2196,45 @@ async fn kayit_yazilamazsa_500_doner_ve_pdf_verilmez() {
     assert!(basliklar.get("content-disposition").is_none());
 }
 
+/// Ana parola kontrolu YAPILAMAZSA rapor verilmez (fail-closed). Yalnizca
+/// `WrongSecret` rapora devam eder; anahtar kaydi okunup yapisal olarak
+/// gecerli gorunen ama KDF'i calistirilamayan bir kayit (`t_cost = 0`:
+/// `yapisal_gecerli_mi` yalnizca UST sinirlara bakar, Argon2 alt siniri
+/// reddeder) `CryptoError::Kdf` dondurur. Oturum acik kalir -- anahtar
+/// bellekte -- dolayisiyla kapi ve `keystore_durumu` geciliyor ve olculen
+/// dal gercekten `uret`'teki `Err(_)` koludur.
+#[tokio::test]
+async fn ana_parola_kontrolu_yapilamazsa_500_pdf_verilmez_log_yazilmaz() {
+    use psikolog_core::crypto::keyring::CryptoError;
+    use psikolog_core::store::keystore::{load, save, unlock_with_password};
+    use psikolog_server::state::KeystoreDurumu;
+
+    let (_d, s, cid, _rid) = dolu_state().await;
+    // On kosul: ayni durumda rapor GERCEKTEN uretilebiliyor.
+    let (kod, _, govde) = rapor_parolayla(&s, cid, RAPOR_PAROLASI).await;
+    assert_eq!(kod, StatusCode::OK, "{}", String::from_utf8_lossy(&govde));
+    let once = log_satirlari(&s).await.len();
+
+    let mut ks = load(&s.keystore_yolu()).unwrap();
+    ks.password.kdf.t_cost = 0;
+    save(&ks, &s.keystore_yolu()).unwrap();
+    // On kosullar: kayit handler'in `let-else` dalina DUSMUYOR (Var) ve
+    // kilit acma denemesi "yanlis parola" DEGIL, baska bir hata.
+    let KeystoreDurumu::Var(okunan) = s.keystore_durumu() else {
+        panic!("on kosul: bozulan kayit yine `Var` okunmali");
+    };
+    assert!(
+        matches!(unlock_with_password(&okunan, RAPOR_PAROLASI), Err(CryptoError::Kdf(_))),
+        "on kosul: ana parola kontrolu Kdf hatasiyla yapilamamali"
+    );
+
+    let (kod, basliklar, govde) = rapor_parolayla(&s, cid, RAPOR_PAROLASI).await;
+    assert_eq!(kod, StatusCode::INTERNAL_SERVER_ERROR, "{}", String::from_utf8_lossy(&govde));
+    assert_eq!(hata_metni(&govde), "Rapor üretilemedi.");
+    assert!(!pdf_mi(&govde) && basliklar.get("content-disposition").is_none());
+    assert_eq!(log_satirlari(&s).await.len(), once, "kontrol yapilamadiysa log satiri yok");
+}
+
 #[tokio::test]
 async fn bozuk_govde_turkce_json_hata_doner() {
     let (_d, s, cid, _rid) = dolu_state().await;

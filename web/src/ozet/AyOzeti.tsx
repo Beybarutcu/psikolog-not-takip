@@ -53,6 +53,15 @@ type Sonuc = { ay: string; veri: AyOzetiVerisi } | { ay: string; hata: string }
  * dizgisi: üst bileşenin her render'da geçirdiği yeni `onDanisanAc` ya da
  * `bugun` istek ATTIRMAZ. `bugun` yalnızca açılış ayını belirler.
  *
+ * # Hata sonrası "Yeniden dene" (Görev 4 inceleme M2)
+ *
+ * Hata dalında bir düğme aynı ayı YENİDEN ister (`tazeleme` sayacı efektin
+ * bağımlılığı). Düğme olmadan geçici bir hatadan kurtulmanın tek yolu başka
+ * bir aya gidip geri gelmek ya da ekranı kapatıp açmaktı. Basınca sonuç
+ * temizlenir: sayılar "…" olur, eski hata metni yeniden deneme sürerken
+ * ekranda kalmaz. Yalnızca hata varken görünür — yüklü bir özet üzerinde her
+ * basış sunucuda bir görüntüleme kaydı daha demek.
+ *
  * # 401
  *
  * `ozetApi` merkezî `istek()` yolundan geçer; 401'de `App` kilit ekranına
@@ -69,6 +78,7 @@ export function AyOzeti({
 }) {
   const [ay, setAy] = useState(() => bugun.slice(0, 7))
   const [sonuc, setSonuc] = useState<Sonuc | null>(null)
+  const [tazeleme, setTazeleme] = useState(0)
 
   useEffect(() => {
     let iptal = false
@@ -84,7 +94,7 @@ export function AyOzeti({
     return () => {
       iptal = true
     }
-  }, [ay])
+  }, [ay, tazeleme])
 
   const guncel = sonuc !== null && sonuc.ay === ay ? sonuc : null
   const veri = guncel !== null && 'veri' in guncel ? guncel.veri : null
@@ -130,9 +140,19 @@ export function AyOzeti({
       </dl>
 
       {hata !== null && (
-        <p role="alert" className="mt-2 text-red-600">
-          Özet yüklenemedi. {hata}
-        </p>
+        <div role="alert" className="mt-2">
+          <p className="text-red-600">Özet yüklenemedi. {hata}</p>
+          <button
+            type="button"
+            className="mt-1 rounded border border-red-300 px-2 py-1 text-xs"
+            onClick={() => {
+              setSonuc(null)
+              setTazeleme((n) => n + 1)
+            }}
+          >
+            Yeniden dene
+          </button>
+        </div>
       )}
 
       {veri !== null &&

@@ -252,6 +252,35 @@ describe('AyOzeti', () => {
     }
   })
 
+  // Görev 4 inceleme M2. İki yön: hata varken düğme AYNI ayı yeniden ister
+  // ve başarıda sayılar görünür; yüklü özette düğme YOKTUR (her basış
+  // sunucuda bir görüntüleme kaydı daha).
+  it('hata sonrasi Yeniden dene AYNI ayi TEK istekle yeniden ister; basarida sayilar gorunur ve hata kalkar', async () => {
+    const ikinci = kapi<AyOzetiVerisi>()
+    const ayOzeti = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('GECICI-HATA'))
+      .mockReturnValueOnce(ikinci.promise)
+    render(<AyOzeti bugun="2026-09-16" onDanisanAc={vi.fn()} />, { ayOzeti })
+
+    const uyari = await screen.findByRole('alert')
+    expect(uyari.textContent).toContain('GECICI-HATA')
+    expect(ayOzeti).toHaveBeenCalledTimes(1)
+
+    await userEvent.click(within(uyari).getByRole('button', { name: 'Yeniden dene' }))
+    expect(ayOzeti).toHaveBeenCalledTimes(2)
+    expect(ayOzeti).toHaveBeenLastCalledWith('2026-09')
+    // Yeniden deneme sürerken eski hata ekranda kalmaz; sayılar "…".
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(deger('Tahsilat')).toBe('…')
+
+    ikinci.coz({ ay: '2026-09', seans_sayisi: 3, tahsilat_kurus: 123450, bekleyen_kurus: 0, borclular: [] })
+    await screen.findByText('1.234,50 TL')
+    expect(deger('Gelinen seans')).toBe('3')
+    expect(screen.queryByRole('button', { name: 'Yeniden dene' })).toBeNull()
+    expect(ayOzeti).toHaveBeenCalledTimes(2)
+  })
+
   it('401 disi hata duyurulur ve sayilar gosterilmez', async () => {
     const ayOzeti = vi.fn().mockRejectedValue(new Error('Ay YYYY-AA biçiminde olmalı.'))
     render(<AyOzeti bugun="2026-09-16" onDanisanAc={vi.fn()} />, { ayOzeti })

@@ -1,9 +1,49 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { YetkisizHata } from '../api'
 import { NotEditoru } from './NotEditoru'
 import { taslakOku, taslaklariUnut } from './taslak'
+
+// # SAHTE SAAT — bu dosyada GERÇEK ZAMANA bağlı tek bir iddia yok
+//
+// Önceki hâli 20/50/80 ms'lik GERÇEK zamanlayıcılarla `userEvent.type`'ın
+// tuş hızına güveniyordu: yüklü bir makinede iki tuş arası gecikmeyi aşıyor,
+// editör araya bir kayıt sıkıştırıyor ve "tam bir kez kaydeder" / "gecikme
+// dolmadan kaydetmez" iddiaları ÜRÜN DOĞRU ÇALIŞIRKEN kırılıyordu (tam paket
+// koşusunda 5 koşunun 2'sinde; bkz. Plan 4 Görev 4 inceleme I1).
+//
+// Şimdi saat `vi.useFakeTimers()` ile duruyor ve YALNIZCA `ilerle(ms)` ile
+// ilerliyor. "Hızlı yazma" bir yarış değil, bir olgu: `yaz()` harfleri
+// aralarında tam olarak verilen sahte süreyle gönderiyor.
+//
+// `userEvent` burada BİLEREK yok: Testing Library'nin `asyncWrapper`'ı her
+// `userEvent` çağrısının sonunda `setTimeout(0)` bekliyor ve sahte saati
+// yalnızca `jest` globali varsa ilerletiyor (Vitest'te yok) — saat durunca
+// ilk `userEvent` çağrısı sonsuza kadar asılı kalıyor. Aynı sebeple
+// `waitFor`/`findBy*` de yok: yerlerine saat ilerletilip EŞZAMANLI iddia
+// kuruluyor, ki bu da onlardan güçlü (koşul "sonunda" değil, TAM O ANDA
+// doğru olmalı). Editör yalnızca `onChange` dinliyor; `fireEvent.change`
+// ölçülen yolu değiştirmiyor.
+
+/** Sahte saati `ms` ilerletir; zamanlayıcıların başlattığı sözleri ve React güncellemelerini boşaltır. */
+async function ilerle(ms: number) {
+  await act(() => vi.advanceTimersByTimeAsync(ms))
+}
+
+/**
+ * Metni HARF HARF yazar. Her harften sonra sahte saat `aralikMs` ilerler;
+ * `0` ise harfler arasında hiç zaman geçmez.
+ */
+async function yaz(alanEl: HTMLTextAreaElement, metin: string, aralikMs = 0) {
+  for (const harf of metin) {
+    fireEvent.change(alanEl, { target: { value: alanEl.value + harf } })
+    if (aralikMs > 0) await ilerle(aralikMs)
+  }
+}
+
+function sablonSec(kod: string) {
+  fireEvent.change(screen.getByLabelText('Şablon'), { target: { value: kod } })
+}
 
 // `taslakAnahtari` ZORUNLU bir prop: taslak deposu not kimliğine göre
 // ayrılmasaydı bir seansın kaydedilmemiş metni başka bir seansın editörüne
@@ -30,9 +70,11 @@ function alan() {
 // sızmaması için her testten önce boşaltılıyor.
 beforeEach(() => {
   taslaklariUnut()
+  vi.useFakeTimers()
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -44,48 +86,51 @@ describe('NotEditoru', () => {
 
   it('yazdiktan sonra kendiliginden kaydeder', async () => {
     const props = kur()
-    await userEvent.type(screen.getByLabelText('Seans notu'), 'merhaba')
-    await waitFor(() => expect(props.onKaydet).toHaveBeenCalled())
-    expect(props.onKaydet).toHaveBeenCalledWith(
-      expect.objectContaining({ icerik: expect.stringContaining('merhaba') }),
-    )
+    await yaz(alan(), 'merhaba')
+    await ilerle(20)
+    expect(props.onKaydet).toHaveBeenCalledTimes(1)
+    expect(props.onKaydet).toHaveBeenCalledWith({ sablon: 'dap', icerik: 'merhaba' })
   })
 
   it('hizli yazarken her tusa kayit atmaz', async () => {
+    // Tuş aralığı (10 ms) gecikmenin (50 ms) altında: her tuş zamanlayıcıyı
+    // baştan kurar. Eski iddia "5'ten az" idi ve yük altında kırılıyordu;
+    // saat sahteyken sonuç TAM OLARAK bir kayıt, son hâlle.
     const props = kur({ gecikmeMs: 50 })
-    await userEvent.type(screen.getByLabelText('Seans notu'), 'abcdefghij')
-    await waitFor(() => expect(props.onKaydet).toHaveBeenCalled())
-    expect(props.onKaydet.mock.calls.length).toBeLessThan(5)
+    await yaz(alan(), 'abcdefghij', 10)
+    expect(props.onKaydet).not.toHaveBeenCalled()
+    await ilerle(40)
+    expect(props.onKaydet).toHaveBeenCalledTimes(1)
+    expect(props.onKaydet).toHaveBeenCalledWith({ sablon: 'dap', icerik: 'abcdefghij' })
   })
 
   it('kaydedildi gostergesi cikar', async () => {
     kur()
-    await userEvent.type(screen.getByLabelText('Seans notu'), 'x')
-    expect(await screen.findByText(/kaydedildi/i)).toBeDefined()
+    await yaz(alan(), 'x')
+    expect(screen.queryByText(/kaydedildi/i)).toBeNull()
+    await ilerle(20)
+    expect(screen.getByText(/kaydedildi/i)).toBeDefined()
   })
 
   it('kayit basarisiz olursa uyarir ve icerigi silmez', async () => {
     kur({ onKaydet: vi.fn().mockRejectedValue(new Error('ağ hatası')) })
-    await userEvent.type(screen.getByLabelText('Seans notu'), 'onemli not')
-    expect(await screen.findByText(/kaydedilemedi/i)).toBeDefined()
-    expect((screen.getByLabelText('Seans notu') as HTMLTextAreaElement).value).toContain(
-      'onemli not',
-    )
+    await yaz(alan(), 'onemli not')
+    await ilerle(20)
+    expect(screen.getByText(/kaydedilemedi/i)).toBeDefined()
+    expect(alan().value).toContain('onemli not')
   })
 
-  it('sablon secilince basliklar bos editore eklenir', async () => {
+  it('sablon secilince basliklar bos editore eklenir', () => {
     kur()
-    await userEvent.selectOptions(screen.getByLabelText('Şablon'), 'soap')
-    const alan = screen.getByLabelText('Seans notu') as HTMLTextAreaElement
-    expect(alan.value).toContain('Öznel')
-    expect(alan.value).toContain('Plan')
+    sablonSec('soap')
+    expect(alan().value).toContain('Öznel')
+    expect(alan().value).toContain('Plan')
   })
 
-  it('dolu editorde sablon degisimi mevcut metni ezmez', async () => {
+  it('dolu editorde sablon degisimi mevcut metni ezmez', () => {
     kur({ baslangicIcerik: 'yazilmis onemli not' })
-    await userEvent.selectOptions(screen.getByLabelText('Şablon'), 'soap')
-    const alan = screen.getByLabelText('Seans notu') as HTMLTextAreaElement
-    expect(alan.value).toContain('yazilmis onemli not')
+    sablonSec('soap')
+    expect(alan().value).toContain('yazilmis onemli not')
   })
 })
 
@@ -95,23 +140,34 @@ describe('NotEditoru', () => {
 describe('NotEditoru — otomatik kaydın iki yönü', () => {
   it('kullanici hicbir sey yazmadiysa acilan editor kayit ATMAZ', async () => {
     const props = kur({ baslangicIcerik: 'gecen haftadan kalan not', gecikmeMs: 20 })
-    // Gecikmenin birkaç katı beklenir: "henüz zamanı gelmedi" ile
-    // "hiç kaydetmiyor" burada karışmasın.
-    await new Promise((coz) => setTimeout(coz, 120))
+    // Gecikmenin çok katı ilerletilir: "henüz zamanı gelmedi" ile "hiç
+    // kaydetmiyor" burada karışmasın.
+    await ilerle(10_000)
     expect(props.onKaydet).not.toHaveBeenCalled()
     // Aynı editör yazınca kaydediyor — yukarıdaki sessizlik "hiç kaydetmeyen
     // editör" yüzünden değil.
-    await userEvent.type(alan(), ' ek')
-    await waitFor(() => expect(props.onKaydet).toHaveBeenCalledTimes(1))
+    await yaz(alan(), ' ek')
+    await ilerle(20)
+    expect(props.onKaydet).toHaveBeenCalledTimes(1)
+    expect(props.onKaydet).toHaveBeenCalledWith({
+      sablon: 'dap',
+      icerik: 'gecen haftadan kalan not ek',
+    })
   })
 
   it('yazma durunca tam bir kez kaydeder, gecikme dolmadan kaydetmez', async () => {
     const props = kur({ gecikmeMs: 80 })
-    await userEvent.type(alan(), 'uzunca bir cumle')
-    // Yazma bitti ama gecikme dolmadı: bu ana kadar hiç istek olmamalı.
+    // Tuşlar arası 79 ms: gecikmenin HEMEN altı. Her tuş zamanlayıcıyı
+    // sıfırlamasaydı (ör. yalnızca ilk tuşta kurulsaydı) burada kayıt olurdu.
+    await yaz(alan(), 'uzunca bir cumle', 79)
+    // Yazma bitti ve son tuştan beri 79 ms geçti: gecikme dolmadı.
     expect(props.onKaydet).not.toHaveBeenCalled()
-    await waitFor(() => expect(props.onKaydet).toHaveBeenCalledTimes(1))
+    await ilerle(1)
+    expect(props.onKaydet).toHaveBeenCalledTimes(1)
     expect(props.onKaydet).toHaveBeenCalledWith({ sablon: 'dap', icerik: 'uzunca bir cumle' })
+    // Kayıt tek: başka bekleyen zamanlayıcı yok.
+    await ilerle(10_000)
+    expect(props.onKaydet).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -127,15 +183,16 @@ describe('NotEditoru — sablon-yalniz degisim', () => {
     const props = kur({ baslangicIcerik: 'gecen haftadan kalan not', gecikmeMs: 20 })
 
     // TEK eylem şablon seçimi: tuşa basılmıyor, içerik hiç değişmiyor.
-    await userEvent.selectOptions(screen.getByLabelText('Şablon'), 'soap')
+    sablonSec('soap')
 
-    await waitFor(() => expect(props.onKaydet).toHaveBeenCalledTimes(1))
+    await ilerle(20)
+    expect(props.onKaydet).toHaveBeenCalledTimes(1)
     expect(props.onKaydet).toHaveBeenCalledWith({
       sablon: 'soap',
       icerik: 'gecen haftadan kalan not',
     })
     // Gösterge de sessiz kalmamalı: kullanıcı bir şeyin olduğunu görmeli.
-    expect(await screen.findByText(/kaydedildi/i)).toBeDefined()
+    expect(screen.getByText(/kaydedildi/i)).toBeDefined()
   })
 
   it('sablon-yalniz degisim 401 aninda da taslakta korunur ve geri yuklendigi SOYLENIR', async () => {
@@ -153,8 +210,9 @@ describe('NotEditoru — sablon-yalniz degisim', () => {
     }
     const { unmount } = render(<NotEditoru {...ortak} onKaydet={kilitli} />)
 
-    await userEvent.selectOptions(screen.getByLabelText('Şablon'), 'soap')
-    await waitFor(() => expect(kilitli).toHaveBeenCalled())
+    sablonSec('soap')
+    await ilerle(20)
+    expect(kilitli).toHaveBeenCalled()
     unmount()
 
     // Kilit açıldı. Sunucu hâlâ ESKİ şablonu döndürüyor (kayıt olmamıştı).
@@ -163,12 +221,11 @@ describe('NotEditoru — sablon-yalniz degisim', () => {
 
     expect((screen.getByLabelText('Şablon') as HTMLSelectElement).value).toBe('soap')
     expect(screen.getByText(/geri yüklendi/i)).toBeDefined()
-    await waitFor(() =>
-      expect(acik).toHaveBeenCalledWith({
-        sablon: 'soap',
-        icerik: 'gecen haftadan kalan not',
-      }),
-    )
+    await ilerle(20)
+    expect(acik).toHaveBeenCalledWith({
+      sablon: 'soap',
+      icerik: 'gecen haftadan kalan not',
+    })
   })
 })
 
@@ -197,10 +254,11 @@ describe('NotEditoru — 401 sirasinda yazilmamis icerik', () => {
     const kilitli = vi.fn().mockRejectedValue(new YetkisizHata('Oturum zaman aşımına uğradı.'))
     const { unmount } = editorCiz(kilitli)
 
-    await userEvent.type(alan(), 'danisan bugun cok kaygiliydi')
-    await waitFor(() => expect(kilitli).toHaveBeenCalled())
+    await yaz(alan(), 'danisan bugun cok kaygiliydi')
+    await ilerle(20)
+    expect(kilitli).toHaveBeenCalled()
     // Kullanıcıya kaydedilemediği ve metnin korunduğu söyleniyor.
-    expect(await screen.findByText(/kaydedilemedi/i)).toBeDefined()
+    expect(screen.getByText(/kaydedilemedi/i)).toBeDefined()
 
     // App'in yaptığı şey: görsel perde değil, gerçek unmount.
     unmount()
@@ -214,10 +272,9 @@ describe('NotEditoru — 401 sirasinda yazilmamis icerik', () => {
     expect(screen.getByText(/geri yüklendi/i)).toBeDefined()
     // Kullanıcı kaldığı yerden devam edebiliyor VE geri yüklenen metin
     // ekranda kalmakla yetinmiyor, ilk fırsatta sunucuya yazılıyor.
-    await waitFor(() =>
-      expect(acik).toHaveBeenCalledWith(
-        expect.objectContaining({ icerik: 'danisan bugun cok kaygiliydi' }),
-      ),
+    await ilerle(20)
+    expect(acik).toHaveBeenCalledWith(
+      expect.objectContaining({ icerik: 'danisan bugun cok kaygiliydi' }),
     )
   })
 
@@ -225,8 +282,9 @@ describe('NotEditoru — 401 sirasinda yazilmamis icerik', () => {
     const kaydet = vi.fn().mockResolvedValue(undefined)
     const { unmount } = editorCiz(kaydet)
 
-    await userEvent.type(alan(), 'kaydedilmis metin')
-    await screen.findByText(/kaydedildi/i)
+    await yaz(alan(), 'kaydedilmis metin')
+    await ilerle(20)
+    expect(screen.getByText(/kaydedildi/i)).toBeDefined()
     expect(taslakOku('not-42')).toBeUndefined()
 
     unmount()
@@ -235,15 +293,16 @@ describe('NotEditoru — 401 sirasinda yazilmamis icerik', () => {
     editorCiz(ikinci, { baslangicIcerik: 'kaydedilmis metin' })
 
     expect(screen.queryByText(/geri yüklendi/i)).toBeNull()
-    await new Promise((coz) => setTimeout(coz, 120))
+    await ilerle(10_000)
     expect(ikinci).not.toHaveBeenCalled()
   })
 
   it('taslak not kimligine baglidir: baska seansin editorune sizmaz', async () => {
     const kilitli = vi.fn().mockRejectedValue(new YetkisizHata('Oturum kilitli.'))
     const { unmount } = editorCiz(kilitli, { taslakAnahtari: 'not-42' })
-    await userEvent.type(alan(), 'ayse hanimin seansi')
-    await waitFor(() => expect(kilitli).toHaveBeenCalled())
+    await yaz(alan(), 'ayse hanimin seansi')
+    await ilerle(20)
+    expect(kilitli).toHaveBeenCalled()
     unmount()
 
     // Kilit açıldı ama kullanıcı BAŞKA bir randevuyu açtı.
@@ -259,12 +318,16 @@ describe('NotEditoru — 401 sirasinda yazilmamis icerik', () => {
     })
     editorCiz(onKaydet)
 
-    await userEvent.type(alan(), 'not metni')
-    expect(await screen.findByText(/kaydedilemedi/i)).toBeDefined()
+    await yaz(alan(), 'not metni')
+    await ilerle(20)
+    expect(screen.getByText(/kaydedilemedi/i)).toBeDefined()
 
     basarisiz = false
-    await userEvent.click(screen.getByRole('button', { name: 'Yeniden dene' }))
-    expect(await screen.findByText(/kaydedildi/i)).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Yeniden dene' }))
+    // Zamanlayıcı BEKLENMİYOR: düğme kaydı hemen dener.
+    await ilerle(0)
+    expect(onKaydet).toHaveBeenCalledTimes(2)
+    expect(screen.getByText(/kaydedildi/i)).toBeDefined()
     expect(taslakOku('not-42')).toBeUndefined()
   })
 })
@@ -276,7 +339,8 @@ describe('NotEditoru — 401 sirasinda yazilmamis icerik', () => {
 describe('NotEditoru — prop degisimi (yeniden mount olmadan)', () => {
   it('baska seansa gecince icerik tasinmaz, geri donunce taslak geri gelir', async () => {
     const kaydet = vi.fn().mockResolvedValue(undefined)
-    // Gecikme uzun: birinci seansın metni hiç kaydedilemeden geçiş oluyor.
+    // Gecikme uzun ve saat sahte: birinci seansın metni hiç kaydedilemeden
+    // geçiş oluyor.
     const birinci = (
       <NotEditoru
         baslangicIcerik=""
@@ -288,7 +352,7 @@ describe('NotEditoru — prop degisimi (yeniden mount olmadan)', () => {
     )
     const { rerender } = render(birinci)
 
-    await userEvent.type(alan(), 'birinci seansin notu')
+    await yaz(alan(), 'birinci seansin notu')
 
     rerender(
       <NotEditoru
@@ -339,7 +403,7 @@ describe('NotEditoru — prop degisimi `key` yolunun yerini TUTMAZ', () => {
     //    GİTMİYOR: kilit açılmadan kapatılan bir sekmede o metin gider.
     const propla = vi.fn().mockResolvedValue(undefined)
     const a = render(editor('not-a', propla, false))
-    await userEvent.type(alan(), 'a seansinin bekleyen metni')
+    await yaz(alan(), 'a seansinin bekleyen metni')
 
     a.rerender(editor('not-b', propla, false))
 
@@ -348,20 +412,19 @@ describe('NotEditoru — prop degisimi `key` yolunun yerini TUTMAZ', () => {
     a.unmount()
 
     // B) `key` VAR: geçiş gerçek bir unmount'tur, bekleyen metin
-    //    zamanlayıcı beklenmeden sunucuya yazılır.
+    //    zamanlayıcı beklenmeden sunucuya yazılır. Saat hiç ilerlemedi:
+    //    yazma zamanlayıcıdan gelmiş OLAMAZ.
     taslaklariUnut()
     const keyle = vi.fn().mockResolvedValue(undefined)
     const b = render(editor('not-a', keyle, true))
-    await userEvent.type(alan(), 'a seansinin bekleyen metni')
+    await yaz(alan(), 'a seansinin bekleyen metni')
 
     b.rerender(editor('not-b', keyle, true))
 
-    await waitFor(() =>
-      expect(keyle).toHaveBeenCalledWith({
-        sablon: 'dap',
-        icerik: 'a seansinin bekleyen metni',
-      }),
-    )
+    expect(keyle).toHaveBeenCalledWith({
+      sablon: 'dap',
+      icerik: 'a seansinin bekleyen metni',
+    })
   })
 })
 
@@ -377,14 +440,13 @@ describe('NotEditoru — kapanirken bekleyen icerik', () => {
         taslakAnahtari="not-7"
       />,
     )
-    await userEvent.type(alan(), 'yarim kalan cumle')
+    await yaz(alan(), 'yarim kalan cumle')
     expect(kaydet).not.toHaveBeenCalled()
 
     unmount()
 
-    await waitFor(() =>
-      expect(kaydet).toHaveBeenCalledWith({ sablon: 'dap', icerik: 'yarim kalan cumle' }),
-    )
+    // Saat ilerlemedi: yazma zamanlayıcıdan değil, tahliyeden.
+    expect(kaydet).toHaveBeenCalledWith({ sablon: 'dap', icerik: 'yarim kalan cumle' })
   })
 
   it('degisiklik yokken unmount kayit ATMAZ', async () => {
@@ -399,7 +461,9 @@ describe('NotEditoru — kapanirken bekleyen icerik', () => {
       />,
     )
     unmount()
-    await new Promise((coz) => setTimeout(coz, 50))
+    // Tahliye yazmayı EŞZAMANLI başlatıyor (bir üstteki testin ölçtüğü yol);
+    // saat yine de bol ilerletiliyor ki gecikmeli bir yol da görünsün.
+    await ilerle(10_000)
     expect(kaydet).not.toHaveBeenCalled()
   })
 })
@@ -416,10 +480,11 @@ describe('NotEditoru — ekran okuyucuya duyurulanlar', () => {
     // güvenilir biçimde duyurulmaz; bu yüzden kaldırılmıyor, boşalıyor.)
     expect(screen.getByRole('status').textContent).toBe('')
 
-    await userEvent.type(alan(), 'x')
+    await yaz(alan(), 'x')
+    await ilerle(20)
     // İddia bölgenin KENDİSİ üzerinden: sayfanın başka bir yerindeki
     // "Kaydedildi" metni bunu tatmin edemesin.
-    await waitFor(() => expect(screen.getByRole('status').textContent).toMatch(/kaydedildi/i))
+    expect(screen.getByRole('status').textContent).toMatch(/kaydedildi/i)
   })
 
   it('kayit hatasi assertive olarak duyurulur ve kibar bolge susar', async () => {
@@ -428,9 +493,10 @@ describe('NotEditoru — ekran okuyucuya duyurulanlar', () => {
     // Önce YOK: `alert` gerçekten hataya bağlı, her kutuya serpilmiş değil.
     expect(screen.queryByRole('alert')).toBeNull()
 
-    await userEvent.type(alan(), 'onemli not')
+    await yaz(alan(), 'onemli not')
+    await ilerle(20)
 
-    const uyari = await screen.findByRole('alert')
+    const uyari = screen.getByRole('alert')
     expect(uyari.textContent ?? '').toMatch(/kaydedilemedi/i)
     // Kurtarma yolu da duyurunun İÇİNDE: kullanıcı ne olduğunu duyduğunda
     // ne yapabileceğini de duyar.
@@ -444,9 +510,10 @@ describe('NotEditoru — ekran okuyucuya duyurulanlar', () => {
       onKaydet: vi.fn().mockRejectedValue(new YetkisizHata('Oturum zaman aşımına uğradı.')),
       gecikmeMs: 20,
     })
-    await userEvent.type(alan(), 'danisan bugun kaygiliydi')
+    await yaz(alan(), 'danisan bugun kaygiliydi')
+    await ilerle(20)
 
-    const uyari = await screen.findByRole('alert')
+    const uyari = screen.getByRole('alert')
     expect(uyari.textContent ?? '').toMatch(/oturum kilitlendi/i)
     expect(uyari.textContent ?? '').toMatch(/geri yüklenir/i)
   })
@@ -457,8 +524,9 @@ describe('NotEditoru — ekran okuyucuya duyurulanlar', () => {
     const { unmount } = render(
       <NotEditoru {...ortak} onKaydet={kilitli} taslakAnahtari="not-55" />,
     )
-    await userEvent.type(alan(), 'kaydedilemeyen metin')
-    await waitFor(() => expect(kilitli).toHaveBeenCalled())
+    await yaz(alan(), 'kaydedilemeyen metin')
+    await ilerle(20)
+    expect(kilitli).toHaveBeenCalled()
     unmount()
 
     render(
@@ -504,12 +572,12 @@ describe('NotEditoru — kisitlar', () => {
     expect(alan().value).toBe('')
     expect((screen.getByLabelText('Şablon') as HTMLSelectElement).value).toBe('dap')
 
-    await new Promise((coz) => setTimeout(coz, 120))
+    await ilerle(10_000)
     expect(props.onKaydet).not.toHaveBeenCalled()
 
     // Aynı başlıklar SEÇİM üzerinden geliyor: yol kapalı değil, yalnızca
     // mount'a bağlı değil.
-    await userEvent.selectOptions(screen.getByLabelText('Şablon'), 'soap')
+    sablonSec('soap')
     expect(alan().value).toContain('Öznel')
   })
 
@@ -524,13 +592,18 @@ describe('NotEditoru — kisitlar', () => {
       taslakAnahtari: 'not-3',
     })
 
-    await userEvent.type(alan(), ' ek')
+    await yaz(alan(), ' ek')
     expect(taslakOku('not-3')?.icerik).toBe('gecen haftadan kalan not ek')
 
-    await userEvent.keyboard('{Backspace}{Backspace}{Backspace}')
+    // Üç kez geri silme: her biri AYRI bir değişiklik (ara hâller depoya
+    // yazılıyor).
+    for (let i = 0; i < 3; i++) {
+      fireEvent.change(alan(), { target: { value: alan().value.slice(0, -1) } })
+    }
     expect(alan().value).toBe('gecen haftadan kalan not')
     expect(taslakOku('not-3')).toBeUndefined()
     // Hiçbir kayıt atılmadı: silinen tek şey fazlalık kopya.
+    await ilerle(10_000)
     expect(props.onKaydet).not.toHaveBeenCalled()
   })
 
@@ -540,8 +613,9 @@ describe('NotEditoru — kisitlar', () => {
     )
     kur({ onKaydet: vi.fn().mockRejectedValue(new Error('ağ hatası')) })
 
-    await userEvent.type(alan(), 'GIZLI-ICERIK-ABC')
-    await screen.findByText(/kaydedilemedi/i)
+    await yaz(alan(), 'GIZLI-ICERIK-ABC')
+    await ilerle(20)
+    expect(screen.getByText(/kaydedilemedi/i)).toBeDefined()
 
     for (const casus of casuslar) {
       for (const cagri of casus.mock.calls) {
@@ -583,7 +657,7 @@ describe('NotEditoru — sablon secici ve etiket', () => {
       gecikmeMs: 20,
     })
     expect((screen.getByLabelText('Özel notum') as HTMLTextAreaElement).value).toBe('')
-    await new Promise((coz) => setTimeout(coz, 120))
+    await ilerle(10_000)
     expect(props.onKaydet).not.toHaveBeenCalled()
     expect(screen.queryByText('Veri:')).toBeNull()
   })
@@ -592,10 +666,9 @@ describe('NotEditoru — sablon secici ve etiket', () => {
     // Tek yönlü kapsam kaçağı: yalnızca "seçici yok" iddiaları yazılsaydı,
     // hiçbir şey render etmeyen bir editör de üsttekileri geçerdi.
     const props = kur({ sablonSecilebilir: false, etiket: 'Özel notum', gecikmeMs: 20 })
-    await userEvent.type(screen.getByLabelText('Özel notum'), 'ozel metin')
-    await waitFor(() => expect(props.onKaydet).toHaveBeenCalled())
-    expect(props.onKaydet).toHaveBeenCalledWith(
-      expect.objectContaining({ icerik: expect.stringContaining('ozel metin') }),
-    )
+    await yaz(screen.getByLabelText('Özel notum') as HTMLTextAreaElement, 'ozel metin')
+    await ilerle(20)
+    expect(props.onKaydet).toHaveBeenCalledTimes(1)
+    expect(props.onKaydet).toHaveBeenCalledWith({ sablon: 'dap', icerik: 'ozel metin' })
   })
 })

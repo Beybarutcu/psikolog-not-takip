@@ -1,5 +1,5 @@
 import aramaKaynagi from './HizliArama.tsx?raw'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AramaSonucu, AramaYaniti } from '../api'
@@ -47,6 +47,28 @@ async function ac() {
 }
 
 const kutu = () => screen.getByRole('searchbox', { name: 'Danışan adı veya not içeriği' })
+
+/**
+ * `islem`i SAHTE SAATLE koşturur ve saati yalnızca verilen `ilerle` ile
+ * ilerletir. Önceden "arama YAPMAZ" iddiaları gerçek 40 ms beklemeye
+ * yaslanıyordu: yüklü bir makinede 40 ms debounce'u (5 ms) doldurmaya
+ * yetmeyebilir ve iddia HİÇBİR ŞEY sınamadan geçer. Saat sahteyken "gecikme
+ * doldu ve yine de istek yok" bir olgu.
+ *
+ * Açılış (`ac()`) GERÇEK saatle yapılıyor: `userEvent`in `asyncWrapper`ı
+ * `setTimeout(0)` bekliyor ve sahte saatte asılı kalıyor. Bu yüzden sahte
+ * saatin içinde yalnızca `fireEvent` (eşzamanlı) kullanılıyor.
+ */
+async function sahteSaatle(islem: (ilerle: (ms: number) => Promise<void>) => Promise<void>) {
+  vi.useFakeTimers()
+  try {
+    await islem(async (ms) => {
+      await act(() => vi.advanceTimersByTimeAsync(ms))
+    })
+  } finally {
+    vi.useRealTimers()
+  }
+}
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -307,12 +329,14 @@ describe('HizliArama — gerçek modal davranışı', () => {
 
 describe('HizliArama — sorgu eşiği ve geciktirme', () => {
   it('iki karakterden kisa sorguda arama yapmaz', async () => {
-    const { ara } = kur()
+    const { ara, gecikmeMs } = kur()
     await ac()
-    await userEvent.type(kutu(), 'k')
-    await new Promise((coz) => setTimeout(coz, 40))
-    expect(ara).not.toHaveBeenCalled()
-    expect(screen.getByText(/en az 2 karakter/i)).toBeDefined()
+    await sahteSaatle(async (ilerle) => {
+      fireEvent.change(kutu(), { target: { value: 'k' } })
+      await ilerle(gecikmeMs * 100)
+      expect(ara).not.toHaveBeenCalled()
+      expect(screen.getByText(/en az 2 karakter/i)).toBeDefined()
+    })
   })
 
   it('ARTI YON: iki karakterde arama YAPAR', async () => {
@@ -325,11 +349,18 @@ describe('HizliArama — sorgu eşiği ve geciktirme', () => {
   })
 
   it('bosluklardan ibaret sorgu arama yapmaz', async () => {
-    const { ara } = kur()
+    const { ara, gecikmeMs } = kur()
     await ac()
-    await userEvent.type(kutu(), '   ')
-    await new Promise((coz) => setTimeout(coz, 40))
-    expect(ara).not.toHaveBeenCalled()
+    await sahteSaatle(async (ilerle) => {
+      fireEvent.change(kutu(), { target: { value: '   ' } })
+      await ilerle(gecikmeMs * 100)
+      expect(ara).not.toHaveBeenCalled()
+      // ARTI YÖN aynı saatle: boşlukla çevrili iki harf ARANIR (kırpılmış
+      // hâliyle) — "hiç aramayan" bir bileşen üstteki iddiayı da geçerdi.
+      fireEvent.change(kutu(), { target: { value: ' ka ' } })
+      await ilerle(gecikmeMs)
+      expect(ara).toHaveBeenCalledExactlyOnceWith('ka')
+    })
   })
 
   it('hizli yazilan sorgu TEK istek uretir', async () => {
@@ -354,23 +385,30 @@ describe('HizliArama — sorgu eşiği ve geciktirme', () => {
     // atılmadığı da artık ölçülüyor. Debounce'suz bir sürüm (her tuşta
     // `ara()`) burada beş çağrıyla, `setTimeout`u tümüyle kaldıran bir
     // sürüm de ilk iddiada kırılır.
+    //
+    // İkinci tur (Plan 4 web düzeltme turu): sondaki "ikinci istek belirmedi"
+    // iddiası gerçek `gecikmeMs * 8` beklemeye yaslanıyordu; artık saat
+    // sahte ve gecikmenin İKİ YÖNÜ de ölçülüyor: dolmadan istek YOK, dolunca
+    // TAM BİR istek, sonra saat bol ilerlese de ikincisi yok.
     const { ara, gecikmeMs } = kur()
     await ac()
 
-    const alan = kutu() as HTMLInputElement
-    for (const parca of ['k', 'ka', 'kay', 'kayg', 'kaygi']) {
-      fireEvent.change(alan, { target: { value: parca } })
-    }
-    expect(alan.value).toBe('kaygi')
-    // Tuşlar arasında hiçbir istek atılmadı.
-    expect(ara).not.toHaveBeenCalled()
+    await sahteSaatle(async (ilerle) => {
+      const alan = kutu() as HTMLInputElement
+      for (const parca of ['k', 'ka', 'kay', 'kayg', 'kaygi']) {
+        fireEvent.change(alan, { target: { value: parca } })
+      }
+      expect(alan.value).toBe('kaygi')
+      // Tuşlar arasında hiçbir istek atılmadı.
+      expect(ara).not.toHaveBeenCalled()
 
-    await waitFor(() => expect(ara).toHaveBeenCalled())
-    // Bekleyen başka bir zamanlayıcı yok; yine de gecikmenin birkaç katı
-    // beklenip ikinci bir isteğin BELİRMEDİĞİ doğrulanıyor.
-    await new Promise((coz) => setTimeout(coz, gecikmeMs * 8))
-    expect(ara).toHaveBeenCalledTimes(1)
-    expect(ara).toHaveBeenCalledWith('kaygi')
+      await ilerle(gecikmeMs - 1)
+      expect(ara).not.toHaveBeenCalled()
+      await ilerle(1)
+      expect(ara).toHaveBeenCalledExactlyOnceWith('kaygi')
+      await ilerle(gecikmeMs * 100)
+      expect(ara).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('sorgu tumuyle silinince sonuclar ekrandan kalkar', async () => {

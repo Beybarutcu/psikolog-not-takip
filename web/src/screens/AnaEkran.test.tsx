@@ -1,7 +1,7 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { taslaklariUnut } from '../seans/taslak'
+import { taslakOku, taslaklariUnut } from '../seans/taslak'
 import { AnaEkran } from './AnaEkran'
 
 // Görev 10 inceleme Bulgu 1: RandevuPaneli, seçili randevu/boş saat değişince
@@ -1047,6 +1047,28 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await screen.findByLabelText('Seans notu')
   }
 
+  /**
+   * GÖZLEMLENEBİLİR BARİYER: randevu seçilince `RandevuPaneli`
+   * `CAKISMA_GECIKME_MS` (300 ms) sonra `GET /api/cakisma?...&haric_id=<id>`
+   * atıyor. "Bu işlemden sonra başka istek yok" diyen bir test anlık
+   * görüntüsünü bu istek gelmeden alırsa, sorgu ölçüm penceresine düşer ve
+   * test yük altında kırılır (Görev 2 I2 / Görev 4 I1: tek-PATCH testi 5
+   * koşunun 4'ünde kırmızı; ölçüm penceresine sabit 400 ms eklenince HER
+   * SEFERİNDE kırılıyordu).
+   *
+   * Süzgeçle ayıklamak yerine BEKLENİYOR: süzgeç, işlemin ürettiği gerçek bir
+   * fazla `cakisma` isteğini de gizlerdi. Bekleme sayıya değil VARLIĞA
+   * bakıyor ve tam olarak BİR sorgu olduğunu da iddia ediyor — debounce
+   * bozulup iki sorgu atılsa burada görünür.
+   */
+  async function cakismaSorgusunuBekle(randevuId: number) {
+    const sorgular = () =>
+      istekler.filter(
+        (i) => i.yol.startsWith('/api/cakisma?') && i.yol.endsWith(`&haric_id=${randevuId}`),
+      )
+    await waitFor(() => expect(sorgular()).toHaveLength(1))
+  }
+
   it('randevu secilince seans paneli acilir', async () => {
     await seansAc()
     expect(screen.getByRole('region', { name: 'Seans' })).toBeDefined()
@@ -1347,6 +1369,9 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await seansAc()
     const kutu = odendiKutusu()
     expect(kutu.checked).toBe(false)
+    // ÖN BARİYER: panelin gecikmeli çakışma sorgusu ölçüm penceresinden
+    // ÖNCE gelmiş olmalı (bkz. `cakismaSorgusunuBekle`).
+    await cakismaSorgusunuBekle(randevuA.id)
 
     let coz: () => void = () => {}
     odemeBekletici = new Promise<void>((r) => { coz = r })
@@ -1356,12 +1381,13 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     // İstek uçuşta: kutu kilitli (ikinci bir tıklama ikinci PATCH üretemez).
     expect(kutu.disabled).toBe(true)
     coz()
-    // BARİYER: işlem BİTTİ (kilit kalktı). Bu olmadan aşağıdaki "başka istek
-    // yok" iddiası, `yukle()` henüz tetiklenmeden anında tatmin olurdu.
+    // SON BARİYER: işlem BİTTİ (kilit kalktı). Kilit `altIslem`in `finally`
+    // bloğunda, yani `onOdemeDegis`in döndürdüğü söz — içinde bir `yukle()`
+    // beklenseydi o da — çözüldükten SONRA kalkıyor; o zincirin atacağı her
+    // istek bu noktada `istekler`e düşmüş olur. Eskiden burada sabit 30 ms
+    // vardı: ölçülebilir bir şey beklemiyordu, yalnızca gecikmeli çakışma
+    // sorgusunun henüz gelmemiş olmasına yaslanıyordu.
     await waitFor(() => expect(kutu.disabled).toBe(false))
-    // Tazeleme sonrası olası bir efektin/yeniden yüklemenin istek atmasına
-    // fırsat ver.
-    await new Promise((r) => setTimeout(r, 30))
 
     // YOL + YÖNTEM + GÖVDE ile, tam eşitlik: "bir PATCH gitti" tek başına
     // `{durum}` PATCH'ine giden bir çağrıyı da geçirirdi.
@@ -1445,7 +1471,13 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     expect(alan.value).toContain('Plan:')
 
     await userEvent.click(screen.getByRole('button', { name: 'Seansı kapat' }))
-    await new Promise((coz) => setTimeout(coz, 30))
+    // BARİYER: panel gerçekten kapandı, yani editörün unmount tahliyesi
+    // ÇALIŞTI. Tahliye yazmayı senkron başlatıyor (`void k(kayit)` ->
+    // `fetch` ilk `await`ten önce çağrılıyor ve taklit isteği ilk satırında
+    // kaydediyor); bir yazma olacak olsaydı şu an `istekler`de olurdu.
+    // Eskiden burada sabit 30 ms vardı. ARTI YÖN aynı yol üzerinden
+    // "resmi sekmede yazilan metin YALNIZCA /not adresine PUT edilir"de.
+    expect(screen.queryByRole('region', { name: 'Seans' })).toBeNull()
     expect(yazmalar(`/api/randevular/${randevuA.id}/not`)).toHaveLength(0)
   })
 
@@ -1456,21 +1488,36 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
   it('ozel not kaydedilirken 401 gelirse metin kaybolmaz ve kilit acilinca OZEL nota yazilir', async () => {
     const ozelYol = `/api/randevular/${randevuA.id}/ozel-not`
     ozelYazmaYetkisiz = true
+    // SAHTE ZAMANLAYICI (eskiden gerçek 2000 ms + `timeout: 4000` payı): bu
+    // test bilerek editörün ÇAĞRI NOKTASINDAKİ varsayılan gecikmesini
+    // (2000 ms) ölçüyor — prop'la kısaltmak ölçülen yolu değiştirirdi. Saat
+    // artık ELLE 2000 ms ilerletiliyor: yük altındaki bir makinede "4 s
+    // içinde yazıldı mı" yarışı yok.
+    //
+    // `shouldAdvanceTime` ZORUNLU: RTL'nin `asyncWrapper`'ı her `findBy*`/
+    // `waitFor` sonunda `setTimeout(0)` bekliyor ve sahte saati yalnızca
+    // `jest` globali varsa ilerletiyor (Vitest'te yok) — saat durursa ilk
+    // `findBy` sonsuza kadar asılı kalıyor (ölçüldü). Bu yüzden "gecikme
+    // dolmadan yazma yok" yönü burada ÖLÇÜLMÜYOR (saat gerçek zamanla da
+    // akıyor); o yön `NotEditoru.test.tsx`'te tam sahte saatle ölçülüyor.
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'], shouldAdvanceTime: true })
+    vi.setSystemTime(new Date(2026, 8, 9, 12, 0))
+    const kullanici = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    const editorGecikmesi = async (ms: number) => {
+      await act(() => vi.advanceTimersByTimeAsync(ms))
+    }
 
     const { unmount } = render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await kullanici.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
     await screen.findByLabelText('Seans notu')
-    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
-    await userEvent.type(await screen.findByLabelText('Özel notum'), '-KAYBOLMAMALI')
+    await kullanici.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+    await kullanici.type(await screen.findByLabelText('Özel notum'), '-KAYBOLMAMALI')
 
-    // Kayıt denendi ve 401 aldı; kullanıcıya söylendi. Bekleme payı
-    // editörün varsayılan gecikmesinden (2000 ms) uzun: bu test bilerek
-    // GERÇEK otomatik kaydı bekliyor, unmount tahliyesini değil — 401'in
-    // geldiği an üretimde budur.
-    await waitFor(() => expect(yazmalar(ozelYol).length).toBeGreaterThanOrEqual(1), {
-      timeout: 4000,
-    })
+    // Gecikme dolunca GERÇEK otomatik kayıt denenir ve 401 alır (unmount
+    // tahliyesi değil — 401'in geldiği an üretimde budur).
+    await editorGecikmesi(2000)
+    await waitFor(() => expect(yazmalar(ozelYol)).toHaveLength(1))
     expect(await screen.findByText(/kaydedilemedi/i)).toBeDefined()
 
     // App'in 401'de yaptığı şey görsel bir perde değil, GERÇEK unmount.
@@ -1482,28 +1529,24 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     // ve aynı sekmeyi açtı.
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await kullanici.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
     await screen.findByLabelText('Seans notu')
-    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+    await kullanici.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
 
     const alan = (await screen.findByLabelText('Özel notum')) as HTMLTextAreaElement
     expect(alan.value).toContain('-KAYBOLMAMALI')
     expect(screen.getByText(/geri yüklendi/i)).toBeDefined()
 
-    // Ekranda kalmakla yetinmiyor: ilk fırsatta SUNUCUYA yazılıyor.
-    await waitFor(
-      () => expect(yazmalar(ozelYol).length).toBeGreaterThan(oncekiYazmaSayisi),
-      { timeout: 4000 },
-    )
+    // Ekranda kalmakla yetinmiyor: ilk fırsatta (editör gecikmesi dolunca)
+    // SUNUCUYA yazılıyor.
+    await editorGecikmesi(2000)
+    await waitFor(() => expect(yazmalar(ozelYol).length).toBeGreaterThan(oncekiYazmaSayisi))
     expect(
       (yazmalar(ozelYol).at(-1)!.govde as { icerik: string }).icerik,
     ).toContain('-KAYBOLMAMALI')
     // Ve kurtarılan ÖZEL metin resmî nota HİÇ yazılmadı.
     expect(yazmalar(`/api/randevular/${randevuA.id}/not`)).toHaveLength(0)
-    // Süre sınırı yükseltildi: bu test editörün GERÇEK gecikmesini
-    // (2000 ms) iki kez bekliyor. Gecikmeyi kısaltmak için prop geçmek,
-    // ölçülen yolu (çağrı noktasının kurduğu editör) değiştirmek olurdu.
-  }, 20000)
+  })
 
   it('not yuklenirken 401 gelirse panel kapanir', async () => {
     notYetkisiz = true
@@ -1641,17 +1684,24 @@ describe('AnaEkran — seans geçişi × uçuştaki istek (Görev 9)', () => {
     await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
     await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
     await screen.findByLabelText('Seans notu')
-    await userEvent.type(alan(), ' EK')
 
-    // A'nın kaydı uçuşta kalsın: unmount tahliyesi bu isteği atacak.
+    // A'nın kaydı uçuşta kalsın: unmount tahliyesi bu isteği atacak. Kapı
+    // yazmadan ÖNCE kuruluyor: yük altında editörün kendi zamanlayıcısı
+    // yazma sırasında dolsa bile o istek de kapıda bekler.
     const a = kapi()
     gecikmeler[`PUT /api/randevular/${randevuA.id}/not`] = a.bekle
+    await userEvent.type(alan(), ' EK')
 
     await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
     await waitFor(() => expect(alan().value).toBe('B METNI'))
 
+    // BARİYER (eskiden sabit 20 ms): A'nın kaydı uçuştayken taslağı depoda;
+    // editör taslağı YALNIZCA `onKaydet` sözü — yani `notKaydet`in state
+    // güncellemesi — çözüldükten SONRA temizliyor. Taslağın kalkması,
+    // geciken yanıtın işlendiğinin gözlemlenebilir kanıtı.
+    expect(taslakOku(`not-${randevuA.id}`)?.icerik).toContain(' EK')
     a.ac()
-    await new Promise((coz) => setTimeout(coz, 20))
+    await waitFor(() => expect(taslakOku(`not-${randevuA.id}`)).toBeUndefined())
 
     // Sekme gidip gelince editör yeniden mount olur ve o an geçerli olan
     // içerikle açılır: A'nın geciken yanıtı B'nin verisine yazılmış olsaydı

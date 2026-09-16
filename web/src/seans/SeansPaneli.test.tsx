@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -458,11 +458,22 @@ describe('SeansPaneli — yeni notun şablon başlıkları', () => {
     // Diğer yön: başlıklar ekranda görünüyor ama editörün "sunucudaki hâl"
     // temeli de bu metin, dolayısıyla kullanıcı tek tuşa basmadan yazma (ve
     // silinemez bir denetim satırı) oluşmaz.
-    const { onNotKaydet, unmount } = kur({ not: { ...resmiNot, icerik: '' } })
-    await new Promise((coz) => setTimeout(coz, 60))
-    unmount()
-    await new Promise((coz) => setTimeout(coz, 20))
-    expect(onNotKaydet).not.toHaveBeenCalled()
+    //
+    // SAHTE SAAT (eskiden gerçek 60 + 20 ms): editörün varsayılan gecikmesi
+    // 2000 ms, yani 60 ms'lik gerçek bekleme zamanlayıcı yolunu HİÇ
+    // sınamıyordu — başlıkları "değişiklik" sayan bir editör de 60 ms içinde
+    // kaydetmez. Saat şimdi gecikmenin çok ötesine ilerletiliyor; unmount
+    // tahliyesi ise zaten eşzamanlı başlıyor.
+    vi.useFakeTimers()
+    try {
+      const { onNotKaydet, unmount } = kur({ not: { ...resmiNot, icerik: '' } })
+      await act(() => vi.advanceTimersByTimeAsync(10_000))
+      expect(onNotKaydet).not.toHaveBeenCalled()
+      unmount()
+      expect(onNotKaydet).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('DOLU notun basina baslik EKLENMEZ', () => {

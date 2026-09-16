@@ -636,14 +636,18 @@ mod tests {
         }
     }
 
+    /// Yalnızca "geçerli PDF + `/Encrypt` sözlüğü var" ölçülür. Eskiden burada
+    /// ham baytlarda kanarya aranıyordu; içerik akışı sıkıştırılıp glif
+    /// kimliğine çevrildiği için o iddia **şifresiz** dosyada da geçiyordu
+    /// (inceleme M3) ve kaldırıldı. Şifrelemenin gerçekten içeriği kapattığını
+    /// `yanlis_parolayla_icerik_okunamaz` ve `baslik_ustverisi_de_ham_baytlarda_gecmez`
+    /// ölçer.
     #[test]
-    fn dosya_sifrelidir_ve_ham_baytlarda_icerik_gecmez() {
+    fn dosya_gecerli_pdf_ve_sifreleme_sozlugu_tasir() {
         let pdf = sifreli_pdf(&icerik(), "dogru-parola-123").unwrap();
         assert!(pdf.starts_with(b"%PDF-"), "gecerli bir PDF olmali");
         let doc = lopdf::Document::load_mem(&pdf).unwrap();
         assert!(doc.is_encrypted(), "sifreleme sozlugu olmali");
-        let ham = String::from_utf8_lossy(&pdf);
-        assert!(!ham.contains(KANARYA), "icerik duz metin olarak dosyada gorunmemeli");
     }
 
     /// Belge başlığı `/Info` sözlüğüne **dizgi** olarak yazılır (içerik
@@ -708,16 +712,10 @@ mod tests {
         assert_eq!(sifre.get(b"R").unwrap().as_i64().unwrap(), 6);
     }
 
-    #[test]
-    fn her_uretimde_farkli_anahtar_kullanilir() {
-        let a = sifreli_pdf(&icerik(), "dogru-parola-123").unwrap();
-        let b = sifreli_pdf(&icerik(), "dogru-parola-123").unwrap();
-        assert_ne!(a, b, "ayni icerik ve parola ayni baytlari uretmemeli");
-    }
-
-    /// Üstteki bayt karşılaştırması tek başına anahtarı ölçmez: AES IV'leri
-    /// ve U/O tuzları zaten her seferinde rastgele, sabit bir anahtarla da
-    /// baytlar farklı çıkar. Burada **dosya şifreleme anahtarının kendisi**
+    /// İki çıktının baytlarını karşılaştırmak anahtarı ölçmez: AES IV'leri ve
+    /// U/O tuzları her seferinde rastgele, sabit bir anahtarla da baytlar
+    /// farklı çıkar (o test sabit anahtar mutasyonunda yeşil kaldığı için
+    /// silindi, inceleme M3). Burada **dosya şifreleme anahtarının kendisi**
     /// parolayla türetilip karşılaştırılır.
     #[test]
     fn dosya_sifreleme_anahtari_her_uretimde_yenidir() {

@@ -107,12 +107,21 @@ pub enum PdfHatasi {
 /// **CPU-yoğun ve eşzamanlıdır** (debug derlemede 20 000 satır ≈ 12 sn):
 /// async bağlamda doğrudan değil `tokio::task::spawn_blocking` içinde
 /// çağrılmalıdır, yoksa çalışma zamanı iş parçacığını bloklar.
+///
+/// # Bellekte kalan düz metin
+///
+/// Bizim tuttuğumuz şifresiz PDF baytları ve dosya anahtarı `Zeroizing`
+/// içindedir. Ancak **silinemeyen kopyalar vardır** ve bu fonksiyon onları
+/// sıfırladığını iddia etmez: `printpdf`'in ara yapıları, şifrelemeden önce
+/// düz nesneleri tutan `lopdf::Document`, `EncryptionState`'in içindeki
+/// anahtar kopyası ve parola türevleri bu kütüphanelerin bellek yönetimine
+/// bırakılmıştır.
 pub fn sifreli_pdf(icerik: &RaporIcerigi, parola: &str) -> Result<Vec<u8>, PdfHatasi> {
     if parola.chars().count() < ASGARI_PAROLA {
         return Err(PdfHatasi::ParolaCokKisa);
     }
 
-    let duz = duz_pdf(icerik)?;
+    let duz = Zeroizing::new(duz_pdf(icerik)?);
 
     let mut belge =
         lopdf::Document::load_mem(&duz).map_err(|e| PdfHatasi::Uretim(e.to_string()))?;

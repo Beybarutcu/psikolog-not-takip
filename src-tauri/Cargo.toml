@@ -2,6 +2,7 @@
 name = "psikolog-tauri"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

@@ -1750,6 +1750,15 @@ fn rota_modulleri_audit_kaydet_cagirmaz() {
 /// 47/47 yeşil). Rotaya bağlanabilmek `pub` olmaya değil `async fn` olmaya
 /// bağlı; artık **her** `async fn` (`pub`, `pub(crate)`, `pub(super)`,
 /// görünürlüksüz) handler adayıdır — bkz. `async_fn_parcalari`.
+///
+/// **Plan 4 Görev 6 düzeltmesi: "tam bir kez"in tek istisnası.** Veri raporu
+/// saniyeler süren bir üretimden SONRA kapıyı yeniden çağırır; yoksa üretim
+/// sürerken kilitlenen oturuma rapor verilirdi (incelemede ölçüldü: `200` +
+/// PDF). "Tam bir kez"in gerekçesi sayım telafisiydi (b); o telafi artık
+/// parça başına ilk satır iddiasıyla da imkânsız, ama kural yine de
+/// gevşetilmedi — istisna **adıyla** `URETIM_SONRASI_YENIDEN_DOGRULAYANLAR`
+/// listesinde ve üç şartla çalıştırılabilir: tam iki çağrı, ikincisi
+/// `spawn_blocking`'den sonra, listedeki ad gerçekten var.
 #[test]
 fn her_veri_handleri_acik_baglantidan_gecer() {
     const KAPI: &str = "let conn = acik_baglanti(&s)?;";
@@ -1757,6 +1766,7 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
     istisnalar_gercek_mi(&kaynaklar, &VERI_DISI_ROTALAR);
 
     let mut toplam = 0;
+    let mut kullanilan_istisnalar: Vec<(String, String)> = Vec::new();
     for (ad, kaynak) in &kaynaklar {
         // Yorum satirlari kuralin KENDISINDEN bahsedebilir; yalnizca kod
         // satirlarina bakiyoruz (kardes yapisal testlerle ayni eleme).
@@ -1802,15 +1812,41 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
                 "{ad}::{isim}: handler'in ILK satiri `{KAPI}` olmali -- kilit \
                  kontrolunden once calisan her satir kilitli oturumda da calisir"
             );
-            // (b) telafisi: iki kez cagiran bir handler, kapisiz kalan bir
-            // baskasini artik ortemez.
-            assert_eq!(
-                parca.matches("acik_baglanti(").count(),
-                1,
-                "{ad}::{isim}: kapi tam bir kez cagrilmali"
-            );
+            let cagrilar: Vec<usize> =
+                parca.match_indices("acik_baglanti(").map(|(i, _)| i).collect();
+            if URETIM_SONRASI_YENIDEN_DOGRULAYANLAR.contains(&(ad.as_str(), isim)) {
+                // Bilinçli istisna: ilk satir kapi + uzun uretimden SONRA
+                // taze kapi. Istisna calistirilabilir: ikinci cagri kalkarsa
+                // (bayat istisna) ya da uretimden once gelirse kirilir.
+                kullanilan_istisnalar.push((ad.clone(), isim.to_string()));
+                assert_eq!(
+                    cagrilar.len(),
+                    2,
+                    "{ad}::{isim}: istisna TAM iki kapi cagrisi ister (ilk satir + \
+                     uretim sonrasi); tek cagri kaldiysa istisnayi listeden sil"
+                );
+                let uretim = parca.find("spawn_blocking(").unwrap_or_else(|| {
+                    panic!("{ad}::{isim}: istisnanin gerekcesi olan uretim adimi yok")
+                });
+                assert!(
+                    cagrilar[1] > uretim,
+                    "{ad}::{isim}: ikinci kapi uretimden ({{spawn_blocking}}) SONRA olmali"
+                );
+            } else {
+                // (b) telafisi: iki kez cagiran bir handler, kapisiz kalan bir
+                // baskasini artik ortemez.
+                assert_eq!(cagrilar.len(), 1, "{ad}::{isim}: kapi tam bir kez cagrilmali");
+            }
         }
         toplam += parcalar.len();
+    }
+    // Istisna listesi bayatlamamali: adi yazili her handler gercekten
+    // bulunmali (dosya/handler yeniden adlandirilirsa sessizce etkisizlesirdi).
+    for (ad, isim) in URETIM_SONRASI_YENIDEN_DOGRULAYANLAR {
+        assert!(
+            kullanilan_istisnalar.iter().any(|(a, i)| a == ad && i == isim),
+            "URETIM_SONRASI_YENIDEN_DOGRULAYANLAR bayat: {ad}::{isim} bulunamadi"
+        );
     }
     // Ikinci ag: sayi degisirse (handler eklendi/silindi) bu satir kirilir ve
     // degisiklik BILINCLI olarak onaylanir. Birincil koruma artik yukaridaki
@@ -1818,6 +1854,10 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
     // getirmez.
     assert_eq!(toplam, 31, "toplam veri handler'i sayisi 31 olmali");
 }
+
+/// Kapıyı ilk satırda VE uzun bir üretimden sonra ikinci kez çağırmasına izin
+/// verilen handler'lar: `(dosya, handler)`. Bkz. `her_veri_handleri_acik_baglantidan_gecer`.
+const URETIM_SONRASI_YENIDEN_DOGRULAYANLAR: [(&str, &str); 1] = [("veri_raporu.rs", "veri_raporu")];
 
 /// Kaynağı **her** `async fn` başlangıcından parçalar; her parça fonksiyon
 /// adıyla başlar ve bir sonraki `async fn`'e kadar sürer. Görünürlük
@@ -2194,6 +2234,82 @@ async fn kayit_yazilamazsa_500_doner_ve_pdf_verilmez() {
     );
     assert!(!pdf_mi(&govde), "kayit yazilamadiysa PDF baytlari donmemeli");
     assert!(basliklar.get("content-disposition").is_none());
+}
+
+/// `rapor_akisi`'ni uc noktanin yaptigi gibi cagirir: once gercek kapi,
+/// sonra verilen PDF ureticisiyle akis. Yanit `(kod, govde)` olarak.
+async fn akisla_rapor<U>(s: &AppState, cid: i64, pdf_uret: U) -> (StatusCode, Vec<u8>)
+where
+    U: FnOnce(
+            &psikolog_core::pdf::RaporIcerigi,
+            &str,
+        ) -> Result<Vec<u8>, psikolog_core::pdf::PdfHatasi>
+        + Send
+        + 'static,
+{
+    use axum::response::IntoResponse;
+    let conn = psikolog_server::guard::acik_baglanti(s).expect("on kosul: kapi acik olmali");
+    let istek: psikolog_server::routes::veri_raporu::RaporIstegi =
+        serde_json::from_value(json!({ "parola": RAPOR_PAROLASI, "bugun": RAPOR_GUNU })).unwrap();
+    let yanit = psikolog_server::routes::veri_raporu::rapor_akisi(
+        s.clone(),
+        conn,
+        cid,
+        Ok(axum::Json(istek)),
+        pdf_uret,
+    )
+    .await
+    .into_response();
+    let kod = yanit.status();
+    let govde = yanit.into_body().collect().await.unwrap().to_bytes().to_vec();
+    (kod, govde)
+}
+
+/// M2: kapi yalnizca handler basindaydi; 400 notlu bir raporda uretim
+/// basladiktan 300 ms sonra `/kilitle` -> `200` + PDF olculmustu.
+///
+/// Sabit bekleme YOK: kilitleme uretimin ICINDEN, gercek `/api/kilitle`
+/// ucuyla yapiliyor (uretici engelleyici is parcaciginda calisir; kapi o an
+/// coktan gecilmistir). Uretici gercek `sifreli_pdf`'i cagirir -- yani PDF
+/// baytlari GERCEKTEN uretilmistir ve verilmemesi gereken tam da onlardir.
+#[tokio::test(flavor = "multi_thread")]
+async fn uretim_surerken_kilitlenirse_401_pdf_ve_log_yok() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let (_d, s, cid, _rid) = dolu_state().await;
+
+    // ARTI YON / on kosul: kilitlemeyen ayni uretici 200 + PDF + tek satir
+    // verir. Yoksa asagidaki 401 akisin kendisinin bozuk olmasindan gelebilirdi.
+    let once = log_satirlari(&s).await.len();
+    let (kod, govde) = akisla_rapor(&s, cid, psikolog_core::pdf::sifreli_pdf).await;
+    assert_eq!(kod, StatusCode::OK, "{}", String::from_utf8_lossy(&govde));
+    assert!(govde.starts_with(b"%PDF-"));
+    assert_eq!(log_satirlari(&s).await.len(), once + 1, "on kosul: basarili akis bir satir yazar");
+
+    let once = log_satirlari(&s).await;
+    let calisti = Arc::new(AtomicBool::new(false));
+    let (s2, calisti2) = (s.clone(), calisti.clone());
+    let calisma_zamani = tokio::runtime::Handle::current();
+    let (kod, govde) = akisla_rapor(&s, cid, move |icerik, parola| {
+        let pdf = psikolog_core::pdf::sifreli_pdf(icerik, parola);
+        calisma_zamani.block_on(kilitle(&s2));
+        // On kosul: kilit GERCEKTEN uretim sirasinda kondu.
+        assert!(s2.acik_anahtar().is_none(), "uretim icinde oturum kilitlenmis olmali");
+        calisti2.store(true, Ordering::SeqCst);
+        pdf
+    })
+    .await;
+    assert!(calisti.load(Ordering::SeqCst), "on kosul: uretici calisti (ilk kapi gecildi)");
+    assert_eq!(kod, StatusCode::UNAUTHORIZED, "{}", String::from_utf8_lossy(&govde));
+    assert!(!pdf_mi(&govde), "kilitlenen oturuma PDF baytlari verilmemeli");
+    assert_eq!(hata_metni(&govde), "Oturum kilitli. Lütfen parolanızı girin.");
+
+    kilit_ac(&s).await;
+    let sonra = log_satirlari(&s).await;
+    let disa = |v: &[String]| v.iter().filter(|x| x.starts_with("disa_aktarma")).count();
+    assert_eq!(disa(&sonra), disa(&once), "verilmeyen rapor icin denetim satiri yazilmamali");
+    // Yalnizca cikis + giris satirlari eklendi.
+    assert_eq!(sonra.len(), once.len() + 2, "{sonra:?}");
 }
 
 /// Ana parola kontrolu YAPILAMAZSA rapor verilmez (fail-closed). Yalnizca

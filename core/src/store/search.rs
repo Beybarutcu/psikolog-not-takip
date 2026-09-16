@@ -775,18 +775,124 @@ mod tests {
         );
     }
 
-    /// Özel not tablosuna **kod içinde** dokunmasına izin verilen depo
-    /// modülleri. Bunun dışındaki her modül için tablo adı bir ihlaldir.
+    /// Özel not tablosuna **kod içinde** dokunmasına izin verilen modüller
+    /// (workspace köküne göre yol). Bunun dışındaki her üretim modülü için
+    /// tablo adı bir ihlaldir.
     ///
-    /// - `notes.rs`: `ozel_not_getir`/`ozel_not_kaydet`'in evi (tek yazma/
-    ///   okuma yolu).
-    /// - `schema.rs`: tabloyu ve indeksini YARATAN yer.
-    /// - `appointments.rs`: randevu silinince kaç notun cascade ile
-    ///   gideceğini sayar — **içeriğe hiç bakmaz**, yalnızca `COUNT(*)`
+    /// - `core/src/store/notes.rs`: `ozel_not_getir`/`ozel_not_kaydet`'in evi
+    ///   (tek yazma/okuma yolu).
+    /// - `core/src/store/schema.rs`: tabloyu ve indeksini YARATAN yer.
+    /// - `core/src/store/appointments.rs`: randevu silinince kaç notun cascade
+    ///   ile gideceğini sayar — **içeriğe hiç bakmaz**, yalnızca `COUNT(*)`
     ///   (bkz. `silinecek_not_adedi`).
-    const OZEL_NOTA_DOKUNABILEN: [&str; 3] = ["notes.rs", "schema.rs", "appointments.rs"];
+    const OZEL_NOTA_DOKUNABILEN: [&str; 3] =
+        ["core/src/store/notes.rs", "core/src/store/schema.rs", "core/src/store/appointments.rs"];
 
-    /// Özel not sızıntısının **depo katmanı genelindeki** yapısal karşılığı.
+    /// Özel not **okuma/yazma API'sinin** (`ozel_not_` önekli fonksiyonlar ve
+    /// `OzelNot` tipi) geçebileceği modüller: çekirdekte tanımı, sunucuda tek
+    /// rota modülü. Başka hiçbir üretim modülü (`guard.rs`, `lib.rs`,
+    /// `bin/sunucu.rs`, `src-tauri/src/main.rs`, yarının `export.rs`'i)
+    /// onları çağıramaz, içe aktaramaz.
+    const OZEL_NOT_API_EVLERI: [&str; 2] =
+        ["core/src/store/notes.rs", "server/src/routes/private_notes.rs"];
+
+    /// Özel not **rota modülünü** yönlendiriciye bağlamak için modül adının
+    /// (`private_notes`) kodda geçmesi zorunlu olan yerler: `(dosya, tam metin)`.
+    /// Tam metin dosyanın üretim kodunda **tam bir kez** geçmeli ve yalnızca o
+    /// metin taramadan düşülür — aynı dosyada modül adının BAŞKA bir kullanımı
+    /// (ör. `lib.rs`'te `routes::private_notes::getir`'i bir rapor
+    /// yardımcısından çağırmak) yine ihlaldir.
+    const MODUL_BAGLAMA_ISTISNALARI: [(&str, &str); 2] = [
+        // `routes/mod.rs`: modül bildirimi -- dosya adı tablo adıyla aynı.
+        ("server/src/routes/mod.rs", "pub mod private_notes;"),
+        // `lib.rs`: özel not uç noktasının yönlendiriciye tek bağlandığı satır.
+        ("server/src/lib.rs", "get(routes::private_notes::getir).put(routes::private_notes::kaydet)"),
+    ];
+
+    /// Kök `Cargo.toml`'daki `[workspace] members` listesi. Okunamazsa ya da
+    /// liste bulunamazsa **panik**: boş bir üye kümesi her yasağı sessizce
+    /// sağlardı.
+    fn workspace_uyeleri(kok: &std::path::Path) -> Vec<String> {
+        let toml = std::fs::read_to_string(kok.join("Cargo.toml"))
+            .unwrap_or_else(|e| panic!("kok Cargo.toml okunamadi: {e}"));
+        // `members = [...]` ile BASLAYAN satir (yorumdaki bir "members"
+        // kelimesi sayilmaz); liste birden cok satira yayilabilir.
+        let mut bas = None;
+        let mut konum = 0usize;
+        for satir in toml.split_inclusive('\n') {
+            let sade = satir.trim_start();
+            if sade.strip_prefix("members").is_some_and(|k| k.trim_start().starts_with('=')) {
+                bas = Some(konum);
+                break;
+            }
+            konum += satir.len();
+        }
+        let bas = bas.unwrap_or_else(|| panic!("kok Cargo.toml'da `members = [...]` yok"));
+        let kalan = &toml[bas..];
+        let ac = kalan.find('[').expect("`members` listesi `[` ile baslamali");
+        let kapa = kalan.find(']').expect("`members` listesi `]` ile bitmeli");
+        kalan[ac + 1..kapa]
+            .split(',')
+            .map(|p| p.trim().trim_matches('"').to_string())
+            .filter(|p| !p.is_empty())
+            .collect()
+    }
+
+    /// Workspace'in **bütün üyelerinin** `src/` dizinlerindeki her `.rs`
+    /// dosyası, özyinelemeli: `(workspace köküne göre / ayraçlı yol, üretim
+    /// kodu)`. Üye kümesi `Cargo.toml`'dan türetilir, elle yazılmaz: yarın
+    /// eklenecek bir üye hiçbir şey yapılmadan kapsama girer.
+    fn workspace_uretim_dosyalari() -> Vec<(String, String)> {
+        fn yuru(kok: &std::path::Path, dizin: &std::path::Path, cikti: &mut Vec<(String, String)>) {
+            let girdiler = std::fs::read_dir(dizin)
+                .unwrap_or_else(|e| panic!("{} okunamadi: {e}", dizin.display()));
+            for girdi in girdiler {
+                let yol = girdi.expect("dizin girdisi okunamadi").path();
+                if yol.is_dir() {
+                    yuru(kok, &yol, cikti);
+                } else if yol.extension().and_then(|u| u.to_str()) == Some("rs") {
+                    let goreli = yol
+                        .strip_prefix(kok)
+                        .unwrap()
+                        .components()
+                        .map(|p| p.as_os_str().to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    let ham = std::fs::read_to_string(&yol)
+                        .unwrap_or_else(|e| panic!("{goreli} okunamadi: {e}"));
+                    cikti.push((goreli, uretim_kodunu_ayikla(&ham)));
+                }
+            }
+        }
+        let kok = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("core'un ust dizini workspace koku olmali");
+        let uyeler = workspace_uyeleri(kok);
+        // Alt sinir: bugun uc uye. Liste ayristirmasi bozulup tek bir uyeye
+        // (ya da hicbirine) inerse kume daralir ve kavsak disarida kalir.
+        assert!(uyeler.len() >= 3, "workspace uye listesi beklenenden kucuk: {uyeler:?}");
+        let mut dosyalar = Vec::new();
+        for uye in &uyeler {
+            let src = kok.join(uye).join("src");
+            assert!(src.is_dir(), "workspace uyesi `{uye}` icin src/ yok: {}", src.display());
+            yuru(kok, &src, &mut dosyalar);
+        }
+        dosyalar.sort();
+        dosyalar
+    }
+
+    /// Özel not sızıntısının **workspace genelindeki** yapısal karşılığı.
+    ///
+    /// # Bulgu (Plan 4 dal incelemesi I2): tarama `server/src`'nin çoğunu ve `src-tauri`'yi görmüyordu
+    ///
+    /// Üçüncü kez biçim 12. Çekirdek taraması yalnızca `core/src`'ye, rota
+    /// taraması (`server/tests/notlar_api.rs`) yalnızca `server/src/routes/`'a
+    /// bakıyordu. `guard.rs`, `lib.rs`, `state.rs`, `assets.rs`,
+    /// `bin/sunucu.rs` ve `src-tauri/src/main.rs` hiçbirinde yoktu.
+    /// İncelemecinin mutasyonu: `guard.rs`'e `ozel_not_getir` çağıran bir
+    /// `pub fn rapor_yardimcisi` + rapor rotasından çağrı → bütün yapısal
+    /// testler yeşil. Küme artık kök `Cargo.toml`'daki `members`'tan türetilir
+    /// ve her üyenin `src/`'si özyinelemeli taranır.
     ///
     /// # Bulgu (dal incelemesi): tarama kendi dosyasıyla sınırlıydı
     ///
@@ -798,34 +904,75 @@ mod tests {
     /// aktarıma, rapora veya aramaya girmez" sözü tam olarak o dosyalar
     /// hakkında.
     ///
-    /// Bu test kümeyi `core/src/store/` **dizininden** türetir: yeni bir
-    /// modül eklendiğinde hiçbir şey yapılmadan kapsama girer. Elle kalan
-    /// tek şey `OZEL_NOTA_DOKUNABILEN` izin listesidir ve her girdisi için
-    /// iki yönlü ön koşul var — dosya diskte var mı, ve izin GERÇEKTEN
-    /// gerekli mi (üretim kodunda tabloyu fiilen anıyor mu). Bayat bir izin,
-    /// kuralı bir modülden sessizce kaldırırdı.
+    /// # Bulgu (Plan 4): tarama `store/` ile ve tablo adıyla sınırlıydı
+    ///
+    /// İkinci kez aynı biçim (docs/test-yesil-ama-korumuyor.md #12): tarama
+    /// yalnızca `core/src/store/`'a düz bakıyor ve yalnızca **tablo adını**
+    /// arıyordu. `core/src/pdf.rs` gibi `store` dışı bir modül tabloya
+    /// dokunsa, ya da yeni bir rapor modülü tablo adını hiç anmadan
+    /// `notes::ozel_not_getir`'i çağırsa hiçbir test kırılmazdı. Küme artık
+    /// `core/src/`'den **özyinelemeli** türetildi (üçüncü bulguda kapsam
+    /// workspace'e genişledi, yukarı bakınız).
+    ///
+    /// # Kurallar (workspace'in bütün üretim kaynakları)
+    ///
+    /// 1. `private_notes` yalnızca `OZEL_NOTA_DOKUNABILEN` modüllerinde;
+    ///    rota modülünün yönlendiriciye bağlandığı iki tam metin
+    ///    (`MODUL_BAGLAMA_ISTISNALARI`) tam bir kez düşülür.
+    /// 2. `ozel_not_` önekli adlar ve `OzelNot` tipi yalnızca
+    ///    `OZEL_NOT_API_EVLERI`'nde.
+    ///
+    /// Elle kalan tek şey izin listeleridir ve her girdisi için iki yönlü
+    /// ön koşul var — dosya diskte var mı, ve izin GERÇEKTEN gerekli mi
+    /// (üretim kodunda fiilen geçiyor mu). Bayat bir izin, kuralı bir
+    /// modülden sessizce kaldırırdı.
+    ///
+    /// Tarayıcı `uretim_kodunu_ayikla`'dır (yorum/dizgi farkındalıklı tek
+    /// geçiş): yorumda kuralın kendisinden bahsetmek serbesttir, kodda ve
+    /// dizgide geçmek değildir.
     #[test]
-    fn depo_katmaninda_ozel_not_tablosu_yalnizca_izinli_modullerde_gecer() {
-        let dizin = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/store");
-        let mut dosyalar: Vec<(String, String)> = std::fs::read_dir(&dizin)
-            .unwrap_or_else(|e| panic!("{} okunamadi: {e}", dizin.display()))
-            .map(|girdi| girdi.expect("dizin girdisi okunamadi").path())
-            .filter(|yol| yol.extension().and_then(|u| u.to_str()) == Some("rs"))
-            .map(|yol| {
-                let ad = yol.file_name().unwrap().to_string_lossy().into_owned();
-                let ham = std::fs::read_to_string(&yol)
-                    .unwrap_or_else(|e| panic!("{ad} okunamadi: {e}"));
-                (ad, uretim_kodunu_ayikla(&ham))
-            })
-            .collect();
-        dosyalar.sort();
+    fn workspace_genelinde_ozel_not_yalnizca_izinli_modullerde_gecer() {
+        let mut dosyalar = workspace_uretim_dosyalari();
+        let adlar: Vec<String> = dosyalar.iter().map(|(a, _)| a.clone()).collect();
 
         // Dizin okunamaz hale gelirse her iddia BOS kume uzerinde saglanirdi.
         assert!(
-            dosyalar.len() >= 10,
-            "depo dizini beklenenden kucuk, kume turetilememis: {:?}",
-            dosyalar.iter().map(|(a, _)| a).collect::<Vec<_>>()
+            dosyalar.len() >= 40,
+            "workspace kaynak kumesi beklenenden kucuk, turetilememis: {adlar:?}"
         );
+        // Uye turetmesi ve ozyineleme GERCEKTEN calisiyor: her uye, kok ve
+        // alt dizinler birlikte kapsamda; I2'nin kor kaldigi dosyalar adiyla.
+        for gerekli in [
+            "core/src/lib.rs",
+            "core/src/pdf.rs",
+            "core/src/store/notes.rs",
+            "core/src/crypto/keyring.rs",
+            "server/src/lib.rs",
+            "server/src/guard.rs",
+            "server/src/state.rs",
+            "server/src/assets.rs",
+            "server/src/bin/sunucu.rs",
+            "server/src/routes/veri_raporu.rs",
+            "src-tauri/src/main.rs",
+        ] {
+            assert!(adlar.iter().any(|a| a == gerekli), "`{gerekli}` taramada yok: {adlar:?}");
+        }
+
+        // Rota baglama metinleri: dosya var, metin TAM BIR KEZ geciyor (bayat
+        // ya da cogaltilmis istisna kirmizi); yalnizca o metin dusulur.
+        for (dosya, metin) in MODUL_BAGLAMA_ISTISNALARI {
+            let (_, uretim) = dosyalar
+                .iter_mut()
+                .find(|(ad, _)| ad == dosya)
+                .unwrap_or_else(|| panic!("baglama istisnasi bayat: `{dosya}` artik yok"));
+            assert_eq!(
+                uretim.matches(metin).count(),
+                1,
+                "{dosya}: `{metin}` uretim kodunda tam bir kez gecmeli -- istisna bayat \
+                 ya da ayni baglama cogaltilmis"
+            );
+            *uretim = uretim.replacen(metin, "", 1);
+        }
 
         for izinli in OZEL_NOTA_DOKUNABILEN {
             let (_, uretim) = dosyalar
@@ -843,22 +990,54 @@ mod tests {
             );
         }
 
+        // Ihlaller TOPLU raporlanir: bir gerileme hangi dosyalari actigini
+        // tek kosuda gostersin.
+        let mut ihlaller = Vec::new();
         for (ad, uretim) in &dosyalar {
             if OZEL_NOTA_DOKUNABILEN.contains(&ad.as_str()) {
                 continue;
             }
-            assert!(
-                !uretim.contains("private_notes"),
-                "{ad}: ozel not tablosuna erisim yalnizca {OZEL_NOTA_DOKUNABILEN:?} \
-                 modullerinde olabilir -- yeni bir disa aktarim/rapor modulu \
-                 ozel notu kendi sorgusuna aliyor"
-            );
-            // Parcalanmis dizgi kacamagi burada da gorunur olmali.
-            assert!(
-                !dizgi_parcalari_birlestir(uretim).contains("private_notes"),
-                "{ad}: parcalanmis dizgiyle de olsa private_notes gecmemeli"
-            );
+            // Parcalanmis dizgi kacamagi da gorunur olmali.
+            if uretim.contains("private_notes")
+                || dizgi_parcalari_birlestir(uretim).contains("private_notes")
+            {
+                ihlaller.push(format!(
+                    "{ad}: `private_notes` yalnizca {OZEL_NOTA_DOKUNABILEN:?} icinde gecebilir -- \
+                     yeni bir disa aktarim/rapor modulu ozel not tablosuna uzaniyor"
+                ));
+            }
         }
+
+        // --- Kural 2: ozel not API'si yalnizca kendi evlerinde ---
+        for ev_adi in OZEL_NOT_API_EVLERI {
+            let (_, ev) = dosyalar
+                .iter()
+                .find(|(ad, _)| ad == ev_adi)
+                .unwrap_or_else(|| panic!("`{ev_adi}` artik yok -- kural bayatladi"));
+            for isaret in ["ozel_not_", "OzelNot"] {
+                // ON KOSUL: isaret evde gercekten geciyor; yoksa (yeniden
+                // adlandirma) asagidaki yasak her yerde bos yere saglanir.
+                assert!(
+                    ev.contains(isaret),
+                    "{ev_adi}: `{isaret}` uretim kodunda yok -- API yeniden adlandirildiysa \
+                     ya da ev onu artik kullanmiyorsa liste guncellenmeli"
+                );
+            }
+        }
+        for (ad, uretim) in &dosyalar {
+            if OZEL_NOT_API_EVLERI.contains(&ad.as_str()) {
+                continue;
+            }
+            for isaret in ["ozel_not_", "OzelNot"] {
+                if uretim.contains(isaret) || dizgi_parcalari_birlestir(uretim).contains(isaret) {
+                    ihlaller.push(format!(
+                        "{ad}: `{isaret}` yalnizca {OZEL_NOT_API_EVLERI:?} icinde gecebilir -- \
+                         baska bir modul ozel not okuma/yazma API'sine eristi"
+                    ));
+                }
+            }
+        }
+        assert!(ihlaller.is_empty(), "{} ihlal:\n{}", ihlaller.len(), ihlaller.join("\n"));
     }
 
     /// Uretim kodu: test blogu ve YORUMLAR cikarilmis kaynak.
@@ -873,30 +1052,356 @@ mod tests {
     }
 
     /// `uretim_kodu`'nun kaynağı dışarıdan alan hâli — kardeş test
-    /// (`depo_katmaninda_ozel_not_tablosu_...`) dizindeki her dosyayı aynı
+    /// (`workspace_genelinde_ozel_not_...`) workspace'teki her dosyayı aynı
     /// elemeden geçirmek zorunda: iki ayrı eleme, iki ayrı kaçamak demekti.
+    ///
+    /// # Bulgu (Plan 4 Görev 3): eleme ilk `#[cfg(test)]` geçişinde KESİYORDU
+    ///
+    /// Önceki hâli `split("#[cfg(test)]").next()` idi ve iki biçimde körleşti:
+    ///
+    /// 1. **Dosya ortasındaki test öğesi.** Bu gerçek bir dosyada açıktı:
+    ///    `crypto/keyring.rs`'te `impl KdfParams` içindeki
+    ///    `#[cfg(test)] fn test_fast`'ten sonraki bütün üretim kodu
+    ///    (`generate_data_key`, `wrap_key`, `unwrap_key`...) hiç taranmıyordu.
+    ///    Görev 5 incelemesinin mutasyonu: o satırdan SONRA `private_notes`
+    ///    okuyan bir fonksiyon → yeşil; ÖNCE → kırmızı.
+    /// 2. **Yorumda ya da dizgide geçen işaret.** `split` metni her yerde
+    ///    aradığı için `// bkz. #[cfg(test)]` gibi bir yorum satırı da
+    ///    taramayı orada bitiriyordu.
+    ///
+    /// Artık kaynak yorum/dizgi/karakter farkındalıklı bir tarayıcıyla
+    /// yürünür; yalnızca **kodda** duran `#[cfg(test)]`'in işaretlediği
+    /// `mod`, `fn` ya da `impl` öğesi denk parantezle çıkarılır, dosyanın geri
+    /// kalanı taranır.
+    ///
+    /// # Bulgu (Plan 4 Görev 3 incelemesi): yorum ayıklaması İKİNCİ bir ayrıştırıcıydı
+    ///
+    /// Test öğesi elemesi dizgi farkındalıklı olduktan sonra blok yorumları
+    /// hâlâ düz metinde `find("/*")` ile, satır yorumları `starts_with("//")`
+    /// ile atılıyordu. Kodda bir dizgi `/*` içerip eşsiz kalınca
+    /// (`"yedekler/*.db"`) dosyanın GERİ KALANI taranmıyordu; sonraki bir
+    /// dizgide `*/` varsa aradaki üretim kodu siliniyordu. Artık yorum atma da
+    /// aynı tek geçişte, aynı `sozcuk_disi_atla` ile yapılır: yorum yalnızca
+    /// kodda başlıyorsa yorumdur. Kapsanan vakalar
+    /// `uretim_kodu_elemesi_...` testinde tek tek listelenir.
     fn uretim_kodunu_ayikla(kaynak: &str) -> String {
-        let ham = kaynak.split("#[cfg(test)]").next().expect("kaynak bos olamaz");
+        const ISARET: &str = "#[cfg(test)]";
+        let mut cikti = String::with_capacity(kaynak.len());
+        let mut i = 0usize;
+        while i < kaynak.len() {
+            if let Some(son) = sozcuk_disi_atla(kaynak, i) {
+                // Yorum atılır; dizgi ve karakter literali korunur (SQL
+                // metni dizgidedir, taranması gereken tam da odur). Satır
+                // yorumunun sonundaki `\n` yoruma dahil değildir, satır
+                // yapısı korunur. Blok yorum hiçbir şeyle değiştirilmez:
+                // `private_/* */notes` birleşik görünür -- fazla görmek,
+                // eksik görmekten iyidir.
+                if !kaynak[i..].starts_with("//") && !kaynak[i..].starts_with("/*") {
+                    cikti.push_str(&kaynak[i..son]);
+                }
+                i = son;
+            } else if kaynak[i..].starts_with(ISARET) {
+                let sonrasi = i + ISARET.len();
+                match test_ogesi_uzunlugu(&kaynak[sonrasi..]) {
+                    Some(uzunluk) => i = sonrasi + uzunluk,
+                    None => {
+                        cikti.push_str(ISARET);
+                        i = sonrasi;
+                    }
+                }
+            } else {
+                let k = kaynak[i..].chars().next().expect("i bir karakter sinirinda");
+                cikti.push(k);
+                i += k.len_utf8();
+            }
+        }
+        cikti
+    }
 
-        let mut bloksuz = String::with_capacity(ham.len());
-        let mut kalan = ham;
-        while let Some(bas) = kalan.find("/*") {
-            bloksuz.push_str(&kalan[..bas]);
-            match kalan[bas + 2..].find("*/") {
-                Some(son) => kalan = &kalan[bas + 2 + son + 2..],
-                None => {
-                    kalan = "";
-                    break;
+    // Çıkarılan test öğesi türleri: `mod ad { ... }`, `mod ad;`, `fn` (önünde
+    // `async`/`const`/`unsafe` olabilir) ve `impl ... { ... }`. Aradaki ek
+    // öznitelikler (`#[allow(..)]`) ve görünürlük (`pub`, `pub(crate)`) kabul
+    // edilir. Başka bir öğe (`const`, `use`, `static`, `struct`) çıkarılmaz ve
+    // taranır: tarama o durumda fazla görür, eksik değil. Blok sonu
+    // bulunamazsa (denk olmayan parantez) öğe de çıkarılmaz — aynı gerekçe.
+
+    /// `#[cfg(test)]`'ten hemen sonraki metin çıkarılabilir bir öğeyse, öğenin
+    /// sonuna kadarki bayt uzunluğu.
+    fn test_ogesi_uzunlugu(s: &str) -> Option<usize> {
+        let bosluk_atla = |i: usize| s.len() - s[i..].trim_start().len();
+        let anahtar = |i: usize, kelime: &str| {
+            s[i..].strip_prefix(kelime).is_some_and(|k| k.starts_with(char::is_whitespace))
+        };
+        let mut i = bosluk_atla(0);
+        while s[i..].starts_with("#[") {
+            i += s[i..].find(']')? + 1;
+            i = bosluk_atla(i);
+        }
+        if s[i..].starts_with("pub") {
+            i += "pub".len();
+            if s[i..].starts_with('(') {
+                i += s[i..].find(')')? + 1;
+            }
+            i = bosluk_atla(i);
+        }
+        if anahtar(i, "mod") {
+            i = bosluk_atla(i + "mod".len());
+            i += s[i..].find(|c: char| !(c.is_alphanumeric() || c == '_'))?;
+            i = bosluk_atla(i);
+            if s[i..].starts_with(';') {
+                return Some(i + 1);
+            }
+        } else {
+            for niteleyici in ["async", "const", "unsafe"] {
+                if anahtar(i, niteleyici) {
+                    i = bosluk_atla(i + niteleyici.len());
+                }
+            }
+            if !anahtar(i, "fn") && !anahtar(i, "impl") && !s[i..].starts_with("impl<") {
+                return None;
+            }
+            // Imzanin sonundaki ilk kod seviyesi `{`: imza icinde dizgi ya da
+            // yorum olabilir, onlar atlanir. Govdesiz bir `fn f();` burada
+            // cikarilmaz.
+            loop {
+                if let Some(son) = sozcuk_disi_atla(s, i) {
+                    i = son;
+                    continue;
+                }
+                match s.as_bytes().get(i)? {
+                    b'{' => break,
+                    b';' => return None,
+                    _ => i += 1,
                 }
             }
         }
-        bloksuz.push_str(kalan);
+        if !s[i..].starts_with('{') {
+            return None;
+        }
+        Some(i + denk_parantez_sonu(&s[i..])?)
+    }
 
-        bloksuz
-            .lines()
-            .filter(|satir| !satir.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n")
+    /// `i`'de bir yorum, dizgi ya da karakter literali başlıyorsa onun
+    /// bittiği bayt konumu; başlamıyorsa `None`. Kapanmamış bir yorum/dizgi
+    /// kaynağın sonuna kadar sürer.
+    ///
+    /// Tanınanlar: `//`, iç içe `/* */`, `"..."` (kaçışlarla), `r"..."`,
+    /// `r#"..."#`, `br"..."`, `'x'`, `'\''`, `'\u{..}'`. `'a` bir ömür
+    /// belirtecidir, karakter değil.
+    fn sozcuk_disi_atla(s: &str, i: usize) -> Option<usize> {
+        let b = s.as_bytes();
+        let tanimlayici = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+        match *b.get(i)? {
+            b'/' if b.get(i + 1) == Some(&b'/') => {
+                Some(s[i..].find('\n').map_or(s.len(), |n| i + n))
+            }
+            b'/' if b.get(i + 1) == Some(&b'*') => {
+                let mut j = i;
+                let mut ic = 0usize;
+                while j < b.len() {
+                    if s[j..].starts_with("/*") {
+                        ic += 1;
+                        j += 2;
+                    } else if s[j..].starts_with("*/") {
+                        ic -= 1;
+                        j += 2;
+                        if ic == 0 {
+                            return Some(j);
+                        }
+                    } else {
+                        j += 1;
+                    }
+                }
+                Some(s.len())
+            }
+            b'r' if (i == 0
+                || !tanimlayici(b[i - 1])
+                || (b[i - 1] == b'b' && (i < 2 || !tanimlayici(b[i - 2]))))
+                && matches!(b.get(i + 1), Some(b'"') | Some(b'#')) =>
+            {
+                let kareler = s[i + 1..].bytes().take_while(|&c| c == b'#').count();
+                if b.get(i + 1 + kareler) != Some(&b'"') {
+                    return None;
+                }
+                let kapanis = format!("\"{}", "#".repeat(kareler));
+                let icerik = i + 1 + kareler + 1;
+                Some(s[icerik..].find(&kapanis).map_or(s.len(), |n| icerik + n + kapanis.len()))
+            }
+            b'"' => {
+                let mut j = i + 1;
+                while j < b.len() && b[j] != b'"' {
+                    j += if b[j] == b'\\' { 2 } else { 1 };
+                }
+                Some((j + 1).min(s.len()))
+            }
+            b'\'' => {
+                if b.get(i + 1) == Some(&b'\\') {
+                    // `'\''`: kacirilan karakterin kendisi `'` olabilir,
+                    // kapanis onun ARKASINDA aranir.
+                    let arka = s.get(i + 3..)?;
+                    Some(i + 3 + arka.find('\'')? + 1)
+                } else {
+                    let k = s[i + 1..].chars().next()?;
+                    let son = i + 1 + k.len_utf8();
+                    (b.get(son) == Some(&b'\'')).then_some(son + 1)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// `s` `{` ile başlar; eşleşen `}`'den hemen sonraki bayt konumu. Yorum,
+    /// dizgi ve karakter içindeki parantezler sayılmaz (`sozcuk_disi_atla`).
+    fn denk_parantez_sonu(s: &str) -> Option<usize> {
+        let mut derinlik = 0usize;
+        let mut i = 0usize;
+        while i < s.len() {
+            if let Some(son) = sozcuk_disi_atla(s, i) {
+                i = son;
+                continue;
+            }
+            match s.as_bytes()[i] {
+                b'{' => derinlik += 1,
+                b'}' => {
+                    derinlik = derinlik.checked_sub(1)?;
+                    if derinlik == 0 {
+                        return Some(i + 1);
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// Elemenin kendisi. `workspace_genelinde_...` gerçek dosyalar üzerinde
+    /// çalışır ve yalnızca bugünkü dosyaların biçimini sınar; bu test
+    /// gerilemeyi dosyalardan bağımsız, **iki yönlü** yakalar: test öğeleri
+    /// elenmeli (fazla görme), onlardan sonraki üretim kodu taranmalı
+    /// (eksik görme).
+    #[test]
+    fn uretim_kodu_elemesi_test_ogelerini_atar_sonrasini_tarar() {
+        let kaynak = [
+            "fn once() { \"BIRINCI\" }",
+            "// yorumdaki #[cfg(test)] taramayi kesmemeli",
+            "fn yorumdan_sonra() { \"YORUM_SONRASI\" }",
+            "const DIZGI: &str = \"#[cfg(test)]\";",
+            "fn dizgiden_sonra() { \"DIZGI_SONRASI\" }",
+            "#[cfg(test)]",
+            "const TEST_SABITI: u8 = 0;",
+            "impl Tip {",
+            "    #[cfg(test)]",
+            "    pub fn test_hizli() -> Self { Self { a: \"TEST_FN_ICERIGI\" } }",
+            "    pub fn uretim() { \"IMPL_ICI_URETIM\" }",
+            "}",
+            "#[cfg(test)]",
+            "#[allow(dead_code)]",
+            "pub(crate) mod yardim {",
+            "    fn f() { let _ = '{'; let _ = '\\''; let _ = \"}}\"; }",
+            "    // } yorumdaki parantez",
+            "    /* } /* ic } */ } */",
+            "    fn g<'a>(x: &'a str) -> &'a str { let _ = r#\"}\"#; x }",
+            "    mod ic { fn h() { \"TEST_ICERIGI\" } }",
+            "}",
+            "fn sonra() { \"UCUNCU\" }",
+            "#[cfg(test)]",
+            "impl<T> Baska for T { fn x() { \"TEST_IMPL_ICERIGI\" } }",
+            "#[cfg(test)]",
+            "mod dosya_modulu;",
+            "fn en_son() { \"DORDUNCU\" }",
+            "#[cfg(test)]",
+            "mod tests { fn t() { \"TEST_ICERIGI\" } }",
+        ]
+        .join("\n");
+        let uretim = uretim_kodunu_ayikla(&kaynak);
+        for gorunmeli in [
+            "BIRINCI",
+            "YORUM_SONRASI",
+            "DIZGI_SONRASI",
+            "TEST_SABITI",
+            "IMPL_ICI_URETIM",
+            "UCUNCU",
+            "DORDUNCU",
+        ] {
+            assert!(uretim.contains(gorunmeli), "`{gorunmeli}` taranmali:\n{uretim}");
+        }
+        for elenmeli in ["TEST_ICERIGI", "TEST_FN_ICERIGI", "TEST_IMPL_ICERIGI", "dosya_modulu"] {
+            assert!(!uretim.contains(elenmeli), "`{elenmeli}` elenmeli:\n{uretim}");
+        }
+    }
+
+    /// Yorum ayıklaması da dizgi/karakter farkındalıklı olmalı (Plan 4 Görev 3
+    /// incelemesi). Her vakada `SIZINTI` üretim kodudur ve taranmalı; yorum
+    /// içeriği ise elenmeli. Vakalar tek tek denenir ve TÜM başarısızlıklar
+    /// birlikte raporlanır: bir gerileme hangi vakaları açtığını tek koşuda
+    /// gösterir.
+    #[test]
+    fn uretim_kodu_elemesi_yorumu_dizgi_ve_karakterden_ayirir() {
+        let vakalar: [(&str, &str); 7] = [
+            (
+                "dizgide essiz /* -- eskiden dosyanin geri kalani taranmiyordu",
+                "pub const DESEN: &str = \"yedekler/*.db\";\nfn f() { SIZINTI }",
+            ),
+            (
+                "bir dizgide /*, sonrakinde */ -- eskiden aradaki kod siliniyordu",
+                "const A: &str = \"/*\";\nfn f() { SIZINTI }\nconst B: &str = \"*/\";",
+            ),
+            (
+                "raw string icinde tirnak ve /*",
+                "const R: &str = r#\"a \"/*\" b\"#;\nfn f() { SIZINTI }",
+            ),
+            (
+                "karakter literali '/' ardindan '*'",
+                "let (a, b) = ('/', '*');\nlet ab = ['/','*'];\nfn f() { SIZINTI }",
+            ),
+            (
+                "karakter literali '\"' dizgi baslangici sanilmamali",
+                "let t = '\"';\nconst U: &str = \"/*\";\nfn f() { SIZINTI }",
+            ),
+            (
+                "satir yorumunda \" dizgi baslangici sanilmamali",
+                "// \"tirnak acik kaldi\nconst X: &str = \" /* \";\nfn f() { SIZINTI }\n\
+                 const Y: &str = \" */ \";",
+            ),
+            (
+                "blok yorumunda \" dizgi baslangici sanilmamali",
+                "/* \" */\nconst X: &str = \" /* \";\nfn f() { SIZINTI }\nconst Y: &str = \" */ \";",
+            ),
+        ];
+        let mut hatalar = Vec::new();
+        for (ad, kaynak) in vakalar {
+            let uretim = uretim_kodunu_ayikla(kaynak);
+            if !uretim.contains("SIZINTI") {
+                hatalar.push(format!("[{ad}] SIZINTI taranmadi:\n{uretim}"));
+            }
+        }
+
+        // Karsi yon: yorumlar GERCEKTEN atiliyor, dizgideki `//` ve `/*`
+        // yorum sayilmiyor. Bu olmazsa modul basliklarindaki `private_notes`
+        // gecisleri her dosyayi kirmizi yapardi (fazla gorme).
+        let kaynak = [
+            "//! MODUL_YORUMU",
+            "/// BELGE_YORUMU",
+            "fn a() { \"http://DIZGIDEKI_URL\" } // SATIR_SONU_YORUMU",
+            "/* BLOK /* IC_ICE */ BLOK_YORUMU */ fn b() { \"BLOKTAN_SONRA\" }",
+            "fn c() { \"yol/*DIZGIDEKI_DESEN*/\" }",
+        ]
+        .join("\n");
+        let uretim = uretim_kodunu_ayikla(&kaynak);
+        for gorunmeli in ["DIZGIDEKI_URL", "BLOKTAN_SONRA", "DIZGIDEKI_DESEN"] {
+            if !uretim.contains(gorunmeli) {
+                hatalar.push(format!("`{gorunmeli}` taranmali:\n{uretim}"));
+            }
+        }
+        for elenmeli in
+            ["MODUL_YORUMU", "BELGE_YORUMU", "SATIR_SONU_YORUMU", "IC_ICE", "BLOK_YORUMU"]
+        {
+            if uretim.contains(elenmeli) {
+                hatalar.push(format!("`{elenmeli}` elenmeli:\n{uretim}"));
+            }
+        }
+        assert!(hatalar.is_empty(), "{} vaka basarisiz:\n{}", hatalar.len(), hatalar.join("\n---\n"));
     }
 
     /// Parcalanmis dizgi kacamagini gorunur kilar: dizgi tirnaklari,

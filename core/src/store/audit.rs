@@ -133,6 +133,12 @@ pub enum Ayrinti {
     /// I2). Yalnızca SAYI taşır — not içeriği loga asla girmez.
     RandevuSilme { not_adedi: usize },
     SeriSilme { adet: usize, not_adedi: usize, tarihten: String },
+    /// Randevu "ödendi" işaretlendi (Plan 4 Görev 1). **Birim varyant**:
+    /// tutar, ücret ya da danışan adı taşımaz — hangi randevu olduğu zaten
+    /// `varlik_id`'dedir.
+    OdemeAlindi,
+    /// Randevunun "ödendi" işareti geri alındı. `OdemeAlindi` ile aynı kural.
+    OdemeGeriAlindi,
 }
 
 /// Ham `String` alanlarini ASLA basmaz. Turetilmis `Debug` yerine elle
@@ -157,6 +163,8 @@ impl std::fmt::Debug for Ayrinti {
                 .field("not_adedi", not_adedi)
                 .field("tarihten", &"<gizli>")
                 .finish(),
+            Ayrinti::OdemeAlindi => write!(f, "Ayrinti::OdemeAlindi"),
+            Ayrinti::OdemeGeriAlindi => write!(f, "Ayrinti::OdemeGeriAlindi"),
         }
     }
 }
@@ -184,6 +192,8 @@ impl Ayrinti {
                     "seri silme: gecersiz".to_string()
                 }
             }
+            Ayrinti::OdemeAlindi => "odeme: alindi".to_string(),
+            Ayrinti::OdemeGeriAlindi => "odeme: geri alindi".to_string(),
         }
     }
 }
@@ -482,6 +492,8 @@ mod tests {
                 .metin(),
             "seri silme: 3 kayit, 5 not, 2026-09-21T00:00 sonrasi"
         );
+        assert_eq!(Ayrinti::OdemeAlindi.metin(), "odeme: alindi");
+        assert_eq!(Ayrinti::OdemeGeriAlindi.metin(), "odeme: geri alindi");
     }
 
     #[test]

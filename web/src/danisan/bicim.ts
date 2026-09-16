@@ -22,17 +22,6 @@ export function tarihBicimle(gun: string): string {
   return `${g}.${ay}.${yil}`
 }
 
-/**
- * Kuruş -> `"450,00 ₺"`.
- *
- * `Intl.NumberFormat` kullanılmıyor: çıktısı çalıştırma ortamının ICU
- * sürümüne göre değişir (para simgesinin yeri, boşluk karakteri) ve testte
- * sabitlenemez — sabitlense bile başka bir ortamda sessizce farklı basardı.
- */
-export function tlBicimle(kurus: number): string {
-  return `${(kurus / 100).toFixed(2).replace('.', ',')} ₺`
-}
-
 /** Bayt -> `"2,0 MB"` / `"1,5 KB"` / `"512 B"`. */
 export function boyutBicimle(bayt: number): string {
   if (bayt >= 1024 * 1024) return `${(bayt / (1024 * 1024)).toFixed(1).replace('.', ',')} MB`

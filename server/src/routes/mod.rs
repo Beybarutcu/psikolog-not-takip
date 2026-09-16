@@ -4,6 +4,8 @@ pub mod attachments;
 pub mod backup;
 pub mod clients;
 pub mod notes;
+/// Ay sonu özeti (Plan 4 Görev 3) — salt okur, kapının içinde.
+pub mod ozet;
 /// Parola değiştirme — kilit kapısının **içinde**, `session.rs`'ten ayrı
 /// bir modül; gerekçe o modülün başlığında (özet: `session.rs` kapıyı
 /// kullanmayan ve denetim satırını kendisi yazan bir modüldür, bu handler
@@ -21,3 +23,7 @@ pub mod restore;
 pub mod search;
 pub mod session;
 pub mod setup;
+/// Danışan veri raporu (Plan 4 Görev 6) — sunucuda üretilen AES-256 parola
+/// korumalı PDF; kapının içinde. Özel not bu modüle giremez (yapısal:
+/// `notlar_api.rs::rota_katmani_ozel_nota_yapisal_olarak_ayri_erisir`).
+pub mod veri_raporu;

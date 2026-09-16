@@ -1,7 +1,10 @@
-import { aramaApi, danisanApi, notApi, takvimApi, type SeansNotu } from '../api'
+import { useState } from 'react'
+import { aramaApi, danisanApi, takvimApi } from '../api'
 import { HizliArama } from '../arama/HizliArama'
 import { boyutBicimle } from '../danisan/bicim'
 import { DanisanKarti } from '../danisan/DanisanKarti'
+import { AyOzeti } from '../ozet/AyOzeti'
+import { SeansAltSatiri } from '../seans/SeansAltSatiri'
 import { SeansPaneli } from '../seans/SeansPaneli'
 import { HaftalikTakvim } from '../takvim/HaftalikTakvim'
 import { RandevuPaneli } from '../takvim/RandevuPaneli'
@@ -12,17 +15,6 @@ import { useSeansNotlari } from './anaEkranKancalari/useSeansNotlari'
 import { useTakvimAkisi } from './anaEkranKancalari/useTakvimAkisi'
 import { useYedekleme } from './anaEkranKancalari/useYedekleme'
 import { yerelGun } from './anaEkranKancalari/yerelGun'
-
-/**
- * Veri raporuna alınacak en fazla resmî not sayısı.
- *
- * Sunucu `?limit=`i `1..=200` aralığına kırpıyor; buradaki değer o üst
- * sınırdır çünkü rapor KVKK md. 11 kapsamında "elimdeki her şey" demektir —
- * "son 50 not" diyen bir rapor, eksik olduğunu söylemeden eksik olurdu.
- * (Daha fazlası olan bir dosyada rapor yine kırpılır; bu Plan 4'ün sunucu
- * tarafında çözeceği bilinen bir sınırdır, bkz. görev raporu.)
- */
-const RAPOR_NOT_SINIRI = 200
 
 /**
  * Ana ekran: takvim, danışan listesi, danışan kartı, seans paneli, yedekleme
@@ -83,6 +75,17 @@ export function AnaEkran({
     onYetkisiz: () => takvim.oturumKapandi(),
   })
   const parola = useParolaFormu()
+  // Ay sonu özeti KAPALI başlar: sunucu her görüntülemeyi denetim kaydına
+  // yazıyor ve açılışta kendiliğinden istek atan bir özet, terapistin hiç
+  // bakmadığı bir görüntülemeyi silinemez biçimde kaydederdi.
+  const [ozetAcik, setOzetAcik] = useState(false)
+  // Açık özetin DIŞARIDAN tazelenme sayacı (dal incelemesi I1). Kart
+  // bakiyesi durum/ödeme yazmasından sonra yerelde yamanıyor; özet ise
+  // yalnızca ay değişince istek atıyordu — özet açıkken "Ödendi" işaretlenince
+  // kart `0,00 TL`, özet aynı borcu hâlâ gösteriyordu. Özet kapalıyken sayaç
+  // artsa da istek GİTMEZ: `AyOzeti` monte değil, açıldığında zaten tek bir
+  // taze istek atar.
+  const [ozetTazeleme, setOzetTazeleme] = useState(0)
 
   const { seciliRandevu, seciliBosSaat } = takvim
   const { seciliDanisanId, kart } = dosya
@@ -109,48 +112,39 @@ export function AnaEkran({
     dosya.kapat()
   }
 
-  // Rapor için not çekmenin TEK yolu `notApi` — yani yalnızca resmî notlar.
-  // `ozelNotApi` bu bileşene HİÇ girmiyor (özel not `useSeansNotlari`
-  // kancasında, seans panelinde meşru olarak kullanılıyor) ve karta da
-  // geçmiyor.
-  //
-  // BURASI KAVŞAK. `veriRaporu.ts` ve `DanisanKarti.tsx` `ozelNotApi`'yi
-  // içe aktarmıyor ve aktarmalarına gerek de yok; raporun NOT KAYNAĞINI
-  // seçen tek yer bu fonksiyondur. Dolayısıyla "özel not rapora giremez"
-  // güvencesi burada ölçülüyor, orada değil (`veriRaporu.test.ts`'teki
-  // kaynak taraması riskin olmadığı dosyalara bakıyordu):
-  //   - davranışsal: `AnaEkran.test.tsx` "uretilen rapor METNI ozel not
-  //     kanaryasini TASIMAZ, resmi notu TASIR" — üretilen Blob'un metnini
-  //     okur;
-  //   - yapısal: aynı dosyadaki "rapor not kaynağı: `raporNotlariGetir`
-  //     gövdesi" bloğu bu fonksiyonun GÖVDESİNİ tarar. Fonksiyon kanca
-  //     ayrımında BİLEREK burada bırakıldı: taşınsaydı tarama yanlış dosyaya
-  //     bakan bir teste dönerdi (`docs/test-yesil-ama-korumuyor.md` biçim 12).
-  //     Özel notun bu ekranın erişim alanında GERÇEKTEN durduğunu (yani
-  //     taramanın gövdeye özgü olduğunu) o testin artı yön iddiası
-  //     `useSeansNotlari`'yi göstererek koruyor.
-  async function raporNotlariGetir(): Promise<SeansNotu[]> {
-    if (seciliDanisanId === null) return []
-    return notApi.danisanNotlari(seciliDanisanId, RAPOR_NOT_SINIRI)
+  // Veri raporu SUNUCUDA üretilir (Plan 4 Görev 6–7): bu ekran not çekmez,
+  // metin kurmaz; yalnızca parolayı ve YEREL günü sunucuya iletir. Gün
+  // TIKLAMA ANINDA hesaplanır — kart gece yarısından önce açılıp sonra
+  // kullanılırsa render anındaki `bugun` dünü taşırdı. Testli:
+  // `AnaEkran.test.tsx` > "yerel gün: gece yarısı ile 03:00 arası".
+  /**
+   * Alt satırın durum/ödeme işlemleri. Takvim listesi ve seçili randevu
+   * `useTakvimAkisi`'nde tazeleniyor; AÇIK DANIŞAN KARTININ bakiyesi de aynı
+   * randevudan hesaplandığı için kartın listesi burada yerelde yamanıyor
+   * (Görev 2 inceleme M5 — kart yeniden çekilmez, bkz. `randevuYamala`).
+   * Yama yalnızca istek BAŞARILIYSA: ret önce `await`ten fırlar.
+   *
+   * Açık AY SONU ÖZETİ ise yamanamaz (toplamlar sunucuda hesaplanıyor) ve
+   * YENİDEN İSTENİR: tek bir `GET /api/ay-ozeti`. Tazeleme de yalnızca
+   * başarıda — reddedilen bir yazma sunucuda hiçbir şeyi değiştirmedi.
+   * Ölçen testler: `AnaEkran.test.tsx` > "ozet ACIKKEN ... TEK yeni istekle
+   * tazelenir", "ozet KAPALIYKEN ... ozet istegi YOK", "odeme yazmasi
+   * REDDEDILIRSE ...".
+   */
+  async function durumDegis(id: number, durum: string) {
+    await takvim.durumDegis(id, durum)
+    dosya.randevuYamala(id, { durum })
+    setOzetTazeleme((n) => n + 1)
   }
 
-  // Dışa aktarımın DENETİM KAYDI — kart bunu notları çekmeden ÖNCE çağırır
-  // (bkz. `DanisanKarti` modül başlığı "Dışa aktarım önce KAYDEDİLİR").
-  //
-  // Bu fonksiyon BİLEREK `raporNotlariGetir`'in dışında duruyor: o gövde
-  // raporun NOT KAYNAĞINI seçen kavşaktır ve `AnaEkran.test.tsx` onu
-  // satır satır tarıyor ("gövdede özel nota giden hiçbir yol YOKTUR").
-  // İkinci bir sorumluluğu oraya taşımak o taramanın ölçtüğü şeyi
-  // bulanıklaştırırdı.
-  //
-  // Danışan seçili değilse fırlatır, sessizce başarılı olmaz: kartın
-  // fail-closed sırası ancak "kayıt gerçekten yazıldı" güvencesi varsa
-  // anlamlıdır — burada `return` etmek, kayıtsız bir raporu üretilebilir
-  // kılardı. (Kart yalnızca `seciliDanisanId !== null` iken render
-  // edildiği için bu dal bugün ulaşılamaz; ikincil hat.)
-  async function raporKaydiOlustur(): Promise<void> {
-    if (seciliDanisanId === null) throw new Error('Danışan seçili değil; rapor kaydı yazılamadı.')
-    await danisanApi.raporKaydiOlustur(seciliDanisanId)
+  async function odemeDegis(id: number, odendi: boolean) {
+    await takvim.odemeDegis(id, odendi)
+    dosya.randevuYamala(id, { odendi })
+    setOzetTazeleme((n) => n + 1)
+  }
+
+  function veriRaporuIndir(danisanId: number, parola: string): Promise<void> {
+    return danisanApi.veriRaporuIndir(danisanId, parola, yerelGun(new Date()))
   }
 
   return (
@@ -166,11 +160,30 @@ export function AnaEkran({
             onDanisanSec={danisanKartiAc}
             onSeansSec={seansaGit}
           />
+          <button
+            type="button"
+            className="rounded-lg border px-4 py-2"
+            aria-expanded={ozetAcik}
+            onClick={() => setOzetAcik((acik) => !acik)}
+          >
+            Ay sonu özeti
+          </button>
           <button className="rounded-lg border px-4 py-2" onClick={kilitle}>
             Kilitle
           </button>
         </div>
       </div>
+
+      {/* Borçlu satırı GERÇEK danışan kartını açar: danışan çipiyle aynı
+          `danisanKartiAc` yolu (`AnaEkran.test.tsx` "ay sonu ozeti" bloğu
+          kartın isteğini ölçer). */}
+      {ozetAcik && (
+        <AyOzeti
+          bugun={yerelGun(new Date())}
+          disTazeleme={ozetTazeleme}
+          onDanisanAc={danisanKartiAc}
+        />
+      )}
 
       <div className="mb-4">
         <div className="flex items-center gap-3">
@@ -612,7 +625,6 @@ export function AnaEkran({
             randevu={seciliRandevu}
             danisanlar={liste.danisanlar}
             onKaydet={takvim.kaydet}
-            onDurumDegis={takvim.durumDegis}
             onSil={takvim.sil}
             onSeriSil={takvim.seriSil}
             seriSayisiAl={takvimApi.seriSayisi}
@@ -660,9 +672,7 @@ export function AnaEkran({
               ekler={kart.ekler}
               randevular={kart.randevular}
               bugun={yerelGun(new Date())}
-              notlariGetir={raporNotlariGetir}
-              notSiniri={RAPOR_NOT_SINIRI}
-              raporKaydiOlustur={raporKaydiOlustur}
+              veriRaporuIndir={veriRaporuIndir}
               ekYukle={dosya.ekYukle}
               ekSil={dosya.ekSil}
               onRizaKaydet={dosya.rizaKaydet}
@@ -689,20 +699,42 @@ export function AnaEkran({
             onOzelSekme={seansAkisi.ozelSekmeAcildi}
             onOzelYenidenDene={seansAkisi.ozelYenidenDene}
             onKapat={takvim.panelKapat}
+            // Alt satır (Plan 4 Görev 2). Kimlik burada, render anında
+            // bağlanıyor: panel bu `key` ile yalnızca O randevu için mount
+            // edildiğinden closure'daki `id` panelin ömrü boyunca doğru.
+            // Her renderda taze closure'lar zararsız — panel bunları hiçbir
+            // efektin bağımlılığına koymuyor, yalnızca tıklamada çağırıyor.
+            onDurumDegis={(durum) => durumDegis(seciliRandevu.id, durum)}
+            onOdemeDegis={(odendi) => odemeDegis(seciliRandevu.id, odendi)}
           />
         ) : (
           // Yükleme başarısızsa panel AÇILMAZ: "yükleniyor…" yazan bir panel
           // sonsuza kadar öyle kalır ve kullanıcı notunun neden gelmediğini
           // bilemez.
-          <div role="alert" className="mt-4 rounded border border-red-300 bg-red-50 p-3">
-            <p className="text-sm text-red-800">Seans notu yüklenemedi. {seans.hata}</p>
-            <button
-              type="button"
-              className="mt-2 rounded border border-red-300 px-2 py-1 text-sm"
-              onClick={seansAkisi.yenidenDene}
-            >
-              Yeniden dene
-            </button>
+          <div className="mt-4">
+            <div role="alert" className="rounded border border-red-300 bg-red-50 p-3">
+              <p className="text-sm text-red-800">Seans notu yüklenemedi. {seans.hata}</p>
+              <button
+                type="button"
+                className="mt-2 rounded border border-red-300 px-2 py-1 text-sm"
+                onClick={seansAkisi.yenidenDene}
+              >
+                Yeniden dene
+              </button>
+            </div>
+            {/* Durum ve ödeme notlara BAĞLI DEĞİL: notlar okunamasa da
+                işaretlenebilmeli (Görev 2 inceleme I1). Geçmiş notlardan biri
+                kalıcı olarak okunamıyorsa bu dal o danışanın HER seansında
+                açılır; satır burada olmasaydı "Geldi" hiç işaretlenemez, son
+                temas tazelenmez ve dosya imha hatırlatmasına erken düşerdi.
+                `key` panelinkiyle aynı gerekçe: kutunun iyimser yerel değeri
+                seans değişince sıfırlanmalı. */}
+            <SeansAltSatiri
+              key={`seans-alt-${seciliRandevu.id}`}
+              randevu={seciliRandevu}
+              onDurumDegis={(durum) => durumDegis(seciliRandevu.id, durum)}
+              onOdemeDegis={(odendi) => odemeDegis(seciliRandevu.id, odendi)}
+            />
           </div>
         ))}
     </div>

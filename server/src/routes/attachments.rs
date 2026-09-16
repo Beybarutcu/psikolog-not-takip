@@ -291,6 +291,24 @@ pub async fn yukle(
 ///
 /// Gövde ham baytlardır ve **hiçbir yerde `{:?}` ile biçimlendirilmez**
 /// (bkz. modül başlığı).
+///
+/// # Şifresiz indirme — tasarım §10'un adlı istisnası (dal incelemesi D3)
+///
+/// Tasarım §10 dışa aktarılan her dosyanın şifreli olmasını ister ve çekirdek
+/// bu indirmeyi `DisaAktarma` olarak loglar. Yine de baytlar **bilerek
+/// şifresiz** verilir: bu, terapistin kendi yüklediği kaynak belgeyi (onam
+/// formu, test sonucu) kendi makinesinde açmasıdır; danışana ya da üçüncü
+/// kişiye verilecek bir rapor üretimi değildir. Belge yüklenirken zaten
+/// terapistin elindeydi; şifrelemek yeni bir koruma katmaz, parolası
+/// unutulabilecek ikinci bir kopya üretir. Danışana verilecek belge
+/// `routes::veri_raporu`'dur ve o şifrelidir.
+///
+/// Karar yorumda kalmıyor: `tests/notlar_api.rs::SIFRESIZ_INDIRME_ISTISNALARI`
+/// bu handler'ı adıyla taşır ve
+/// `dosya_indiren_her_uc_sifreli_ya_da_adli_istisnadir`, `routes/` altında
+/// `Content-Disposition` kuran her kök fonksiyonun ya `sifreli_pdf`'e
+/// ulaşmasını ya da o listede olmasını ister. Bu handler adı değişir ya da
+/// indirmeyi bırakırsa liste bayatlar ve test kırılır.
 pub async fn indir(State(s): State<AppState>, Path(id): Path<i64>) -> Result<Response, ApiHata> {
     let conn = acik_baglanti(&s)?;
     let (bilgi, icerik) = icerik_getir(&conn, id, Cihaz::Masaustu).map_err(depo_hatasi)?;

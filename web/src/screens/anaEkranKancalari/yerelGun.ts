@@ -8,10 +8,11 @@
  * `toISOString().slice(0, 10)` kullanan bir sürüm o üç saat boyunca
  * `bugun`'ü bir gün geriye alır; sonuç iki yerde birden görünür — saklama
  * süresi tam dolan bir dosyada ekran "1 gün kaldı" yazar ve veri raporunun
- * dosya adındaki tarih yanlış olur.
+ * dosya adındaki tarih yanlış olur (Plan 4 Görev 7'den beri o gün de istek
+ * gövdesinde sunucuya gidiyor).
  *
- * Üç ayrı akış bunu kullanıyor (danışan kartının `bugun`'ü, saklama
- * hatırlatması, günlük yedeğin damgası); kancalara ayrılırken burada
+ * Dört ayrı akış bunu kullanıyor (danışan kartının `bugun`'ü, saklama
+ * hatırlatması, günlük yedeğin damgası, veri raporunun dosya adı); kancalara ayrılırken burada
  * TEK KOPYA olarak duruyor — ikinci bir kopya, iki tarihin sessizce
  * ayrışabileceği yer demekti.
  *

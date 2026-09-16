@@ -71,10 +71,13 @@ fn api_router() -> Router<AppState> {
         // Görev 7'nin ekleyeceği `/danisanlar/{id}` ile çakışmaz -- bu üç
         // segmentli.
         .route("/danisanlar/{id}/arsivle", post(routes::clients::arsivle_uc))
-        // Veri raporu disa aktariminin denetim kaydi (C1). Uc segmentli,
-        // `.../arsivle` ile ayni sinifta: yan etkisi olan bir islem, bu
-        // yuzden `POST`. Gerekce icin bkz. `routes::clients::rapor_kaydi_uc`.
-        .route("/danisanlar/{id}/rapor-kaydi", post(routes::clients::rapor_kaydi_uc))
+        // Danisan veri raporu (Plan 4 Gorev 6): sunucuda uretilen AES-256
+        // parola korumali PDF. `POST` cunku (a) silinemez bir `disa_aktarma`
+        // satiri yazar ve (b) parola GOVDEDE gider, sorgu dizesinde degil.
+        // Plan 3'un ayri `rapor-kaydi` ucu kaldirildi: raporu ureten uc
+        // noktanin kendisi loglar. Sira sozlesmesi icin bkz.
+        // `routes::veri_raporu` modul basligi.
+        .route("/danisanlar/{id}/veri-raporu", post(routes::veri_raporu::veri_raporu))
         .route(
             "/randevular",
             get(routes::appointments::liste).post(routes::appointments::olustur),
@@ -94,6 +97,10 @@ fn api_router() -> Router<AppState> {
         // ayni sinif. Uc segmentli ve ikinci segmenti sayisal oldugu icin
         // literal `seri` yoluyla cakismaz.
         .route("/randevular/{id}/silinecekler", get(routes::appointments::silinecekler))
+        // Odeme isareti (Plan 4 Gorev 1): `PATCH /randevular/{id} {durum}`
+        // sozlesmesine DOKUNMAMAK icin ayri, uc segmentli yol -- gerekce icin
+        // bkz. `routes::appointments::odeme`.
+        .route("/randevular/{id}/odeme", axum::routing::patch(routes::appointments::odeme))
         // Seri islemleri ayri bir yol segmentinde: `/randevular/{id}` iki
         // segmentli, bu uc segmentli -- cakisma yok.
         .route(
@@ -102,12 +109,16 @@ fn api_router() -> Router<AppState> {
                 .delete(routes::appointments::seri_kaldir),
         )
         .route("/cakisma", get(routes::appointments::cakisma))
+        // Ay sonu ozeti (Plan 4 Gorev 3): salt okur, kapinin ICINDE (31. veri
+        // handler'i). `ay` sorgu dizesinde: hassas degil (bir takvim ayi).
+        .route("/ay-ozeti", get(routes::ozet::ay_ozeti_uc))
         // --- Plan 3 Gorev 7: danisan dosyasi, notlar, ekler, arama --------
         //
         // Asagidaki on dort handler'in da ilk satiri `guard::acik_baglanti`:
         // kilitliyken 401, govdede veri yok, islem uygulanmaz. Toplam veri
         // handler'i sayisi 11 -> 25 (dal incelemesi C1'in ekledigi
-        // `rapor-kaydi` ile 26).
+        // `rapor-kaydi` ile 26; Plan 4 Gorev 6'da o uc kalkti, yerine
+        // `veri-raporu` geldi -- toplam degismedi).
         //
         // `/danisanlar/{id}` iki segmentlidir; uc segmentli
         // `/danisanlar/{id}/arsivle`, `.../notlar` ve `.../ekler` ile

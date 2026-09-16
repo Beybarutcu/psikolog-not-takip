@@ -140,8 +140,9 @@ async fn ek_yukle(s: &AppState, cid: i64, ad_kodlu: &str, icerik: &[u8]) -> i64 
 // =====================================================================
 
 /// Görev 7'nin eklediği on dört uç nokta (+ dal incelemesi C1'in eklediği
-/// `rapor-kaydi`, toplam **on beş**) kilitliyken `401` döner ve gövdesinde
-/// hiçbir veri taşımaz.
+/// `rapor-kaydi`, toplam **on beş**; Plan 4 Görev 6'da o uç kalktı, yerine
+/// `veri-raporu` geldi) kilitliyken `401` döner ve gövdesinde hiçbir veri
+/// taşımaz.
 ///
 /// Tablo halinde yazılmıştır ki yeni bir uç nokta eklendiğinde satır
 /// eklemeyi unutmak zorlaşsın; sayı ayrıca `assert_eq!` ile pinlenir.
@@ -189,10 +190,14 @@ async fn kilitliyken_gorev7_uclarinin_hepsi_401_doner_ve_veri_sizdirmaz() {
         ("GET", "/api/ara?q=GIZLI".to_string(), None),
         ("GET", "/api/saklama-suresi-dolanlar?bugun=2030-01-01".to_string(), None),
         ("GET", "/api/depolama-durumu".to_string(), None),
-        // Dal incelemesi C1: veri raporu disa aktarim kaydi da ayni kapidan
-        // gecer -- kilitliyken bir danisanin dosyasi disa aktarilamaz,
-        // dolayisiyla o kaydin yazilmasi da reddedilir.
-        ("POST", format!("/api/danisanlar/{cid}/rapor-kaydi"), None),
+        // Veri raporu (Plan 4 Gorev 6) ayni kapidan gecer: kilitliyken bir
+        // danisanin dosyasi disa aktarilamaz. Ayrintili hali:
+        // `kilitliyken_veri_raporu_401_ve_log_yazilmaz`.
+        (
+            "POST",
+            format!("/api/danisanlar/{cid}/veri-raporu"),
+            Some(json!({"parola":"danisan-parolasi-1","bugun":"2026-09-16"})),
+        ),
     ];
     assert_eq!(uclar.len(), 14, "POST /ekler ile birlikte on bes uc kapsanmali");
 
@@ -219,6 +224,176 @@ async fn kilitliyken_gorev7_uclarinin_hepsi_401_doner_ve_veri_sizdirmaz() {
     .await;
     assert_eq!(kod, StatusCode::UNAUTHORIZED, "ek yukleme kilitliyken 401 donmeli");
     assert!(!String::from_utf8_lossy(&govde).contains("YENI_GIZLI"));
+}
+
+/// JSON gövde (`Json<T>`) ya da sorgu dizesi (`Sorgu<T>`) alan **her** veri
+/// handler'ı, girdisi bozukken de kilitliyse önce `401` döner; kilit açıkken
+/// aynı bozuk girdi Türkçe `400 {"hata"}` alır ve girdiyi yansıtmaz.
+///
+/// # Bulgu (dal incelemesi M1)
+///
+/// Extractor'lar handler gövdesinden önce çalışıyordu: kilitliyken bozuk
+/// gövdeli `PATCH /randevular/{id}/odeme` → `422` + İngilizce
+/// `invalid type: string "evet"`; parametresiz `GET /ay-ozeti` → `400`.
+/// Düzeltme `guard::govde_coz` belgesinde.
+///
+/// Tablo elle bakımlıdır ama **kaynaktan doğrulanır**: `routes/` altındaki
+/// veri modüllerinde parametre listesinde `Json<` ya da `Sorgu<` geçen her
+/// `async fn` tabloda olmalı (ve tersi), ve o extractor çıplak değil
+/// `Result<...>` olarak alınmalı. Yarın eklenecek bir handler tabloya
+/// yazılmazsa ya da extractor'ı çıplak alırsa bu test kırılır.
+#[tokio::test]
+async fn kilitliyken_govde_ve_sorgu_alan_her_uc_once_401_doner() {
+    let (_d, s, cid, rid) = dolu_state().await;
+    const KANARYA: &str = "GIRDI-KANARYA";
+    let bozuk_govde = Some(format!("\"{KANARYA}\""));
+    // (dosya, handler, metot, yol, bozuk govde -- None ise sorgu ucu)
+    let tablo: Vec<(&str, &str, &str, String, Option<String>)> = vec![
+        ("appointments.rs", "liste", "GET", format!("/api/randevular?x={KANARYA}"), None),
+        ("appointments.rs", "olustur", "POST", "/api/randevular".into(), bozuk_govde.clone()),
+        ("appointments.rs", "durum", "PATCH", format!("/api/randevular/{rid}"), bozuk_govde.clone()),
+        (
+            "appointments.rs",
+            "odeme",
+            "PATCH",
+            format!("/api/randevular/{rid}/odeme"),
+            Some(r#"{"odendi":"evet"}"#.into()),
+        ),
+        ("appointments.rs", "guncelle", "PUT", format!("/api/randevular/{rid}"), bozuk_govde.clone()),
+        (
+            "appointments.rs",
+            "seri_adedi",
+            "GET",
+            format!("/api/randevular/seri/s1?x={KANARYA}"),
+            None,
+        ),
+        (
+            "appointments.rs",
+            "seri_kaldir",
+            "DELETE",
+            format!("/api/randevular/seri/s1?x={KANARYA}"),
+            None,
+        ),
+        ("appointments.rs", "cakisma", "GET", format!("/api/cakisma?x={KANARYA}"), None),
+        ("backup.rs", "al", "POST", "/api/yedek".into(), bozuk_govde.clone()),
+        ("clients.rs", "olustur", "POST", "/api/danisanlar".into(), bozuk_govde.clone()),
+        ("clients.rs", "guncelle_uc", "PATCH", format!("/api/danisanlar/{cid}"), bozuk_govde.clone()),
+        (
+            "clients.rs",
+            "saklama_listesi",
+            "GET",
+            format!("/api/saklama-suresi-dolanlar?x={KANARYA}"),
+            None,
+        ),
+        ("notes.rs", "kaydet", "PUT", format!("/api/randevular/{rid}/not"), bozuk_govde.clone()),
+        (
+            "notes.rs",
+            "danisan_listesi",
+            "GET",
+            format!("/api/danisanlar/{cid}/notlar?limit={KANARYA}"),
+            None,
+        ),
+        ("ozet.rs", "ay_ozeti_uc", "GET", "/api/ay-ozeti".into(), None),
+        ("password.rs", "degistir", "POST", "/api/parola".into(), bozuk_govde.clone()),
+        (
+            "private_notes.rs",
+            "kaydet",
+            "PUT",
+            format!("/api/randevular/{rid}/ozel-not"),
+            bozuk_govde.clone(),
+        ),
+        ("search.rs", "ara_uc", "GET", format!("/api/ara?x={KANARYA}"), None),
+        (
+            "veri_raporu.rs",
+            "veri_raporu",
+            "POST",
+            format!("/api/danisanlar/{cid}/veri-raporu"),
+            bozuk_govde.clone(),
+        ),
+    ];
+
+    // --- Kaynakla birebir ortusme ---
+    let mut kaynaktaki: Vec<(String, String)> = Vec::new();
+    let mut ciplak: Vec<String> = Vec::new();
+    for (ad, kaynak) in rota_kaynaklari() {
+        if VERI_DISI_ROTALAR.contains(&ad.as_str()) {
+            continue;
+        }
+        let kod = kod_satirlari(&kaynak);
+        for parca in async_fn_parcalari(&kod) {
+            let isim = parca.split('(').next().unwrap_or("").trim().to_string();
+            // Parametre listesi: ilk `(` ile imzadaki ilk `) ->` arasi (donus
+            // tipi `Result<(StatusCode, Json<..>)>` parametre sayilmamali).
+            let imza = &parca[..parca.find('{').unwrap_or(parca.len())];
+            let son = imza.find(") ->").or_else(|| imza.rfind(')')).unwrap_or(imza.len());
+            let params = &imza[imza.find('(').map_or(0, |i| i + 1)..son];
+            let mut var = false;
+            for isaret in ["Json<", "Sorgu<"] {
+                for (i, _) in params.match_indices(isaret) {
+                    var = true;
+                    if !params[..i].ends_with("Result<") {
+                        ciplak.push(format!("{ad}::{isim}: `{isaret}` ciplak extractor"));
+                    }
+                }
+            }
+            if var {
+                kaynaktaki.push((ad.clone(), isim));
+            }
+        }
+    }
+    assert!(
+        ciplak.is_empty(),
+        "extractor kapidan ONCE calisir; `Result<...>` alip kapidan sonra cozulmeli:\n{}",
+        ciplak.join("\n")
+    );
+    let mut tablodaki: Vec<(String, String)> =
+        tablo.iter().map(|(a, h, ..)| (a.to_string(), h.to_string())).collect();
+    kaynaktaki.sort();
+    tablodaki.sort();
+    assert_eq!(tablodaki, kaynaktaki, "tablo ile kaynaktaki Json/Sorgu handler'lari ortusmeli");
+
+    // --- ARTI YON: kilit acikken bozuk girdi Turkce 400, girdi yansimaz ---
+    // (Bu olmadan "her seye 401 don" mutasyonu asagidaki dongu ile gecerdi.)
+    for (ad, h, metot, yol, govde) in &tablo {
+        let (kod, _b, yanit) = match govde {
+            Some(g) => {
+                cagir_ham(&s, metot, yol, &[("content-type", "application/json")], g.clone().into_bytes())
+                    .await
+            }
+            None => cagir_ham(&s, metot, yol, &[], Vec::new()).await,
+        };
+        assert_eq!(kod, StatusCode::BAD_REQUEST, "{ad}::{h} acikken bozuk girdi 400 donmeli");
+        let mesaj = hata_metni(&yanit);
+        let beklenen = if govde.is_some() {
+            "İstek gövdesi eksik veya geçersiz."
+        } else {
+            "Sorgu parametreleri eksik veya geçersiz."
+        };
+        assert_eq!(mesaj, beklenen, "{ad}::{h}");
+        let ham = String::from_utf8_lossy(&yanit);
+        assert!(
+            !ham.contains(KANARYA) && !ham.contains("evet") && !ham.contains("invalid type"),
+            "{ad}::{h}: girdi ya da Ingilizce metin yansidi: {ham}"
+        );
+    }
+
+    // --- Kilitliyken: once 401 ---
+    kilitle(&s).await;
+    let mut hatalar = Vec::new();
+    for (ad, h, metot, yol, govde) in &tablo {
+        let (kod, _b, yanit) = match govde {
+            Some(g) => {
+                cagir_ham(&s, metot, yol, &[("content-type", "application/json")], g.clone().into_bytes())
+                    .await
+            }
+            None => cagir_ham(&s, metot, yol, &[], Vec::new()).await,
+        };
+        let ham = String::from_utf8_lossy(&yanit);
+        if kod != StatusCode::UNAUTHORIZED || ham.contains(KANARYA) || ham.contains("evet") {
+            hatalar.push(format!("{ad}::{h} {metot} {yol}: {kod} {ham}"));
+        }
+    }
+    assert!(hatalar.is_empty(), "kilitliyken 401 donmeyen uclar:\n{}", hatalar.join("\n"));
 }
 
 /// Kilitliyken indirme yolu **ham baytları da** sızdırmamalı: JSON gövde
@@ -413,10 +588,14 @@ async fn ozel_not_ayri_uctan_gider_ve_danisan_notlarinda_gorunmez() {
     assert!(!resmi.to_string().contains("GIZLI"));
 }
 
-/// KVKK md. 11 kapsamındaki dışa aktarım, terapistin özel notlarını **asla**
-/// içermemeli. Bugün ayrı bir "rapor" uç noktası yoktur; danışanın verisi
-/// API üzerinden okunabilen uç noktaların **toplamıdır**. Bu test o toplamı
-/// gezer.
+/// Danışanın verisi API üzerinden okunabilen JSON uç noktalarının
+/// **toplamıdır**; bu test o toplamı gezer ve hiçbirinden özel notun
+/// dönmediğini doğrular.
+///
+/// Plan 4 Görev 6'dan beri KVKK md. 11 raporunun kendisi ayrı bir uç
+/// noktadır ve şifreli PDF döner (JSON değil); özel notun ORAYA girmediği
+/// PDF parolayla çözülerek
+/// `veri_raporu_sifreli_pdf_doner_ve_disa_aktarma_loglanir` içinde doğrulanır.
 #[tokio::test]
 async fn danisan_veri_raporu_ozel_not_icermez() {
     let (_d, s, cid, rid) = dolu_state().await;
@@ -1731,6 +1910,25 @@ fn rota_modulleri_audit_kaydet_cagirmaz() {
 /// `pub async fn` içeren yeni bir dosya, listeye eklenmeden de bu testi
 /// kırar. Elle kalan tek şey `VERI_DISI_ROTALAR` istisnası ve o istisnanın
 /// **gerekli olduğu** burada iki yönlü doğrulanıyor.
+///
+/// **Plan 4 Görev 1 incelemesi (dördüncü kusur): parçalayıcı görünürlüğe
+/// bağlıydı.** Kaynak `"pub async fn "` ile bölünüp ilk parça (`skip(1)`)
+/// atılıyordu. Modüldeki ilk `pub async fn`'den ÖNCE yazılmış kapısız bir
+/// `pub(crate) async fn` o ilk parçanın içinde kalıyor, hiç handler
+/// sayılmıyor ve `lib.rs` onu rotaya bağlayabiliyordu (mutasyonla
+/// gösterildi: `/ay-ozeti` kapısız bir `pub(crate) async fn`'e bağlandı,
+/// 47/47 yeşil). Rotaya bağlanabilmek `pub` olmaya değil `async fn` olmaya
+/// bağlı; artık **her** `async fn` (`pub`, `pub(crate)`, `pub(super)`,
+/// görünürlüksüz) handler adayıdır — bkz. `async_fn_parcalari`.
+///
+/// **Plan 4 Görev 6 düzeltmesi: "tam bir kez"in tek istisnası.** Veri raporu
+/// saniyeler süren bir üretimden SONRA kapıyı yeniden çağırır; yoksa üretim
+/// sürerken kilitlenen oturuma rapor verilirdi (incelemede ölçüldü: `200` +
+/// PDF). "Tam bir kez"in gerekçesi sayım telafisiydi (b); o telafi artık
+/// parça başına ilk satır iddiasıyla da imkânsız, ama kural yine de
+/// gevşetilmedi — istisna **adıyla** `URETIM_SONRASI_YENIDEN_DOGRULAYANLAR`
+/// listesinde ve üç şartla çalıştırılabilir: tam iki çağrı, ikincisi
+/// `spawn_blocking`'den sonra, listedeki ad gerçekten var.
 #[test]
 fn her_veri_handleri_acik_baglantidan_gecer() {
     const KAPI: &str = "let conn = acik_baglanti(&s)?;";
@@ -1738,6 +1936,7 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
     istisnalar_gercek_mi(&kaynaklar, &VERI_DISI_ROTALAR);
 
     let mut toplam = 0;
+    let mut kullanilan_istisnalar: Vec<(String, String)> = Vec::new();
     for (ad, kaynak) in &kaynaklar {
         // Yorum satirlari kuralin KENDISINDEN bahsedebilir; yalnizca kod
         // satirlarina bakiyoruz (kardes yapisal testlerle ayni eleme).
@@ -1755,12 +1954,12 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
             continue;
         }
 
-        let parcalar: Vec<&str> = kod.split("pub async fn ").skip(1).collect();
+        let parcalar = async_fn_parcalari(&kod);
         // Bos bir veri rota modulu, "hicbir handler yok" diyerek her iddiayi
         // sessizce saglardi.
         assert!(
             !parcalar.is_empty(),
-            "{ad}: veri rota modulu en az bir `pub async fn` icermeli \
+            "{ad}: veri rota modulu en az bir `async fn` icermeli \
              (icermiyorsa VERI_DISI_ROTALAR'a yazilmali)"
         );
 
@@ -1783,146 +1982,994 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
                 "{ad}::{isim}: handler'in ILK satiri `{KAPI}` olmali -- kilit \
                  kontrolunden once calisan her satir kilitli oturumda da calisir"
             );
-            // (b) telafisi: iki kez cagiran bir handler, kapisiz kalan bir
-            // baskasini artik ortemez.
-            assert_eq!(
-                parca.matches("acik_baglanti(").count(),
-                1,
-                "{ad}::{isim}: kapi tam bir kez cagrilmali"
-            );
+            let cagrilar: Vec<usize> =
+                parca.match_indices("acik_baglanti(").map(|(i, _)| i).collect();
+            if URETIM_SONRASI_YENIDEN_DOGRULAYANLAR.contains(&(ad.as_str(), isim)) {
+                // Bilinçli istisna: ilk satir kapi + uzun uretimden SONRA
+                // taze kapi. Istisna calistirilabilir: ikinci cagri kalkarsa
+                // (bayat istisna) ya da uretimden once gelirse kirilir.
+                kullanilan_istisnalar.push((ad.clone(), isim.to_string()));
+                assert_eq!(
+                    cagrilar.len(),
+                    2,
+                    "{ad}::{isim}: istisna TAM iki kapi cagrisi ister (ilk satir + \
+                     uretim sonrasi); tek cagri kaldiysa istisnayi listeden sil"
+                );
+                let uretim = parca.find("spawn_blocking(").unwrap_or_else(|| {
+                    panic!("{ad}::{isim}: istisnanin gerekcesi olan uretim adimi yok")
+                });
+                assert!(
+                    cagrilar[1] > uretim,
+                    "{ad}::{isim}: ikinci kapi uretimden ({{spawn_blocking}}) SONRA olmali"
+                );
+            } else {
+                // (b) telafisi: iki kez cagiran bir handler, kapisiz kalan bir
+                // baskasini artik ortemez.
+                assert_eq!(cagrilar.len(), 1, "{ad}::{isim}: kapi tam bir kez cagrilmali");
+            }
         }
         toplam += parcalar.len();
+    }
+    // Istisna listesi bayatlamamali: adi yazili her handler gercekten
+    // bulunmali (dosya/handler yeniden adlandirilirsa sessizce etkisizlesirdi).
+    for (ad, isim) in URETIM_SONRASI_YENIDEN_DOGRULAYANLAR {
+        assert!(
+            kullanilan_istisnalar.iter().any(|(a, i)| a == ad && i == isim),
+            "URETIM_SONRASI_YENIDEN_DOGRULAYANLAR bayat: {ad}::{isim} bulunamadi"
+        );
     }
     // Ikinci ag: sayi degisirse (handler eklendi/silindi) bu satir kirilir ve
     // degisiklik BILINCLI olarak onaylanir. Birincil koruma artik yukaridaki
     // bire bir esleme -- sayiyi guncellemek tek basina bir kapiyi geri
     // getirmez.
-    assert_eq!(toplam, 29, "toplam veri handler'i sayisi 29 olmali");
+    assert_eq!(toplam, 31, "toplam veri handler'i sayisi 31 olmali");
+}
+
+/// Kapıyı ilk satırda VE uzun bir üretimden sonra ikinci kez çağırmasına izin
+/// verilen handler'lar: `(dosya, handler)`. Bkz. `her_veri_handleri_acik_baglantidan_gecer`.
+const URETIM_SONRASI_YENIDEN_DOGRULAYANLAR: [(&str, &str); 1] = [("veri_raporu.rs", "veri_raporu")];
+
+/// Kaynağı **her** `async fn` başlangıcından parçalar; her parça fonksiyon
+/// adıyla başlar ve bir sonraki `async fn`'e kadar sürer. Görünürlük
+/// belirteci (`pub`, `pub(crate)`, `pub(super)`, hiçbiri) ayırt edilmez.
+///
+/// `async` bir tanımlayıcının parçası olmamalı (`asenkron_async`); ardından
+/// en az bir boşluk, `fn` ve yine en az bir boşluk gelmeli. `async  fn` ya da
+/// satır sonuyla bölünmüş `async`/`fn` da yakalanır.
+fn async_fn_parcalari(kod: &str) -> Vec<&str> {
+    fn tanimlayici(c: char) -> bool {
+        c.is_alphanumeric() || c == '_'
+    }
+    let mut baslar = Vec::new();
+    let mut arama = 0usize;
+    while let Some(yer) = kod[arama..].find("async") {
+        let bas = arama + yer;
+        arama = bas + "async".len();
+        if kod[..bas].chars().next_back().is_some_and(tanimlayici) {
+            continue;
+        }
+        let kalan = &kod[arama..];
+        let bosluksuz = kalan.trim_start();
+        if bosluksuz.len() == kalan.len() || !bosluksuz.starts_with("fn") {
+            continue;
+        }
+        let fn_sonrasi = &bosluksuz["fn".len()..];
+        let ad = fn_sonrasi.trim_start();
+        if ad.len() == fn_sonrasi.len() {
+            continue;
+        }
+        baslar.push(kod.len() - ad.len());
+    }
+    baslar
+        .iter()
+        .enumerate()
+        .map(|(i, &b)| &kod[b..baslar.get(i + 1).copied().unwrap_or(kod.len())])
+        .collect()
+}
+
+/// Parçalayıcının kendisi: görünürlükten bağımsız yakalama, tanımlayıcı
+/// içindeki `async` hecesinin aday sayılmaması. Parçalayıcı yeniden
+/// `pub async fn`'e daralırsa bu test kırılır.
+#[test]
+fn async_fn_parcalayici_gorunurlukten_bagimsizdir() {
+    let kod = [
+        "use x;",
+        "pub(crate) async fn gizli(s: S) -> R {",
+        "    govde();",
+        "}",
+        "async  fn yalin() {}",
+        "pub(super) async",
+        "fn bolunmus() {}",
+        "fn asenkron_async() {}",
+        "let fn_async = 1;",
+        "pub async fn acik(s: S) -> R {}",
+    ]
+    .join("\n");
+    let adlar: Vec<&str> = async_fn_parcalari(&kod)
+        .iter()
+        .map(|p| p.split(|c: char| c == '(' || c.is_whitespace()).next().unwrap())
+        .collect();
+    assert_eq!(adlar, ["gizli", "yalin", "bolunmus", "acik"]);
 }
 
 // =====================================================================
-// DAL INCELEMESI C1 -- VERI RAPORU DISA AKTARIMI DENETIM KAYDI
+// DOSYA INDIREN UCLAR -- SIFRELI YA DA ADLI ISTISNA (dal incelemesi D3/I3)
+// =====================================================================
+
+/// Dosya indiren (yanıtına `Content-Disposition`/`attachment` koyan) ama
+/// yanıt gövdesini `pdf::sifreli_pdf`'ten ÜRETMEYEN handler'lar:
+/// `(rota dosyası, handler)`. Her girdinin gerekçesi yanında yazılır.
+///
+/// Tasarım §10 dışa aktarılan her dosyanın şifreli olmasını ister. Bu liste o
+/// kuralın **adlı ve çalıştırılabilir** istisnasıdır: listede olmayan yeni bir
+/// indirme ucu şifresizse `dosya_indiren_her_uc_sifreli_ya_da_adli_istisnadir`
+/// kırılır; listedeki bir girdi bayatlarsa (handler yok, artık indirmiyor ya
+/// da artık şifreliyor) yine kırılır.
+const SIFRESIZ_INDIRME_ISTISNALARI: [(&str, &str); 1] = [
+    // Terapistin kendi yüklediği kaynak belgeyi (onam formu, test sonucu)
+    // kendi makinesinde açması; rapor üretimi değil. Belge yüklenirken zaten
+    // terapistin elindeydi, şifrelemek yeni bir koruma katmaz ama parolasını
+    // unutulabilecek ikinci bir kopya üretir. Bkz. `routes::attachments::indir`.
+    ("attachments.rs", "indir"),
+];
+
+/// Kaynaktaki her `fn` öğesi (`async` olsun olmasın): `(ad, async mı, parça)`.
+/// Parça, fonksiyon adından bir sonraki `fn`'e kadar sürer. `FnOnce` gibi
+/// tanımlayıcı içindeki hece sayılmaz.
+fn fn_parcalari(kod: &str) -> Vec<(String, bool, &str)> {
+    fn tanimlayici(c: char) -> bool {
+        c.is_alphanumeric() || c == '_'
+    }
+    let mut baslar: Vec<(usize, String, bool)> = Vec::new();
+    let mut arama = 0usize;
+    while let Some(yer) = kod[arama..].find("fn") {
+        let bas = arama + yer;
+        arama = bas + 2;
+        if kod[..bas].chars().next_back().is_some_and(tanimlayici) {
+            continue;
+        }
+        let sonrasi = &kod[arama..];
+        let ad_bas = sonrasi.trim_start();
+        if ad_bas.len() == sonrasi.len() {
+            continue;
+        }
+        let ad: String = ad_bas.chars().take_while(|&c| tanimlayici(c)).collect();
+        if ad.is_empty() {
+            continue;
+        }
+        let once = kod[..bas].trim_end();
+        let asenkron = once.ends_with("async")
+            && !once[..once.len() - "async".len()].chars().next_back().is_some_and(tanimlayici);
+        baslar.push((bas, ad, asenkron));
+    }
+    baslar
+        .iter()
+        .enumerate()
+        .map(|(i, (b, ad, asenkron))| {
+            let son = baslar.get(i + 1).map_or(kod.len(), |x| x.0);
+            (ad.clone(), *asenkron, &kod[*b..son])
+        })
+        .collect()
+}
+
+/// Kodda dosya indirme başlığı kuruluyor mu. Yalnızca KOD satırlarına bakılır
+/// (çağıran `kod_satirlari` verir); `attachments::` modül yolu `"attachment`
+/// dizgi başlangıcıyla karışmaz.
+fn indirme_basligi_var(parca: &str) -> bool {
+    let kucuk = parca.to_lowercase();
+    kucuk.contains("content_disposition")
+        || kucuk.contains("content-disposition")
+        || kucuk.contains("\"attachment")
+}
+
+/// Bir rota dosyasında indirme başlığı kuran **kök** fonksiyonlar:
+/// `(ad, sifreli_pdf'e ulaşıyor mu)`. Başlığı doğrudan ya da dosya içi bir
+/// yardımcı üzerinden (geçişli) kuran ve dosyada başka hiçbir fonksiyonun
+/// çağırmadığı her fonksiyon köktür — `async fn` olması gerekmez, çünkü
+/// `impl Future` dönen düz bir `fn` de rotaya bağlanabilir.
+///
+/// Sınır (biçim 10 gereği açıkça): "şifreli" iddiası `sifreli_pdf` adının kök
+/// fonksiyonun geçişli çağrı kümesinde GEÇMESİDİR; baytların gerçekten o
+/// çıktıdan geldiği veri akışı analiz edilmez. Veri raporu için akış ayrıca
+/// davranışsal olarak ölçülüyor
+/// (`veri_raporu_sifreli_pdf_doner_ve_disa_aktarma_loglanir`: `is_encrypted`).
+fn indirme_kokleri(kod: &str) -> Vec<(String, bool)> {
+    let parcalar = fn_parcalari(kod);
+    let cagiriyor = |parca: &str, ad: &str| {
+        // Tanımın kendisi (`fn ad(`) çağrı sayılmaz.
+        parca.match_indices(&format!("{ad}(")).any(|(i, _)| {
+            !parca[..i].trim_end().ends_with("fn")
+                && !parca[..i].chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_')
+        })
+    };
+    // Gecisli kapanis: baslik kuran ve sifreli_pdf'e ulasan fonksiyon kumeleri.
+    let mut baslik: Vec<bool> = parcalar.iter().map(|(_, _, p)| indirme_basligi_var(p)).collect();
+    let mut sifreli: Vec<bool> = parcalar.iter().map(|(_, _, p)| p.contains("sifreli_pdf")).collect();
+    loop {
+        let mut degisti = false;
+        for i in 0..parcalar.len() {
+            for j in 0..parcalar.len() {
+                if i != j && cagiriyor(parcalar[i].2, &parcalar[j].0) {
+                    if baslik[j] && !baslik[i] {
+                        baslik[i] = true;
+                        degisti = true;
+                    }
+                    if sifreli[j] && !sifreli[i] {
+                        sifreli[i] = true;
+                        degisti = true;
+                    }
+                }
+            }
+        }
+        if !degisti {
+            break;
+        }
+    }
+    parcalar
+        .iter()
+        .enumerate()
+        .filter(|&(i, (ad, _, _))| {
+            baslik[i]
+                && !parcalar.iter().enumerate().any(|(j, (_, _, p))| j != i && cagiriyor(p, ad))
+        })
+        .map(|(i, (ad, _, _))| (ad.clone(), sifreli[i]))
+        .collect()
+}
+
+/// Dosya indiren her uç ya şifreli PDF üretir ya da adıyla istisnadır.
+///
+/// # Bulgu (dal incelemesi I3)
+///
+/// Çekirdek ek indirmeyi `DisaAktarma` sayıyordu ama baytları şifresiz
+/// veriyordu — tasarım §10 ("dışa aktarılan her dosya şifreli") ile çelişki.
+/// Karar D3: ek indirme şifresiz kalır, ama bu bir **adlı** istisnadır ve
+/// sunucuda "`Content-Disposition` dönen her uç şifreli olmalı" kuralı artık
+/// çalıştırılabilir. Küme `server/src/routes/` dizininden türetilir: yarın
+/// eklenecek bir CSV/yedek/özet indirme ucu hiçbir şey yapılmadan kapsama
+/// girer.
+#[test]
+fn dosya_indiren_her_uc_sifreli_ya_da_adli_istisnadir() {
+    let kaynaklar = rota_kaynaklari();
+    let mut kokler: Vec<(String, String, bool)> = Vec::new();
+    for (ad, kaynak) in &kaynaklar {
+        for (isim, sifreli) in indirme_kokleri(&kod_satirlari(kaynak)) {
+            kokler.push((ad.clone(), isim, sifreli));
+        }
+    }
+
+    // ON KOSUL (totoloji engeli): tarayici bugunku iki indirme ucunu GERCEKTEN
+    // buluyor -- biri sifreli (yardimci zinciri uzerinden), biri istisna.
+    assert!(
+        kokler.iter().any(|(a, i, s)| a == "veri_raporu.rs" && i == "veri_raporu" && *s),
+        "veri raporu sifreli indirme ucu olarak taninmadi: {kokler:?}"
+    );
+
+    let mut ihlaller = Vec::new();
+    for (ad, isim, sifreli) in &kokler {
+        let istisna = SIFRESIZ_INDIRME_ISTISNALARI.contains(&(ad.as_str(), isim.as_str()));
+        if !sifreli && !istisna {
+            ihlaller.push(format!(
+                "{ad}::{isim}: dosya indiriyor ama yanitini `pdf::sifreli_pdf`'ten uretmiyor \
+                 ve SIFRESIZ_INDIRME_ISTISNALARI'nda yok (tasarim §10)"
+            ));
+        }
+        if *sifreli && istisna {
+            ihlaller.push(format!(
+                "{ad}::{isim}: artik sifreli -- SIFRESIZ_INDIRME_ISTISNALARI girdisi bayat, silinmeli"
+            ));
+        }
+    }
+    // Bayatlik: listedeki her handler gercekten var ve gercekten indirme
+    // basligi kuruyor.
+    for (ad, isim) in SIFRESIZ_INDIRME_ISTISNALARI {
+        if !kokler.iter().any(|(a, i, _)| a == ad && i == isim) {
+            ihlaller.push(format!(
+                "SIFRESIZ_INDIRME_ISTISNALARI bayat: {ad}::{isim} yok ya da artik \
+                 Content-Disposition kurmuyor"
+            ));
+        }
+    }
+    assert!(ihlaller.is_empty(), "{} ihlal:\n{}", ihlaller.len(), ihlaller.join("\n"));
+}
+
+/// Tarayıcının kendisi, dosyalardan bağımsız: geçişli yardımcı, kök tespiti,
+/// `FnOnce` hecesi, `"attachment` ile `attachments::` ayrımı.
+#[test]
+fn indirme_koku_tarayicisi_yardimci_zincirini_izler() {
+    let kod = [
+        "use psikolog_core::store::attachments::liste;",
+        "fn baslik_koy(y: &mut R) { y.insert(header::CONTENT_DISPOSITION, v); }",
+        "fn akis<U: FnOnce()>(u: U) -> impl Future { async move { baslik_koy(&mut y) } }",
+        "pub async fn sifreli_uc(s: S) -> R { akis(sifreli_pdf) }",
+        "pub async fn duz_uc(s: S) -> R { let _ = \"attachment; filename=x\"; }",
+        "pub async fn liste_uc(s: S) -> R { liste(&c) }",
+    ]
+    .join("\n");
+    let mut kokler = indirme_kokleri(&kod);
+    kokler.sort();
+    assert_eq!(kokler, [("duz_uc".to_string(), false), ("sifreli_uc".to_string(), true)]);
+}
+
+// =====================================================================
+// PLAN 4 GOREV 6 -- DANISAN VERI RAPORU (sunucuda, AES-256 sifreli PDF)
 // =====================================================================
 //
-// Bulgu: rapor tamamen ISTEMCIDE uretiliyor ve sunucuya giden tek istek
-// `GET /api/danisanlar/{id}/notlar` idi. O yol `goruntuleme` yazip 5
-// dakikalik pencerede BIRLESIYOR; seans paneli ayni danisan icin acilmissa
-// disa aktarim SIFIR satir uretiyordu. Olculen log su idi:
+// Plan 3'teki `POST /api/danisanlar/{id}/rapor-kaydi` ucu KALDIRILDI: rapor
+// istemcide uretiliyor, sunucu yalnizca "haberdar ediliyordu". Artik raporu
+// ureten uc nokta onu loglar. Kaldirilan testlerin karsiliklari:
 //
-//   ["goruntuleme|progress_note|liste:1", "duzenleme|progress_note|1",
-//    "ekleme|appointment|1", "ekleme|client|1"]   -- hic `disa_aktarma` yok
-//
-// Asagidaki testler tam olarak o olcumu HTTP seviyesinde tekrarlar.
+// - rapor_kaydi_uc_noktasi_disa_aktarma_satiri_yazar
+//     -> veri_raporu_sifreli_pdf_doner_ve_disa_aktarma_loglanir
+// - ard_arda_iki_disa_aktarim_iki_satir_yazar
+//     -> ayni_rapor_ikinci_kez_alininca_ikinci_log_satiri_yazilir
+// - olmayan_danisan_icin_rapor_kaydi_404_doner_ve_log_yazmaz
+//     -> olmayan_danisan_icin_veri_raporu_404_doner_ve_log_yazmaz
+// - kilitliyken_rapor_kaydi_401_doner_ve_log_yazmaz
+//     -> kilitliyken_veri_raporu_401_ve_log_yazilmaz
+// - (istemcideki "once kayit, sonra rapor" sirasi)
+//     -> kayit_yazilamazsa_500_doner_ve_pdf_verilmez
 
 /// Oturumun anahtariyla `audit_log`'u okur ve `eylem|varlik|varlik_id`
-/// uclusunu dondurur. Testler dogrudan veriye bakar, yanit sekline degil.
+/// uclusunu dondurur (en yeni once). Testler dogrudan veriye bakar.
 async fn log_satirlari(s: &AppState) -> Vec<String> {
     use psikolog_server::guard::acik_baglanti_ile;
     let conn = acik_baglanti_ile(s, std::time::Instant::now())
         .expect("log okumak icin oturum acik olmali");
-    psikolog_core::store::audit::son_kayitlar(&conn, 200)
+    psikolog_core::store::audit::son_kayitlar(&conn, 100_000)
         .unwrap()
         .into_iter()
         .map(|k| format!("{}|{}|{}", k.eylem, k.varlik, k.varlik_id))
         .collect()
 }
 
-#[tokio::test]
-async fn rapor_kaydi_uc_noktasi_disa_aktarma_satiri_yazar() {
-    let (_d, s, cid, rid) = dolu_state().await;
+/// Denetim kaydinin TUM alanlari (zaman, eylem, varlik, kimlik, cihaz,
+/// ayrinti) tek metin olarak -- sizinti taramasi icin. En yeni satir once.
+async fn audit_dokumu(s: &AppState) -> String {
+    use psikolog_server::guard::acik_baglanti_ile;
+    let conn = acik_baglanti_ile(s, std::time::Instant::now()).expect("oturum acik olmali");
+    psikolog_core::store::audit::son_kayitlar(&conn, 100_000)
+        .unwrap()
+        .into_iter()
+        .map(|k| {
+            format!(
+                "{}|{}|{}|{}|{}|{:?}",
+                k.olay_zamani, k.eylem, k.varlik, k.varlik_id, k.cihaz, k.ayrinti
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
-    // Arayuzun disa aktarimdan ONCE yaptigi seyi birebir taklit et: seans
-    // paneli ayni danisan icin acilmis (not listesi cekilmis) olsun. Bulgu
-    // TAM OLARAK bu durumda ortaya cikiyordu.
+const RAPOR_PAROLASI: &str = "danisan-parolasi-1";
+/// Istemcinin yerel gunu (Gorev 7). Sunucunun saatinden BILEREK farkli bir
+/// gun: dosya adi sunucu saatinden uretilseydi esitlik tutmazdi.
+const RAPOR_GUNU: &str = "2031-01-02";
+
+async fn rapor_iste(s: &AppState, cid: i64, govde: &str) -> (StatusCode, HeaderMap, Vec<u8>) {
+    cagir_ham(
+        s,
+        "POST",
+        &format!("/api/danisanlar/{cid}/veri-raporu"),
+        &[("content-type", "application/json")],
+        govde.as_bytes().to_vec(),
+    )
+    .await
+}
+
+async fn rapor_parolayla(
+    s: &AppState,
+    cid: i64,
+    parola: &str,
+) -> (StatusCode, HeaderMap, Vec<u8>) {
+    rapor_iste(s, cid, &json!({ "parola": parola, "bugun": RAPOR_GUNU }).to_string()).await
+}
+
+fn hata_metni(govde: &[u8]) -> String {
+    let j: serde_json::Value = serde_json::from_slice(govde)
+        .unwrap_or_else(|_| panic!("govde JSON degil: {}", String::from_utf8_lossy(govde)));
+    j["hata"].as_str().unwrap_or_else(|| panic!("`hata` alani yok: {j}")).to_string()
+}
+
+fn pdf_mi(govde: &[u8]) -> bool {
+    String::from_utf8_lossy(govde).contains("%PDF")
+}
+
+/// PDF'i verilen parolayla cozup metnini cikarir. Yanlis parola `Err`.
+fn pdf_metni(pdf: &[u8], parola: &str) -> Result<String, String> {
+    let doc =
+        lopdf::Document::load_mem_with_options(pdf, lopdf::LoadOptions::with_password(parola))
+            .map_err(|e| e.to_string())?;
+    let sayfalar: Vec<u32> = doc.get_pages().keys().copied().collect();
+    doc.extract_text(&sayfalar).map_err(|e| e.to_string())
+}
+
+#[tokio::test]
+async fn veri_raporu_sifreli_pdf_doner_ve_disa_aktarma_loglanir() {
+    let (_d, s, cid, rid) = dolu_state().await;
     cagir(
         &s,
         "PUT",
         &format!("/api/randevular/{rid}/not"),
-        Some(json!({"sablon":"dap","icerik":"seans notu"})),
+        Some(json!({"sablon":"dap","icerik":"RESMI-KANARYA"})),
     )
     .await;
+    cagir(
+        &s,
+        "PUT",
+        &format!("/api/randevular/{rid}/ozel-not"),
+        Some(json!({"icerik":"OZEL-KANARYA"})),
+    )
+    .await;
+    // Plan 4 Gorev 7: ek ADI rapora girer (danisanin kendi verisi), ek
+    // ICERIGI girmez. Ek, log on kosulundan ONCE yukleniyor.
+    ek_yukle(&s, cid, "EK-ADI-KANARYA.pdf", b"EK-ICERIK-KANARYA").await;
+    // Plan 3'teki C1 bulgusunun kosulu: seans paneli ayni danisan icin
+    // acilmis (not listesi `goruntuleme` yazmis). Disa aktarim satiri bu
+    // satirin arkasina saklanmamali.
     cagir(&s, "GET", &format!("/api/danisanlar/{cid}/notlar?limit=200"), None).await;
+    let once = log_satirlari(&s).await;
+    assert!(!once.iter().any(|x| x.starts_with("disa_aktarma")), "on kosul: {once:?}");
 
-    // ON KOSUL -- bulgunun kendisi: not listesi hicbir `disa_aktarma`
-    // satiri uretmez. Bu iddia olmasa asagidaki artı yon "zaten oyleydi"
-    // ile tatmin olabilirdi.
-    let panel_sonrasi = log_satirlari(&s).await;
+    let (kod, basliklar, govde) = rapor_parolayla(&s, cid, RAPOR_PAROLASI).await;
+    assert_eq!(kod, StatusCode::OK, "{}", String::from_utf8_lossy(&govde));
+    assert_eq!(basliklar.get("content-type").unwrap(), "application/pdf");
+    let ek = basliklar.get("content-disposition").expect("content-disposition").to_str().unwrap();
+    assert!(ek.starts_with("attachment;"), "{ek}");
+    let dosya = ek.split("filename=\"").nth(1).and_then(|p| p.strip_suffix('"')).expect(ek);
+    assert_eq!(dosya, format!("danisan-veri-raporu-{RAPOR_GUNU}.pdf"), "istemcinin yerel gunu");
+    assert!(!ek.contains("Ayse") && !ek.contains("Yilmaz"), "dosya adinda danisan adi: {ek}");
+    assert_eq!(basliklar.get("x-content-type-options").unwrap(), "nosniff");
+
+    // Sifreli: ham baytlarda kanarya yok VE sifreleme sozlugu var. Ham bayt
+    // taramasi tek basina yetmez: icerik akisi sifresiz dosyada da glif
+    // kimligi olarak durur (bkz. `pdf.rs::baslik_ustverisi_de_ham_...`).
+    assert!(govde.starts_with(b"%PDF-"));
+    assert!(!String::from_utf8_lossy(&govde).contains("RESMI-KANARYA"));
+    assert!(lopdf::Document::load_mem(&govde).unwrap().is_encrypted(), "PDF sifreli olmali");
+
+    let metin = pdf_metni(&govde, RAPOR_PAROLASI).expect("dogru parolayla acilmali");
+    // ARTI YON: yoksa "ozel yok" iddiasi bos bir raporla da saglanirdi.
+    assert!(metin.contains("RESMI-KANARYA"), "resmi not raporda olmali: {metin}");
+    assert!(metin.contains("Ayse Yilmaz"), "danisan adi raporda olmali");
+    assert!(!metin.contains("OZEL-KANARYA"), "ozel not rapora SIZDI: {metin}");
+    assert!(metin.contains("EK-ADI-KANARYA.pdf"), "ek adi raporda olmali: {metin}");
+    assert!(!metin.contains("EK-ICERIK-KANARYA"), "ek icerigi rapora gomulmemeli: {metin}");
+    assert!(!String::from_utf8_lossy(&govde).contains("EK-ADI-KANARYA"), "ek adi sifreli olmali");
     assert!(
-        !panel_sonrasi.iter().any(|x| x.starts_with("disa_aktarma")),
-        "on kosul: not listesi disa_aktarma yazmaz -- {panel_sonrasi:?}"
+        pdf_metni(&govde, "yanlis-parola-9").map_or(true, |m| !m.contains("RESMI-KANARYA")),
+        "yanlis parola icerigi acmamali"
     );
-
-    let (kod, _) = cagir(&s, "POST", &format!("/api/danisanlar/{cid}/rapor-kaydi"), None).await;
-    assert_eq!(kod, StatusCode::OK);
-
-    let rapor_sonrasi = log_satirlari(&s).await;
-    assert!(
-        rapor_sonrasi.contains(&format!("disa_aktarma|client|{cid}")),
-        "veri raporu disa aktarimi silinemez kayitta gorunmeli -- {rapor_sonrasi:?}"
-    );
-    assert_eq!(
-        rapor_sonrasi.len(),
-        panel_sonrasi.len() + 1,
-        "TAM OLARAK bir satir eklenmeli (ne sifir, ne iki)"
-    );
-}
-
-#[tokio::test]
-async fn ard_arda_iki_disa_aktarim_iki_satir_yazar() {
-    // `attachments::icerik_getir` ile ayni gerekce: birlestirilseydi iki
-    // disa aktarimdan biri gorunmez olurdu. `goruntuleme` yolundan farkli
-    // oldugunu kanitlayan sey bu testtir.
-    let (_d, s, cid, _rid) = dolu_state().await;
-    let once = log_satirlari(&s).await.len();
-
-    for _ in 0..2 {
-        let (kod, _) = cagir(&s, "POST", &format!("/api/danisanlar/{cid}/rapor-kaydi"), None).await;
-        assert_eq!(kod, StatusCode::OK);
-    }
 
     let sonra = log_satirlari(&s).await;
-    assert_eq!(sonra.len(), once + 2, "her disa aktarim ayri satir yazmali");
-    assert_eq!(
-        sonra.iter().filter(|x| *x == &format!("disa_aktarma|client|{cid}")).count(),
-        2
-    );
+    assert_eq!(sonra.len(), once.len() + 1, "TAM OLARAK bir satir: {sonra:?}");
+    assert_eq!(sonra[0], format!("disa_aktarma|client|{cid}"), "en ustte disa aktarma satiri");
+    let dokum = audit_dokumu(&s).await;
+    assert!(dokum.lines().next().unwrap().ends_with("|None"), "ayrinti bos olmali: {dokum}");
+}
+
+/// Dal incelemesi karari D1: raporda "Randevular ve odemeler" bolumu --
+/// notsuz ve iptal edilmis randevular da, ucret `1.234,50 TL` bicimiyle,
+/// odendi bilgisiyle. Baskasinin randevusu yok, tasinan randevu yeni
+/// danisanda, ozel not hala yok. Olcum COZULMUS PDF metni uzerinde.
+#[tokio::test]
+async fn veri_raporu_randevular_ve_odemeler_bolumunu_icerir() {
+    let (_d, s) = kurulu_state().await;
+    let cid = danisan_ekle(&s, "Ayse Yilmaz").await;
+    let baska = danisan_ekle(&s, "Mehmet Demir").await;
+    let randevu = |cid: i64, bas: &str, ucret: Option<i64>| {
+        let s = s.clone();
+        let bas = bas.to_string();
+        async move {
+            let (kod, r) = cagir(
+                &s,
+                "POST",
+                "/api/randevular",
+                Some(json!({
+                    "client_id": cid,
+                    "baslangic": bas,
+                    "bitis": format!("{}T23:59", &bas[..10]),
+                    "ucret": ucret,
+                })),
+            )
+            .await;
+            assert_eq!(kod, StatusCode::CREATED, "kurulum: {r}");
+            r[0]["id"].as_i64().unwrap()
+        }
+    };
+    let geldi = randevu(cid, "2026-01-10T09:30", Some(123450)).await;
+    let iptal = randevu(cid, "2026-02-11T10:00", Some(45000)).await;
+    randevu(cid, "2026-03-12T11:15", None).await;
+    let tasinan = randevu(baska, "2026-04-13T12:00", Some(98765)).await;
+    randevu(baska, "2026-05-14T13:00", Some(777700)).await;
+
+    for (id, yol, govde) in [
+        (geldi, "", json!({"durum":"geldi"})),
+        (geldi, "/odeme", json!({"odendi":true})),
+        (iptal, "", json!({"durum":"iptal"})),
+    ] {
+        let (kod, j) = cagir(&s, "PATCH", &format!("/api/randevular/{id}{yol}"), Some(govde)).await;
+        assert!(kod.is_success(), "kurulum: {kod} {j}");
+    }
+    cagir(
+        &s,
+        "PUT",
+        &format!("/api/randevular/{iptal}/ozel-not"),
+        Some(json!({"icerik":"OZEL-KANARYA-RANDEVU"})),
+    )
+    .await;
+    let (kod, j) = cagir(
+        &s,
+        "PUT",
+        &format!("/api/randevular/{tasinan}"),
+        Some(json!({
+            "client_id": cid,
+            "baslangic": "2026-04-13T12:00",
+            "bitis": "2026-04-13T23:59",
+            "ucret": 98765,
+        })),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::OK, "kurulum: tasima {j}");
+
+    let (kod, _b, govde) = rapor_parolayla(&s, cid, RAPOR_PAROLASI).await;
+    assert_eq!(kod, StatusCode::OK, "{}", String::from_utf8_lossy(&govde));
+    let metin = pdf_metni(&govde, RAPOR_PAROLASI).expect("dogru parolayla acilmali");
+    // PDF metin cikarimi satir sonlarini/bosluklari degistirebilir; iddialar
+    // bosluklar atilmis metin uzerinde.
+    let sade: String = metin.chars().filter(|c| !c.is_whitespace()).collect();
+    let icerir = |parca: &str| {
+        let p: String = parca.chars().filter(|c| !c.is_whitespace()).collect();
+        sade.contains(&p)
+    };
+    assert!(icerir("Randevular ve ödemeler (4)"), "{metin}");
+    for satir in [
+        "10.01.2026 09:30 · Geldi · Ücret: 1.234,50 TL · Ödendi: Evet",
+        "11.02.2026 10:00 · İptal · Ücret: 450,00 TL · Ödendi: Hayır",
+        "12.03.2026 11:15 · Planlandı · Ücret girilmemiş · Ödendi: Hayır",
+        "13.04.2026 12:00 · Planlandı · Ücret: 987,65 TL · Ödendi: Hayır",
+    ] {
+        assert!(icerir(satir), "`{satir}` raporda yok:\n{metin}");
+    }
+    assert!(!icerir("7.777,00 TL") && !icerir("14.05.2026"), "baskasinin randevusu: {metin}");
+    assert!(!icerir("OZEL-KANARYA-RANDEVU"), "ozel not rapora SIZDI: {metin}");
+
+    // Tasinan randevu eski danisanin raporundan cikti.
+    let (kod, _b, govde) = rapor_parolayla(&s, baska, RAPOR_PAROLASI).await;
+    assert_eq!(kod, StatusCode::OK);
+    let b_metin: String = pdf_metni(&govde, RAPOR_PAROLASI)
+        .unwrap()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    assert!(b_metin.contains("Randevularveödemeler(1)"), "{b_metin}");
+    assert!(!b_metin.contains("987,65TL") && b_metin.contains("7.777,00TL"), "{b_metin}");
+}
+
+/// Gorev 7: dosya adindaki tarih ISTEMCININ yerel gunudur (duvar saati
+/// sozlesmesi; emsal `saklama-suresi-dolanlar?bugun=`). Iki farkli gun:
+/// sunucunun kendi gunune donen bir uygulama ikisini birden tutturamaz.
+#[tokio::test]
+async fn dosya_adi_istemcinin_gonderdigi_yerel_gundur() {
+    let (_d, s, cid, _rid) = dolu_state().await;
+    for gun in ["2026-09-09", "2019-12-31"] {
+        let govde = json!({ "parola": RAPOR_PAROLASI, "bugun": gun }).to_string();
+        let (kod, basliklar, yanit) = rapor_iste(&s, cid, &govde).await;
+        assert_eq!(kod, StatusCode::OK, "{}", String::from_utf8_lossy(&yanit));
+        assert_eq!(
+            basliklar.get("content-disposition").unwrap(),
+            &format!("attachment; filename=\"danisan-veri-raporu-{gun}.pdf\""),
+        );
+    }
+}
+
+/// Gecersiz gun `400 {"hata"}`: PDF uretilmez, log satiri yazilmaz, deger
+/// basliga yansimaz (baslik enjeksiyonu denemesi dahil).
+#[tokio::test]
+async fn gecersiz_bugun_400_doner_rapor_uretilmez_log_yazilmaz() {
+    let (_d, s, cid, _rid) = dolu_state().await;
+    let once = log_satirlari(&s).await.len();
+    for kotu in ["2026-02-30", "2026-9-9", "", "2026-09-09\r\nX-Enjekte: 1", "../x"] {
+        let govde = json!({ "parola": RAPOR_PAROLASI, "bugun": kotu }).to_string();
+        let (kod, basliklar, yanit) = rapor_iste(&s, cid, &govde).await;
+        assert_eq!(kod, StatusCode::BAD_REQUEST, "{kotu:?}");
+        assert_eq!(
+            hata_metni(&yanit),
+            "Rapor tarihi YYYY-AA-GG biçiminde geçerli bir gün olmalı.",
+            "{kotu:?}"
+        );
+        assert!(!pdf_mi(&yanit) && basliklar.get("content-disposition").is_none(), "{kotu:?}");
+        assert!(basliklar.get("x-enjekte").is_none());
+    }
+    assert_eq!(log_satirlari(&s).await.len(), once, "red log satiri birakmamali");
 }
 
 #[tokio::test]
-async fn olmayan_danisan_icin_rapor_kaydi_404_doner_ve_log_yazmaz() {
-    // Uydurma bir kimlikle atilan istek, silinemez loga disaridan
-    // tetiklenebilir bir gurultu satiri dusurmemeli (`seriyi_sil` dersi).
-    let (_d, s, _cid, _rid) = dolu_state().await;
+async fn ayni_rapor_ikinci_kez_alininca_ikinci_log_satiri_yazilir() {
+    let (_d, s, cid, _rid) = dolu_state().await;
+    let once = log_satirlari(&s).await.len();
+    for _ in 0..2 {
+        let (kod, _, govde) = rapor_parolayla(&s, cid, RAPOR_PAROLASI).await;
+        assert_eq!(kod, StatusCode::OK);
+        assert!(govde.starts_with(b"%PDF-"));
+    }
+    let sonra = log_satirlari(&s).await;
+    assert_eq!(sonra.len(), once + 2, "HerCagri: iki istek iki satir -- {sonra:?}");
+    assert_eq!(sonra.iter().filter(|x| **x == format!("disa_aktarma|client|{cid}")).count(), 2);
+}
+
+#[tokio::test]
+async fn ana_parola_rapor_parolasi_olarak_reddedilir_ve_log_yazilmaz() {
+    let (_d, s, cid, _rid) = dolu_state().await;
     let once = log_satirlari(&s).await.len();
 
-    let (kod, json) = cagir(&s, "POST", "/api/danisanlar/9999/rapor-kaydi", None).await;
-    assert_eq!(kod, StatusCode::NOT_FOUND);
-    assert!(json.get("hata").is_some());
+    // `kurulu_state`in ana parolasi: "gizliparola".
+    let (kod, basliklar, govde) = rapor_parolayla(&s, cid, "gizliparola").await;
+    assert_eq!(kod, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        hata_metni(&govde),
+        "Rapor için ana parolanızı kullanmayın; danışana vereceğiniz ayrı bir parola seçin."
+    );
+    assert!(!pdf_mi(&govde) && basliklar.get("content-disposition").is_none());
+    assert_eq!(log_satirlari(&s).await.len(), once, "red log satiri birakmamali");
 
-    assert_eq!(log_satirlari(&s).await.len(), once, "404 log satiri birakmamali");
+    // TERS YON: ana parolaya BENZEYEN ama farkli bir parola reddedilmez --
+    // yoksa her seyi reddeden bir kontrol de bu testi gecerdi.
+    let (kod, _, govde) = rapor_parolayla(&s, cid, "gizliparolA").await;
+    assert_eq!(kod, StatusCode::OK, "{}", String::from_utf8_lossy(&govde));
+    assert!(govde.starts_with(b"%PDF-"));
 }
 
 #[tokio::test]
-async fn kilitliyken_rapor_kaydi_401_doner_ve_log_yazmaz() {
-    // Fail-closed'un sunucu tarafi: kilitli oturumda kayit YAZILAMAZ,
-    // dolayisiyla (arayuzdeki siralama geregi) disa aktarim da yapilamaz.
+async fn kisa_parola_400_sinirdaki_200() {
     let (_d, s, cid, _rid) = dolu_state().await;
+    let once = log_satirlari(&s).await.len();
+    // "şşşşşşş": 7 karakter, 14 bayt -- bayt sayan bir kontrol bunu gecirirdi.
+    for kisa in ["1234567", "şşşşşşş"] {
+        let (kod, _, govde) = rapor_parolayla(&s, cid, kisa).await;
+        assert_eq!(kod, StatusCode::BAD_REQUEST, "{kisa}");
+        assert_eq!(hata_metni(&govde), "Rapor parolası en az 8 karakter olmalı.");
+    }
+    assert_eq!(log_satirlari(&s).await.len(), once);
+    for sinirda in ["12345678", "şşşşşşşş"] {
+        let (kod, _, govde) = rapor_parolayla(&s, cid, sinirda).await;
+        assert_eq!(kod, StatusCode::OK, "{sinirda}: {}", String::from_utf8_lossy(&govde));
+        assert!(pdf_metni(&govde, sinirda).unwrap().contains("Ayse Yilmaz"));
+    }
+}
+
+#[tokio::test]
+async fn kilitliyken_veri_raporu_401_ve_log_yazilmaz() {
+    let (_d, s, cid, rid) = dolu_state().await;
+    cagir(
+        &s,
+        "PUT",
+        &format!("/api/randevular/{rid}/not"),
+        Some(json!({"sablon":"dap","icerik":"KILITLI-KANARYA"})),
+    )
+    .await;
     let once = log_satirlari(&s).await.len();
 
     kilitle(&s).await;
-    let (kod, _) = cagir(&s, "POST", &format!("/api/danisanlar/{cid}/rapor-kaydi"), None).await;
+    let (kod, basliklar, govde) = rapor_parolayla(&s, cid, RAPOR_PAROLASI).await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED);
+    assert!(!pdf_mi(&govde), "kilitliyken PDF donmemeli");
+    assert!(!String::from_utf8_lossy(&govde).contains("KILITLI-KANARYA"));
+    assert!(basliklar.get("content-disposition").is_none());
+    // Kapi govde ayristirmasindan ONCE: bozuk govde de 401 (400 degil).
+    let (kod, _, _) = rapor_iste(&s, cid, "{bozuk").await;
     assert_eq!(kod, StatusCode::UNAUTHORIZED);
 
     kilit_ac(&s).await;
     let sonra = log_satirlari(&s).await;
-    assert!(
-        !sonra.iter().any(|x| x.starts_with("disa_aktarma")),
-        "kilitliyken atilan istek disa_aktarma satiri birakmamali -- {sonra:?}"
-    );
-    // `kilitle`/`kilit_ac` kendi `cikis`/`giris` satirlarini yaziyor;
-    // olculen sey disa_aktarma satirinin YOKLUGU ve toplamın o iki
-    // oturum satiri disinda buyumemesidir.
+    assert!(!sonra.iter().any(|x| x.starts_with("disa_aktarma")), "{sonra:?}");
     assert_eq!(sonra.len(), once + 2, "yalnizca cikis + giris satirlari eklenmeli");
+}
+
+#[tokio::test]
+async fn olmayan_danisan_icin_veri_raporu_404_doner_ve_log_yazmaz() {
+    let (_d, s, _cid, _rid) = dolu_state().await;
+    let once = log_satirlari(&s).await.len();
+    let (kod, _, govde) = rapor_parolayla(&s, 9999, RAPOR_PAROLASI).await;
+    assert_eq!(kod, StatusCode::NOT_FOUND);
+    // Bilinmeyen yol da `404 {hata}` doner; mesaj ikisini ayirir.
+    assert_eq!(hata_metni(&govde), "Kayıt bulunamadı.");
+    assert_eq!(log_satirlari(&s).await.len(), once, "404 log satiri birakmamali");
+}
+
+/// Fail-closed: denetim satiri yazilamazsa rapor VERILMEZ. Kaldirilan
+/// istemci tarafi "once kayit, sonra rapor" sirasinin sunucudaki karsiligi.
+#[tokio::test]
+async fn kayit_yazilamazsa_500_doner_ve_pdf_verilmez() {
+    let (_d, s, cid, _rid) = dolu_state().await;
+    // On kosul: ayni durumda rapor GERCEKTEN uretilebiliyor.
+    let (kod, _, govde) = rapor_parolayla(&s, cid, RAPOR_PAROLASI).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert!(pdf_mi(&govde));
+
+    {
+        use psikolog_server::guard::acik_baglanti_ile;
+        let conn = acik_baglanti_ile(&s, std::time::Instant::now()).unwrap();
+        conn.execute_batch("DROP TABLE audit_log").unwrap();
+    }
+
+    let (kod, basliklar, govde) = rapor_parolayla(&s, cid, RAPOR_PAROLASI).await;
+    assert_eq!(kod, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        hata_metni(&govde),
+        "Dışa aktarım denetim kaydına yazılamadı; rapor verilmedi."
+    );
+    assert!(!pdf_mi(&govde), "kayit yazilamadiysa PDF baytlari donmemeli");
+    assert!(basliklar.get("content-disposition").is_none());
+}
+
+/// `rapor_akisi`'ni uc noktanin yaptigi gibi cagirir: once gercek kapi,
+/// sonra verilen PDF ureticisiyle akis. Yanit `(kod, govde)` olarak.
+async fn akisla_rapor<U>(s: &AppState, cid: i64, pdf_uret: U) -> (StatusCode, Vec<u8>)
+where
+    U: FnOnce(
+            &psikolog_core::pdf::RaporIcerigi,
+            &str,
+        ) -> Result<Vec<u8>, psikolog_core::pdf::PdfHatasi>
+        + Send
+        + 'static,
+{
+    use axum::response::IntoResponse;
+    let conn = psikolog_server::guard::acik_baglanti(s).expect("on kosul: kapi acik olmali");
+    let istek: psikolog_server::routes::veri_raporu::RaporIstegi =
+        serde_json::from_value(json!({ "parola": RAPOR_PAROLASI, "bugun": RAPOR_GUNU })).unwrap();
+    let yanit = psikolog_server::routes::veri_raporu::rapor_akisi(
+        s.clone(),
+        conn,
+        cid,
+        Ok(axum::Json(istek)),
+        pdf_uret,
+    )
+    .await
+    .into_response();
+    let kod = yanit.status();
+    let govde = yanit.into_body().collect().await.unwrap().to_bytes().to_vec();
+    (kod, govde)
+}
+
+/// M2: kapi yalnizca handler basindaydi; 400 notlu bir raporda uretim
+/// basladiktan 300 ms sonra `/kilitle` -> `200` + PDF olculmustu.
+///
+/// Sabit bekleme YOK: kilitleme uretimin ICINDEN, gercek `/api/kilitle`
+/// ucuyla yapiliyor (uretici engelleyici is parcaciginda calisir; kapi o an
+/// coktan gecilmistir). Uretici gercek `sifreli_pdf`'i cagirir -- yani PDF
+/// baytlari GERCEKTEN uretilmistir ve verilmemesi gereken tam da onlardir.
+#[tokio::test(flavor = "multi_thread")]
+async fn uretim_surerken_kilitlenirse_401_pdf_ve_log_yok() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    let (_d, s, cid, _rid) = dolu_state().await;
+
+    // ARTI YON / on kosul: kilitlemeyen ayni uretici 200 + PDF + tek satir
+    // verir. Yoksa asagidaki 401 akisin kendisinin bozuk olmasindan gelebilirdi.
+    let once = log_satirlari(&s).await.len();
+    let (kod, govde) = akisla_rapor(&s, cid, psikolog_core::pdf::sifreli_pdf).await;
+    assert_eq!(kod, StatusCode::OK, "{}", String::from_utf8_lossy(&govde));
+    assert!(govde.starts_with(b"%PDF-"));
+    assert_eq!(log_satirlari(&s).await.len(), once + 1, "on kosul: basarili akis bir satir yazar");
+
+    let once = log_satirlari(&s).await;
+    let calisti = Arc::new(AtomicBool::new(false));
+    let (s2, calisti2) = (s.clone(), calisti.clone());
+    let calisma_zamani = tokio::runtime::Handle::current();
+    let (kod, govde) = akisla_rapor(&s, cid, move |icerik, parola| {
+        let pdf = psikolog_core::pdf::sifreli_pdf(icerik, parola);
+        calisma_zamani.block_on(kilitle(&s2));
+        // On kosul: kilit GERCEKTEN uretim sirasinda kondu.
+        assert!(s2.acik_anahtar().is_none(), "uretim icinde oturum kilitlenmis olmali");
+        calisti2.store(true, Ordering::SeqCst);
+        pdf
+    })
+    .await;
+    assert!(calisti.load(Ordering::SeqCst), "on kosul: uretici calisti (ilk kapi gecildi)");
+    assert_eq!(kod, StatusCode::UNAUTHORIZED, "{}", String::from_utf8_lossy(&govde));
+    assert!(!pdf_mi(&govde), "kilitlenen oturuma PDF baytlari verilmemeli");
+    assert_eq!(hata_metni(&govde), "Oturum kilitli. Lütfen parolanızı girin.");
+
+    kilit_ac(&s).await;
+    let sonra = log_satirlari(&s).await;
+    let disa = |v: &[String]| v.iter().filter(|x| x.starts_with("disa_aktarma")).count();
+    assert_eq!(disa(&sonra), disa(&once), "verilmeyen rapor icin denetim satiri yazilmamali");
+    // Yalnizca cikis + giris satirlari eklendi.
+    assert_eq!(sonra.len(), once.len() + 2, "{sonra:?}");
+}
+
+/// M1: sira "uret -> yeniden dogrula -> kaydet -> ver". Uretim basarisizsa
+/// `500` ve denetim satiri YOK. Kayit uretimden once alinsaydi bu test
+/// kirilirdi (eskiden adimlar yer degistirince her sey yesildi).
+#[tokio::test]
+async fn veri_raporu_uretim_basarisizsa_500_ve_log_yazilmaz() {
+    let (_d, s, cid, _rid) = dolu_state().await;
+    let once = log_satirlari(&s).await.len();
+    let (kod, govde) = akisla_rapor(&s, cid, |_icerik, _parola| {
+        Err(psikolog_core::pdf::PdfHatasi::Uretim("GIZLI-KUTUPHANE-METNI".into()))
+    })
+    .await;
+    assert_eq!(kod, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(hata_metni(&govde), "Rapor üretilemedi.");
+    assert!(!String::from_utf8_lossy(&govde).contains("GIZLI-KUTUPHANE"), "kutuphane metni sizdi");
+    assert_eq!(log_satirlari(&s).await.len(), once, "uretilmeyen rapor loga girmemeli");
+
+    // TERS YON: ayni yardimci gercek ureticiyle satir YAZAR -- yoksa "satir
+    // yok" iddiasi hic yazmayan bir akisla da saglanirdi.
+    let (kod, _) = akisla_rapor(&s, cid, psikolog_core::pdf::sifreli_pdf).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(log_satirlari(&s).await.len(), once + 1);
+}
+
+/// Ana parola kontrolu YAPILAMAZSA rapor verilmez (fail-closed). Yalnizca
+/// `WrongSecret` rapora devam eder; anahtar kaydi okunup yapisal olarak
+/// gecerli gorunen ama KDF'i calistirilamayan bir kayit (`t_cost = 0`:
+/// `yapisal_gecerli_mi` yalnizca UST sinirlara bakar, Argon2 alt siniri
+/// reddeder) `CryptoError::Kdf` dondurur. Oturum acik kalir -- anahtar
+/// bellekte -- dolayisiyla kapi ve `keystore_durumu` geciliyor ve olculen
+/// dal gercekten `uret`'teki `Err(_)` koludur.
+#[tokio::test]
+async fn ana_parola_kontrolu_yapilamazsa_500_pdf_verilmez_log_yazilmaz() {
+    use psikolog_core::crypto::keyring::CryptoError;
+    use psikolog_core::store::keystore::{load, save, unlock_with_password};
+    use psikolog_server::state::KeystoreDurumu;
+
+    let (_d, s, cid, _rid) = dolu_state().await;
+    // On kosul: ayni durumda rapor GERCEKTEN uretilebiliyor.
+    let (kod, _, govde) = rapor_parolayla(&s, cid, RAPOR_PAROLASI).await;
+    assert_eq!(kod, StatusCode::OK, "{}", String::from_utf8_lossy(&govde));
+    let once = log_satirlari(&s).await.len();
+
+    let mut ks = load(&s.keystore_yolu()).unwrap();
+    ks.password.kdf.t_cost = 0;
+    save(&ks, &s.keystore_yolu()).unwrap();
+    // On kosullar: kayit handler'in `let-else` dalina DUSMUYOR (Var) ve
+    // kilit acma denemesi "yanlis parola" DEGIL, baska bir hata.
+    let KeystoreDurumu::Var(okunan) = s.keystore_durumu() else {
+        panic!("on kosul: bozulan kayit yine `Var` okunmali");
+    };
+    assert!(
+        matches!(unlock_with_password(&okunan, RAPOR_PAROLASI), Err(CryptoError::Kdf(_))),
+        "on kosul: ana parola kontrolu Kdf hatasiyla yapilamamali"
+    );
+
+    let (kod, basliklar, govde) = rapor_parolayla(&s, cid, RAPOR_PAROLASI).await;
+    assert_eq!(kod, StatusCode::INTERNAL_SERVER_ERROR, "{}", String::from_utf8_lossy(&govde));
+    assert_eq!(hata_metni(&govde), "Rapor üretilemedi.");
+    assert!(!pdf_mi(&govde) && basliklar.get("content-disposition").is_none());
+    assert_eq!(log_satirlari(&s).await.len(), once, "kontrol yapilamadiysa log satiri yok");
+}
+
+#[tokio::test]
+async fn bozuk_govde_turkce_json_hata_doner() {
+    let (_d, s, cid, _rid) = dolu_state().await;
+    for govde in [
+        "{bozuk",
+        "{}",
+        r#"{"parola": 12345678, "bugun": "2026-09-16"}"#,
+        "",
+        // Gorev 7: `bugun` zorunlu.
+        r#"{"parola": "danisan-parolasi-1"}"#,
+    ] {
+        let (kod, basliklar, yanit) = rapor_iste(&s, cid, govde).await;
+        assert_eq!(kod, StatusCode::BAD_REQUEST, "{govde}");
+        assert!(basliklar.get("content-type").unwrap().to_str().unwrap().contains("json"));
+        assert_eq!(hata_metni(&yanit), "İstek gövdesi eksik veya geçersiz.", "{govde}");
+    }
+}
+
+#[tokio::test]
+async fn parola_hicbir_log_satirinda_ve_hata_govdesinde_gecmez() {
+    let (_d, s, cid, rid) = dolu_state().await;
+    cagir(
+        &s,
+        "PUT",
+        &format!("/api/randevular/{rid}/not"),
+        Some(json!({"sablon":"dap","icerik":"x"})),
+    )
+    .await;
+    const GECERLI: &str = "SIZINTI-GECERLI-PAROLA-3K";
+    const KISA: &str = "SZN-7kr";
+    const BOZUK_GOVDEDE: &str = "SIZINTI-BOZUK-GOVDE-8M";
+    let parolalar = [GECERLI, KISA, BOZUK_GOVDEDE, "gizliparola"];
+
+    let mut yanitlar: Vec<(StatusCode, HeaderMap, Vec<u8>)> = vec![
+        rapor_parolayla(&s, cid, GECERLI).await,
+        rapor_parolayla(&s, 9999, GECERLI).await,
+        rapor_parolayla(&s, cid, KISA).await,
+        rapor_parolayla(&s, cid, "gizliparola").await,
+        rapor_iste(&s, cid, &format!("{{\"parola\": \"{BOZUK_GOVDEDE}\"")).await,
+        rapor_iste(&s, cid, &format!("{{\"parola\": [\"{BOZUK_GOVDEDE}\"]}}")).await,
+        // Gorev 7: gecersiz gun reddi de parolayi yansitmaz.
+        rapor_iste(&s, cid, &json!({ "parola": GECERLI, "bugun": "2026-02-30" }).to_string())
+            .await,
+    ];
+    // On kosul: her yol GERCEKTEN denendi (basari, 404, kisa, ana parola, iki
+    // bozuk govde) -- yoksa tarama bos yanitlar uzerinde saglanirdi.
+    let kodlar: Vec<u16> = yanitlar.iter().map(|(k, _, _)| k.as_u16()).collect();
+    assert_eq!(kodlar, [200, 404, 400, 400, 400, 400, 400]);
+
+    kilitle(&s).await;
+    yanitlar.push(rapor_parolayla(&s, cid, GECERLI).await);
+    kilit_ac(&s).await;
+
+    let dokum = audit_dokumu(&s).await;
+    assert!(dokum.contains("disa_aktarma|client"), "on kosul: dokum gercek satirlar icermeli");
+    for p in parolalar {
+        assert!(!dokum.contains(p), "parola denetim kaydina dustu: {p}");
+        for (kod, basliklar, govde) in &yanitlar {
+            assert!(
+                !String::from_utf8_lossy(govde).contains(p),
+                "{kod}: parola yanit govdesinde: {p}"
+            );
+            for (ad, deger) in basliklar {
+                assert!(
+                    !deger.to_str().unwrap_or("").contains(p),
+                    "{kod}: parola {ad} basliginda: {p}"
+                );
+            }
+        }
+    }
+
+    let istek: psikolog_server::routes::veri_raporu::RaporIstegi =
+        serde_json::from_str(&json!({ "parola": GECERLI, "bugun": "2026-09-16" }).to_string())
+            .unwrap();
+    assert_eq!(istek.parola, GECERLI, "on kosul: parola gercekten tipte");
+    assert!(!format!("{istek:?}").contains(GECERLI), "Debug parolayi basmamali");
+}
+
+/// Bir `Cargo.toml`'daki TEK `lopdf` bildiriminin surum dizgisi. Yorum
+/// satirlari elenir (kuralin kendisi yorumda geciyor); bildirim yoksa ya da
+/// birden fazlaysa test bos/yanlis bir esitlikle tatmin olmasin diye panik.
+fn lopdf_surumu(toml_yolu: &std::path::Path) -> String {
+    let metin = std::fs::read_to_string(toml_yolu)
+        .unwrap_or_else(|e| panic!("{} okunamadi: {e}", toml_yolu.display()));
+    let satirlar: Vec<&str> = metin
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with('#'))
+        .filter(|l| l.split('=').next().is_some_and(|ad| ad.trim() == "lopdf"))
+        .collect();
+    assert_eq!(satirlar.len(), 1, "{}: tam bir `lopdf` bildirimi olmali: {satirlar:?}", toml_yolu.display());
+    let deger = satirlar[0].split_once('=').unwrap().1.trim();
+    // Iki bicim: `lopdf = "=x"` ve `lopdf = { version = "=x", ... }`.
+    let surum_bolumu = match deger.find("version") {
+        Some(i) => &deger[i..],
+        None => deger,
+    };
+    let surum = surum_bolumu
+        .split('"')
+        .nth(1)
+        .unwrap_or_else(|| panic!("{}: lopdf surumu okunamadi: {deger}", toml_yolu.display()));
+    assert!(!surum.is_empty(), "{}: bos lopdf surumu", toml_yolu.display());
+    surum.to_string()
+}
+
+/// Bicim 13'un karsi ilaci: "test bagimliligi `lopdf` surumu `core`un
+/// sabitledigiyle ayni olmali" kurali eskiden yalnizca `server/Cargo.toml`
+/// yorumundaydi. Surumler ayrisirsa Cargo iki ayri `lopdf` derler ve HTTP
+/// testleri PDF'i **uretenden farkli** bir kutuphaneyle cozer -- sifreleme
+/// bicimi degisse bile testler eski okuyucuyla yesil kalabilirdi. Dizgi
+/// esitligi (`=` sabitlemesi dahil) iddia edilir; `"0.45"` gibi uyumlu ama
+/// sabitlenmemis bir yazim da kirilir.
+#[test]
+fn lopdf_test_surumu_core_ile_ayni() {
+    let kok = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let sunucu = lopdf_surumu(&kok.join("Cargo.toml"));
+    let cekirdek = lopdf_surumu(&kok.join("../core/Cargo.toml"));
+    assert!(cekirdek.starts_with('='), "on kosul: core lopdf surumunu sabitliyor: {cekirdek}");
+    assert_eq!(sunucu, cekirdek, "server dev-dependency lopdf surumu core ile ayni olmali");
+}
+
+#[tokio::test]
+async fn eski_rapor_kaydi_ucu_artik_yok() {
+    let (_d, s, cid, _rid) = dolu_state().await;
+    let once = log_satirlari(&s).await.len();
+    let (kod, json) =
+        cagir(&s, "POST", &format!("/api/danisanlar/{cid}/rapor-kaydi"), None).await;
+    assert_eq!(kod, StatusCode::NOT_FOUND);
+    assert_eq!(json["hata"], "Bilinmeyen API yolu.", "rota kalkmis olmali, danisan 404'u degil");
+    assert_eq!(log_satirlari(&s).await.len(), once);
 }
 
 // =====================================================================

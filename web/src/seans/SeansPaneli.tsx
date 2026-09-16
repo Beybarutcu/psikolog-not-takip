@@ -4,6 +4,7 @@ import type { Randevu } from '../takvim/HaftalikTakvim'
 import { AYLAR } from '../takvim/hafta'
 import { GecmisNotlar } from './GecmisNotlar'
 import { NotEditoru } from './NotEditoru'
+import { SeansAltSatiri } from './SeansAltSatiri'
 import { sablonMetni } from './sablon'
 
 /**
@@ -51,6 +52,14 @@ import { sablonMetni } from './sablon'
  * (yalnızca taslakta kalır; kilit açılmadan kapatılan bir sekmede gider).
  * Bkz. `NotEditoru.test.tsx` içindeki "prop degisimi `key` yolunun yerini
  * TUTMAZ".
+ *
+ * # Alt satır: durum, ücret, ödendi (Plan 4 Görev 2)
+ *
+ * Tasarım §6: ödeme takibi ayrı bir modül değil, seansın alt satırı. Durum
+ * düğmeleri buraya `RandevuPaneli`'nden TAŞINDI (iki panel aynı anda açık).
+ * Satırın kendisi `SeansAltSatiri`'nda: not yüklenemediğinde de (panel
+ * açılmadığında) `AnaEkran` aynı satırı gösteriyor — bkz. o dosyanın
+ * başlığı.
  */
 
 type NotKaydi = { sablon: string; icerik: string }
@@ -83,6 +92,18 @@ type Props = {
   /** Özel not yüklenemediyse yeniden dene. */
   onOzelYenidenDene?: () => void
   onKapat: () => void
+  /**
+   * Alt satırdaki durum düğmesi (`geldi` / `gelmedi` / `iptal`). Seçili
+   * düğme `randevu.durum`'dan okunur, yerel kopyadan DEĞİL: çağıran taraf
+   * başarıda seçili randevunun kopyasını aynı kimlikle tazeliyor ve panel
+   * yeniden mount edilmiyor.
+   */
+  onDurumDegis: (durum: string) => Promise<void>
+  /**
+   * Alt satırdaki "Ödendi" kutusu. Reddedilirse kutu eski hâline döner ve
+   * hata `role="alert"` ile duyurulur.
+   */
+  onOdemeDegis: (odendi: boolean) => Promise<void>
 }
 
 const OZEL_UYARISI = 'Bu notlar dışa aktarımlara ve danışan raporuna dahil edilmez.'
@@ -120,6 +141,8 @@ export function SeansPaneli({
   onOzelSekme,
   onOzelYenidenDene,
   onKapat,
+  onDurumDegis,
+  onOdemeDegis,
 }: Props) {
   const [sekme, setSekme] = useState<'resmi' | 'ozel'>('resmi')
   const ozelAcik = sekme === 'ozel'
@@ -325,6 +348,15 @@ export function SeansPaneli({
           )}
         </div>
       </div>
+
+      {/* Alt satır (tasarım §6): "geldi/gelmedi/iptal + ücret + ödendi" tek
+          satırda. Ödeme takibi ayrı bir modül değil, seansın parçası. `key`
+          gerekmiyor: panelin kendisi seans kimliğiyle key'li. */}
+      <SeansAltSatiri
+        randevu={randevu}
+        onDurumDegis={onDurumDegis}
+        onOdemeDegis={onOdemeDegis}
+      />
     </section>
   )
 }

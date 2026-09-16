@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { takvimApi, YetkisizHata } from '../../api'
 import type { Randevu } from '../../takvim/HaftalikTakvim'
 import { haftaGunleri, haftaninBasi, yerelZaman } from '../../takvim/hafta'
+import { yazmaSaatiOlustur } from './yazmaSaati'
 
 /**
  * Görünen haftanın randevuları ve o listeye bağlı SEÇİM.
@@ -51,6 +52,14 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
   // `haftaninBasi` saati sıfırladığı için hafta başına tek bir değer.
   const bekleyenSeans = useRef<{ id: number; hafta: number } | null>(null)
 
+  // # Uçuştaki yazma × liste yüklemesi (Görev 2 inceleme M7)
+  //
+  // `durumDegis`/`odemeDegis` listeye YEREL yazıyor; yazmadan önce başlayıp
+  // sonra dönen bir hafta GET'i yerel değeri ezerdi. Mantıksal saat
+  // `yazmaSaati.ts`te (gerekçe ve ölçen testler orada); danışan kartı AYNI
+  // mekanizmayı kullanıyor.
+  const [yazmaSaati] = useState(yazmaSaatiOlustur)
+
   /**
    * Oturum kilitlendiğinde takvim tarafının bırakması gerekenler.
    *
@@ -76,8 +85,12 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
     const bitis = yerelZaman(new Date(
       sonGun.getFullYear(), sonGun.getMonth(), sonGun.getDate(), 23, 59,
     ))
+    const okumaDamgasi = yazmaSaati.okumaBasladi()
     try {
-      const gelen = await takvimApi.randevulariGetir(baslangic, bitis)
+      const sunucudan = await takvimApi.randevulariGetir(baslangic, bitis)
+      // Bu yükleme başladığında henüz bitmemiş yazmalar yanıttan önce gelir
+      // (bkz. `yazmaSaati.ts`).
+      const gelen = yazmaSaati.uygula(sunucudan, okumaDamgasi)
       setRandevular(gelen)
       // Seçili randevu TAZE nesneyle değiştirilir. Panelin `key`'i
       // `randevu-${id}` olduğu için kimlik aynı kaldığında bileşen yeniden
@@ -127,7 +140,7 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
       }
       setHata(e instanceof Error ? e.message : 'Randevular yüklenemedi.')
     }
-  }, [haftaBasi, oturumKapandi])
+  }, [haftaBasi, oturumKapandi, yazmaSaati])
 
   useEffect(() => { void yukle() }, [yukle])
 
@@ -234,29 +247,69 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
   // `kaydet` ve `seriSil` için AYNI ŞEY YAPILMADI — orada sonuç birden çok
   // satırı (ve görünen haftanın dışını) etkileyebilir, dolayısıyla yeniden
   // yükleme doğru olanı.
+  //
+  // # Hata sayfa üstü banda YAZILMAZ (Görev 2 inceleme M6)
+  //
+  // `durumDegis` ve `odemeDegis` hatayı `setHata` ile takvimin sayfa üstü
+  // bandına da yazıyordu; aynı mesaj alt satırın `alert`inde de çıkıyordu ve
+  // panel kapansa bile bantta kalıyordu. Bu iki işlemin TEK çağıranı
+  // `SeansAltSatiri` ve hatayı kendi `alert`inde gösteriyor; burada yalnızca
+  // RED yayılıyor (try/catch yok, ret olduğu gibi çağırana gidiyor). Başarıda
+  // `setHata(null)` da yok: bir PATCH'in başarısı haftanın YÜKLENEMEDİĞİNİ
+  // söyleyen bandı silmemeli.
+  //
+  // Reddin çağırana ULAŞMASI yük taşıyor (inceleme M4): yutulsaydı alt satır
+  // işlemi başarılı sayar, kullanıcı hiçbir şey duymazdı. Ölçen test:
+  // `AnaEkran.test.tsx` > "durum hatasi YALNIZCA alt satirda, TEK KEZ
+  // duyurulur" (ve "odeme ..." eşi).
   async function durumDegis(id: number, durum: string) {
-    try {
-      await takvimApi.randevuDurumu(id, durum)
-      setHata(null)
-      setRandevular((onceki) => onceki.map((r) => (r.id === id ? { ...r, durum } : r)))
-      // Panel açık kalır ve elindeki `randevu` nesnesi bu state'tir; o kopya
-      // güncellenmezse `seciliRandevu.durum` sunucudaki gerçekten sessizce
-      // ayrışır. Bugün görünür bir etkisi YOK — `RandevuPaneli` `durum`
-      // alanını hiçbir yerde render etmiyor ve `key` değişmediği için remount
-      // da olmuyor (bu satırın eski gerekçesi "kullanıcı işaretlediği durumu
-      // panelde göremez" idi; yanlıştı, silindi). Satır yine de duruyor çünkü
-      // paneldeki kopyanın listedeki satırdan ayrışması, panel ileride
-      // `durum`'u okuduğu anda bayat veri gösterirdi.
-      //
-      // Nesne tazeleniyor ama KİMLİK aynı kalıyor: seans notu efektleri
-      // `seansId`/`seansDanisanId`/`seansBaslangici` ilkel değerlerine bağlı,
-      // dolayısıyla bu tazeleme yeni bir not isteği ATMAZ (ölçen test:
-      // "Geldi isaretlemek not isteklerini YENIDEN ATMAZ").
-      setSeciliRandevu((secili) => (secili && secili.id === id ? { ...secili, durum } : secili))
-    } catch (e) {
-      setHata(e instanceof Error ? e.message : 'Randevu güncellenemedi.')
-      throw e
-    }
+    await takvimApi.randevuDurumu(id, durum)
+    yazmaSaati.yazmaBitti(id, { durum })
+    setRandevular((onceki) => onceki.map((r) => (r.id === id ? { ...r, durum } : r)))
+    // Panel açık kalır ve elindeki `randevu` nesnesi bu state'tir; o kopya
+    // güncellenmezse `seciliRandevu.durum` sunucudaki gerçekten sessizce
+    // ayrışır. Plan 4 Görev 2'den beri bu satır YÜK TAŞIYOR: `SeansPaneli`
+    // alt satırı seçili düğmeyi (`aria-pressed`) `randevu.durum`'dan okuyor
+    // ve `key` değişmediği için remount olmuyor — bu tazeleme olmasaydı
+    // "Geldi"ye basınca vurgu eski düğmede kalırdı.
+    //
+    // Nesne tazeleniyor ama KİMLİK aynı kalıyor: seans notu efektleri
+    // `seansId`/`seansDanisanId`/`seansBaslangici` ilkel değerlerine bağlı,
+    // dolayısıyla bu tazeleme yeni bir not isteği ATMAZ (ölçen test:
+    // "Geldi isaretlemek not isteklerini YENIDEN ATMAZ").
+    setSeciliRandevu((secili) => (secili && secili.id === id ? { ...secili, durum } : secili))
+  }
+
+  // "Ödendi" işareti — `durumDegis` ile AYNI karar ve aynı gerekçe: sonuç
+  // yerel olarak kesin biçimde bilinir (tek satır, tek boolean), bu yüzden
+  // `yukle()` ÇAĞRILMAZ; çağrılsaydı her işaretleme sunucuda silinemez bir
+  // `goruntuleme` satırı daha bırakırdı. Ölçen test: `AnaEkran.test.tsx` >
+  // "\"Ödendi\" isaretlemek YALNIZCA tek PATCH /odeme uretir".
+  //
+  // # İki tazeleme, iki farklı hat (Görev 2 inceleme M3)
+  //
+  // BİRİNCİL HAT — liste tazelemesi (`setRandevular`). Kutunun değeri
+  // `SeansAltSatiri` MOUNT'unda `randevu.odendi`'den okunur; başka bir seansa
+  // geçip geri dönülünce panel randevuyu LİSTEDEN alır ve yeniden mount
+  // edilir. Bu satır olmasaydı kutu bayat `odendi` ile açılırdı. Ölçen test:
+  // `AnaEkran.test.tsx` > "seans degisince Odendi kutusu YENI randevunun
+  // degerini gosterir; geri donunce A nin isareti korunur" (satır
+  // kaldırılınca kırılıyor — ölçüldü).
+  //
+  // İKİNCİL HAT — seçili kopyanın tazelemesi (`setSeciliRandevu`). BUGÜN
+  // GÖZLEMLENEMİYOR: açık satır `odendi`yi yalnızca mount'ta okuyor ve kendi
+  // iyimser kopyasını tutuyor, seçili nesnenin `odendi`sini okuyan başka bir
+  // yer yok. Satır kaldırıldığında TÜM web paketi yeşil kalıyor (ölçüldü;
+  // `durumDegis`teki eşi ise `aria-pressed` üzerinden yük taşıyor). Duruyor,
+  // çünkü seçili nesneyi prop olarak okuyan ilk bileşen (ör. kutuyu
+  // `randevu.odendi`'ye bağlayan bir sadeleştirme) onu anında yük taşır hâle
+  // getirir ve maliyeti sıfır. Koruma İMA ETMİYOR: yük taşımaya başladığı
+  // gün testini de o değişiklik getirmeli.
+  async function odemeDegis(id: number, odendi: boolean) {
+    await takvimApi.odemeGuncelle(id, odendi)
+    yazmaSaati.yazmaBitti(id, { odendi })
+    setRandevular((onceki) => onceki.map((r) => (r.id === id ? { ...r, odendi } : r)))
+    setSeciliRandevu((secili) => (secili && secili.id === id ? { ...secili, odendi } : secili))
   }
 
   async function sil(id: number) {
@@ -302,6 +355,7 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
     seansaGit,
     kaydet,
     durumDegis,
+    odemeDegis,
     sil,
     seriSil,
   }

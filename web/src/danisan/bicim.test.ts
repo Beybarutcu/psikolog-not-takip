@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { boyutBicimle, kalanGun, tarihBicimle, tlBicimle } from './bicim'
+import { boyutBicimle, kalanGun, tarihBicimle } from './bicim'
 
 describe('tarihBicimle', () => {
   it('YYYY-AA-GG degerini GG.AA.YYYY yapar', () => {
@@ -17,20 +17,6 @@ describe('tarihBicimle', () => {
     // Uydurulmuş bir tarih göstermek, ham değeri göstermekten kötüdür.
     expect(tarihBicimle('bilinmiyor')).toBe('bilinmiyor')
     expect(tarihBicimle('')).toBe('')
-  })
-})
-
-describe('tlBicimle', () => {
-  it('kurusu virgullu TL metnine cevirir', () => {
-    expect(tlBicimle(45000)).toBe('450,00 ₺')
-    expect(tlBicimle(0)).toBe('0,00 ₺')
-  })
-
-  it('kurus basamaklarini KAYBETMEZ', () => {
-    // Tam sayıya yuvarlayan bir mutasyon 450,50'yi 450,00 yapar ve bunu
-    // yalnızca bu vaka gösterir.
-    expect(tlBicimle(45050)).toBe('450,50 ₺')
-    expect(tlBicimle(1)).toBe('0,01 ₺')
   })
 })
 

@@ -32,7 +32,6 @@ function kur(ozel = {}) {
     randevu: null as typeof mevcut | null,
     danisanlar,
     onKaydet: vi.fn().mockResolvedValue(undefined),
-    onDurumDegis: vi.fn().mockResolvedValue(undefined),
     onSil: vi.fn().mockResolvedValue(undefined),
     onSeriSil: vi.fn().mockResolvedValue(undefined),
     seriSayisiAl: vi.fn().mockResolvedValue({ adet: 9, notAdedi: 0 }),
@@ -98,15 +97,16 @@ describe('RandevuPaneli', () => {
     expect(props.onKaydet).toHaveBeenCalledWith(expect.objectContaining({ tekrar_sayisi: 8 }))
   })
 
-  it('mevcut randevuda durum düğmeleri görünür ve çalışır', async () => {
-    const props = kur({ randevu: mevcut })
-    await userEvent.click(screen.getByRole('button', { name: 'Geldi' }))
-    expect(props.onDurumDegis).toHaveBeenCalledWith(7, 'geldi')
-  })
-
-  it('yeni randevuda durum düğmeleri görünmez', () => {
-    kur()
+  // Plan 4 Görev 2: durum düğmeleri SEANS PANELİNİN alt satırına taşındı
+  // (tasarım §6: "geldi/gelmedi/iptal + ücret + ödendi" tek satırda). İki
+  // panel aynı anda açık olduğundan burada kalsalardı ekranda iki "Geldi"
+  // düğmesi olurdu. Çalıştıkları yer: `SeansPaneli.test.tsx` ve
+  // `AnaEkran.test.tsx` ("Geldi" isaretlemek ...).
+  it('durum düğmeleri randevu panelinde YOK (ne mevcut ne yeni randevuda)', () => {
+    kur({ randevu: mevcut })
     expect(screen.queryByRole('button', { name: 'Geldi' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Gelmedi' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'İptal' })).toBeNull()
   })
 
   it('silme onay ister', async () => {

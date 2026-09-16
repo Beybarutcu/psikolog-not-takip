@@ -9,6 +9,8 @@ import {
   ekIndirmeYolu,
   notApi,
   ozelNotApi,
+  ozetApi,
+  takvimApi,
   veritabaniBozukOlunca,
   VeritabaniBozukHata,
   yedekApi,
@@ -171,6 +173,112 @@ describe('not uç noktalarında 401', () => {
     await expect(ozelNotApi.kaydet(7, 'gizli')).rejects.toBeInstanceOf(YetkisizHata)
     expect(dinleyici).toHaveBeenCalledTimes(1)
     birak()
+  })
+})
+
+// --- Plan 4 Görev 2: ödeme işareti ----------------------------------------
+//
+// İddialar YOL ve GÖVDEYLE kuruluyor, yalnızca yöntemle değil: Görev 1'de
+// yalnızca durum koduna bakan testlerin yol hiç yokken de geçebildiği
+// görüldü. `{durum}` PATCH'i ile aynı yöntemi paylaştığı için "bir PATCH
+// gitti" iddiası tek başına yanlış uca giden bir istemciyi de geçirirdi.
+describe('takvimApi.odemeGuncelle — ödendi işareti', () => {
+  it('PATCH ile TAM OLARAK /api/randevular/{id}/odeme adresine {odendi} gönderir', async () => {
+    await takvimApi.odemeGuncelle(7, true)
+    await takvimApi.odemeGuncelle(8, false)
+    // Tam eşitlik: fazladan bir `durum` alanı ya da yanlış yol (ör. `{durum}`
+    // PATCH'inin `/api/randevular/7`'si) burada kırılır.
+    expect(cagrilar).toEqual([
+      { yol: '/api/randevular/7/odeme', method: 'PATCH', govde: { odendi: true } },
+      { yol: '/api/randevular/8/odeme', method: 'PATCH', govde: { odendi: false } },
+    ])
+  })
+
+  it('204 (gövdesiz) yanıtı başarı sayar ve undefined döner', async () => {
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
+      cagrilar.push({
+        yol: String(girdi),
+        method: secenekler?.method ?? 'GET',
+        govde: JSON.parse(String(secenekler?.body)),
+      })
+      return {
+        ok: true,
+        status: 204,
+        json: async () => {
+          throw new SyntaxError('Unexpected end of JSON input')
+        },
+      } as unknown as Response
+    }) as unknown as typeof fetch
+    await expect(takvimApi.odemeGuncelle(7, true)).resolves.toBeUndefined()
+    expect(cagrilar).toEqual([
+      { yol: '/api/randevular/7/odeme', method: 'PATCH', govde: { odendi: true } },
+    ])
+  })
+
+  it('401de dinleyiciyi throwdan ÖNCE tetikler ve YetkisizHata fırlatır', async () => {
+    sunucu(() => ({ ok: false, status: 401, govde: { hata: 'Oturum kilitli.' } }))
+    const sira: string[] = []
+    const birak = yetkisizOlunca(() => sira.push('dinleyici'))
+
+    await expect(
+      takvimApi.odemeGuncelle(7, true).catch((e) => {
+        sira.push('throw')
+        throw e
+      }),
+    ).rejects.toBeInstanceOf(YetkisizHata)
+
+    expect(sira).toEqual(['dinleyici', 'throw'])
+    // İstek GERÇEKTEN doğru uca gitti ve 401'i oradan aldı.
+    expect(cagrilar).toEqual([
+      { yol: '/api/randevular/7/odeme', method: 'PATCH', govde: { odendi: true } },
+    ])
+    birak()
+  })
+
+  it('401 dışındaki ret (404) sunucunun mesajıyla fırlatır', async () => {
+    sunucu(() => ({ ok: false, status: 404, govde: { hata: 'Kayıt bulunamadı.' } }))
+    await expect(takvimApi.odemeGuncelle(7, true)).rejects.toThrow('Kayıt bulunamadı.')
+  })
+})
+
+// --- Plan 4 Görev 3: ay sonu özeti ----------------------------------------
+//
+// Bileşen Görev 4'te yazılacak; bu testler istemcinin DOĞRU uca gittiğini
+// ölçer. Yalnızca "bir GET gitti" demek, `/api/ay-ozeti` yerine başka bir
+// yola giden istemciyi de geçirirdi.
+describe('ozetApi.ayOzeti — ay sonu özeti', () => {
+  it('istemcinin yüzeyi TAM OLARAK tek okuma ucudur', () => {
+    // Özet ekranı (Görev 4) yalnızca okur. Buraya eklenen bir uç (ör. bir
+    // "ödendi say" yazması) bu testi bilerek kırmalı ve gözden geçirilmeli.
+    expect(Object.keys(ozetApi)).toEqual(['ayOzeti'])
+  })
+
+  it('GET ile TAM OLARAK /api/ay-ozeti?ay=YYYY-AA adresine gider ve yanıtı döner', async () => {
+    const ozet = {
+      ay: '2026-09',
+      seans_sayisi: 3,
+      tahsilat_kurus: 90000,
+      bekleyen_kurus: 45000,
+      borclular: [{ client_id: 4, ad_soyad: 'Ayşe', borc_kurus: 45000, seans_sayisi: 1 }],
+    }
+    sunucu(() => ({ ok: true, govde: ozet }))
+    await expect(ozetApi.ayOzeti('2026-09')).resolves.toEqual(ozet)
+    await ozetApi.ayOzeti('2027-01')
+    expect(cagrilar).toEqual([
+      { yol: '/api/ay-ozeti?ay=2026-09', method: 'GET', govde: null },
+      { yol: '/api/ay-ozeti?ay=2027-01', method: 'GET', govde: null },
+    ])
+  })
+
+  it('400 sunucunun mesajıyla fırlatır', async () => {
+    sunucu(() => ({ ok: false, status: 400, govde: { hata: 'Ay YYYY-AA biçiminde olmalı.' } }))
+    await expect(ozetApi.ayOzeti('2026-13')).rejects.toThrow('Ay YYYY-AA biçiminde olmalı.')
+    expect(cagrilar[0].yol).toBe('/api/ay-ozeti?ay=2026-13')
+  })
+
+  it('401de YetkisizHata fırlatır (merkezi mekanizma)', async () => {
+    sunucu(() => ({ ok: false, status: 401, govde: { hata: 'Oturum kilitli.' } }))
+    await expect(ozetApi.ayOzeti('2026-09')).rejects.toBeInstanceOf(YetkisizHata)
   })
 })
 
@@ -369,6 +477,23 @@ describe('ekIndir — kilitli oturumda SPA yıkılmaz', () => {
     await expect(ekIndir({ id: 9, dosya_adi: 'onam.pdf' })).rejects.toThrow('Kayıt bulunamadı.')
     expect(uretilenBloblar).toHaveLength(0)
   })
+
+  it('blob URL bir SONRAKI makro gorevde serbest birakilir (ayni karede degil, hic degil de degil)', async () => {
+    // Kişisel veri taşıyan bir blob URL'i sayfa ömrü boyunca canlı kalmamalı;
+    // aynı karede iptal ise bazı tarayıcılarda indirmeyi yarıda keser. İki
+    // yön de sahte saatle ölçülüyor (sabit bekleme yok).
+    ikiliSunucu({ ok: true, bayt: 'PDF-BAYTLARI' })
+    vi.useFakeTimers()
+    try {
+      await ekIndir({ id: 9, dosya_adi: 'onam.pdf' })
+      expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+      vi.runAllTimers()
+      expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1)
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:ek-1')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('api.parolaDegistir — parola değiştirme', () => {
@@ -482,10 +607,12 @@ describe('danışan dosyası uç noktalarında 401', () => {
       'dosyaGetir',
       'rizaKaydet',
       'ekleriGetir',
-      // Dal incelemesi C1: disa aktarimin denetim kaydi. Veri GETIRMEZ --
-      // govdesi bos bir POST'tur ve yaniti kullanilmaz; nesnenin gizlilik
-      // sozunu genisletmez.
-      'raporKaydiOlustur',
+      // Plan 4 Gorev 6: sunucuda uretilen sifreli rapor. Donen sey bir
+      // DOSYA indirmesidir (blob), JSON veri degil; ozel nota giden bir yol
+      // acmaz -- sunucu raporu yalnizca resmi notlardan kurar.
+      'veriRaporuIndir',
+      // Plan 4 Gorev 7: `raporKaydiOlustur` KALDIRILDI. Denetim kaydini
+      // raporu ureten sunucu ucu yaziyor; istemcide "once kayit" adimi yok.
       'ekYukle',
       // Dal incelemesi (HTTP -> arayuz taramasi): ucu de yalnizca dosya/ek
       // ustverisine ve bir SAYIYA dokunuyor; not icerigine giden yeni bir
@@ -496,27 +623,129 @@ describe('danışan dosyası uç noktalarında 401', () => {
     ])
   })
 
-  it('raporKaydiOlustur tam olarak POST /api/danisanlar/{id}/rapor-kaydi eder', async () => {
-    // Yol duz literal ve govde BOS: rapor icerigi (ad, not metni, dosya
-    // adlari) sunucuya ve loga ASLA gitmez.
-    await danisanApi.raporKaydiOlustur(7)
+  it('Plan 4 Gorev 7: raporKaydiOlustur YOK, veriRaporuIndir VAR', () => {
+    // Anahtar listesi testinin ayri, adlandirilmis iddiasi: istemci tarafli
+    // "once kayit, sonra rapor" zinciri geri gelirse burada da gorunur.
+    expect(Object.keys(danisanApi)).not.toContain('raporKaydiOlustur')
+    expect(Object.keys(danisanApi)).toContain('veriRaporuIndir')
+  })
+})
+
+// --- Plan 4 Görev 6: sunucuda üretilen şifreli veri raporu -------------
+describe('danisanApi.veriRaporuIndir — parola gövdede, 401 kapısı, gezinme yok', () => {
+  const gercekOlustur = URL.createObjectURL
+  const gercekSerbest = URL.revokeObjectURL
+  let uretilenBloblar: Blob[]
+  let indirilenAdlar: string[]
+  let tiklamaCasusu: { mockRestore: () => void }
+
+  beforeEach(() => {
+    uretilenBloblar = []
+    indirilenAdlar = []
+    URL.createObjectURL = vi.fn((b: Blob) => {
+      uretilenBloblar.push(b)
+      return `blob:rapor-${uretilenBloblar.length}`
+    }) as unknown as typeof URL.createObjectURL
+    URL.revokeObjectURL = vi.fn() as unknown as typeof URL.revokeObjectURL
+    tiklamaCasusu = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        indirilenAdlar.push(this.download)
+      })
+  })
+
+  afterEach(() => {
+    URL.createObjectURL = gercekOlustur
+    URL.revokeObjectURL = gercekSerbest
+    tiklamaCasusu.mockRestore()
+  })
+
+  function raporSunucusu(yanit: { ok: boolean; status?: number; govde?: unknown; bayt?: string }) {
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, s?: RequestInit) => {
+      cagrilar.push({
+        yol: String(girdi),
+        method: s?.method ?? 'GET',
+        govde: typeof s?.body === 'string' ? JSON.parse(s.body) : (s?.body ?? null),
+      })
+      return {
+        ok: yanit.ok,
+        status: yanit.status ?? (yanit.ok ? 200 : 500),
+        headers: new Headers(
+          yanit.ok
+            ? { 'content-disposition': 'attachment; filename="danisan-veri-raporu-2026-09-16.pdf"' }
+            : {},
+        ),
+        json: async () => yanit.govde ?? {},
+        blob: async () => new Blob([yanit.bayt ?? '']),
+      } as unknown as Response
+    }) as unknown as typeof fetch
+  }
+
+  it('POST govdesinde parolayi gonderir, URLde parola YOK, sunucu baytlarini indirir', async () => {
+    raporSunucusu({ ok: true, bayt: '%PDF-SIFRELI' })
+    const onceki = window.location.href
+
+    await danisanApi.veriRaporuIndir(7, 'danisan-parolasi-1', '2026-09-09')
+
     expect(cagrilar).toEqual([
-      { yol: '/api/danisanlar/7/rapor-kaydi', method: 'POST', govde: null },
+      {
+        yol: '/api/danisanlar/7/veri-raporu',
+        method: 'POST',
+        govde: { parola: 'danisan-parolasi-1', bugun: '2026-09-09' },
+      },
     ])
+    expect(cagrilar[0].yol).not.toContain('parola')
+    expect(cagrilar[0].yol).not.toContain('danisan-parolasi-1')
+    expect(cagrilar[0].yol).not.toContain('?')
+    expect(uretilenBloblar).toHaveLength(1)
+    expect(await uretilenBloblar[0].text()).toBe('%PDF-SIFRELI')
+    expect(indirilenAdlar).toEqual(['danisan-veri-raporu-2026-09-16.pdf'])
+    expect(window.location.href).toBe(onceki)
   })
 
-  it('raporKaydiOlustur 401de YetkisizHata firlatir (fail-closed dayanagi)', async () => {
-    // Kart bu firlatmaya guveniyor: sessizce basarili donseydi kilitli
-    // oturumda KAYITSIZ bir rapor uretilebilirdi.
-    sunucu(() => ({ ok: false, status: 401, govde: { hata: 'Oturum kilitli.' } }))
-    await expect(danisanApi.raporKaydiOlustur(7)).rejects.toBeInstanceOf(YetkisizHata)
+  it('401de dinleyici throwdan ONCE tetiklenir, dosya uretilmez, sayfa gezinmez', async () => {
+    raporSunucusu({ ok: false, status: 401, govde: { hata: 'Oturum kilitli.' } })
+    const sira: string[] = []
+    const birak = yetkisizOlunca(() => sira.push('dinleyici'))
+    const onceki = window.location.href
+
+    await expect(
+      danisanApi.veriRaporuIndir(7, 'danisan-parolasi-1', '2026-09-09').catch((e) => {
+        sira.push('throw')
+        throw e
+      }),
+    ).rejects.toBeInstanceOf(YetkisizHata)
+
+    expect(sira).toEqual(['dinleyici', 'throw'])
+    expect(uretilenBloblar).toHaveLength(0)
+    expect(indirilenAdlar).toHaveLength(0)
+    expect(window.location.href).toBe(onceki)
+    birak()
   })
 
-  it('raporKaydiOlustur 404te de firlatir', async () => {
-    // 401 disindaki redler de fail-closed olmali: 404/500 alinip yine de
-    // rapor uretilirse kayitsiz bir kopya olusur.
-    sunucu(() => ({ ok: false, status: 404, govde: { hata: 'Kayıt bulunamadı.' } }))
-    await expect(danisanApi.raporKaydiOlustur(7)).rejects.toThrow('Kayıt bulunamadı.')
+  it('sunucunun 400 mesaji (ana parola reddi) oldugu gibi firlatilir, dosya uretilmez', async () => {
+    const mesaj =
+      'Rapor için ana parolanızı kullanmayın; danışana vereceğiniz ayrı bir parola seçin.'
+    raporSunucusu({ ok: false, status: 400, govde: { hata: mesaj } })
+    await expect(danisanApi.veriRaporuIndir(7, 'gizliparola', '2026-09-09')).rejects.toThrow(
+      mesaj,
+    )
+    expect(uretilenBloblar).toHaveLength(0)
+  })
+
+  it('blob URL bir SONRAKI makro gorevde serbest birakilir (ayni karede degil, hic degil de degil)', async () => {
+    raporSunucusu({ ok: true, bayt: '%PDF-SIFRELI' })
+    vi.useFakeTimers()
+    try {
+      await danisanApi.veriRaporuIndir(7, 'danisan-parolasi-1', '2026-09-09')
+      expect(indirilenAdlar).toHaveLength(1)
+      expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+      vi.runAllTimers()
+      expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1)
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:rapor-1')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

@@ -15,8 +15,8 @@
 //! isim asla yazılmaz.
 //!
 //! # Yazma + log aynı transaction'da
-//! `olustur`, `guncelle`, `durum_guncelle`, `sil`, `seri_olustur` ve
-//! `seriyi_sil` veriyi değiştirir; hepsi tabloya yazdıktan hemen sonra
+//! `olustur`, `guncelle`, `durum_guncelle`, `odeme_guncelle`, `sil`,
+//! `seri_olustur` ve `seriyi_sil` veriyi değiştirir; hepsi tabloya yazdıktan hemen sonra
 //! `audit::kaydet` çağırır. Bu adımlar
 //! `conn.unchecked_transaction()` ile TEK transaction'a alınır -- log yazımı
 //! başarısız olursa veri değişikliği de geri alınır, "randevu değişti ama
@@ -65,12 +65,43 @@ pub const GECERLI_DURUMLAR: [&str; 4] = ["planlandi", "geldi", "gelmedi", "iptal
 /// veritabanı ile dün yükselmiş bir veritabanı farklı şemalar alırdı.
 pub const ASGARI_UCRET: i64 = 0;
 
-/// Bir ücret değerinin uygulama katmanınca kabul edilip edilmediği.
+/// Ücretin (kuruş) uygulama katmanındaki üst sınırı: seans başına
+/// 1 000 000 TL.
+///
+/// # Bulgu (Plan 4 Görev 3 incelemesi)
+///
+/// Üst sınır yoktu. İki `i64::MAX / 2 + 1` ücretli seans, ay özetindeki
+/// `SUM(ucret)`'i taşırıyordu: SQLite `integer overflow` → özet ekranı HTTP
+/// 500. Sınır makul bir seans ücretinin çok üstündedir ama toplamları güvenli
+/// tutar: `i64` taşması için bir ayda ~9,2 × 10¹⁰ azami ücretli seans
+/// gerekir. Ayrıca JSON'u okuyan JavaScript'in tam sayı hassasiyeti 2⁵³
+/// (~9 × 10¹⁵ kuruş); tek bir ücret onun çok altındadır, bir aylık toplamın
+/// bu sınırı aşması için de ~9 × 10⁷ azami ücretli seans gerekir.
+///
+/// **Yalnızca uygulama katmanında.** `ASGARI_UCRET`'in aksine bu sınır
+/// `schema::V4`'teki `CHECK`'te YOKTUR ve oraya eklenmedi: var olan bir
+/// tabloya `CHECK` eklemek yeni bir göç (tablo yeniden kurma) ister ve tek
+/// yazma yolu (`olustur`, `guncelle`, `seri_olustur`) zaten
+/// `ucret_gecerli_mi`'den geçer. Ham SQL'le yazılan bir değer bu sınırı
+/// aşabilir; bu bilinçli bir sınırdır.
+pub const AZAMI_UCRET: i64 = 100_000_000;
+
+/// Bir ücret değerinin uygulama katmanınca kabul edilip edilmediği:
+/// `ASGARI_UCRET..=AZAMI_UCRET`.
 ///
 /// `None` (ücretsiz/girilmemiş seans) geçerlidir — şemadaki `ucret IS NULL`
 /// kolunun karşılığı.
 pub fn ucret_gecerli_mi(ucret: Option<i64>) -> bool {
-    !ucret.is_some_and(|u| u < ASGARI_UCRET)
+    ucret.is_none_or(|u| (ASGARI_UCRET..=AZAMI_UCRET).contains(&u))
+}
+
+/// `ucret_gecerli_mi` reddettiğinde dönen hata; üç yazma yolu aynı metni verir.
+fn ucret_hatasi() -> DepoHatasi {
+    DepoHatasi::GecersizVeri(format!(
+        "Ücret {} ile {} TL arasında olmalı.",
+        ASGARI_UCRET / 100,
+        AZAMI_UCRET / 100
+    ))
 }
 
 /// Bir seride üretilebilecek azami randevu sayısı (ilk randevu dahil).
@@ -195,7 +226,7 @@ pub fn olustur(
         ));
     }
     if !ucret_gecerli_mi(yeni.ucret) {
-        return Err(DepoHatasi::GecersizVeri("Ücret negatif olamaz.".into()));
+        return Err(ucret_hatasi());
     }
 
     let tx = conn.unchecked_transaction()?;
@@ -319,6 +350,59 @@ pub fn durum_guncelle(
     Ok(())
 }
 
+/// Bir randevunun "ödendi" işaretini koyar (`true`) ya da geri alır
+/// (`false`). Güncelleme ve erişim logu tek transaction'da yazılır.
+///
+/// # Neden var (Plan 4 Görev 1)
+/// `appointments.odendi` sütunu Plan 2'den beri vardı ama hiçbir yazma yolu
+/// yoktu (yalnızca `INSERT`'te `0`): danışan bakiyesi hiçbir zaman
+/// azalmıyordu. Tasarım §6: ödeme takibi ayrı bir modül değil, randevu
+/// panelindeki bir işarettir.
+///
+/// # Sözleşme
+/// - `durum` ne olursa olsun işaretlenebilir (ön ödeme, iptal edilmiş ama
+///   ücreti alınmış seans olağandır) — testle sabit:
+///   `odeme_iptal_edilmis_randevuda_da_isaretlenebilir`.
+/// - Değer zaten aynıysa da yazılır ve **loglanır**: bir kullanıcı eylemi =
+///   bir satır (`LogHacmi::HerCagri`). "Değişmedi" dalı gereksiz karmaşa.
+/// - 0 satır etkilenirse `Bulunamadi` döner ve **log yazılmaz** (hacim
+///   politikası: hiçbir satırı etkilemeyen mutasyon loglanmaz).
+/// - Loga yalnızca `Ayrinti::OdemeAlindi` / `OdemeGeriAlindi` (birim
+///   varyantlar) girer; ücret, tutar, danışan adı girmez.
+///
+/// UYARI: Kendi `unchecked_transaction()`'ını içeride açar -- bunu zaten
+/// açık bir transaction'ın içinden çağırmayın (SQLite iç içe transaction
+/// desteklemez, bkz. modül başlığındaki uyarı).
+pub fn odeme_guncelle(
+    conn: &Connection,
+    id: i64,
+    odendi: bool,
+    cihaz: Cihaz,
+) -> Result<(), DepoHatasi> {
+    let tx = conn.unchecked_transaction()?;
+
+    let etkilenen = tx.execute(
+        "UPDATE appointments SET odendi = ?1, guncelleme_zamani = ?2 WHERE id = ?3",
+        rusqlite::params![odendi, simdi(), id],
+    )?;
+    if etkilenen == 0 {
+        return Err(DepoHatasi::Bulunamadi);
+    }
+    let ayrinti = if odendi { Ayrinti::OdemeAlindi } else { Ayrinti::OdemeGeriAlindi };
+    kaydet(
+        &tx,
+        Eylem::Duzenleme,
+        "appointment",
+        &id.to_string(),
+        cihaz,
+        Some(ayrinti),
+        LogHacmi::HerCagri,
+    )?;
+
+    tx.commit()?;
+    Ok(())
+}
+
 /// Randevu "geldi" olarak işaretlendiğinde danışanın son temas tarihini ve
 /// saklama süresi bitişini tazeler.
 ///
@@ -415,7 +499,7 @@ pub fn guncelle(
         ));
     }
     if !ucret_gecerli_mi(yeni.ucret) {
-        return Err(DepoHatasi::GecersizVeri("Ücret negatif olamaz.".into()));
+        return Err(ucret_hatasi());
     }
 
     let tx = conn.unchecked_transaction()?;
@@ -757,8 +841,8 @@ pub fn seri_olustur(
             "Randevu bitişi başlangıcından sonra olmalı.".into(),
         ));
     }
-    if yeni.ucret.is_some_and(|u| u < 0) {
-        return Err(DepoHatasi::GecersizVeri("Ücret negatif olamaz.".into()));
+    if !ucret_gecerli_mi(yeni.ucret) {
+        return Err(ucret_hatasi());
     }
 
     let seri_id = uuid::Uuid::new_v4().to_string();
@@ -989,6 +1073,42 @@ mod tests {
         };
         let hata = olustur(&c, &yeni_negatif, Cihaz::Masaustu).unwrap_err();
         assert!(matches!(hata, DepoHatasi::GecersizVeri(_)));
+    }
+
+    /// Üst sınır iki yönlü ve ÜÇ yazma yolunda da (`olustur`, `guncelle`,
+    /// `seri_olustur`): sınır kabul, sınır+1 ret. `seri_olustur` eskiden
+    /// kendi `u < 0` denetimini yapıyordu; ortak fonksiyona bağlanmasaydı
+    /// üst sınır oradan delinirdi.
+    #[test]
+    fn ucret_ust_siniri_uc_yazma_yolunda_iki_yonlu() {
+        assert_eq!(AZAMI_UCRET, 100_000_000, "seans basina 1 000 000 TL");
+        assert!(ucret_gecerli_mi(Some(AZAMI_UCRET)));
+        assert!(!ucret_gecerli_mi(Some(AZAMI_UCRET + 1)));
+        assert!(!ucret_gecerli_mi(Some(i64::MAX)));
+        assert!(ucret_gecerli_mi(None));
+
+        let (_d, c, cid) = kurulum();
+        let ucretli = |u: i64| YeniRandevu { ucret: Some(u), ..yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00") };
+
+        let r = olustur(&c, &ucretli(AZAMI_UCRET), Cihaz::Masaustu).unwrap();
+        assert_eq!(r.ucret, Some(AZAMI_UCRET));
+        match olustur(&c, &ucretli(AZAMI_UCRET + 1), Cihaz::Masaustu).unwrap_err() {
+            DepoHatasi::GecersizVeri(m) => assert_eq!(m, "Ücret 0 ile 1000000 TL arasında olmalı."),
+            h => panic!("GecersizVeri bekleniyordu: {h:?}"),
+        }
+
+        let g = |u| guncelleme(cid, "2026-09-07T14:00", "2026-09-07T15:00", Some(u));
+        assert!(matches!(
+            guncelle(&c, r.id, &g(AZAMI_UCRET + 1), Cihaz::Masaustu).unwrap_err(),
+            DepoHatasi::GecersizVeri(_)
+        ));
+        guncelle(&c, r.id, &g(AZAMI_UCRET - 1), Cihaz::Masaustu).unwrap();
+        guncelle(&c, r.id, &g(AZAMI_UCRET), Cihaz::Masaustu).unwrap();
+
+        let seri = |u| seri_olustur(&c, &ucretli(u), 2, Cihaz::Masaustu);
+        assert!(matches!(seri(AZAMI_UCRET + 1).unwrap_err(), DepoHatasi::GecersizVeri(_)));
+        assert!(matches!(seri(-1).unwrap_err(), DepoHatasi::GecersizVeri(_)));
+        assert!(seri(AZAMI_UCRET).unwrap().iter().all(|x| x.ucret == Some(AZAMI_UCRET)));
     }
 
     #[test]
@@ -2270,5 +2390,90 @@ mod tests {
             seri_silinecek_not_sayisi(&c, "s", "07.09.2026 14:00"),
             Err(DepoHatasi::GecersizVeri(_))
         ));
+    }
+
+    // --- Plan 4 Gorev 1: odeme isaretleme ----------------------------------
+
+    #[test]
+    fn odeme_isaretlenir_ve_geri_alinir() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+        assert!(!r.odendi, "on kosul: yeni randevu odenmemis");
+
+        odeme_guncelle(&c, r.id, true, Cihaz::Masaustu).unwrap();
+        let hafta = aralik_getir(&c, "2026-09-07T00:00", "2026-09-08T00:00", Cihaz::Masaustu).unwrap();
+        assert!(hafta.iter().find(|x| x.id == r.id).unwrap().odendi);
+
+        odeme_guncelle(&c, r.id, false, Cihaz::Masaustu).unwrap();
+        let hafta = aralik_getir(&c, "2026-09-07T00:00", "2026-09-08T00:00", Cihaz::Masaustu).unwrap();
+        assert!(!hafta.iter().find(|x| x.id == r.id).unwrap().odendi, "geri alma da yazilmali (iki yon)");
+    }
+
+    #[test]
+    fn olmayan_randevuya_odeme_bulunamadi_doner_ve_log_yazmaz() {
+        let (_d, c, _cid) = kurulum();
+        let once = crate::store::audit::son_kayitlar(&c, 1000).unwrap().len();
+        assert!(matches!(odeme_guncelle(&c, 999_999, true, Cihaz::Masaustu), Err(DepoHatasi::Bulunamadi)));
+        assert_eq!(crate::store::audit::son_kayitlar(&c, 1000).unwrap().len(), once);
+    }
+
+    #[test]
+    fn odeme_her_cagrida_bir_log_satiri_yazar_ve_tutari_icermez() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+        let once = crate::store::audit::son_kayitlar(&c, 1000).unwrap().len();
+        odeme_guncelle(&c, r.id, true, Cihaz::Masaustu).unwrap();
+        odeme_guncelle(&c, r.id, true, Cihaz::Masaustu).unwrap();
+        let kayitlar = crate::store::audit::son_kayitlar(&c, 1000).unwrap();
+        assert_eq!(kayitlar.len(), once + 2, "HerCagri: iki eylem iki satir, birlesme yok");
+        let son = &kayitlar[0];
+        assert_eq!(son.ayrinti.as_deref(), Some("odeme: alindi"));
+        let hepsi = format!("{kayitlar:?}");
+        assert!(!hepsi.contains("45000") && !hepsi.contains("450"), "tutar loga girmemeli");
+    }
+
+    #[test]
+    fn odeme_geri_alma_kendi_ayrintisiyla_loglanir() {
+        // Iki yon logda da ayirt edilmeli: her iki cagriya da "alindi" yazan
+        // bir uygulama yukaridaki testlerin hepsini gecerdi.
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+        odeme_guncelle(&c, r.id, true, Cihaz::Masaustu).unwrap();
+        odeme_guncelle(&c, r.id, false, Cihaz::Masaustu).unwrap();
+        let ayrintilar: Vec<Option<String>> = crate::store::audit::son_kayitlar(&c, 2)
+            .unwrap()
+            .into_iter()
+            .map(|k| k.ayrinti)
+            .collect();
+        assert_eq!(
+            ayrintilar,
+            vec![Some("odeme: geri alindi".to_string()), Some("odeme: alindi".to_string())]
+        );
+    }
+
+    #[test]
+    fn odeme_iptal_edilmis_randevuda_da_isaretlenebilir() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+        durum_guncelle(&c, r.id, "iptal", Cihaz::Masaustu).unwrap();
+        odeme_guncelle(&c, r.id, true, Cihaz::Masaustu).unwrap();
+        // Hata donmemesi yetmez: yazma gercekten olmali ve durum korunmali.
+        let (odendi, durum): (i64, String) = c
+            .query_row("SELECT odendi, durum FROM appointments WHERE id = ?1", [r.id], |x| {
+                Ok((x.get(0)?, x.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(odendi, 1, "iptal edilmis randevuda da odeme yazilmali");
+        assert_eq!(durum, "iptal", "odeme isaretlemek durumu degistirmemeli");
+    }
+
+    #[test]
+    fn odeme_audit_basarisiz_olursa_yazma_geri_alinir() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+        c.execute_batch("DROP TABLE audit_log").unwrap();
+        assert!(odeme_guncelle(&c, r.id, true, Cihaz::Masaustu).is_err());
+        let odendi: i64 = c.query_row("SELECT odendi FROM appointments WHERE id = ?1", [r.id], |x| x.get(0)).unwrap();
+        assert_eq!(odendi, 0, "log yazilamadiysa odeme de yazilmamali");
     }
 }

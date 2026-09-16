@@ -477,6 +477,23 @@ describe('ekIndir — kilitli oturumda SPA yıkılmaz', () => {
     await expect(ekIndir({ id: 9, dosya_adi: 'onam.pdf' })).rejects.toThrow('Kayıt bulunamadı.')
     expect(uretilenBloblar).toHaveLength(0)
   })
+
+  it('blob URL bir SONRAKI makro gorevde serbest birakilir (ayni karede degil, hic degil de degil)', async () => {
+    // Kişisel veri taşıyan bir blob URL'i sayfa ömrü boyunca canlı kalmamalı;
+    // aynı karede iptal ise bazı tarayıcılarda indirmeyi yarıda keser. İki
+    // yön de sahte saatle ölçülüyor (sabit bekleme yok).
+    ikiliSunucu({ ok: true, bayt: 'PDF-BAYTLARI' })
+    vi.useFakeTimers()
+    try {
+      await ekIndir({ id: 9, dosya_adi: 'onam.pdf' })
+      expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+      vi.runAllTimers()
+      expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1)
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:ek-1')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('api.parolaDegistir — parola değiştirme', () => {
@@ -714,6 +731,21 @@ describe('danisanApi.veriRaporuIndir — parola gövdede, 401 kapısı, gezinme 
       mesaj,
     )
     expect(uretilenBloblar).toHaveLength(0)
+  })
+
+  it('blob URL bir SONRAKI makro gorevde serbest birakilir (ayni karede degil, hic degil de degil)', async () => {
+    raporSunucusu({ ok: true, bayt: '%PDF-SIFRELI' })
+    vi.useFakeTimers()
+    try {
+      await danisanApi.veriRaporuIndir(7, 'danisan-parolasi-1', '2026-09-09')
+      expect(indirilenAdlar).toHaveLength(1)
+      expect(URL.revokeObjectURL).not.toHaveBeenCalled()
+      vi.runAllTimers()
+      expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1)
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:rapor-1')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

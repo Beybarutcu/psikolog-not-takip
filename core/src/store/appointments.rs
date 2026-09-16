@@ -15,8 +15,8 @@
 //! isim asla yazılmaz.
 //!
 //! # Yazma + log aynı transaction'da
-//! `olustur`, `guncelle`, `durum_guncelle`, `sil`, `seri_olustur` ve
-//! `seriyi_sil` veriyi değiştirir; hepsi tabloya yazdıktan hemen sonra
+//! `olustur`, `guncelle`, `durum_guncelle`, `odeme_guncelle`, `sil`,
+//! `seri_olustur` ve `seriyi_sil` veriyi değiştirir; hepsi tabloya yazdıktan hemen sonra
 //! `audit::kaydet` çağırır. Bu adımlar
 //! `conn.unchecked_transaction()` ile TEK transaction'a alınır -- log yazımı
 //! başarısız olursa veri değişikliği de geri alınır, "randevu değişti ama
@@ -314,6 +314,59 @@ pub fn durum_guncelle(
     if sabit_durum == "geldi" {
         son_temasi_isaretle(&tx, id)?;
     }
+
+    tx.commit()?;
+    Ok(())
+}
+
+/// Bir randevunun "ödendi" işaretini koyar (`true`) ya da geri alır
+/// (`false`). Güncelleme ve erişim logu tek transaction'da yazılır.
+///
+/// # Neden var (Plan 4 Görev 1)
+/// `appointments.odendi` sütunu Plan 2'den beri vardı ama hiçbir yazma yolu
+/// yoktu (yalnızca `INSERT`'te `0`): danışan bakiyesi hiçbir zaman
+/// azalmıyordu. Tasarım §6: ödeme takibi ayrı bir modül değil, randevu
+/// panelindeki bir işarettir.
+///
+/// # Sözleşme
+/// - `durum` ne olursa olsun işaretlenebilir (ön ödeme, iptal edilmiş ama
+///   ücreti alınmış seans olağandır) — testle sabit:
+///   `odeme_iptal_edilmis_randevuda_da_isaretlenebilir`.
+/// - Değer zaten aynıysa da yazılır ve **loglanır**: bir kullanıcı eylemi =
+///   bir satır (`LogHacmi::HerCagri`). "Değişmedi" dalı gereksiz karmaşa.
+/// - 0 satır etkilenirse `Bulunamadi` döner ve **log yazılmaz** (hacim
+///   politikası: hiçbir satırı etkilemeyen mutasyon loglanmaz).
+/// - Loga yalnızca `Ayrinti::OdemeAlindi` / `OdemeGeriAlindi` (birim
+///   varyantlar) girer; ücret, tutar, danışan adı girmez.
+///
+/// UYARI: Kendi `unchecked_transaction()`'ını içeride açar -- bunu zaten
+/// açık bir transaction'ın içinden çağırmayın (SQLite iç içe transaction
+/// desteklemez, bkz. modül başlığındaki uyarı).
+pub fn odeme_guncelle(
+    conn: &Connection,
+    id: i64,
+    odendi: bool,
+    cihaz: Cihaz,
+) -> Result<(), DepoHatasi> {
+    let tx = conn.unchecked_transaction()?;
+
+    let etkilenen = tx.execute(
+        "UPDATE appointments SET odendi = ?1, guncelleme_zamani = ?2 WHERE id = ?3",
+        rusqlite::params![odendi, simdi(), id],
+    )?;
+    if etkilenen == 0 {
+        return Err(DepoHatasi::Bulunamadi);
+    }
+    let ayrinti = if odendi { Ayrinti::OdemeAlindi } else { Ayrinti::OdemeGeriAlindi };
+    kaydet(
+        &tx,
+        Eylem::Duzenleme,
+        "appointment",
+        &id.to_string(),
+        cihaz,
+        Some(ayrinti),
+        LogHacmi::HerCagri,
+    )?;
 
     tx.commit()?;
     Ok(())
@@ -2270,5 +2323,90 @@ mod tests {
             seri_silinecek_not_sayisi(&c, "s", "07.09.2026 14:00"),
             Err(DepoHatasi::GecersizVeri(_))
         ));
+    }
+
+    // --- Plan 4 Gorev 1: odeme isaretleme ----------------------------------
+
+    #[test]
+    fn odeme_isaretlenir_ve_geri_alinir() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+        assert!(!r.odendi, "on kosul: yeni randevu odenmemis");
+
+        odeme_guncelle(&c, r.id, true, Cihaz::Masaustu).unwrap();
+        let hafta = aralik_getir(&c, "2026-09-07T00:00", "2026-09-08T00:00", Cihaz::Masaustu).unwrap();
+        assert!(hafta.iter().find(|x| x.id == r.id).unwrap().odendi);
+
+        odeme_guncelle(&c, r.id, false, Cihaz::Masaustu).unwrap();
+        let hafta = aralik_getir(&c, "2026-09-07T00:00", "2026-09-08T00:00", Cihaz::Masaustu).unwrap();
+        assert!(!hafta.iter().find(|x| x.id == r.id).unwrap().odendi, "geri alma da yazilmali (iki yon)");
+    }
+
+    #[test]
+    fn olmayan_randevuya_odeme_bulunamadi_doner_ve_log_yazmaz() {
+        let (_d, c, _cid) = kurulum();
+        let once = crate::store::audit::son_kayitlar(&c, 1000).unwrap().len();
+        assert!(matches!(odeme_guncelle(&c, 999_999, true, Cihaz::Masaustu), Err(DepoHatasi::Bulunamadi)));
+        assert_eq!(crate::store::audit::son_kayitlar(&c, 1000).unwrap().len(), once);
+    }
+
+    #[test]
+    fn odeme_her_cagrida_bir_log_satiri_yazar_ve_tutari_icermez() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+        let once = crate::store::audit::son_kayitlar(&c, 1000).unwrap().len();
+        odeme_guncelle(&c, r.id, true, Cihaz::Masaustu).unwrap();
+        odeme_guncelle(&c, r.id, true, Cihaz::Masaustu).unwrap();
+        let kayitlar = crate::store::audit::son_kayitlar(&c, 1000).unwrap();
+        assert_eq!(kayitlar.len(), once + 2, "HerCagri: iki eylem iki satir, birlesme yok");
+        let son = &kayitlar[0];
+        assert_eq!(son.ayrinti.as_deref(), Some("odeme: alindi"));
+        let hepsi = format!("{kayitlar:?}");
+        assert!(!hepsi.contains("45000") && !hepsi.contains("450"), "tutar loga girmemeli");
+    }
+
+    #[test]
+    fn odeme_geri_alma_kendi_ayrintisiyla_loglanir() {
+        // Iki yon logda da ayirt edilmeli: her iki cagriya da "alindi" yazan
+        // bir uygulama yukaridaki testlerin hepsini gecerdi.
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+        odeme_guncelle(&c, r.id, true, Cihaz::Masaustu).unwrap();
+        odeme_guncelle(&c, r.id, false, Cihaz::Masaustu).unwrap();
+        let ayrintilar: Vec<Option<String>> = crate::store::audit::son_kayitlar(&c, 2)
+            .unwrap()
+            .into_iter()
+            .map(|k| k.ayrinti)
+            .collect();
+        assert_eq!(
+            ayrintilar,
+            vec![Some("odeme: geri alindi".to_string()), Some("odeme: alindi".to_string())]
+        );
+    }
+
+    #[test]
+    fn odeme_iptal_edilmis_randevuda_da_isaretlenebilir() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+        durum_guncelle(&c, r.id, "iptal", Cihaz::Masaustu).unwrap();
+        odeme_guncelle(&c, r.id, true, Cihaz::Masaustu).unwrap();
+        // Hata donmemesi yetmez: yazma gercekten olmali ve durum korunmali.
+        let (odendi, durum): (i64, String) = c
+            .query_row("SELECT odendi, durum FROM appointments WHERE id = ?1", [r.id], |x| {
+                Ok((x.get(0)?, x.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(odendi, 1, "iptal edilmis randevuda da odeme yazilmali");
+        assert_eq!(durum, "iptal", "odeme isaretlemek durumu degistirmemeli");
+    }
+
+    #[test]
+    fn odeme_audit_basarisiz_olursa_yazma_geri_alinir() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+        c.execute_batch("DROP TABLE audit_log").unwrap();
+        assert!(odeme_guncelle(&c, r.id, true, Cihaz::Masaustu).is_err());
+        let odendi: i64 = c.query_row("SELECT odendi FROM appointments WHERE id = ?1", [r.id], |x| x.get(0)).unwrap();
+        assert_eq!(odendi, 0, "log yazilamadiysa odeme de yazilmamali");
     }
 }

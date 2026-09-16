@@ -332,6 +332,14 @@ export const takvimApi = {
       method: 'PATCH',
       body: JSON.stringify({ durum }),
     }),
+  // "Ödendi" işaretini koyar/geri alır (`PATCH /api/randevular/{id}/odeme`,
+  // yanıt 204 — gövde yok). Ayrı yol: yukarıdaki PATCH'in `{durum}`
+  // sözleşmesine dokunulmaz. Panel bağlantısı Plan 4 Görev 2'de.
+  odemeGuncelle: (id: number, odendi: boolean): Promise<void> =>
+    istek<unknown>(`/api/randevular/${id}/odeme`, {
+      method: 'PATCH',
+      body: JSON.stringify({ odendi }),
+    }).then(() => undefined),
   randevuSil: (id: number) =>
     istek<Record<string, never>>(`/api/randevular/${id}`, { method: 'DELETE' }),
   /**

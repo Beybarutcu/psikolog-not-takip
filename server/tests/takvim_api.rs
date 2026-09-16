@@ -524,6 +524,90 @@ async fn put_eklendikten_sonra_patch_durum_sozlesmesi_degismez() {
     assert_eq!(hafta[0]["baslangic"], "2026-09-07T14:00");
 }
 
+// --- Plan 4 Gorev 1: odeme isaretleme (`PATCH /randevular/{id}/odeme`) ---
+//
+// Odeme AYRI bir yol: `PATCH /randevular/{id} {durum}` sozlesmesine dokunulmaz
+// (bkz. yukaridaki `put_eklendikten_sonra_patch_durum_sozlesmesi_degismez`).
+
+async fn odeme_icin_randevu(s: &AppState) -> i64 {
+    let (_, d) = cagir(s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let (_, olusan) = cagir(s, "POST", "/api/randevular", Some(json!({
+        "client_id": d["id"], "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00",
+        "ucret": 45000
+    }))).await;
+    olusan[0]["id"].as_i64().unwrap()
+}
+
+async fn hafta_getir(s: &AppState) -> serde_json::Value {
+    let (kod, hafta) = cagir(
+        s, "GET",
+        "/api/randevular?baslangic=2026-09-07T00:00&bitis=2026-09-14T00:00", None,
+    ).await;
+    assert_eq!(kod, StatusCode::OK);
+    hafta
+}
+
+#[tokio::test]
+async fn odeme_isaretlenir_ve_geri_alinir_http() {
+    let (_d, s) = kurulu_state().await;
+    let id = odeme_icin_randevu(&s).await;
+    assert_eq!(hafta_getir(&s).await[0]["odendi"], false, "on kosul: odenmemis");
+
+    let (kod, _) =
+        cagir(&s, "PATCH", &format!("/api/randevular/{id}/odeme"), Some(json!({"odendi":true}))).await;
+    assert_eq!(kod, StatusCode::NO_CONTENT);
+    let hafta = hafta_getir(&s).await;
+    assert_eq!(hafta.as_array().unwrap().len(), 1, "odeme kopya uretmemeli");
+    assert_eq!(hafta[0]["odendi"], true);
+    assert_eq!(hafta[0]["durum"], "planlandi", "odeme durumu degistirmemeli");
+    assert_eq!(hafta[0]["ucret"], 45000, "odeme ucreti degistirmemeli");
+
+    // Iki yon: geri alma da yazilmali.
+    let (kod, _) =
+        cagir(&s, "PATCH", &format!("/api/randevular/{id}/odeme"), Some(json!({"odendi":false}))).await;
+    assert_eq!(kod, StatusCode::NO_CONTENT);
+    assert_eq!(hafta_getir(&s).await[0]["odendi"], false, "geri alma da uygulanmali");
+}
+
+#[tokio::test]
+async fn olmayan_randevuya_odeme_404_doner() {
+    let (_d, s) = kurulu_state().await;
+    let (kod, json) =
+        cagir(&s, "PATCH", "/api/randevular/999999/odeme", Some(json!({"odendi":true}))).await;
+    assert_eq!(kod, StatusCode::NOT_FOUND);
+    // Rota yokken de 404 + `hata` donerdi (`api_bulunamadi` fallback'i); bu
+    // yuzden mesaj, depo esleme yolunu (`DepoHatasi::Bulunamadi`) ayirt eder.
+    assert_eq!(
+        json["hata"], "Kayıt bulunamadı.",
+        "404 depo eslemesinden gelmeli, bilinmeyen-yol fallback'inden degil: {json}"
+    );
+}
+
+#[tokio::test]
+async fn kilitliyken_odeme_401_doner_ve_isaretlemez() {
+    let (_d, s) = kurulu_state().await;
+    let id = odeme_icin_randevu(&s).await;
+    cagir(&s, "POST", "/api/kilitle", None).await;
+
+    let (kod, json) =
+        cagir(&s, "PATCH", &format!("/api/randevular/{id}/odeme"), Some(json!({"odendi":true}))).await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED);
+    assert!(json.get("hata").is_some());
+    let govde = json.to_string();
+    assert!(
+        !govde.contains("Ayse") && !govde.contains("45000") && !govde.contains("odendi"),
+        "kilitliyken govdede veri olmamali: {govde}"
+    );
+
+    cagir(&s, "POST", "/api/kilit-ac", Some(json!({"parola":"gizliparola"}))).await;
+    let hafta = hafta_getir(&s).await;
+    assert_eq!(hafta.as_array().unwrap().len(), 1);
+    assert_eq!(
+        hafta[0]["odendi"], false,
+        "kilitliyken yapilan odeme isaretlemesi uygulanmamis olmali"
+    );
+}
+
 #[tokio::test]
 async fn guncellemede_gecersiz_veri_400_doner() {
     let (_d, s) = kurulu_state().await;

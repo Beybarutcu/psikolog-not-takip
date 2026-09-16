@@ -94,6 +94,10 @@ fn api_router() -> Router<AppState> {
         // ayni sinif. Uc segmentli ve ikinci segmenti sayisal oldugu icin
         // literal `seri` yoluyla cakismaz.
         .route("/randevular/{id}/silinecekler", get(routes::appointments::silinecekler))
+        // Odeme isareti (Plan 4 Gorev 1): `PATCH /randevular/{id} {durum}`
+        // sozlesmesine DOKUNMAMAK icin ayri, uc segmentli yol -- gerekce icin
+        // bkz. `routes::appointments::odeme`.
+        .route("/randevular/{id}/odeme", axum::routing::patch(routes::appointments::odeme))
         // Seri islemleri ayri bir yol segmentinde: `/randevular/{id}` iki
         // segmentli, bu uc segmentli -- cakisma yok.
         .route(

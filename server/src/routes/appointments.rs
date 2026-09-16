@@ -7,7 +7,7 @@ use axum::{
 };
 use psikolog_core::store::appointments::{
     aralik_getir, cakisanlari_bul, durum_guncelle, guncelle as depo_guncelle,
-    olustur as tekil_olustur, seri_cakisanlari_bul, seri_olustur, seri_sayisi,
+    odeme_guncelle, olustur as tekil_olustur, seri_cakisanlari_bul, seri_olustur, seri_sayisi,
     seri_silinecek_not_sayisi, seriyi_sil, sil, silinecek_not_sayisi, Randevu, RandevuGuncelleme,
     SeriCakismasi, YeniRandevu,
 };
@@ -43,6 +43,13 @@ pub struct YeniRandevuIstegi {
 #[derive(Deserialize)]
 pub struct DurumIstegi {
     pub durum: String,
+}
+
+/// `PATCH /randevular/{id}/odeme` gövdesi. Yalnızca işaret taşır; tutar
+/// randevunun kendi `ucret` alanındadır ve buradan değiştirilemez.
+#[derive(Deserialize)]
+pub struct OdemeIstegi {
+    pub odendi: bool,
 }
 
 /// Mevcut bir randevunun alanlarını değiştiren istek gövdesi (bkz.
@@ -95,6 +102,24 @@ pub async fn durum(
     let conn = acik_baglanti(&s)?;
     durum_guncelle(&conn, id, &istek.durum, Cihaz::Masaustu).map_err(depo_hatasi)?;
     Ok(Json(json!({})))
+}
+
+/// Randevunun "ödendi" işaretini koyar/geri alır
+/// (`PATCH /randevular/{id}/odeme {odendi}`) → `204`.
+///
+/// # Neden ayrı yol
+/// `PATCH /randevular/{id}` gövdesi kesin olarak `{durum}` ve bit düzeyinde
+/// kilitli bir testle korunuyor. Gövde şekline göre dallanan bir handler,
+/// istemcideki bir yazım hatasını sessizce yanlış dala düşürürdü (`PUT`
+/// ayrımıyla aynı gerekçe, bkz. `guncelle`). Ödeme bu yüzden kendi yolunda.
+pub async fn odeme(
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+    Json(istek): Json<OdemeIstegi>,
+) -> Result<StatusCode, ApiHata> {
+    let conn = acik_baglanti(&s)?;
+    odeme_guncelle(&conn, id, istek.odendi, Cihaz::Masaustu).map_err(depo_hatasi)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Mevcut bir randevunun alanlarını günceller (`PUT /randevular/{id}`).

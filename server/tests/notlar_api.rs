@@ -1797,7 +1797,7 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
     // degisiklik BILINCLI olarak onaylanir. Birincil koruma artik yukaridaki
     // bire bir esleme -- sayiyi guncellemek tek basina bir kapiyi geri
     // getirmez.
-    assert_eq!(toplam, 29, "toplam veri handler'i sayisi 29 olmali");
+    assert_eq!(toplam, 30, "toplam veri handler'i sayisi 30 olmali");
 }
 
 // =====================================================================

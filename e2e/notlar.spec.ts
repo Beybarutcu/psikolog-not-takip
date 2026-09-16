@@ -134,9 +134,18 @@ test('seans notu otomatik kaydedilir, sayfa yenilenince yerinde durur', async ({
 // (PDF parolayla çözülür, metinde resmî kanarya VAR, özel kanarya YOK).
 //
 // Bu test yalnızca uçtan uca zinciri ölçer: arayüzdeki parola formu doğru
-// uca gider, ana parola reddi ekrana gelir, ŞİFRELİ bir PDF iner (ham
-// baytlarda resmî kanarya bile düz metin olarak yok) ve parola hiçbir
-// isteğin URL'sine girmez.
+// uca gider, ana parola reddi ekrana gelir, şifreleme sözlüğü taşıyan bir PDF
+// iner ve parola hiçbir isteğin URL'sine girmez.
+//
+// ŞİFRELEMEYİ ölçen TEK kontrol `/Encrypt` sözlüğüdür (V5/R6 = AES-256; bu
+// sözlük şifreli dosyada da düz metin durur). Ham baytlarda kanarya
+// ARANMASI şifrelemeye BAĞLI DEĞİLDİR: `printpdf` içerik akışını Flate ile
+// sıkıştırıp metni glif kimliklerine çeviriyor, dolayısıyla şifreleme
+// tamamen kaldırılsa da kanaryalar ham baytlarda görünmez (Görev 5'te
+// mutasyonla ölçüldü, bkz. `core/src/pdf.rs` >
+// `dosya_gecerli_pdf_ve_sifreleme_sozlugu_tasir`). O kontroller yalnızca
+// "istemci/sunucu düz metin bir dosya (ör. eski `.txt` raporu) indirmedi"
+// gerilemesini yakalar.
 test('veri raporu SIFRELI PDF olarak iner, parola URLye girmez (icerik dogrulamasi HTTP testinde)', async ({
   page,
 }) => {
@@ -192,8 +201,21 @@ test('veri raporu SIFRELI PDF olarak iner, parola URLye girmez (icerik dogrulama
   // Boş ya da bozuk bir dosya aşağıdaki "düz metin yok" iddialarını da
   // geçerdi.
   expect(ham.startsWith('%PDF-')).toBe(true)
-  expect(ham).toContain('/Encrypt')
-  // Ham baytlarda DÜZ METİN yok — resmî not dahil (şifreli olduğu için).
+  // Şifrelemenin TEK ölçüsü: trailer'ın gösterdiği `/Encrypt` nesnesi
+  // Standard işleyicili V5/R6 (AES-256) sözlüğüdür. Sözlük düz metin durur.
+  const sifreBaglantisi = /\/Encrypt\s+(\d+)\s+(\d+)\s+R\b/.exec(ham)
+  expect(sifreBaglantisi).not.toBeNull()
+  const [, nesneNo, nesneKusak] = sifreBaglantisi ?? []
+  const sifreSozlugu = new RegExp(
+    String.raw`(?:^|\s)${nesneNo}\s+${nesneKusak}\s+obj\b([\s\S]*?)endobj`,
+  ).exec(ham)?.[1]
+  expect(sifreSozlugu).toBeDefined()
+  expect(sifreSozlugu).toMatch(/\/Filter\s*\/Standard\b/)
+  expect(sifreSozlugu).toMatch(/\/V\s+5\b/)
+  expect(sifreSozlugu).toMatch(/\/R\s+6\b/)
+  // Ham baytlarda DÜZ METİN yok. DİKKAT: bu şifrelemeyi ÖLÇMEZ (içerik
+  // şifresiz dosyada da sıkıştırılmış glif kimliğidir, bkz. testin
+  // başlığı); yalnızca düz metin bir dosyanın inmesini yakalar.
   expect(ham).not.toContain('RESMIKANARYA14')
   expect(ham).not.toContain('GIZLIKANARYA14')
   expect(ham).not.toContain('Selin')

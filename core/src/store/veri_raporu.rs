@@ -453,6 +453,42 @@ mod tests {
         );
     }
 
+    // (d2) Esitlik bozucu: ayni danisana ayni `baslangic` ile iki randevu
+    // kurulabiliyor (cakisma uyarir, engellemez). O zaman sirayi YALNIZCA
+    // `p.appointment_id ASC` verir. Notlar randevularin TERSI sirayla
+    // kaydediliyor: not tablosunun ekleme/satir sirasi `DESC` ile ayni sonucu
+    // verir, dolayisiyla ikincil anahtar ters cevrilirse bu test kirilir.
+    #[test]
+    fn ayni_baslangicli_notlar_randevu_kimligine_gore_artan_siralanir() {
+        let (_d, c) = baglanti();
+        let cid = danisan(&c, "Ayse Yilmaz");
+        let ilk = randevu(&c, cid, "2026-05-10T10:00", "2026-05-10T11:00");
+        let ikinci = randevu(&c, cid, "2026-05-10T10:00", "2026-05-10T11:00");
+        // On kosul: iki randevu GERCEKTEN ayni baslangicta ve kimlik sirasi belli
+        // -- yoksa test birincil anahtari olcerdi (bicim 8).
+        assert!(ilk < ikinci, "on kosul: randevu kimlikleri artan");
+        let baslangiclar: Vec<String> = c
+            .prepare("SELECT baslangic FROM appointments WHERE client_id = ?1")
+            .unwrap()
+            .query_map([cid], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(baslangiclar.len(), 2);
+        assert_eq!(baslangiclar[0], baslangiclar[1], "on kosul: esit baslangic");
+
+        // Ekleme sirasi randevu kimliginin TERSI.
+        not_kaydet(&c, ikinci, "dap", "ESIT-IKINCI-RANDEVU", Cihaz::Masaustu).unwrap();
+        not_kaydet(&c, ilk, "dap", "ESIT-ILK-RANDEVU", Cihaz::Masaustu).unwrap();
+
+        let metin = duz(&rapor_icerigi(&c, cid).unwrap());
+        let yer = |k: &str| metin.find(k).unwrap_or_else(|| panic!("{k} yok: {metin}"));
+        assert!(
+            yer("ESIT-ILK-RANDEVU") < yer("ESIT-IKINCI-RANDEVU"),
+            "esit baslangicta randevu kimligine gore ARTAN olmali: {metin}"
+        );
+    }
+
     // (e) risk notu yok, basvuru nedeni var
     #[test]
     fn risk_notu_rapora_girmez_basvuru_nedeni_girer() {

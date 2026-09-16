@@ -106,6 +106,9 @@ fn api_router() -> Router<AppState> {
                 .delete(routes::appointments::seri_kaldir),
         )
         .route("/cakisma", get(routes::appointments::cakisma))
+        // Ay sonu ozeti (Plan 4 Gorev 3): salt okur, kapinin ICINDE (31. veri
+        // handler'i). `ay` sorgu dizesinde: hassas degil (bir takvim ayi).
+        .route("/ay-ozeti", get(routes::ozet::ay_ozeti_uc))
         // --- Plan 3 Gorev 7: danisan dosyasi, notlar, ekler, arama --------
         //
         // Asagidaki on dort handler'in da ilk satiri `guard::acik_baglanti`:

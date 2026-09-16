@@ -680,6 +680,40 @@ export const aramaApi = {
     istek<AramaYaniti>(`/api/ara?q=${encodeURIComponent(sorgu)}&limit=${ARAMA_SINIRI}`),
 }
 
+/** Ay sonu özetinde ödenmemiş seansı olan bir danışan (sunucudaki `Borclu`). */
+export type Borclu = {
+  client_id: number
+  ad_soyad: string
+  borc_kurus: number
+  seans_sayisi: number
+}
+
+/**
+ * `GET /api/ay-ozeti?ay=YYYY-AA` yanıtı (sunucudaki `store::ozet::AyOzeti`).
+ *
+ * Yalnızca `geldi` olarak işaretlenen seanslar sayılır; `gelmedi`, `iptal` ve
+ * `planlandi` hiçbir alana girmez. Tutarlar kuruştur.
+ */
+export type AyOzeti = {
+  ay: string
+  seans_sayisi: number
+  tahsilat_kurus: number
+  bekleyen_kurus: number
+  borclular: Borclu[]
+}
+
+/**
+ * Ay sonu özeti istemcisi (Plan 4 Görev 3). Bileşeni Görev 4 yazar.
+ *
+ * `ay` `YYYY-AA` biçimindedir; geçersizse sunucu `400 {hata}` döner. Sunucu
+ * görüntülemeyi ay başına 5 dakikalık pencerede birleştirerek loglar, yani
+ * ekran ay değiştirdikçe çağrılabilir.
+ */
+export const ozetApi = {
+  ayOzeti: (ay: string): Promise<AyOzeti> =>
+    istek<AyOzeti>(`/api/ay-ozeti?ay=${encodeURIComponent(ay)}`),
+}
+
 /** `POST /api/yedekler` yanıtındaki tek yedek (sunucudaki `YedekOzeti`). */
 export type YedekOzeti = {
   /**

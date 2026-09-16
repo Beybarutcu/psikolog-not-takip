@@ -9,6 +9,7 @@ import {
   ekIndirmeYolu,
   notApi,
   ozelNotApi,
+  ozetApi,
   takvimApi,
   veritabaniBozukOlunca,
   VeritabaniBozukHata,
@@ -237,6 +238,41 @@ describe('takvimApi.odemeGuncelle — ödendi işareti', () => {
   it('401 dışındaki ret (404) sunucunun mesajıyla fırlatır', async () => {
     sunucu(() => ({ ok: false, status: 404, govde: { hata: 'Kayıt bulunamadı.' } }))
     await expect(takvimApi.odemeGuncelle(7, true)).rejects.toThrow('Kayıt bulunamadı.')
+  })
+})
+
+// --- Plan 4 Görev 3: ay sonu özeti ----------------------------------------
+//
+// Bileşen Görev 4'te yazılacak; bu testler istemcinin DOĞRU uca gittiğini
+// ölçer. Yalnızca "bir GET gitti" demek, `/api/ay-ozeti` yerine başka bir
+// yola giden istemciyi de geçirirdi.
+describe('ozetApi.ayOzeti — ay sonu özeti', () => {
+  it('GET ile TAM OLARAK /api/ay-ozeti?ay=YYYY-AA adresine gider ve yanıtı döner', async () => {
+    const ozet = {
+      ay: '2026-09',
+      seans_sayisi: 3,
+      tahsilat_kurus: 90000,
+      bekleyen_kurus: 45000,
+      borclular: [{ client_id: 4, ad_soyad: 'Ayşe', borc_kurus: 45000, seans_sayisi: 1 }],
+    }
+    sunucu(() => ({ ok: true, govde: ozet }))
+    await expect(ozetApi.ayOzeti('2026-09')).resolves.toEqual(ozet)
+    await ozetApi.ayOzeti('2027-01')
+    expect(cagrilar).toEqual([
+      { yol: '/api/ay-ozeti?ay=2026-09', method: 'GET', govde: null },
+      { yol: '/api/ay-ozeti?ay=2027-01', method: 'GET', govde: null },
+    ])
+  })
+
+  it('400 sunucunun mesajıyla fırlatır', async () => {
+    sunucu(() => ({ ok: false, status: 400, govde: { hata: 'Ay YYYY-AA biçiminde olmalı.' } }))
+    await expect(ozetApi.ayOzeti('2026-13')).rejects.toThrow('Ay YYYY-AA biçiminde olmalı.')
+    expect(cagrilar[0].yol).toBe('/api/ay-ozeti?ay=2026-13')
+  })
+
+  it('401de YetkisizHata fırlatır (merkezi mekanizma)', async () => {
+    sunucu(() => ({ ok: false, status: 401, govde: { hata: 'Oturum kilitli.' } }))
+    await expect(ozetApi.ayOzeti('2026-09')).rejects.toBeInstanceOf(YetkisizHata)
   })
 })
 

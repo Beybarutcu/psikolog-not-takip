@@ -8,3 +8,4 @@ pub mod appointments;
 pub mod notes;
 pub mod attachments;
 pub mod search;
+pub mod ozet;

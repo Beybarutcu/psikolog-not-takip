@@ -4,6 +4,8 @@ pub mod attachments;
 pub mod backup;
 pub mod clients;
 pub mod notes;
+/// Ay sonu özeti (Plan 4 Görev 3) — salt okur, kapının içinde.
+pub mod ozet;
 /// Parola değiştirme — kilit kapısının **içinde**, `session.rs`'ten ayrı
 /// bir modül; gerekçe o modülün başlığında (özet: `session.rs` kapıyı
 /// kullanmayan ve denetim satırını kendisi yazan bir modüldür, bu handler

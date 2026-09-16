@@ -1175,3 +1175,108 @@ async fn seri_silme_gelecek_uyelerin_notlarini_da_siler() {
     assert_eq!(kod, StatusCode::OK);
     assert_eq!(not["icerik"], "seans notu");
 }
+
+// --- Plan 4 Gorev 3: ay sonu ozeti (`GET /api/ay-ozeti?ay=YYYY-AA`) ---
+//
+// Sayim kurallarinin kendisi cekirdekte (`store::ozet::tests`) sabit; burada
+// HTTP sozlesmesi olculur: alanlar, iki farkli 400 yolu ve kilit kapisi.
+// Bilinmeyen yollar da `{hata}` dondugu icin (bkz. `api_bulunamadi`) her
+// hata testinde MESAJ da dogrulanir.
+
+async fn ozet_icin_borclu(s: &AppState) -> i64 {
+    let (_, d) =
+        cagir(s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ozet Borclusu"}))).await;
+    let cid = d["id"].as_i64().unwrap();
+    let (_, olusan) = cagir(s, "POST", "/api/randevular", Some(json!({
+        "client_id": cid, "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00",
+        "ucret": 45000
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+    let (kod, _) =
+        cagir(s, "PATCH", &format!("/api/randevular/{id}"), Some(json!({"durum":"geldi"}))).await;
+    assert_eq!(kod, StatusCode::OK, "on kosul: durum geldi olmali");
+    cid
+}
+
+async fn ozet_log_satirlari(s: &AppState) -> Vec<String> {
+    let conn = acik_baglanti_ile(s, Instant::now()).expect("oturum acik olmali");
+    psikolog_core::store::audit::son_kayitlar(&conn, 200)
+        .unwrap()
+        .into_iter()
+        .filter(|k| k.varlik == "ozet")
+        .map(|k| format!("{}|{}", k.eylem, k.varlik_id))
+        .collect()
+}
+
+#[tokio::test]
+async fn ay_ozeti_200_ve_tum_alanlar_doner() {
+    let (_d, s) = kurulu_state().await;
+    let cid = ozet_icin_borclu(&s).await;
+
+    let (kod, json) = cagir(&s, "GET", "/api/ay-ozeti?ay=2026-09", None).await;
+    assert_eq!(kod, StatusCode::OK, "{json}");
+    assert_eq!(
+        json,
+        json!({
+            "ay": "2026-09",
+            "seans_sayisi": 1,
+            "tahsilat_kurus": 0,
+            "bekleyen_kurus": 45000,
+            "borclular": [
+                {"client_id": cid, "ad_soyad": "Ozet Borclusu", "borc_kurus": 45000, "seans_sayisi": 1}
+            ]
+        })
+    );
+    assert_eq!(ozet_log_satirlari(&s).await, ["goruntuleme|ay:2026-09"]);
+
+    // Baska bir ay: bos ozet, ama yine 200 ve yine gorunur alanlar.
+    let (kod, bos) = cagir(&s, "GET", "/api/ay-ozeti?ay=2026-10", None).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(bos["seans_sayisi"], 0);
+    assert_eq!(bos["borclular"], json!([]));
+}
+
+#[tokio::test]
+async fn ay_ozeti_gecersiz_ay_400_ve_cekirdek_mesaji() {
+    let (_d, s) = kurulu_state().await;
+    let (kod, json) = cagir(&s, "GET", "/api/ay-ozeti?ay=2026-13", None).await;
+    assert_eq!(kod, StatusCode::BAD_REQUEST, "{json}");
+    assert_eq!(
+        json["hata"], "Ay YYYY-AA biçiminde olmalı.",
+        "400 cekirdegin dogrulamasindan gelmeli: {json}"
+    );
+    assert!(ozet_log_satirlari(&s).await.is_empty(), "gecersiz ay log yazmamali");
+}
+
+#[tokio::test]
+async fn ay_ozeti_ay_parametresi_yoksa_turkce_json_400() {
+    let (_d, s) = kurulu_state().await;
+    let (kod, json) = cagir(&s, "GET", "/api/ay-ozeti", None).await;
+    assert_eq!(kod, StatusCode::BAD_REQUEST, "{json}");
+    assert_eq!(
+        json["hata"], "Sorgu parametreleri eksik veya geçersiz.",
+        "eksik parametre `guard::Sorgu` reddinden gelmeli: {json}"
+    );
+}
+
+#[tokio::test]
+async fn kilitliyken_ay_ozeti_401_doner_veri_ve_log_yok() {
+    let (_d, s) = kurulu_state().await;
+    ozet_icin_borclu(&s).await;
+    cagir(&s, "POST", "/api/kilitle", None).await;
+
+    let (kod, json) = cagir(&s, "GET", "/api/ay-ozeti?ay=2026-09", None).await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED);
+    assert!(json.get("hata").is_some(), "{json}");
+    let govde = json.to_string();
+    assert!(
+        !govde.contains("Ozet Borclusu") && !govde.contains("45000") && !govde.contains("borclular"),
+        "kilitliyken govdede veri olmamali: {govde}"
+    );
+
+    cagir(&s, "POST", "/api/kilit-ac", Some(json!({"parola":"gizliparola"}))).await;
+    assert!(
+        ozet_log_satirlari(&s).await.is_empty(),
+        "kilitliyken istek goruntuleme satiri birakmamali"
+    );
+}

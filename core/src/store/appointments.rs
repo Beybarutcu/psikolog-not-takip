@@ -65,12 +65,43 @@ pub const GECERLI_DURUMLAR: [&str; 4] = ["planlandi", "geldi", "gelmedi", "iptal
 /// veritabanı ile dün yükselmiş bir veritabanı farklı şemalar alırdı.
 pub const ASGARI_UCRET: i64 = 0;
 
-/// Bir ücret değerinin uygulama katmanınca kabul edilip edilmediği.
+/// Ücretin (kuruş) uygulama katmanındaki üst sınırı: seans başına
+/// 1 000 000 TL.
+///
+/// # Bulgu (Plan 4 Görev 3 incelemesi)
+///
+/// Üst sınır yoktu. İki `i64::MAX / 2 + 1` ücretli seans, ay özetindeki
+/// `SUM(ucret)`'i taşırıyordu: SQLite `integer overflow` → özet ekranı HTTP
+/// 500. Sınır makul bir seans ücretinin çok üstündedir ama toplamları güvenli
+/// tutar: `i64` taşması için bir ayda ~9,2 × 10¹⁰ azami ücretli seans
+/// gerekir. Ayrıca JSON'u okuyan JavaScript'in tam sayı hassasiyeti 2⁵³
+/// (~9 × 10¹⁵ kuruş); tek bir ücret onun çok altındadır, bir aylık toplamın
+/// bu sınırı aşması için de ~9 × 10⁷ azami ücretli seans gerekir.
+///
+/// **Yalnızca uygulama katmanında.** `ASGARI_UCRET`'in aksine bu sınır
+/// `schema::V4`'teki `CHECK`'te YOKTUR ve oraya eklenmedi: var olan bir
+/// tabloya `CHECK` eklemek yeni bir göç (tablo yeniden kurma) ister ve tek
+/// yazma yolu (`olustur`, `guncelle`, `seri_olustur`) zaten
+/// `ucret_gecerli_mi`'den geçer. Ham SQL'le yazılan bir değer bu sınırı
+/// aşabilir; bu bilinçli bir sınırdır.
+pub const AZAMI_UCRET: i64 = 100_000_000;
+
+/// Bir ücret değerinin uygulama katmanınca kabul edilip edilmediği:
+/// `ASGARI_UCRET..=AZAMI_UCRET`.
 ///
 /// `None` (ücretsiz/girilmemiş seans) geçerlidir — şemadaki `ucret IS NULL`
 /// kolunun karşılığı.
 pub fn ucret_gecerli_mi(ucret: Option<i64>) -> bool {
-    !ucret.is_some_and(|u| u < ASGARI_UCRET)
+    ucret.is_none_or(|u| (ASGARI_UCRET..=AZAMI_UCRET).contains(&u))
+}
+
+/// `ucret_gecerli_mi` reddettiğinde dönen hata; üç yazma yolu aynı metni verir.
+fn ucret_hatasi() -> DepoHatasi {
+    DepoHatasi::GecersizVeri(format!(
+        "Ücret {} ile {} TL arasında olmalı.",
+        ASGARI_UCRET / 100,
+        AZAMI_UCRET / 100
+    ))
 }
 
 /// Bir seride üretilebilecek azami randevu sayısı (ilk randevu dahil).
@@ -195,7 +226,7 @@ pub fn olustur(
         ));
     }
     if !ucret_gecerli_mi(yeni.ucret) {
-        return Err(DepoHatasi::GecersizVeri("Ücret negatif olamaz.".into()));
+        return Err(ucret_hatasi());
     }
 
     let tx = conn.unchecked_transaction()?;
@@ -468,7 +499,7 @@ pub fn guncelle(
         ));
     }
     if !ucret_gecerli_mi(yeni.ucret) {
-        return Err(DepoHatasi::GecersizVeri("Ücret negatif olamaz.".into()));
+        return Err(ucret_hatasi());
     }
 
     let tx = conn.unchecked_transaction()?;
@@ -810,8 +841,8 @@ pub fn seri_olustur(
             "Randevu bitişi başlangıcından sonra olmalı.".into(),
         ));
     }
-    if yeni.ucret.is_some_and(|u| u < 0) {
-        return Err(DepoHatasi::GecersizVeri("Ücret negatif olamaz.".into()));
+    if !ucret_gecerli_mi(yeni.ucret) {
+        return Err(ucret_hatasi());
     }
 
     let seri_id = uuid::Uuid::new_v4().to_string();
@@ -1042,6 +1073,42 @@ mod tests {
         };
         let hata = olustur(&c, &yeni_negatif, Cihaz::Masaustu).unwrap_err();
         assert!(matches!(hata, DepoHatasi::GecersizVeri(_)));
+    }
+
+    /// Üst sınır iki yönlü ve ÜÇ yazma yolunda da (`olustur`, `guncelle`,
+    /// `seri_olustur`): sınır kabul, sınır+1 ret. `seri_olustur` eskiden
+    /// kendi `u < 0` denetimini yapıyordu; ortak fonksiyona bağlanmasaydı
+    /// üst sınır oradan delinirdi.
+    #[test]
+    fn ucret_ust_siniri_uc_yazma_yolunda_iki_yonlu() {
+        assert_eq!(AZAMI_UCRET, 100_000_000, "seans basina 1 000 000 TL");
+        assert!(ucret_gecerli_mi(Some(AZAMI_UCRET)));
+        assert!(!ucret_gecerli_mi(Some(AZAMI_UCRET + 1)));
+        assert!(!ucret_gecerli_mi(Some(i64::MAX)));
+        assert!(ucret_gecerli_mi(None));
+
+        let (_d, c, cid) = kurulum();
+        let ucretli = |u: i64| YeniRandevu { ucret: Some(u), ..yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00") };
+
+        let r = olustur(&c, &ucretli(AZAMI_UCRET), Cihaz::Masaustu).unwrap();
+        assert_eq!(r.ucret, Some(AZAMI_UCRET));
+        match olustur(&c, &ucretli(AZAMI_UCRET + 1), Cihaz::Masaustu).unwrap_err() {
+            DepoHatasi::GecersizVeri(m) => assert_eq!(m, "Ücret 0 ile 1000000 TL arasında olmalı."),
+            h => panic!("GecersizVeri bekleniyordu: {h:?}"),
+        }
+
+        let g = |u| guncelleme(cid, "2026-09-07T14:00", "2026-09-07T15:00", Some(u));
+        assert!(matches!(
+            guncelle(&c, r.id, &g(AZAMI_UCRET + 1), Cihaz::Masaustu).unwrap_err(),
+            DepoHatasi::GecersizVeri(_)
+        ));
+        guncelle(&c, r.id, &g(AZAMI_UCRET - 1), Cihaz::Masaustu).unwrap();
+        guncelle(&c, r.id, &g(AZAMI_UCRET), Cihaz::Masaustu).unwrap();
+
+        let seri = |u| seri_olustur(&c, &ucretli(u), 2, Cihaz::Masaustu);
+        assert!(matches!(seri(AZAMI_UCRET + 1).unwrap_err(), DepoHatasi::GecersizVeri(_)));
+        assert!(matches!(seri(-1).unwrap_err(), DepoHatasi::GecersizVeri(_)));
+        assert!(seri(AZAMI_UCRET).unwrap().iter().all(|x| x.ucret == Some(AZAMI_UCRET)));
     }
 
     #[test]

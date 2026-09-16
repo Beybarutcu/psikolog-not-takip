@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { ekIndir, ekIndirmeYolu, EK_TURLERI, type DanisanDosyasi, type EkBilgisi } from '../api'
 import type { Randevu } from '../takvim/HaftalikTakvim'
-import { boyutBicimle, kalanGun, tarihBicimle, tlBicimle } from './bicim'
+import { tlMetni } from '../para'
+import { boyutBicimle, kalanGun, tarihBicimle } from './bicim'
 import { RizaBolumu } from './RizaBolumu'
 
 /**
@@ -24,7 +25,7 @@ import { RizaBolumu } from './RizaBolumu'
  * bir randevu borç sayılmaz, iptal sayılmaz; "gelmedi" de sayılmaz çünkü
  * ücretlendirilip ücretlendirilmeyeceği terapistin politikasına bağlıdır ve
  * uygulama o politikayı bilmiyor. Etiket neyi saydığını **yazar**: kapsamı
- * söylemeyen bir "Bakiye: 0,00 ₺", ücreti hiç girilmemiş bir dosyada
+ * söylemeyen bir "Bakiye: 0,00 TL", ücreti hiç girilmemiş bir dosyada
  * "borcu yok" diye okunur.
  *
  * # "Ödenmemiş" artık gerçek (Plan 4 Görev 2)
@@ -328,7 +329,7 @@ export function DanisanKarti({
           )}
         </dd>
         <dt className="font-medium text-slate-600">Bakiye</dt>
-        <dd>{tlBicimle(bakiyeKurus)}</dd>
+        <dd>{tlMetni(bakiyeKurus)}</dd>
       </dl>
       {/* Açıklama hem neyi SAYDIĞINI hem neyi SAYMADIĞINI yazıyor; çıplak
           "Bakiye" yanıltıcı olurdu. "Gelmedi" işaretli bir seansın

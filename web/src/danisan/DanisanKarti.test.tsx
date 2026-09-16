@@ -99,7 +99,7 @@ describe('DanisanKarti — kimlik ve bağlam', () => {
     expect(screen.getByText(/0555 111 22 33/)).toBeDefined()
     expect(screen.getByText(/Yoğun kaygı ve uyku sorunu/)).toBeDefined()
     // 45000 kuruş = 450,00 TL.
-    expect(screen.getByText(/450,00 ₺/)).toBeDefined()
+    expect(screen.getByText('450,00 TL')).toBeDefined()
   })
 
   it('telefon yoksa "kayitli degil" der, bos satir birakmaz', () => {
@@ -149,7 +149,23 @@ describe('DanisanKarti — bakiye ne sayar, ne saymaz', () => {
         randevu({ id: 2, durum: 'geldi', odendi: false, ucret: 30000 }),
       ],
     })
-    expect(screen.getByText(/750,00 ₺/)).toBeDefined()
+    expect(screen.getByText('750,00 TL')).toBeDefined()
+  })
+
+  // Plan 4 Görev 4 inceleme I2: kart eskiden kendi biçimini (`"1800,00 ₺"`)
+  // basıyordu, ay sonu özeti `"1.800,00 TL"`. Aynı borç iki ekranda farklı
+  // görünüyordu. Binlik ayraç yalnızca 1000 TL üstünde görünür; 450 TL'lik
+  // kurulumlar onu hiç sınamıyordu.
+  it('bakiye ay sonu ozetiyle AYNI bicimde: binlik ayrac nokta, para birimi TL', () => {
+    kur({
+      randevular: [
+        randevu({ id: 1, durum: 'geldi', odendi: false, ucret: 150000 }),
+        randevu({ id: 2, durum: 'geldi', odendi: false, ucret: 30000 }),
+      ],
+    })
+    expect(screen.getByText('1.800,00 TL')).toBeDefined()
+    expect(document.body.textContent).not.toContain('₺')
+    expect(document.body.textContent).not.toContain('1800,00')
   })
 
   it('odenmis seans bakiyeye GIRMEZ', () => {
@@ -159,7 +175,7 @@ describe('DanisanKarti — bakiye ne sayar, ne saymaz', () => {
         randevu({ id: 2, durum: 'geldi', odendi: false, ucret: 30000 }),
       ],
     })
-    expect(screen.getByText(/300,00 ₺/)).toBeDefined()
+    expect(screen.getByText('300,00 TL')).toBeDefined()
   })
 
   it('planlanmis, iptal ve gelmedi durumlari bakiyeye GIRMEZ', () => {
@@ -173,7 +189,7 @@ describe('DanisanKarti — bakiye ne sayar, ne saymaz', () => {
         randevu({ id: 3, durum: 'gelmedi', odendi: false, ucret: 45000 }),
       ],
     })
-    expect(screen.getByText(/^0,00 ₺$/)).toBeDefined()
+    expect(screen.getByText('0,00 TL')).toBeDefined()
   })
 
   it('ucreti girilmemis seans bakiyeyi bozmaz', () => {
@@ -183,11 +199,11 @@ describe('DanisanKarti — bakiye ne sayar, ne saymaz', () => {
         randevu({ id: 2, durum: 'geldi', odendi: false, ucret: 30000 }),
       ],
     })
-    expect(screen.getByText(/300,00 ₺/)).toBeDefined()
+    expect(screen.getByText('300,00 TL')).toBeDefined()
   })
 
   it('bakiye etiketi NEYI saydigini soyler', () => {
-    // "Bakiye: 0,00 ₺" tek başına, ücreti hiç girilmemiş bir dosyada
+    // "Bakiye: 0,00 TL" tek başına, ücreti hiç girilmemiş bir dosyada
     // "borcu yok" diye okunur. Etiket kapsamı yazmazsa sayı yanıltıcıdır.
     kur()
     expect(screen.getByText(/gelinmiş ve ödenmemiş seanslar/i)).toBeDefined()

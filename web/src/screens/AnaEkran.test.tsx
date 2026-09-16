@@ -1986,9 +1986,17 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     baslangic: '2026-09-07T13:00', bitis: '2026-09-07T14:00',
     durum: 'geldi', ucret: 99900, odendi: false, seri_id: null,
   }
-  const tumRandevular = [buHafta, gelecekHafta, baskasininki]
-  const BAKIYE_450 = '450,00 ₺'
-  const BAKIYE_0 = '0,00 ₺'
+  // Özetteki borçlu Zeynep'in (id 3) GELİNMİŞ ve ödenmemiş seansı; hiçbir
+  // testin gezdiği haftada değil. Tutar BİNLİK AYRAÇ gerektiriyor: özet ve
+  // kart aynı borcu AYNI biçimde basmalı (Görev 4 inceleme I2).
+  const zeynepinBorcu = {
+    id: 204, client_id: 3, danisan_adi: 'Zeynep Kaya',
+    baslangic: '2026-08-03T10:00', bitis: '2026-08-03T11:00',
+    durum: 'geldi', ucret: 123450, odendi: false, seri_id: null,
+  }
+  const tumRandevular = [buHafta, gelecekHafta, baskasininki, zeynepinBorcu]
+  const BAKIYE_450 = '450,00 TL'
+  const BAKIYE_0 = '0,00 TL'
 
   const dosyalar: Record<number, unknown> = {
     1: {
@@ -2100,7 +2108,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
       if (yol.startsWith('/api/ay-ozeti')) {
         return jsonYanit({
           ay: '2026-09', seans_sayisi: 4, tahsilat_kurus: 180000, bekleyen_kurus: 60000,
-          borclular: [{ client_id: 3, ad_soyad: 'Zeynep Kaya', borc_kurus: 60000, seans_sayisi: 1 }],
+          borclular: [{ client_id: 3, ad_soyad: 'Zeynep Kaya', borc_kurus: 123450, seans_sayisi: 1 }],
         })
       }
 
@@ -2220,6 +2228,11 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
 
       // Zeynep'in (id 3) GERÇEK kartı: sunucudan çekilen dosyanın telefonu.
       expect(await screen.findByText('0555 999 88 77')).toBeDefined()
+      // AYNI borç iki ekranda AYNI metin (binlik ayraçlı): özet satırında ve
+      // kartın bakiyesinde. Eskiden kart "1234,50 ₺" basıyordu.
+      expect(satir.textContent).toContain('1.234,50 TL')
+      const bakiyeDt = screen.getAllByRole('term').find((e) => e.textContent === 'Bakiye')
+      expect(bakiyeDt?.nextElementSibling?.textContent).toBe('1.234,50 TL')
       expect(istekYollari.slice(once)).toContain('GET /api/danisanlar/3')
       // Başka bir danışanın dosyası istenmedi.
       expect(
@@ -2241,8 +2254,8 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     // Ayşe: gelecek haftaki 450 TL'lik seans "geldi" ve ödenmemiş.
     // Mehmet'in 999 TL'lik ödenmemiş seansı bu sayıya KARIŞMAMALI —
     // aralık uç noktası danışan süzgeci sunmuyor, süzgeç istemcide.
-    expect(screen.getByText('450,00 ₺')).toBeDefined()
-    expect(document.body.textContent).not.toContain('999,00 ₺')
+    expect(screen.getByText('450,00 TL')).toBeDefined()
+    expect(document.body.textContent).not.toContain('999,00 TL')
   })
 
   // Görev 2 inceleme M5: kart ve seans paneli aynı anda açık. Alt satırdan

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { aramaApi, danisanApi, notApi, takvimApi, type SeansNotu } from '../api'
+import { aramaApi, danisanApi, takvimApi } from '../api'
 import { HizliArama } from '../arama/HizliArama'
 import { boyutBicimle } from '../danisan/bicim'
 import { DanisanKarti } from '../danisan/DanisanKarti'
@@ -14,17 +14,6 @@ import { useSeansNotlari } from './anaEkranKancalari/useSeansNotlari'
 import { useTakvimAkisi } from './anaEkranKancalari/useTakvimAkisi'
 import { useYedekleme } from './anaEkranKancalari/useYedekleme'
 import { yerelGun } from './anaEkranKancalari/yerelGun'
-
-/**
- * Veri raporuna alınacak en fazla resmî not sayısı.
- *
- * Sunucu `?limit=`i `1..=200` aralığına kırpıyor; buradaki değer o üst
- * sınırdır çünkü rapor KVKK md. 11 kapsamında "elimdeki her şey" demektir —
- * "son 50 not" diyen bir rapor, eksik olduğunu söylemeden eksik olurdu.
- * (Daha fazlası olan bir dosyada rapor yine kırpılır; bu Plan 4'ün sunucu
- * tarafında çözeceği bilinen bir sınırdır, bkz. görev raporu.)
- */
-const RAPOR_NOT_SINIRI = 200
 
 /**
  * Ana ekran: takvim, danışan listesi, danışan kartı, seans paneli, yedekleme
@@ -115,48 +104,13 @@ export function AnaEkran({
     dosya.kapat()
   }
 
-  // Rapor için not çekmenin TEK yolu `notApi` — yani yalnızca resmî notlar.
-  // `ozelNotApi` bu bileşene HİÇ girmiyor (özel not `useSeansNotlari`
-  // kancasında, seans panelinde meşru olarak kullanılıyor) ve karta da
-  // geçmiyor.
-  //
-  // BURASI KAVŞAK. `veriRaporu.ts` ve `DanisanKarti.tsx` `ozelNotApi`'yi
-  // içe aktarmıyor ve aktarmalarına gerek de yok; raporun NOT KAYNAĞINI
-  // seçen tek yer bu fonksiyondur. Dolayısıyla "özel not rapora giremez"
-  // güvencesi burada ölçülüyor, orada değil (`veriRaporu.test.ts`'teki
-  // kaynak taraması riskin olmadığı dosyalara bakıyordu):
-  //   - davranışsal: `AnaEkran.test.tsx` "uretilen rapor METNI ozel not
-  //     kanaryasini TASIMAZ, resmi notu TASIR" — üretilen Blob'un metnini
-  //     okur;
-  //   - yapısal: aynı dosyadaki "rapor not kaynağı: `raporNotlariGetir`
-  //     gövdesi" bloğu bu fonksiyonun GÖVDESİNİ tarar. Fonksiyon kanca
-  //     ayrımında BİLEREK burada bırakıldı: taşınsaydı tarama yanlış dosyaya
-  //     bakan bir teste dönerdi (`docs/test-yesil-ama-korumuyor.md` biçim 12).
-  //     Özel notun bu ekranın erişim alanında GERÇEKTEN durduğunu (yani
-  //     taramanın gövdeye özgü olduğunu) o testin artı yön iddiası
-  //     `useSeansNotlari`'yi göstererek koruyor.
-  async function raporNotlariGetir(): Promise<SeansNotu[]> {
-    if (seciliDanisanId === null) return []
-    return notApi.danisanNotlari(seciliDanisanId, RAPOR_NOT_SINIRI)
-  }
-
-  // Dışa aktarımın DENETİM KAYDI — kart bunu notları çekmeden ÖNCE çağırır
-  // (bkz. `DanisanKarti` modül başlığı "Dışa aktarım önce KAYDEDİLİR").
-  //
-  // Bu fonksiyon BİLEREK `raporNotlariGetir`'in dışında duruyor: o gövde
-  // raporun NOT KAYNAĞINI seçen kavşaktır ve `AnaEkran.test.tsx` onu
-  // satır satır tarıyor ("gövdede özel nota giden hiçbir yol YOKTUR").
-  // İkinci bir sorumluluğu oraya taşımak o taramanın ölçtüğü şeyi
-  // bulanıklaştırırdı.
-  //
-  // Danışan seçili değilse fırlatır, sessizce başarılı olmaz: kartın
-  // fail-closed sırası ancak "kayıt gerçekten yazıldı" güvencesi varsa
-  // anlamlıdır — burada `return` etmek, kayıtsız bir raporu üretilebilir
-  // kılardı. (Kart yalnızca `seciliDanisanId !== null` iken render
-  // edildiği için bu dal bugün ulaşılamaz; ikincil hat.)
-  async function raporKaydiOlustur(): Promise<void> {
-    if (seciliDanisanId === null) throw new Error('Danışan seçili değil; rapor kaydı yazılamadı.')
-    await danisanApi.raporKaydiOlustur(seciliDanisanId)
+  // Veri raporu SUNUCUDA üretilir (Plan 4 Görev 6–7): bu ekran not çekmez,
+  // metin kurmaz; yalnızca parolayı ve YEREL günü sunucuya iletir. Gün
+  // TIKLAMA ANINDA hesaplanır — kart gece yarısından önce açılıp sonra
+  // kullanılırsa render anındaki `bugun` dünü taşırdı. Testli:
+  // `AnaEkran.test.tsx` > "yerel gün: gece yarısı ile 03:00 arası".
+  function veriRaporuIndir(danisanId: number, parola: string): Promise<void> {
+    return danisanApi.veriRaporuIndir(danisanId, parola, yerelGun(new Date()))
   }
 
   return (
@@ -678,9 +632,7 @@ export function AnaEkran({
               ekler={kart.ekler}
               randevular={kart.randevular}
               bugun={yerelGun(new Date())}
-              notlariGetir={raporNotlariGetir}
-              notSiniri={RAPOR_NOT_SINIRI}
-              raporKaydiOlustur={raporKaydiOlustur}
+              veriRaporuIndir={veriRaporuIndir}
               ekYukle={dosya.ekYukle}
               ekSil={dosya.ekSil}
               onRizaKaydet={dosya.rizaKaydet}

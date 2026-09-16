@@ -126,11 +126,25 @@ test('seans notu otomatik kaydedilir, sayfa yenilenince yerinde durur', async ({
   await expect(yenidenAlan).toHaveValue(icerik)
 })
 
-test('ozel not danisan raporuna girmez, resmi not girer', async ({ page }) => {
+// SINIR — bu test rapor İÇERİĞİNİ DOĞRULAMAZ. Rapor sunucuda AES-256 ile
+// şifrelenmiş PDF olarak iniyor ve e2e sürecinde onu çözecek bir PDF
+// kütüphanesi (Rust tarafındaki `lopdf`) yok. "Özel not rapora girmez, resmî
+// not girer" iddiasının davranışsal kanıtı sunucunun HTTP testidir:
+// `server/tests/notlar_api.rs::veri_raporu_sifreli_pdf_doner_ve_disa_aktarma_loglanir`
+// (PDF parolayla çözülür, metinde resmî kanarya VAR, özel kanarya YOK).
+//
+// Bu test yalnızca uçtan uca zinciri ölçer: arayüzdeki parola formu doğru
+// uca gider, ana parola reddi ekrana gelir, ŞİFRELİ bir PDF iner (ham
+// baytlarda resmî kanarya bile düz metin olarak yok) ve parola hiçbir
+// isteğin URL'sine girmez.
+test('veri raporu SIFRELI PDF olarak iner, parola URLye girmez (icerik dogrulamasi HTTP testinde)', async ({
+  page,
+}) => {
   await kurulumYap(page)
   const ad = 'Selin Aydın'
   const resmi = 'RESMIKANARYA14 — seans ozetinin resmi metni.'
   const gizli = 'GIZLIKANARYA14 — terapistin kendi degerlendirmesi.'
+  const raporParolasi = 'danisan-rapor-parolasi-14'
 
   const blok = await danisanVeRandevu(page, ad, '14:00')
   const alan = await seansiAc(page, blok)
@@ -139,53 +153,63 @@ test('ozel not danisan raporuna girmez, resmi not girer', async ({ page }) => {
 
   const ozelAlan = await ozelSekmeyeGec(page)
   await ozelAlan.fill(gizli)
-  // BARİYER: özel notun GERÇEKTEN sunucuya yazılmış olması, aşağıdaki eksi
-  // yönün önkoşulu. Hiç yazılmamış bir özel not, rapora da girmezdi ve test
-  // hiçbir şey kanıtlamadan yeşil verirdi.
+  // BARİYER: özel not GERÇEKTEN sunucuda; seans paneli açık bırakılıyor.
   await kaydedildiBekle(page)
 
-  // Resmî sekme özel notun metnini HİÇ taşımıyor: iki sekme iki ayrı
-  // editör, iki ayrı uç nokta. Tam değer karşılaştırması hem artı (resmî
-  // metin yerinde) hem eksi (başka hiçbir şey yok) yönü birden ölçer.
-  await page.getByRole('tab', { name: 'Seans Notu' }).click()
-  await expect(page.getByLabel('Seans notu', { exact: true })).toHaveValue(resmi)
-
-  // Seans paneli BİLEREK açık bırakılıyor. Raporun not kaynağını seçen yer
-  // `AnaEkran.raporNotlariGetir` ve o fonksiyon `seansId`'ye erişebiliyor;
-  // yani "rapor özel notu da çeksin" biçimindeki sızıntı tam olarak bu
-  // durumda mümkün. Paneli önce kapatan bir test, ölçmek istediği kavşağı
-  // ulaşılamaz kılardı.
   await danisanKartiAc(page, ad)
 
-  // Dal incelemesi C1: dışa aktarım silinemez denetim kaydına bir
-  // `disa_aktarma` satırı yazdırır ve bunu notları çekmeden ÖNCE yapar
-  // (fail-closed). Arayüz ile sunucu arasındaki YOL uyuşmazlığı yalnızca
-  // burada görünür: uç nokta yanlış yazılsaydı `POST` 404 döner, kayıt
-  // reddedilir ve aşağıdaki indirme bağlantısı HİÇ basılmazdı.
-  const kayitIstegi = page.waitForResponse(
-    (y) => /\/api\/danisanlar\/\d+\/rapor-kaydi$/.test(y.url()) && y.request().method() === 'POST',
-  )
-  await page.getByRole('button', { name: 'Veri raporu dışa aktar' }).click()
-  expect((await kayitIstegi).status(), 'rapor kaydi ucu 200 donmeli').toBe(200)
+  const istekler: { url: string; govde: string | null }[] = []
+  page.on('request', (r) => istekler.push({ url: r.url(), govde: r.postData() }))
 
-  // BARİYER: bağlantı ancak `notlariGetir` çözüldükten ve Blob üretildikten
-  // sonra basılıyor.
-  const indirmeBaglantisi = page.getByRole('link', { name: /^Raporu indir/ })
-  await expect(indirmeBaglantisi).toBeVisible()
+  const formuDoldur = async (parola: string) => {
+    await page.getByLabel('Rapor parolası', { exact: true }).fill(parola)
+    await page.getByLabel('Parolayı tekrar girin', { exact: true }).fill(parola)
+  }
 
+  // 1) ANA PAROLA reddedilir; mesaj arayüze olduğu gibi gelir, dosya inmez.
+  await page.getByRole('button', { name: 'Danışan veri raporu dışa aktar' }).click()
+  const form = page.getByRole('dialog', { name: 'Rapor parolası belirleyin' })
+  await formuDoldur('gizliparola')
+  const redYaniti = page.waitForResponse((y) => /\/veri-raporu$/.test(y.url()))
+  await form.getByRole('button', { name: 'Raporu oluştur' }).click()
+  expect((await redYaniti).status()).toBe(400)
+  await expect(form.getByRole('alert')).toHaveText(/ana parolanızı kullanmayın/)
+  // Reddedilen ana parola alanlarda kalmadı.
+  await expect(page.getByLabel('Rapor parolası', { exact: true })).toHaveValue('')
+
+  // 2) Ayrı parolayla şifreli PDF iner.
+  await formuDoldur(raporParolasi)
   const [indirme] = await Promise.all([
     page.waitForEvent('download'),
-    indirmeBaglantisi.click(),
+    form.getByRole('button', { name: 'Raporu oluştur' }).click(),
   ])
-  const raporMetni = readFileSync(await indirme.path(), 'utf-8')
+  expect(indirme.suggestedFilename()).toMatch(/^danisan-veri-raporu-\d{4}-\d{2}-\d{2}\.pdf$/)
+  await expect(page.getByText(/şifreli PDF olarak indirildi/)).toBeVisible()
 
-  // ARTI YÖN — önce bu. Hiçbir şey üretmeyen (ya da boş üreten) bir rapor
-  // aşağıdaki eksi yön iddiasını da geçerdi; raporun gerçekten danışanın
-  // resmî notunu taşıdığını görmeden "özel not yok" demek anlamsız.
-  expect(raporMetni).toContain(resmi)
-  // EKSİ YÖN: özel not kanaryası raporun HİÇBİR yerinde geçmiyor.
-  expect(raporMetni).not.toContain(gizli)
-  expect(raporMetni).not.toContain('GIZLIKANARYA14')
+  const bayt = readFileSync(await indirme.path())
+  const ham = bayt.toString('latin1')
+  // ARTI YÖN: gerçekten bir PDF ve gerçekten ŞİFRELİ (şifreleme sözlüğü var).
+  // Boş ya da bozuk bir dosya aşağıdaki "düz metin yok" iddialarını da
+  // geçerdi.
+  expect(ham.startsWith('%PDF-')).toBe(true)
+  expect(ham).toContain('/Encrypt')
+  // Ham baytlarda DÜZ METİN yok — resmî not dahil (şifreli olduğu için).
+  expect(ham).not.toContain('RESMIKANARYA14')
+  expect(ham).not.toContain('GIZLIKANARYA14')
+  expect(ham).not.toContain('Selin')
+
+  // Parola hiçbir isteğin URL'sinde yok; rapor isteğinin GÖVDESİNDE var
+  // (artı yön: izleyici istekleri gerçekten gördü).
+  const raporIstekleri = istekler.filter((i) => /\/api\/danisanlar\/\d+\/veri-raporu$/.test(i.url))
+  expect(raporIstekleri).toHaveLength(2)
+  expect(raporIstekleri[1].govde).toContain(raporParolasi)
+  expect(JSON.parse(raporIstekleri[1].govde ?? '{}').bugun).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  for (const i of istekler) {
+    expect(i.url).not.toContain(raporParolasi)
+    expect(i.url).not.toContain('gizliparola')
+  }
+  // Rapor için istemci not çekmedi (üretim sunucuda).
+  expect(istekler.some((i) => /\/notlar(\?|$)/.test(i.url))).toBe(false)
 })
 
 test('kilitliyken not uclari veri sizdirmaz', async ({ page, request }) => {

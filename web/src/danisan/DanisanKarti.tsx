@@ -1,16 +1,8 @@
-import { useEffect, useState } from 'react'
-import {
-  ekIndir,
-  ekIndirmeYolu,
-  EK_TURLERI,
-  type DanisanDosyasi,
-  type EkBilgisi,
-  type SeansNotu,
-} from '../api'
+import { useState } from 'react'
+import { ekIndir, ekIndirmeYolu, EK_TURLERI, type DanisanDosyasi, type EkBilgisi } from '../api'
 import type { Randevu } from '../takvim/HaftalikTakvim'
 import { boyutBicimle, kalanGun, tarihBicimle, tlBicimle } from './bicim'
 import { RizaBolumu } from './RizaBolumu'
-import { veriRaporuMetni } from './veriRaporu'
 
 /**
  * Danışan kartı: kimlik, başvuru nedeni, risk notu, bakiye, rıza durumu,
@@ -19,11 +11,9 @@ import { veriRaporuMetni } from './veriRaporu'
  * # Kart, özel nota HİÇ dokunmaz
  *
  * Buradaki hiçbir prop özel not taşımıyor ve bileşenin `ozelNotApi`'ye giden
- * bir yolu yok. Veri raporunu besleyen `notlariGetir` `SeansNotu[]`
- * döndürür — o tip `progress_notes`'un şeklidir (`sablon` + `client_id`
- * alanları `OzelNot`'ta YOKTUR), yani özel notu buraya geçirmek tip
- * seviyesinde de mümkün değildir. Koruma bir filtreye değil, kaynağın
- * kendisine dayanıyor (planın bağlayıcı kısıtı).
+ * bir yolu yok. Kart not da ÇEKMİYOR: veri raporu Plan 4'ten beri sunucuda
+ * üretiliyor ve sunucu onu yalnızca resmî not tablosundan kuruyor (bkz.
+ * aşağıdaki "Veri raporu" bölümü).
  *
  * # Bakiye neyi sayar
  *
@@ -67,7 +57,7 @@ import { veriRaporuMetni } from './veriRaporu'
  * zaman değişmez.
  *
  * Bunun sonucu, bu dosyadaki "danışan değişimi" savunmalarının
- * (`gorunenRapor` ve `ekForm` türetmeleri, `RizaBolumu`'nün `key`'i)
+ * (`raporForm` ve `ekForm` türetmeleri, `RizaBolumu`'nün `key`'i)
  * bugün **ulaşılamaz** olmasıdır. Bilerek duruyorlar — birincil hat
  * gevşetilirse yük taşımaya başlarlar — ama bir koruma sözü olarak
  * sayılmamalılar: koruma `AnaEkran`'daki türetmenin kendisidir ve
@@ -76,37 +66,26 @@ import { veriRaporuMetni } from './veriRaporu'
  * "birincil hat unutulursa ne kalır" sorusunu ölçüyor, "bugün ne çalışıyor"
  * sorusunu değil.
  *
- * # Veri raporu programatik olarak İNDİRİLMEZ
+ * # Veri raporu SUNUCUDA üretilir, parolalı PDF olarak iner (Plan 4 Görev 7)
  *
- * "Dışa aktar"a basmak raporu hazırlar ve bir indirme **bağlantısı**
- * gösterir; dosyayı kullanıcı kendisi indirir. Rapor danışanın kimliğini,
- * başvuru nedenini ve tüm resmî not içeriklerini taşıyan düz bir metin
- * dosyasıdır — diske yazılmasının bir tıkla daha ayrılması, kazara üretilen
- * bir kopyayı önler. Üretilen blob URL'i kart kapanınca serbest bırakılır.
+ * Plan 3'te rapor burada düz `.txt` olarak üretiliyordu; sunucu ayrı bir
+ * "kayıt" ucuyla yalnızca haberdar ediliyordu ve notlar `?limit=200`
+ * tavanına takılıyordu. Artık:
  *
- * # Dışa aktarım önce KAYDEDİLİR (fail-closed) — dal incelemesi C1
- *
- * Rapor tamamen burada, istemcide üretiliyor; sunucu dosyanın diske
- * yazıldığını başka hiçbir yerden göremez. Rapor için çekilen not listesi
- * (`GET /api/danisanlar/{id}/notlar`) `goruntuleme` yazıyor ve 5 dakikalık
- * pencerede **birleşiyor** — seans paneli aynı danışan için az önce
- * açıldıysa dışa aktarım silinemez denetim kaydında **hiçbir iz
- * bırakmıyordu**. Oysa tasarım §4 dışa aktarmayı açıkça sayıyor ve kod
- * tabanı doğrusunu zaten biliyor: tek bir ek indirmesi bile
- * `Eylem::DisaAktarma` + `LogHacmi::HerCagri` ile yazılıyor.
- *
- * Bu yüzden `raporHazirla`'nın İLK adımı `raporKaydiOlustur()`'dur ve
- * **sıra bir güvencedir**: kayıt reddedilirse (kilitli oturum, bilinmeyen
- * danışan, disk hatası) rapor hiç üretilmez — ne notlar çekilir, ne metin
- * kurulur, ne indirme bağlantısı görünür. Plan 1'in kurulum/kilit-açma
- * kararıyla aynı gerekçe: *kaydedilemeyecek bir erişime izin verilmez.*
- * Ters sıra ("önce üret, sonra kaydet") kaydın başarısız olduğu durumda
- * kullanıcının elinde kayıtsız bir kopya bırakırdı.
- *
- * PLAN 4 NOTU: dışa aktarım sunucu tarafına taşınacak ve parola korumalı
- * üretilecek (tasarım §10); o zaman raporu ÜRETEN uç nokta kendi kaydını
- * yazacak ve bu iki adımlı düzen kaldırılacak. Bugünkü hâl, o güne kadarki
- * asgari doğru davranıştır.
+ * - "Danışan veri raporu dışa aktar" bir parola formu açar; iki alan
+ *   eşleşmezse ya da parola `RAPOR_PAROLA_ASGARI` karakterden kısaysa istek
+ *   **gitmez** (sunucu da aynı sınırı uygular; buradaki kontrol yalnızca
+ *   gidiş-dönüşü kısaltır).
+ * - İstek gidince iki alan state'ten **hemen** silinir — başarıda da
+ *   hatada da. Sunucunun `400` ana parola reddinde silinen şey terapistin
+ *   ANA PAROLASIDIR; DOM'da (`value` özniteliği) fazladan kalmamalı. Hata
+ *   metni olduğu gibi `role="alert"` ile gösterilir.
+ * - Alanlar `autocomplete="new-password"`: tarayıcının kayıtlı ana parolayı
+ *   bu alana kendiliğinden doldurmasını engeller.
+ * - İndirmeyi, denetim kaydını ve 401 davranışını `danisanApi.veriRaporuIndir`
+ *   ile sunucu üstleniyor; kart ne not çeker, ne metin kurar, ne Blob üretir.
+ *   İstemcide rapor metni üretilemeyeceği `istemciRaporUretimi.test.ts`'te
+ *   `web/src`'nin tamamında yapısal olarak ölçülüyor.
  */
 type Props = {
   danisan: DanisanDosyasi
@@ -115,24 +94,12 @@ type Props = {
   randevular: Randevu[]
   /** İstemcinin yerel takvim günü, `YYYY-AA-GG`. */
   bugun: string
-  /** Yalnızca **resmî** notlar (`notApi.danisanNotlari`). */
-  notlariGetir: () => Promise<SeansNotu[]>
   /**
-   * `notlariGetir`'in sunucuya gönderdiği üst sınır.
-   *
-   * Yanıt "daha fazlası var" işareti taşımıyor; sayı sınıra dayanmışsa
-   * rapor kırpılmış olabilir ve bunu hem ekranda hem raporun içinde
-   * söylemek gerekiyor (aynı boşluğun arama tarafındaki karşılığı için
-   * bkz. `HizliArama`).
+   * Veri raporunu sunucudan parolalı PDF olarak indirir
+   * (`danisanApi.veriRaporuIndir`; `bugun`'ü çağıran taraf TIKLAMA ANINDA
+   * ekler). Hata sunucunun mesajıyla fırlatılır.
    */
-  notSiniri: number
-  /**
-   * Dışa aktarımı **denetim kaydına** yazdırır; `raporHazirla`'nın İLK adımı.
-   *
-   * Bkz. modül başlığındaki "Dışa aktarım önce KAYDEDİLİR" bölümü ve
-   * `danisanApi.raporKaydiOlustur`.
-   */
-  raporKaydiOlustur: () => Promise<void>
+  veriRaporuIndir: (danisanId: number, parola: string) => Promise<void>
   ekYukle: (dosya: File, tur: string) => Promise<void>
   /**
    * Eki **kalıcı olarak** siler (`danisanApi.ekSil`).
@@ -148,12 +115,20 @@ type Props = {
 
 const RISK_GOVDE_ID = 'danisan-risk-notu-govde'
 
-type Rapor = {
+/** Sunucunun `pdf::ASGARI_PAROLA` sınırı (karakter, bayt değil). */
+const RAPOR_PAROLA_ASGARI = 8
+
+type RaporFormu = {
   danisanId: number
-  url: string
-  dosyaAdi: string
-  notSayisi: number
-  kirpilmisOlabilir: boolean
+  acik: boolean
+  parola: string
+  tekrar: string
+  hata: string | null
+  indirildi: boolean
+}
+
+function bosRaporFormu(danisanId: number): RaporFormu {
+  return { danisanId, acik: false, parola: '', tekrar: '', hata: null, indirildi: false }
 }
 
 export function DanisanKarti({
@@ -161,16 +136,20 @@ export function DanisanKarti({
   ekler,
   randevular,
   bugun,
-  notlariGetir,
-  notSiniri,
-  raporKaydiOlustur,
+  veriRaporuIndir,
   ekYukle,
   ekSil,
   onRizaKaydet,
   onKapat,
 }: Props) {
-  const [rapor, setRapor] = useState<Rapor | null>(null)
-  const [raporHatasi, setRaporHatasi] = useState<string | null>(null)
+  // Rapor formu HANGİ danışan için açıldığını taşıyor ve ekrana giden hâli
+  // render sırasında türetiliyor (`ekFormu` ile aynı desen): A için yazılmış
+  // bir parola B'nin kartında durup B'nin raporuna gitmemeli.
+  // İKİNCİL HAT — kart danışan değişince zaten unmount ediliyor (bkz. modül
+  // başlığı).
+  const [raporFormu, setRaporFormu] = useState<RaporFormu>(() => bosRaporFormu(danisan.id))
+  const raporForm =
+    raporFormu.danisanId === danisan.id ? raporFormu : bosRaporFormu(danisan.id)
   const [raporSuruyor, setRaporSuruyor] = useState(false)
   const [ekSuruyor, setEkSuruyor] = useState(false)
   // Ek indirme hatası. İndirme artık `fetch`'ten geçtiği için (bkz.
@@ -205,7 +184,7 @@ export function DanisanKarti({
   // bırakmak, seçim değişimi ile efekt arasındaki karede aynı riski açık
   // bırakırdı (`AnaEkran`'daki `seansVerisi` ile aynı gerekçe).
   //
-  // İKİNCİL HAT — `gorunenRapor` ile aynı durumda (bkz. modül başlığı).
+  // İKİNCİL HAT — `raporForm` ile aynı durumda (bkz. modül başlığı).
   const [ekFormu, setEkFormu] = useState<{
     danisanId: number
     dosya: File | null
@@ -218,36 +197,6 @@ export function DanisanKarti({
       ? ekFormu
       : { danisanId: danisan.id, dosya: null, tur: 'diger', hata: null }
 
-  // Ekrana giden rapor RENDER SIRASINDA türetiliyor: state başka bir
-  // danışana aitse yok sayılır. Sıfırlamayı efekte bırakmak, seçim değişimi
-  // ile efektin çalışması arasındaki karede ÖNCEKİ danışanın raporunu yeni
-  // kartta göstermek olurdu (`AnaEkran`'daki `seansVerisi` ile aynı desen).
-  //
-  // İKİNCİL HAT: `AnaEkran` danışan değişince bu kartı zaten UNMOUNT ediyor
-  // (bkz. modül başlığındaki "Kartın danışanı üretimde değişmez"), yani bu
-  // türetme bugün erişilemez. Ölçüldüğü tek yer sentetik `rerender`
-  // testleri (`DanisanKarti.test.tsx` > "ikincil hat").
-  const gorunenRapor = rapor !== null && rapor.danisanId === danisan.id ? rapor : null
-
-  // Danışan değiştiğinde `rapor` state'i BİLEREK silinmiyor; türetme onu
-  // zaten gizliyor. Bir efektle sıfırlamak iki mekanizmayı üst üste koyar
-  // ve o durumda yukarıdaki türetmeyi kaldıran bir mutasyon hiçbir testi
-  // kırmaz (efekt aynı işi bir kare gecikmeyle yapar, RTL o kareyi
-  // göremez) — yani türetme "test yeşil ama korumuyor" durumuna düşerdi.
-  // Yan etkisi: aynı karta geri dönüldüğünde hazırlanmış rapor bağlantısı
-  // hâlâ geçerlidir; bu bir kayıp değil, kazanç.
-
-  // Blob URL rapor değiştiğinde ve kart kaldırıldığında serbest bırakılır:
-  // rapor kişisel veri taşıyor, sayfa ömrü boyunca canlı bir URL bırakmak
-  // onu adresi bilen her koda açık tutardı.
-  useEffect(() => {
-    if (rapor === null) return
-    const url = rapor.url
-    return () => {
-      URL.revokeObjectURL(url)
-    }
-  }, [rapor])
-
   // Gelinmiş VE ödenmemiş (bkz. modül başlığı). `odendi` seans panelinin
   // alt satırından yazılıyor (Plan 4 Görev 2).
   const bakiyeKurus = randevular
@@ -256,35 +205,35 @@ export function DanisanKarti({
 
   const kalan = danisan.saklama_bitis === null ? null : kalanGun(bugun, danisan.saklama_bitis)
 
-  async function raporHazirla() {
-    setRaporSuruyor(true)
-    setRaporHatasi(null)
-    try {
-      // SIRA ÖNEMLİ — bkz. modül başlığı "Dışa aktarım önce KAYDEDİLİR".
-      // Kayıt başarısız olursa (kilitli oturum → 401, bilinmeyen danışan →
-      // 404, disk hatası → 500) `await` fırlatır, `catch`'e düşülür ve
-      // AŞAĞIDAKİ HİÇBİR SATIR ÇALIŞMAZ: notlar çekilmez, metin üretilmez,
-      // Blob oluşmaz, indirme bağlantısı gösterilmez. Fail-closed.
-      await raporKaydiOlustur()
-      const notlar = await notlariGetir()
-      const kirpilmisOlabilir = notlar.length >= notSiniri
-      const metin = veriRaporuMetni(danisan, notlar, ekler, kirpilmisOlabilir)
-      const url = URL.createObjectURL(new Blob([metin], { type: 'text/plain;charset=utf-8' }))
-      setRapor({
-        danisanId: danisan.id,
-        url,
-        // Dosya adında danışanın ADI YOK: ad sağlık verisiyle birlikte
-        // anıldığı anda kendisi de hassas veri olur ve dosya adları
-        // paylaşılan klasörlerde, yedeklerde, ekran görüntülerinde görünür.
-        // Testli (bir yorum bu iddiayı tek başına taşıyamaz):
-        // `DanisanKarti.test.tsx` "dosya adinda danisanin ADI GECMEZ".
-        dosyaAdi: `danisan-${danisan.id}-veri-raporu-${bugun}.txt`,
-        notSayisi: notlar.length,
-        kirpilmisOlabilir,
+  async function raporOlustur() {
+    const { parola, tekrar } = raporForm
+    // Karakter sayısı sunucuyla AYNI birimde: `[...dizgi]` kod noktası
+    // sayar (Rust `chars()`); `.length` UTF-16 birimi sayardı.
+    if ([...parola].length < RAPOR_PAROLA_ASGARI) {
+      setRaporFormu({
+        ...raporForm,
+        hata: `Rapor parolası en az ${RAPOR_PAROLA_ASGARI} karakter olmalı.`,
       })
+      return
+    }
+    if (parola !== tekrar) {
+      setRaporFormu({ ...raporForm, hata: 'Parolayı tekrar girin: iki parola eşleşmiyor.' })
+      return
+    }
+    // Parola istek gider gitmez STATE'TEN (dolayısıyla DOM'dan) silinir —
+    // başarıda da hatada da (bkz. modül başlığı). Yerel `parola` değişkeni
+    // bu fonksiyonun ömrüyle sınırlı.
+    setRaporFormu({ ...raporForm, parola: '', tekrar: '', hata: null, indirildi: false })
+    setRaporSuruyor(true)
+    try {
+      await veriRaporuIndir(danisan.id, parola)
+      setRaporFormu({ ...bosRaporFormu(danisan.id), indirildi: true })
     } catch (e) {
-      // Boş bir rapor indirtmek "bu danışanın notu yok" diye okunurdu.
-      setRaporHatasi(e instanceof Error ? e.message : 'Veri raporu hazırlanamadı.')
+      setRaporFormu({
+        ...bosRaporFormu(danisan.id),
+        acik: true,
+        hata: e instanceof Error ? e.message : 'Veri raporu oluşturulamadı.',
+      })
     } finally {
       setRaporSuruyor(false)
     }
@@ -598,34 +547,93 @@ export function DanisanKarti({
           Danışanın kendi verisine erişim talebi için (KVKK md. 11). Terapistin özel notları
           rapora dahil edilmez.
         </p>
-        <button
-          type="button"
-          className="mt-2 rounded border px-3 py-1 text-sm disabled:opacity-50"
-          disabled={raporSuruyor}
-          onClick={() => void raporHazirla()}
-        >
-          Veri raporu dışa aktar
-        </button>
-        {gorunenRapor && (
-          <p className="mt-2">
-            <a
-              className="text-slate-700 underline"
-              href={gorunenRapor.url}
-              download={gorunenRapor.dosyaAdi}
-            >
-              Raporu indir ({gorunenRapor.notSayisi} seans notu, {ekler.length} ek)
-            </a>
-          </p>
+        {!raporForm.acik && (
+          <button
+            type="button"
+            className="mt-2 rounded border px-3 py-1 text-sm disabled:opacity-50"
+            disabled={raporSuruyor}
+            // Açmak state'i SIFIRLAMAZ, yalnızca görünür kılar: parolayı
+            // silmenin tek yeri istek anı ve sonucu (bkz. `raporOlustur`).
+            // Sıfırlayan bir "aç", sonuç yolundaki temizliği ölçülemez kılardı.
+            onClick={() =>
+              setRaporFormu({ ...raporForm, acik: true, hata: null, indirildi: false })
+            }
+          >
+            Danışan veri raporu dışa aktar
+          </button>
         )}
-        {gorunenRapor?.kirpilmisOlabilir && (
-          <p className="mt-2 rounded border border-amber-400 bg-amber-50 p-2 text-amber-900">
-            Not sayısı sunucunun üst sınırına ({gorunenRapor.notSayisi}) dayandı; daha eski
-            notlar rapora girmemiş olabilir. Raporun içinde de bu uyarı var.
-          </p>
+        {raporForm.acik && (
+          <form
+            role="dialog"
+            aria-labelledby="veri-raporu-parola-basligi"
+            className="mt-2 rounded border border-slate-300 p-3"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void raporOlustur()
+            }}
+          >
+            <h4 id="veri-raporu-parola-basligi" className="font-medium">
+              Rapor parolası belirleyin
+            </h4>
+            <p className="mt-1 text-slate-600">
+              Rapor bu parolayla şifrelenmiş PDF olarak iner. Bu parolayı danışana ayrıca
+              iletin. Ana parolanızı kullanmayın.
+            </p>
+            <label className="mt-2 block" htmlFor="rapor-parolasi">
+              Rapor parolası
+            </label>
+            <input
+              id="rapor-parolasi"
+              type="password"
+              autoComplete="new-password"
+              className="mt-1 rounded border p-1"
+              disabled={raporSuruyor}
+              value={raporForm.parola}
+              onChange={(e) =>
+                setRaporFormu({ ...raporForm, parola: e.target.value, hata: null })
+              }
+            />
+            <label className="mt-2 block" htmlFor="rapor-parolasi-tekrar">
+              Parolayı tekrar girin
+            </label>
+            <input
+              id="rapor-parolasi-tekrar"
+              type="password"
+              autoComplete="new-password"
+              className="mt-1 rounded border p-1"
+              disabled={raporSuruyor}
+              value={raporForm.tekrar}
+              onChange={(e) =>
+                setRaporFormu({ ...raporForm, tekrar: e.target.value, hata: null })
+              }
+            />
+            <div className="mt-2 flex gap-2">
+              <button
+                type="submit"
+                className="rounded border px-3 py-1 text-sm disabled:opacity-50"
+                disabled={raporSuruyor}
+              >
+                Raporu oluştur
+              </button>
+              <button
+                type="button"
+                className="rounded border px-3 py-1 text-sm"
+                disabled={raporSuruyor}
+                onClick={() => setRaporFormu(bosRaporFormu(danisan.id))}
+              >
+                Vazgeç
+              </button>
+            </div>
+            {raporForm.hata && (
+              <p role="alert" className="mt-1 text-red-600">
+                {raporForm.hata}
+              </p>
+            )}
+          </form>
         )}
-        {raporHatasi && (
-          <p role="alert" className="mt-1 text-red-600">
-            {raporHatasi}
+        {raporForm.indirildi && (
+          <p role="status" className="mt-2 text-slate-700">
+            Rapor şifreli PDF olarak indirildi. Parolayı danışana ayrıca iletin.
           </p>
         )}
       </div>

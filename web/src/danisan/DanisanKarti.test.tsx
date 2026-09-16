@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DanisanDosyasi, EkBilgisi, SeansNotu } from '../api'
+import type { DanisanDosyasi, EkBilgisi } from '../api'
 import type { Randevu } from '../takvim/HaftalikTakvim'
 import { DanisanKarti } from './DanisanKarti'
 
@@ -55,22 +55,6 @@ function randevu(ozel: Partial<Randevu>): Randevu {
   }
 }
 
-const resmiNotlar: SeansNotu[] = [
-  {
-    appointment_id: 1,
-    client_id: 12,
-    // `SeansNotu` alanı (Görev 9 incelemesi I3): randevunun başlangıcı.
-    seans_zamani: '2026-09-07T10:00',
-    sablon: 'dap',
-    icerik: 'RESMI-NOT-ICERIGI',
-    guncelleme_zamani: '2026-09-07T12:00:00Z',
-  },
-]
-
-// Rapor sızıntı testinin kanaryası: özel notun içeriğini temsil eder ve
-// hiçbir dışa aktarımda görünmemeli.
-const GIZLI = 'GIZLI-OZEL-ABC'
-
 let uretilenBloblar: Blob[]
 const gercekOlustur = URL.createObjectURL
 const gercekSerbest = URL.revokeObjectURL
@@ -98,9 +82,7 @@ function kur(ozel: Partial<React.ComponentProps<typeof DanisanKarti>> = {}) {
     ekler,
     randevular: [randevu({ id: 1, durum: 'geldi', odendi: false, ucret: 45000 })],
     bugun: '2026-09-09',
-    notlariGetir: vi.fn().mockResolvedValue(resmiNotlar),
-    notSiniri: 200,
-    raporKaydiOlustur: vi.fn().mockResolvedValue(undefined),
+    veriRaporuIndir: vi.fn().mockResolvedValue(undefined),
     ekYukle: vi.fn().mockResolvedValue(undefined),
     ekSil: vi.fn().mockResolvedValue(undefined),
     onRizaKaydet: vi.fn().mockResolvedValue(undefined),
@@ -478,159 +460,171 @@ describe('DanisanKarti — ek silme (dal incelemesi: DELETE /api/ekler/{id})', (
   })
 })
 
-describe('DanisanKarti — veri raporu (KVKK md. 11)', () => {
-  it('veri raporu disa aktar butonu vardir', () => {
+// Plan 4 Görev 7: rapor SUNUCUDA üretilir, parolalı PDF olarak iner. Kart
+// yalnızca parolayı toplar ve `veriRaporuIndir`'i çağırır; indirmenin kendisi
+// (401, Blob, dosya adı) `api.test.ts`'te, rapor İÇERİĞİ (özel not yok,
+// resmî not var, ek adı var) sunucunun HTTP testinde ölçülüyor.
+describe('DanisanKarti — veri raporu (KVKK md. 11, parolalı PDF)', () => {
+  const ac = () =>
+    userEvent.click(screen.getByRole('button', { name: 'Danışan veri raporu dışa aktar' }))
+  const diyalog = () => screen.getByRole('dialog', { name: 'Rapor parolası belirleyin' })
+  const parolaAlani = () => within(diyalog()).getByLabelText('Rapor parolası') as HTMLInputElement
+  const tekrarAlani = () =>
+    within(diyalog()).getByLabelText('Parolayı tekrar girin') as HTMLInputElement
+  const olustur = () =>
+    userEvent.click(within(diyalog()).getByRole('button', { name: 'Raporu oluştur' }))
+
+  it('dugme parola formunu acar: iki password alani, new-password, aciklama', async () => {
     kur()
-    expect(screen.getByRole('button', { name: 'Veri raporu dışa aktar' })).toBeDefined()
-  })
-
-  it('rapor hazirlaninca INDIRME BAGLANTISI belirir', async () => {
-    // Programatik tıklama YOK: kullanıcı neyi indireceğini gördükten sonra
-    // kendisi tıklar. Rapor kişisel veri taşıyan bir dosyadır.
-    kur()
-    expect(screen.queryByRole('link', { name: /raporu indir/i })).toBeNull()
-    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
-
-    const bag = await screen.findByRole('link', { name: /raporu indir/i })
-    expect(bag.getAttribute('href')).toMatch(/^blob:/)
-    expect(bag.getAttribute('download')).toContain('.txt')
-  })
-
-  it('dosya adinda danisanin ADI GECMEZ, yalnizca kimlik ve tarih', async () => {
-    // Gerekçe `DanisanKarti.tsx`'te yazılıydı ama testli değildi: tek iddia
-    // `.txt` idi ve `dosyaAdi`'na `danisan.ad_soyad` ekleyen bir mutasyon
-    // tüm paketi yeşil bırakıyordu (onuncu biçim).
-    //
-    // Zarar somut: ad sağlık verisiyle birlikte anıldığı anda kendisi de
-    // hassas veri olur ve dosya adları paylaşılan klasörlerde, yedeklerde,
-    // ekran görüntülerinde ve indirme listesinde GÖRÜNÜR.
-    kur()
-    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
-    const bag = await screen.findByRole('link', { name: /raporu indir/i })
-    const ad = bag.getAttribute('download') ?? ''
-
-    // ARTI YÖN: dosya adı gerçekten üretildi ve ayırt edici (boş bir ad da
-    // aşağıdaki eksi yön iddialarını geçerdi).
-    expect(ad).toBe('danisan-12-veri-raporu-2026-09-09.txt')
-    // Adın hiçbir parçası, hiçbir yazımıyla geçmiyor.
-    for (const parca of ['Ayşe', 'Yılmaz', 'Ayse', 'Yilmaz']) {
-      expect(ad.toLocaleLowerCase('tr')).not.toContain(parca.toLocaleLowerCase('tr'))
+    // Form kapalı başlar: parola alanı ancak istenince DOM'a girer.
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await ac()
+    for (const alan of [parolaAlani(), tekrarAlani()]) {
+      expect(alan.type).toBe('password')
+      // Tarayıcı kayıtlı ANA parolayı buraya kendiliğinden doldurmasın.
+      expect(alan.getAttribute('autocomplete')).toBe('new-password')
     }
-  })
-
-  it('rapor resmi not iceriklerini TASIR', async () => {
-    kur()
-    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
-    await screen.findByRole('link', { name: /raporu indir/i })
-
-    expect(uretilenBloblar).toHaveLength(1)
-    const metin = await uretilenBloblar[0].text()
-    expect(metin).toContain('RESMI-NOT-ICERIGI')
-    expect(metin).toContain('Ayşe Yılmaz')
-  })
-
-  it('rapor OZEL NOT icermez: tek kaynagi resmi not istemcisidir', async () => {
-    // Yapısal iddia: rapor içeriğini besleyen `notlariGetir` `SeansNotu[]`
-    // döndürür ve `notApi` dışında bir kaynağı yoktur. Aşağıdaki kurulum
-    // sunucunun özel notu resmî listeye SIZDIRDIĞI durumu taklit edemez
-    // (tip izin vermez); ölçülen şey, kartın ekranda ya da raporda kendi
-    // başına ikinci bir kaynağa gitmemesi.
-    const notlariGetir = vi.fn().mockResolvedValue(resmiNotlar)
-    kur({ notlariGetir })
-    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
-    await screen.findByRole('link', { name: /raporu indir/i })
-
-    const metin = await uretilenBloblar[0].text()
-    expect(metin).not.toContain(GIZLI)
-    expect(metin).toMatch(/özel notları bu rapora dahil değildir/i)
-    // Rapor için not çekmenin TEK yolu bu prop; ikinci bir çağrı yolu yok.
-    expect(notlariGetir).toHaveBeenCalledTimes(1)
-  })
-
-  it('rapor ek dosyalari USTVERI olarak listeler, icerik gommez', async () => {
-    kur()
-    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
-    await screen.findByRole('link', { name: /raporu indir/i })
-    const metin = await uretilenBloblar[0].text()
-    expect(metin).toContain('onam-formu.pdf')
-    expect(metin).not.toContain('pdf-baytlari')
-  })
-
-  it('not sayisi sunucu sinirina DAYANDIYSA rapor eksik olabilecegini soyler', async () => {
-    // `GET /api/danisanlar/{id}/notlar` "daha fazlası var" işareti
-    // taşımıyor. Kırpılmış bir erişim raporu, eksik olduğunu söylemeden
-    // eksiktir — KVKK md. 11 belgesinde bu sessiz bir yanlış beyandır.
-    const cok = Array.from({ length: 3 }, (_, i) => ({ ...resmiNotlar[0], appointment_id: i + 1 }))
-    kur({ notlariGetir: vi.fn().mockResolvedValue(cok), notSiniri: 3 })
-    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
-    await screen.findByRole('link', { name: /raporu indir/i })
-
-    expect(screen.getByText(/daha eski\s+notlar rapora girmemiş olabilir/i)).toBeDefined()
-    const metin = await uretilenBloblar[0].text()
-    // Uyarı raporun İÇİNDE de var: ekrandaki uyarı dosyayla birlikte
-    // gitmez, dosyayı okuyan (danışan olabilir) onu göremez.
-    expect(metin).toMatch(/rapora GİRMEMİŞ olabilir/i)
-  })
-
-  it('ARTI YON: sinirin altinda o uyari YOKTUR', () => {
-    // Her zaman uyaran bir rapor uyarıyı anlamsızlaştırır.
-    kur({ notSiniri: 200 })
-    expect(screen.queryByText(/rapora girmemiş olabilir/i)).toBeNull()
-  })
-
-  // --- Dal incelemesi C1: dışa aktarım ÖNCE kaydedilir (fail-closed) ---
-
-  it('disa aktarim, notlar cekilmeden ONCE denetim kaydini yazdirir', async () => {
-    // Sıra bir güvence: kayıt yazılamıyorsa rapor da üretilmemeli. Bunu
-    // ölçmenin tek yolu çağrı SIRASINI görmek — "ikisi de çağrıldı"
-    // iddiası, kaydı en sona koyan bir sürümü de geçerdi.
-    const sira: string[] = []
-    const raporKaydiOlustur = vi.fn().mockImplementation(async () => {
-      sira.push('kayit')
-    })
-    const notlariGetir = vi.fn().mockImplementation(async () => {
-      sira.push('notlar')
-      return resmiNotlar
-    })
-    kur({ raporKaydiOlustur, notlariGetir })
-
-    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
-    await screen.findByRole('link', { name: /raporu indir/i })
-
-    expect(raporKaydiOlustur).toHaveBeenCalledTimes(1)
-    expect(sira).toEqual(['kayit', 'notlar'])
-  })
-
-  it('FAIL-CLOSED: kayit basarisiz olursa rapor URETILMEZ', async () => {
-    // KVKK 2018/10'un istediği kaydın var olma sebebi tam olarak bu: bir
-    // danışanın tüm klinik dosyasını diske yazan işlem, silinemez kayıtta
-    // iz bırakmadan gerçekleşmemeli. Kayıt yazılamıyorsa (kilitli oturum →
-    // 401, disk hatası → 500) dışa aktarım da yapılmaz.
-    const raporKaydiOlustur = vi
-      .fn()
-      .mockRejectedValue(new Error('Oturum kilitli. Lütfen parolanızı girin.'))
-    const notlariGetir = vi.fn().mockResolvedValue(resmiNotlar)
-    kur({ raporKaydiOlustur, notlariGetir })
-
-    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
-    await waitFor(() =>
-      expect(screen.getByText('Oturum kilitli. Lütfen parolanızı girin.')).toBeDefined(),
+    expect(diyalog().textContent).toContain(
+      'Bu parolayı danışana ayrıca iletin. Ana parolanızı kullanmayın.',
     )
-
-    // Rapor hiçbir aşamada üretilmedi: notlar bile çekilmedi.
-    expect(notlariGetir).not.toHaveBeenCalled()
-    expect(uretilenBloblar).toHaveLength(0)
-    expect(screen.queryByRole('link', { name: /raporu indir/i })).toBeNull()
   })
 
-  it('rapor hazirlanamazsa baglanti verilmez, hata gosterilir', async () => {
-    // Boş bir rapor indirtmek "bu danışanın notu yok" diye okunurdu.
-    const notlariGetir = vi.fn().mockRejectedValue(new Error('Notlar alınamadı.'))
-    kur({ notlariGetir })
-    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
+  it('parolalar eslesmezse ya da kisaysa istek GITMEZ ve alan adiyla hata gosterilir', async () => {
+    const veriRaporuIndir = vi.fn()
+    kur({ veriRaporuIndir })
+    await ac()
+    await userEvent.type(parolaAlani(), 'kisa')
+    await userEvent.type(tekrarAlani(), 'kisa')
+    await olustur()
+    expect(within(diyalog()).getByRole('alert').textContent).toMatch(
+      /Rapor parolası en az 8 karakter/,
+    )
+    expect(veriRaporuIndir).not.toHaveBeenCalled()
 
-    await waitFor(() => expect(screen.getByText('Notlar alınamadı.')).toBeDefined())
-    expect(screen.queryByRole('link', { name: /raporu indir/i })).toBeNull()
+    await userEvent.clear(parolaAlani())
+    await userEvent.clear(tekrarAlani())
+    await userEvent.type(parolaAlani(), 'dogru-parola-1')
+    await userEvent.type(tekrarAlani(), 'dogru-parola-2')
+    await olustur()
+    expect(within(diyalog()).getByRole('alert').textContent).toMatch(
+      /Parolayı tekrar girin: .*eşleşmiyor/,
+    )
+    expect(veriRaporuIndir).not.toHaveBeenCalled()
+  })
+
+  it('sinir KARAKTER sayar: 7 cok baytli karakter reddedilir, 8i istek gonderir', async () => {
+    // Sunucu `chars()` sayıyor. `.length` (UTF-16) ya da bayt sayan bir
+    // kontrol burada sunucudan ayrışırdı. İKİ YÖN: her şeyi reddeden bir
+    // kontrol de ilk yarıyı geçerdi.
+    const veriRaporuIndir = vi.fn().mockResolvedValue(undefined)
+    kur({ veriRaporuIndir })
+    await ac()
+    await userEvent.type(parolaAlani(), 'şşşşşşş')
+    await userEvent.type(tekrarAlani(), 'şşşşşşş')
+    await olustur()
+    expect(within(diyalog()).getByRole('alert').textContent).toMatch(/en az 8 karakter/)
+    expect(veriRaporuIndir).not.toHaveBeenCalled()
+
+    await userEvent.type(parolaAlani(), 'ş')
+    await userEvent.type(tekrarAlani(), 'ş')
+    await olustur()
+    expect(veriRaporuIndir).toHaveBeenCalledWith(12, 'şşşşşşşş')
+  })
+
+  it('gecerli parolayla TEK istek gider, istek UCUSTAYKEN parola DOMda yok', async () => {
+    let coz!: () => void
+    const veriRaporuIndir = vi.fn(() => new Promise<void>((c) => (coz = c)))
+    kur({ veriRaporuIndir })
+    await ac()
+    await userEvent.type(parolaAlani(), 'danisan-parolasi-1')
+    await userEvent.type(tekrarAlani(), 'danisan-parolasi-1')
+    // Ön koşul: yazılan parola GERÇEKTEN DOM'da (`value` özniteliği) —
+    // yoksa aşağıdaki eksi yön hiçbir şeyi sınamazdı.
+    expect(document.body.innerHTML).toContain('danisan-parolasi-1')
+
+    await olustur()
+    expect(veriRaporuIndir).toHaveBeenCalledTimes(1)
+    expect(veriRaporuIndir).toHaveBeenCalledWith(12, 'danisan-parolasi-1')
+    // Yanıt beklenirken: alanlar boşaltılmış ve kilitli, ikinci istek yok.
+    expect(document.body.innerHTML).not.toContain('danisan-parolasi-1')
+    expect(parolaAlani().disabled).toBe(true)
+    await userEvent.click(within(diyalog()).getByRole('button', { name: 'Raporu oluştur' }))
+    expect(veriRaporuIndir).toHaveBeenCalledTimes(1)
+
+    coz()
+    expect(await screen.findByRole('status')).toBeDefined()
+  })
+
+  it('basarida form kapanir, alanlar TEMIZLENIR (yeniden acinca bos), parola hicbir yerde yok', async () => {
+    const veriRaporuIndir = vi.fn().mockResolvedValue(undefined)
+    kur({ veriRaporuIndir })
+    await ac()
+    await userEvent.type(parolaAlani(), 'danisan-parolasi-1')
+    await userEvent.type(tekrarAlani(), 'danisan-parolasi-1')
+    await olustur()
+
+    expect((await screen.findByRole('status')).textContent).toMatch(/şifreli PDF/)
+    expect(veriRaporuIndir).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.body.innerHTML).not.toContain('danisan-parolasi-1')
+    // Form yeniden açılınca alanlar BOŞ: parola gizli bir state'te de
+    // kalmamış (kapalı formun state'i DOM'da görünmez; ancak böyle ölçülür).
+    await ac()
+    expect(parolaAlani().value).toBe('')
+    expect(tekrarAlani().value).toBe('')
+    expect(document.body.innerHTML).not.toContain('danisan-parolasi-1')
+  })
+
+  it('sunucunun 400 mesaji (ana parola reddi) oldugu gibi gosterilir, ANA PAROLA alanlardan silinir', async () => {
+    const mesaj =
+      'Rapor için ana parolanızı kullanmayın; danışana vereceğiniz ayrı bir parola seçin.'
+    const veriRaporuIndir = vi.fn().mockRejectedValue(new Error(mesaj))
+    kur({ veriRaporuIndir })
+    await ac()
+    await userEvent.type(parolaAlani(), 'ana-parola-123')
+    await userEvent.type(tekrarAlani(), 'ana-parola-123')
+    await olustur()
+
+    expect((await within(diyalog()).findByRole('alert')).textContent).toBe(mesaj)
+    // Form açık kalır (kullanıcı başka parola seçecek) ama reddedilen
+    // parola — terapistin ANA parolası — ne alanda ne DOM'da duruyor.
+    expect(parolaAlani().value).toBe('')
+    expect(tekrarAlani().value).toBe('')
+    expect(document.body.innerHTML).not.toContain('ana-parola-123')
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('Vazgec istek atmaz, formu kapatir ve alanlari temizler', async () => {
+    const veriRaporuIndir = vi.fn()
+    kur({ veriRaporuIndir })
+    await ac()
+    await userEvent.type(parolaAlani(), 'vazgecilen-parola')
+    await userEvent.click(within(diyalog()).getByRole('button', { name: 'Vazgeç' }))
+    expect(veriRaporuIndir).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await ac()
+    expect(parolaAlani().value).toBe('')
+  })
+
+  it('parola console a, localStorage a, sessionStorage a YAZILMAZ; kart Blob URETMEZ', async () => {
+    const gunlukler = ['log', 'info', 'warn', 'error', 'debug'] as const
+    const casuslar = gunlukler.map((a) => vi.spyOn(console, a).mockImplementation(() => {}))
+    localStorage.clear()
+    sessionStorage.clear()
+    kur()
+    await ac()
+    await userEvent.type(parolaAlani(), 'SIZINTI-PAROLA-77')
+    await userEvent.type(tekrarAlani(), 'SIZINTI-PAROLA-77')
+    await olustur()
+    await screen.findByRole('status')
+
+    for (const casus of casuslar) expect(casus).not.toHaveBeenCalled()
+    for (const depo of [localStorage, sessionStorage]) {
+      for (let i = 0; i < depo.length; i++) {
+        expect(depo.getItem(depo.key(i) ?? '') ?? '').not.toContain('SIZINTI-PAROLA-77')
+      }
+    }
+    // İndirme (Blob) kartın değil `danisanApi`'nin işi; kart hiç üretmez.
     expect(uretilenBloblar).toHaveLength(0)
   })
 })
@@ -647,20 +641,10 @@ describe('DanisanKarti — kapanış ve gizlilik', () => {
     const casuslar = gunlukler.map((a) => vi.spyOn(console, a).mockImplementation(() => {}))
 
     kur()
-    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
-    await screen.findByRole('link', { name: /raporu indir/i })
+    await userEvent.click(screen.getByRole('button', { name: 'Risk notunu göster' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Danışan veri raporu dışa aktar' }))
 
     for (const casus of casuslar) expect(casus).not.toHaveBeenCalled()
-  })
-
-  it('kart kaldirilinca uretilen blob URL serbest birakilir', async () => {
-    // Rapor kişisel veri taşıyor; sayfa ömrü boyunca canlı bir blob URL
-    // bırakmak onu adresi bilen her koda açık tutardı.
-    const { unmount } = kur()
-    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
-    await screen.findByRole('link', { name: /raporu indir/i })
-    unmount()
-    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:rapor-1')
   })
 })
 
@@ -691,7 +675,7 @@ describe('DanisanKarti — kapanış ve gizlilik', () => {
 // kadarını kurtarır". Bu değerli bir sorudur; "bugün üretimde şu koruma
 // çalışıyor" DEĞİLDİR.
 describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender`)', () => {
-  it('A icin hazirlanan rapor baglantisi B secilince EKRANDA KALMAZ', async () => {
+  it('A icin yazilan rapor parolasi B secilince EKRANDA KALMAZ ve B nin raporuna GITMEZ', async () => {
     const digeri: DanisanDosyasi = {
       ...danisan,
       id: 13,
@@ -700,13 +684,12 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
       riza_tarihi: null,
       riza_dosya_id: null,
     }
+    const veriRaporuIndir = vi.fn().mockResolvedValue(undefined)
     const ortak = {
       ekler,
       randevular: [randevu({ id: 1 })],
       bugun: '2026-09-09',
-      notlariGetir: vi.fn().mockResolvedValue(resmiNotlar),
-      notSiniri: 200,
-      raporKaydiOlustur: vi.fn().mockResolvedValue(undefined),
+      veriRaporuIndir,
       ekYukle: vi.fn().mockResolvedValue(undefined),
       ekSil: vi.fn().mockResolvedValue(undefined),
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),
@@ -714,31 +697,28 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
     }
     const { rerender } = render(<DanisanKarti danisan={danisan} {...ortak} />)
 
-    await userEvent.click(screen.getByRole('button', { name: 'Veri raporu dışa aktar' }))
-    await screen.findByRole('link', { name: /raporu indir/i })
-    // Risk notu AÇILIYOR: katlanmış hâlde metin zaten DOM'da olmaz ve
-    // aşağıdaki "sızmadı" iddiası hiçbir şeyi sınamayan bir yeşile
-    // dönerdi.
-    await userEvent.click(screen.getByRole('button', { name: 'Risk notunu göster' }))
-    expect(screen.getByText(/Geçmişte bir kez kendine zarar verme/)).toBeDefined()
+    await userEvent.click(screen.getByRole('button', { name: 'Danışan veri raporu dışa aktar' }))
+    await userEvent.type(screen.getByLabelText('Rapor parolası'), 'A-NIN-PAROLASI')
+    await userEvent.type(screen.getByLabelText('Parolayı tekrar girin'), 'A-NIN-PAROLASI')
+    // Ön koşul: parola gerçekten DOM'da.
+    expect(document.body.innerHTML).toContain('A-NIN-PAROLASI')
 
     rerender(<DanisanKarti danisan={digeri} {...ortak} />)
 
-    // A'nın raporu B'nin kartında durursa terapist yanlış danışanın
-    // dosyasını indirir.
-    expect(screen.queryByRole('link', { name: /raporu indir/i })).toBeNull()
-    expect(document.body.textContent).not.toContain('Geçmişte bir kez kendine zarar verme')
-    // B'nin kendi durumu doğru: rızası yok, uyarı görünüyor.
-    expect(
-      screen.getAllByRole('alert').some((u) => /açık rıza kaydı yok/i.test(u.textContent ?? '')),
-    ).toBe(true)
+    expect(document.body.innerHTML).not.toContain('A-NIN-PAROLASI')
+    expect(screen.queryByRole('dialog')).toBeNull()
+    // B için form açılınca boş gelir; "Raporu oluştur" A'nın parolasıyla
+    // B'nin raporunu İSTEMEZ.
+    await userEvent.click(screen.getByRole('button', { name: 'Danışan veri raporu dışa aktar' }))
+    expect((screen.getByLabelText('Rapor parolası') as HTMLInputElement).value).toBe('')
+    await userEvent.click(screen.getByRole('button', { name: 'Raporu oluştur' }))
+    expect(veriRaporuIndir).not.toHaveBeenCalled()
 
-    // ARTI YÖN: A'ya dönülünce A'nın raporu yine geçerli. Bu yarı olmadan
-    // "raporu hiç göstermeyen" bir sürüm de üstteki iddiayı geçerdi.
-    rerender(<DanisanKarti danisan={danisan} {...ortak} />)
-    expect(screen.getByRole('link', { name: /raporu indir/i }).getAttribute('href')).toBe(
-      'blob:rapor-1',
-    )
+    // ARTI YÖN: B'nin formu gerçekten çalışıyor ve B'nin kimliğiyle gidiyor.
+    await userEvent.type(screen.getByLabelText('Rapor parolası'), 'B-NIN-PAROLASI')
+    await userEvent.type(screen.getByLabelText('Parolayı tekrar girin'), 'B-NIN-PAROLASI')
+    await userEvent.click(screen.getByRole('button', { name: 'Raporu oluştur' }))
+    expect(veriRaporuIndir).toHaveBeenCalledWith(13, 'B-NIN-PAROLASI')
   })
 
   it('A icin secilmis dosya B nin kartinda B ye YUKLENMEZ', async () => {
@@ -751,9 +731,7 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
       ekler,
       randevular: [randevu({ id: 1 })],
       bugun: '2026-09-09',
-      notlariGetir: vi.fn().mockResolvedValue(resmiNotlar),
-      notSiniri: 200,
-      raporKaydiOlustur: vi.fn().mockResolvedValue(undefined),
+      veriRaporuIndir: vi.fn().mockResolvedValue(undefined),
       ekYukle,
       ekSil: vi.fn().mockResolvedValue(undefined),
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),
@@ -785,9 +763,7 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
       ekler,
       randevular: [randevu({ id: 1 })],
       bugun: '2026-09-09',
-      notlariGetir: vi.fn().mockResolvedValue(resmiNotlar),
-      notSiniri: 200,
-      raporKaydiOlustur: vi.fn().mockResolvedValue(undefined),
+      veriRaporuIndir: vi.fn().mockResolvedValue(undefined),
       ekYukle: vi.fn().mockResolvedValue(undefined),
       ekSil: vi.fn().mockResolvedValue(undefined),
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),
@@ -819,9 +795,7 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
       ekler,
       randevular: [randevu({ id: 1 })],
       bugun: '2026-09-09',
-      notlariGetir: vi.fn().mockResolvedValue(resmiNotlar),
-      notSiniri: 200,
-      raporKaydiOlustur: vi.fn().mockResolvedValue(undefined),
+      veriRaporuIndir: vi.fn().mockResolvedValue(undefined),
       ekYukle: vi.fn().mockResolvedValue(undefined),
       ekSil: vi.fn().mockResolvedValue(undefined),
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),

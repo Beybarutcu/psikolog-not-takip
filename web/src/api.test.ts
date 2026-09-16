@@ -594,10 +594,8 @@ describe('danışan dosyası uç noktalarında 401', () => {
       // DOSYA indirmesidir (blob), JSON veri degil; ozel nota giden bir yol
       // acmaz -- sunucu raporu yalnizca resmi notlardan kurar.
       'veriRaporuIndir',
-      // Dal incelemesi C1: disa aktarimin denetim kaydi. Veri GETIRMEZ --
-      // govdesi bos bir POST'tur ve yaniti kullanilmaz; nesnenin gizlilik
-      // sozunu genisletmez.
-      'raporKaydiOlustur',
+      // Plan 4 Gorev 7: `raporKaydiOlustur` KALDIRILDI. Denetim kaydini
+      // raporu ureten sunucu ucu yaziyor; istemcide "once kayit" adimi yok.
       'ekYukle',
       // Dal incelemesi (HTTP -> arayuz taramasi): ucu de yalnizca dosya/ek
       // ustverisine ve bir SAYIYA dokunuyor; not icerigine giden yeni bir
@@ -608,27 +606,11 @@ describe('danışan dosyası uç noktalarında 401', () => {
     ])
   })
 
-  it('raporKaydiOlustur tam olarak POST /api/danisanlar/{id}/rapor-kaydi eder', async () => {
-    // Yol duz literal ve govde BOS: rapor icerigi (ad, not metni, dosya
-    // adlari) sunucuya ve loga ASLA gitmez.
-    await danisanApi.raporKaydiOlustur(7)
-    expect(cagrilar).toEqual([
-      { yol: '/api/danisanlar/7/rapor-kaydi', method: 'POST', govde: null },
-    ])
-  })
-
-  it('raporKaydiOlustur 401de YetkisizHata firlatir (fail-closed dayanagi)', async () => {
-    // Kart bu firlatmaya guveniyor: sessizce basarili donseydi kilitli
-    // oturumda KAYITSIZ bir rapor uretilebilirdi.
-    sunucu(() => ({ ok: false, status: 401, govde: { hata: 'Oturum kilitli.' } }))
-    await expect(danisanApi.raporKaydiOlustur(7)).rejects.toBeInstanceOf(YetkisizHata)
-  })
-
-  it('raporKaydiOlustur 404te de firlatir', async () => {
-    // 401 disindaki redler de fail-closed olmali: 404/500 alinip yine de
-    // rapor uretilirse kayitsiz bir kopya olusur.
-    sunucu(() => ({ ok: false, status: 404, govde: { hata: 'Kayıt bulunamadı.' } }))
-    await expect(danisanApi.raporKaydiOlustur(7)).rejects.toThrow('Kayıt bulunamadı.')
+  it('Plan 4 Gorev 7: raporKaydiOlustur YOK, veriRaporuIndir VAR', () => {
+    // Anahtar listesi testinin ayri, adlandirilmis iddiasi: istemci tarafli
+    // "once kayit, sonra rapor" zinciri geri gelirse burada da gorunur.
+    expect(Object.keys(danisanApi)).not.toContain('raporKaydiOlustur')
+    expect(Object.keys(danisanApi)).toContain('veriRaporuIndir')
   })
 })
 
@@ -686,12 +668,18 @@ describe('danisanApi.veriRaporuIndir — parola gövdede, 401 kapısı, gezinme 
     raporSunucusu({ ok: true, bayt: '%PDF-SIFRELI' })
     const onceki = window.location.href
 
-    await danisanApi.veriRaporuIndir(7, 'danisan-parolasi-1')
+    await danisanApi.veriRaporuIndir(7, 'danisan-parolasi-1', '2026-09-09')
 
     expect(cagrilar).toEqual([
-      { yol: '/api/danisanlar/7/veri-raporu', method: 'POST', govde: { parola: 'danisan-parolasi-1' } },
+      {
+        yol: '/api/danisanlar/7/veri-raporu',
+        method: 'POST',
+        govde: { parola: 'danisan-parolasi-1', bugun: '2026-09-09' },
+      },
     ])
     expect(cagrilar[0].yol).not.toContain('parola')
+    expect(cagrilar[0].yol).not.toContain('danisan-parolasi-1')
+    expect(cagrilar[0].yol).not.toContain('?')
     expect(uretilenBloblar).toHaveLength(1)
     expect(await uretilenBloblar[0].text()).toBe('%PDF-SIFRELI')
     expect(indirilenAdlar).toEqual(['danisan-veri-raporu-2026-09-16.pdf'])
@@ -705,7 +693,7 @@ describe('danisanApi.veriRaporuIndir — parola gövdede, 401 kapısı, gezinme 
     const onceki = window.location.href
 
     await expect(
-      danisanApi.veriRaporuIndir(7, 'danisan-parolasi-1').catch((e) => {
+      danisanApi.veriRaporuIndir(7, 'danisan-parolasi-1', '2026-09-09').catch((e) => {
         sira.push('throw')
         throw e
       }),
@@ -722,7 +710,9 @@ describe('danisanApi.veriRaporuIndir — parola gövdede, 401 kapısı, gezinme 
     const mesaj =
       'Rapor için ana parolanızı kullanmayın; danışana vereceğiniz ayrı bir parola seçin.'
     raporSunucusu({ ok: false, status: 400, govde: { hata: mesaj } })
-    await expect(danisanApi.veriRaporuIndir(7, 'gizliparola')).rejects.toThrow(mesaj)
+    await expect(danisanApi.veriRaporuIndir(7, 'gizliparola', '2026-09-09')).rejects.toThrow(
+      mesaj,
+    )
     expect(uretilenBloblar).toHaveLength(0)
   })
 })

@@ -548,26 +548,31 @@ export const danisanApi = {
   /**
    * Danışan veri raporunu (KVKK md. 11) **sunucuda** üretilmiş, AES-256
    * parola korumalı PDF olarak indirir
-   * (`POST /api/danisanlar/{id}/veri-raporu`, Plan 4 Görev 6).
+   * (`POST /api/danisanlar/{id}/veri-raporu`, Plan 4 Görev 6–7).
    *
    * - Parola **gövdede** gider; URL'ye (geçmiş, günlükler) asla girmez.
+   * - `bugun` istemcinin **yerel** takvim günüdür (`yerelGun`) ve yalnızca
+   *   dosya adına girer; sunucunun UTC günü Türkiye'de 00:00–03:00 arasında
+   *   dünü verirdi. Sunucu geçersiz günü `400` ile reddeder.
    * - Denetim kaydını sunucu, raporu ürettiği adımda kendisi yazar; ayrı bir
-   *   "kayıt" çağrısı yoktur.
+   *   "kayıt" çağrısı yoktur (Plan 3'ün `rapor-kaydi` ucu kaldırıldı).
    * - İndirme `ekIndir` ile aynı desen: `fetch` → 401 dinleyicileri
    *   (`basarisizYanitiFirlat`) → `blob:` URL → `download` → URL serbest.
    *   Hata yolunda (400 ana parola reddi, 401, 404, 500) dosya üretilmez,
    *   sunucunun `hata` metni fırlatılır ve sayfa gezinmez.
    *
+   * Blob'un TEK kaynağı sunucunun yanıtıdır (`yanit.blob()`): istemci rapor
+   * metni üretmez. Bunu `istemciRaporUretimi.test.ts` `web/src`'nin
+   * tamamında yapısal olarak ölçer.
+   *
    * Dosya adı sunucunun `Content-Disposition`'ından okunur (danışan adı
    * içermez); okunamazsa sabit bir ad kullanılır.
-   *
-   * Arayüz bağlantısı (parola diyaloğu) Görev 7'dedir.
    */
-  veriRaporuIndir: async (id: number, parola: string): Promise<void> => {
+  veriRaporuIndir: async (id: number, parola: string, bugun: string): Promise<void> => {
     const yanit = await fetch(`/api/danisanlar/${id}/veri-raporu`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ parola }),
+      body: JSON.stringify({ parola, bugun }),
     })
     if (!yanit.ok) await basarisizYanitiFirlat(yanit)
 
@@ -584,36 +589,6 @@ export const danisanApi = {
       setTimeout(() => URL.revokeObjectURL(url), 0)
     }
   },
-  /**
-   * Veri raporu dışa aktarımını denetim kaydına yazdırır
-   * (`POST /api/danisanlar/{id}/rapor-kaydi`).
-   *
-   * # Neden bu çağrı var
-   *
-   * Rapor tamamen İSTEMCİDE üretiliyor (`veriRaporu.ts` + `Blob`), yani
-   * sunucu dosyanın diske yazıldığını başka hiçbir yerden göremez. Rapor
-   * için çekilen not listesi (`notApi.danisanNotlari`) `goruntuleme` yazıyor
-   * ve 5 dakikalık pencerede **birleşiyor** — seans paneli aynı danışan için
-   * açıldıysa dışa aktarım denetim kaydında hiç iz bırakmıyordu. Tasarım §4
-   * dışa aktarmayı açıkça sayıyor; emsal `attachments::icerik_getir` (tek
-   * bir ek indirmesi bile `DisaAktarma` + `HerCagri`).
-   *
-   * # ÖNCE çağrılır — fail-closed
-   *
-   * `DanisanKarti::raporHazirla` bunu notları çekmeden ÖNCE `await` eder;
-   * reddedilirse (kilitli oturum → 401, bilinmeyen danışan → 404, disk
-   * hatası → 500) rapor **hiç üretilmez**. Plan 1'in kurulum/kilit-açma
-   * kararıyla aynı gerekçe: kaydedilemeyecek bir erişime izin verilmez.
-   *
-   * Gövde bilerek boş: rapor içeriği (ad, not metni, dosya adları) sunucuya
-   * ve loga ASLA gitmez.
-   *
-   * PLAN 4: dışa aktarım sunucuya taşınıp parola korumalı üretildiğinde
-   * (tasarım §10) raporu üreten uç noktanın kendisi loglayacak ve bu çağrı
-   * kaldırılacak.
-   */
-  raporKaydiOlustur: (id: number) =>
-    istek<Record<string, never>>(`/api/danisanlar/${id}/rapor-kaydi`, { method: 'POST' }),
   /**
    * Ek dosya yükler (`POST /api/danisanlar/{id}/ekler`).
    *

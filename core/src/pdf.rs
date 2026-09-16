@@ -15,7 +15,9 @@
 //!
 //! # Hat
 //!
-//! `printpdf` (gömülü Noto Sans, alt kümelenmiş, ToUnicode haritalı) →
+//! `printpdf` (Noto Sans **tamamı** gömülü — `printpdf` `text_layout`
+//! özelliği olmadan alt kümeleme yapmaz, dosya başına ~320 KB; ToUnicode
+//! haritalı) →
 //! baytlar → `lopdf::Document::load_mem` → `encrypt(V5)` → `save_to`.
 //! `printpdf`'in kendi `lopdf` bağımlılığı farklı sürümde olduğu için
 //! belge nesnesi değil **baytlar** devredilir.

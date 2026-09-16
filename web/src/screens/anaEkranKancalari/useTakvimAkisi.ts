@@ -269,14 +269,28 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
   // "Ödendi" işareti — `durumDegis` ile AYNI karar ve aynı gerekçe: sonuç
   // yerel olarak kesin biçimde bilinir (tek satır, tek boolean), bu yüzden
   // `yukle()` ÇAĞRILMAZ; çağrılsaydı her işaretleme sunucuda silinemez bir
-  // `goruntuleme` satırı daha bırakırdı. Seçili randevunun kopyası AYNI
-  // kimlikle tazelenir: not efektleri ilkel kimliklere bağlı, yeni istek
-  // atılmaz. Ölçen test: `AnaEkran.test.tsx` > "\"Ödendi\" isaretlemek
-  // YALNIZCA tek PATCH /odeme uretir".
+  // `goruntuleme` satırı daha bırakırdı. Ölçen test: `AnaEkran.test.tsx` >
+  // "\"Ödendi\" isaretlemek YALNIZCA tek PATCH /odeme uretir".
   //
-  // Liste de tazeleniyor, yalnızca seçili kopya değil: kullanıcı başka bir
-  // seansa geçip geri döndüğünde panel randevuyu LİSTEDEN alır ve bayat
-  // `odendi` ile açılırdı.
+  // # İki tazeleme, iki farklı hat (Görev 2 inceleme M3)
+  //
+  // BİRİNCİL HAT — liste tazelemesi (`setRandevular`). Kutunun değeri
+  // `SeansAltSatiri` MOUNT'unda `randevu.odendi`'den okunur; başka bir seansa
+  // geçip geri dönülünce panel randevuyu LİSTEDEN alır ve yeniden mount
+  // edilir. Bu satır olmasaydı kutu bayat `odendi` ile açılırdı. Ölçen test:
+  // `AnaEkran.test.tsx` > "seans degisince Odendi kutusu YENI randevunun
+  // degerini gosterir; geri donunce A nin isareti korunur" (satır
+  // kaldırılınca kırılıyor — ölçüldü).
+  //
+  // İKİNCİL HAT — seçili kopyanın tazelemesi (`setSeciliRandevu`). BUGÜN
+  // GÖZLEMLENEMİYOR: açık satır `odendi`yi yalnızca mount'ta okuyor ve kendi
+  // iyimser kopyasını tutuyor, seçili nesnenin `odendi`sini okuyan başka bir
+  // yer yok. Satır kaldırıldığında TÜM web paketi yeşil kalıyor (ölçüldü;
+  // `durumDegis`teki eşi ise `aria-pressed` üzerinden yük taşıyor). Duruyor,
+  // çünkü seçili nesneyi prop olarak okuyan ilk bileşen (ör. kutuyu
+  // `randevu.odendi`'ye bağlayan bir sadeleştirme) onu anında yük taşır hâle
+  // getirir ve maliyeti sıfır. Koruma İMA ETMİYOR: yük taşımaya başladığı
+  // gün testini de o değişiklik getirmeli.
   async function odemeDegis(id: number, odendi: boolean) {
     await takvimApi.odemeGuncelle(id, odendi)
     setRandevular((onceki) => onceki.map((r) => (r.id === id ? { ...r, odendi } : r)))

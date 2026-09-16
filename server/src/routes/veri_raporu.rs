@@ -123,6 +123,12 @@ pub async fn veri_raporu(
 ///
 /// Bir rota handler'ı DEĞİLDİR ve olamaz: açık bir `Connection` ister, yani
 /// çağıran kapıdan zaten geçmiştir; bu tip bir extractor değildir.
+///
+/// `async fn` DEĞİL, bilerek: yapısal kapı testi her `async fn`'i ayrı bir
+/// handler adayı sayar ve ilk satırında kapı ister. Düz `fn` olduğu için bu
+/// gövde `veri_raporu`'nun parçasında kalır ve oradaki iki kapı çağrısı
+/// (ilk satır + üretim sonrası) **birlikte** denetlenir.
+#[allow(clippy::manual_async_fn)]
 pub fn rapor_akisi<U>(
     s: AppState,
     conn: Connection,

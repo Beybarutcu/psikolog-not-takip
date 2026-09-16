@@ -775,18 +775,55 @@ mod tests {
         );
     }
 
-    /// Özel not tablosuna **kod içinde** dokunmasına izin verilen depo
-    /// modülleri. Bunun dışındaki her modül için tablo adı bir ihlaldir.
+    /// Özel not tablosuna **kod içinde** dokunmasına izin verilen çekirdek
+    /// modülleri (`core/src/`'ye göre yol). Bunun dışındaki her modül için
+    /// tablo adı bir ihlaldir.
     ///
-    /// - `notes.rs`: `ozel_not_getir`/`ozel_not_kaydet`'in evi (tek yazma/
-    ///   okuma yolu).
-    /// - `schema.rs`: tabloyu ve indeksini YARATAN yer.
-    /// - `appointments.rs`: randevu silinince kaç notun cascade ile
+    /// - `store/notes.rs`: `ozel_not_getir`/`ozel_not_kaydet`'in evi (tek
+    ///   yazma/okuma yolu).
+    /// - `store/schema.rs`: tabloyu ve indeksini YARATAN yer.
+    /// - `store/appointments.rs`: randevu silinince kaç notun cascade ile
     ///   gideceğini sayar — **içeriğe hiç bakmaz**, yalnızca `COUNT(*)`
     ///   (bkz. `silinecek_not_adedi`).
-    const OZEL_NOTA_DOKUNABILEN: [&str; 3] = ["notes.rs", "schema.rs", "appointments.rs"];
+    const OZEL_NOTA_DOKUNABILEN: [&str; 3] =
+        ["store/notes.rs", "store/schema.rs", "store/appointments.rs"];
 
-    /// Özel not sızıntısının **depo katmanı genelindeki** yapısal karşılığı.
+    /// Özel not **okuma/yazma API'sinin** (`ozel_not_` önekli fonksiyonlar ve
+    /// `OzelNot` tipi) geçebileceği tek modül.
+    const OZEL_NOT_API_EVI: &str = "store/notes.rs";
+
+    /// `core/src/` altındaki her `.rs` dosyası, **özyinelemeli**:
+    /// (`core/src`'ye göre `/` ayraçlı yol, üretim kodu).
+    fn cekirdek_uretim_dosyalari() -> Vec<(String, String)> {
+        fn yuru(kok: &std::path::Path, dizin: &std::path::Path, cikti: &mut Vec<(String, String)>) {
+            let girdiler = std::fs::read_dir(dizin)
+                .unwrap_or_else(|e| panic!("{} okunamadi: {e}", dizin.display()));
+            for girdi in girdiler {
+                let yol = girdi.expect("dizin girdisi okunamadi").path();
+                if yol.is_dir() {
+                    yuru(kok, &yol, cikti);
+                } else if yol.extension().and_then(|u| u.to_str()) == Some("rs") {
+                    let goreli = yol
+                        .strip_prefix(kok)
+                        .unwrap()
+                        .components()
+                        .map(|p| p.as_os_str().to_string_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                        .join("/");
+                    let ham = std::fs::read_to_string(&yol)
+                        .unwrap_or_else(|e| panic!("{goreli} okunamadi: {e}"));
+                    cikti.push((goreli, uretim_kodunu_ayikla(&ham)));
+                }
+            }
+        }
+        let kok = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut dosyalar = Vec::new();
+        yuru(&kok, &kok, &mut dosyalar);
+        dosyalar.sort();
+        dosyalar
+    }
+
+    /// Özel not sızıntısının **çekirdek genelindeki** yapısal karşılığı.
     ///
     /// # Bulgu (dal incelemesi): tarama kendi dosyasıyla sınırlıydı
     ///
@@ -798,34 +835,43 @@ mod tests {
     /// aktarıma, rapora veya aramaya girmez" sözü tam olarak o dosyalar
     /// hakkında.
     ///
-    /// Bu test kümeyi `core/src/store/` **dizininden** türetir: yeni bir
-    /// modül eklendiğinde hiçbir şey yapılmadan kapsama girer. Elle kalan
-    /// tek şey `OZEL_NOTA_DOKUNABILEN` izin listesidir ve her girdisi için
-    /// iki yönlü ön koşul var — dosya diskte var mı, ve izin GERÇEKTEN
-    /// gerekli mi (üretim kodunda tabloyu fiilen anıyor mu). Bayat bir izin,
-    /// kuralı bir modülden sessizce kaldırırdı.
+    /// # Bulgu (Plan 4): tarama `store/` ile ve tablo adıyla sınırlıydı
+    ///
+    /// İkinci kez aynı biçim (docs/test-yesil-ama-korumuyor.md #12): tarama
+    /// yalnızca `core/src/store/`'a düz bakıyor ve yalnızca **tablo adını**
+    /// arıyordu. `core/src/pdf.rs` gibi `store` dışı bir modül tabloya
+    /// dokunsa, ya da yeni bir rapor modülü tablo adını hiç anmadan
+    /// `notes::ozel_not_getir`'i çağırsa hiçbir test kırılmazdı. Küme artık
+    /// `core/src/`'den **özyinelemeli** türetilir ve iki kural uygulanır:
+    ///
+    /// 1. `private_notes` yalnızca `OZEL_NOTA_DOKUNABILEN` modüllerinde.
+    /// 2. `ozel_not_` önekli adlar ve `OzelNot` tipi yalnızca
+    ///    `OZEL_NOT_API_EVI`'nde — başka bir çekirdek modül onları
+    ///    çağıramaz, içe aktaramaz.
+    ///
+    /// Elle kalan tek şey izin listeleridir ve her girdisi için iki yönlü
+    /// ön koşul var — dosya diskte var mı, ve izin GERÇEKTEN gerekli mi
+    /// (üretim kodunda fiilen geçiyor mu). Bayat bir izin, kuralı bir
+    /// modülden sessizce kaldırırdı.
+    ///
+    /// Sınır: çağrı katmanı (`server/`) bu testin kapsamında değildir;
+    /// orada özel not uç noktası meşru olarak `ozel_not_getir`'i çağırır.
     #[test]
     fn depo_katmaninda_ozel_not_tablosu_yalnizca_izinli_modullerde_gecer() {
-        let dizin = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/store");
-        let mut dosyalar: Vec<(String, String)> = std::fs::read_dir(&dizin)
-            .unwrap_or_else(|e| panic!("{} okunamadi: {e}", dizin.display()))
-            .map(|girdi| girdi.expect("dizin girdisi okunamadi").path())
-            .filter(|yol| yol.extension().and_then(|u| u.to_str()) == Some("rs"))
-            .map(|yol| {
-                let ad = yol.file_name().unwrap().to_string_lossy().into_owned();
-                let ham = std::fs::read_to_string(&yol)
-                    .unwrap_or_else(|e| panic!("{ad} okunamadi: {e}"));
-                (ad, uretim_kodunu_ayikla(&ham))
-            })
-            .collect();
-        dosyalar.sort();
+        let dosyalar = cekirdek_uretim_dosyalari();
+        let adlar: Vec<&str> = dosyalar.iter().map(|(a, _)| a.as_str()).collect();
 
         // Dizin okunamaz hale gelirse her iddia BOS kume uzerinde saglanirdi.
         assert!(
-            dosyalar.len() >= 10,
-            "depo dizini beklenenden kucuk, kume turetilememis: {:?}",
-            dosyalar.iter().map(|(a, _)| a).collect::<Vec<_>>()
+            dosyalar.len() >= 18,
+            "cekirdek kaynak dizini beklenenden kucuk, kume turetilememis: {adlar:?}"
         );
+        // Ozyineleme GERCEKTEN calisiyor: kok, store/ ve baska bir alt dizin
+        // birlikte kapsamda. Duz bir `read_dir(src)` yalnizca kok dosyalari,
+        // eski `read_dir(src/store)` yalnizca store dosyalarini verirdi.
+        for gerekli in ["lib.rs", "pdf.rs", "store/notes.rs", "crypto/keyring.rs"] {
+            assert!(adlar.contains(&gerekli), "`{gerekli}` taramada yok: {adlar:?}");
+        }
 
         for izinli in OZEL_NOTA_DOKUNABILEN {
             let (_, uretim) = dosyalar
@@ -858,6 +904,33 @@ mod tests {
                 !dizgi_parcalari_birlestir(uretim).contains("private_notes"),
                 "{ad}: parcalanmis dizgiyle de olsa private_notes gecmemeli"
             );
+        }
+
+        // --- Kural 2: ozel not API'si yalnizca kendi evinde ---
+        let (_, ev) = dosyalar
+            .iter()
+            .find(|(ad, _)| ad == OZEL_NOT_API_EVI)
+            .unwrap_or_else(|| panic!("`{OZEL_NOT_API_EVI}` artik yok -- kural bayatladi"));
+        for isaret in ["ozel_not_", "OzelNot"] {
+            // ON KOSUL: isaret evde gercekten geciyor; yoksa (yeniden
+            // adlandirma) asagidaki yasak her yerde bos yere saglanir.
+            assert!(
+                ev.contains(isaret),
+                "{OZEL_NOT_API_EVI}: `{isaret}` uretim kodunda yok -- API yeniden \
+                 adlandirildiysa bu tarama da guncellenmeli"
+            );
+        }
+        for (ad, uretim) in &dosyalar {
+            if ad == OZEL_NOT_API_EVI {
+                continue;
+            }
+            for isaret in ["ozel_not_", "OzelNot"] {
+                assert!(
+                    !uretim.contains(isaret) && !dizgi_parcalari_birlestir(uretim).contains(isaret),
+                    "{ad}: `{isaret}` yalnizca {OZEL_NOT_API_EVI} icinde gecebilir -- \
+                     baska bir cekirdek modul ozel not okuma/yazma API'sine eristi"
+                );
+            }
         }
     }
 

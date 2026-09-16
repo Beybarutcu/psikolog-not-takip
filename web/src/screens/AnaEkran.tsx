@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import { aramaApi, danisanApi, notApi, takvimApi, type SeansNotu } from '../api'
 import { HizliArama } from '../arama/HizliArama'
 import { boyutBicimle } from '../danisan/bicim'
 import { DanisanKarti } from '../danisan/DanisanKarti'
+import { AyOzeti } from '../ozet/AyOzeti'
 import { SeansPaneli } from '../seans/SeansPaneli'
 import { HaftalikTakvim } from '../takvim/HaftalikTakvim'
 import { RandevuPaneli } from '../takvim/RandevuPaneli'
@@ -83,6 +85,10 @@ export function AnaEkran({
     onYetkisiz: () => takvim.oturumKapandi(),
   })
   const parola = useParolaFormu()
+  // Ay sonu özeti KAPALI başlar: sunucu her görüntülemeyi denetim kaydına
+  // yazıyor ve açılışta kendiliğinden istek atan bir özet, terapistin hiç
+  // bakmadığı bir görüntülemeyi silinemez biçimde kaydederdi.
+  const [ozetAcik, setOzetAcik] = useState(false)
 
   const { seciliRandevu, seciliBosSaat } = takvim
   const { seciliDanisanId, kart } = dosya
@@ -166,11 +172,24 @@ export function AnaEkran({
             onDanisanSec={danisanKartiAc}
             onSeansSec={seansaGit}
           />
+          <button
+            type="button"
+            className="rounded-lg border px-4 py-2"
+            aria-expanded={ozetAcik}
+            onClick={() => setOzetAcik((acik) => !acik)}
+          >
+            Ay sonu özeti
+          </button>
           <button className="rounded-lg border px-4 py-2" onClick={kilitle}>
             Kilitle
           </button>
         </div>
       </div>
+
+      {/* Borçlu satırı GERÇEK danışan kartını açar: danışan çipiyle aynı
+          `danisanKartiAc` yolu (`AnaEkran.test.tsx` "ay sonu ozeti" bloğu
+          kartın isteğini ölçer). */}
+      {ozetAcik && <AyOzeti bugun={yerelGun(new Date())} onDanisanAc={danisanKartiAc} />}
 
       <div className="mb-4">
         <div className="flex items-center gap-3">

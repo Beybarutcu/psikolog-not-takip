@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import type { OzelNot, SeansNotu } from '../api'
 import type { Randevu } from '../takvim/HaftalikTakvim'
+import { tlMetni } from '../para'
 import { AYLAR } from '../takvim/hafta'
 import { GecmisNotlar } from './GecmisNotlar'
 import { NotEditoru } from './NotEditoru'
@@ -111,11 +112,9 @@ const DURUMLAR = [
   ['İptal', 'iptal'],
 ] as const
 
-const TL = new Intl.NumberFormat('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-
-/** Kuruş -> "450,00 TL". */
+/** Kuruş -> "450,00 TL" (biçim `para.ts`'te, ay sonu özetiyle ortak). */
 function ucretMetni(kurus: number | null): string {
-  return kurus === null ? 'Ücret girilmemiş' : `${TL.format(kurus / 100)} TL`
+  return kurus === null ? 'Ücret girilmemiş' : tlMetni(kurus)
 }
 
 const OZEL_UYARISI = 'Bu notlar dışa aktarımlara ve danışan raporuna dahil edilmez.'

@@ -247,6 +247,12 @@ describe('takvimApi.odemeGuncelle — ödendi işareti', () => {
 // ölçer. Yalnızca "bir GET gitti" demek, `/api/ay-ozeti` yerine başka bir
 // yola giden istemciyi de geçirirdi.
 describe('ozetApi.ayOzeti — ay sonu özeti', () => {
+  it('istemcinin yüzeyi TAM OLARAK tek okuma ucudur', () => {
+    // Özet ekranı (Görev 4) yalnızca okur. Buraya eklenen bir uç (ör. bir
+    // "ödendi say" yazması) bu testi bilerek kırmalı ve gözden geçirilmeli.
+    expect(Object.keys(ozetApi)).toEqual(['ayOzeti'])
+  })
+
   it('GET ile TAM OLARAK /api/ay-ozeti?ay=YYYY-AA adresine gider ve yanıtı döner', async () => {
     const ozet = {
       ay: '2026-09',

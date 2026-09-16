@@ -1819,6 +1819,15 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
         } as unknown as Response
       }
 
+      // Plan 4 Görev 4: ay sonu özeti. Borçlu Zeynep (id 3) — kartında
+      // ayırt edici bir telefon var, "DOĞRU kart açıldı" ekrandan ölçülür.
+      if (yol.startsWith('/api/ay-ozeti')) {
+        return jsonYanit({
+          ay: '2026-09', seans_sayisi: 4, tahsilat_kurus: 180000, bekleyen_kurus: 60000,
+          borclular: [{ client_id: 3, ad_soyad: 'Zeynep Kaya', borc_kurus: 60000, seans_sayisi: 1 }],
+        })
+      }
+
       const ekUc = ekUcYaniti(yol, secenekler)
       if (ekUc) return ekUc
 
@@ -1890,6 +1899,52 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   async function aramayiAc() {
     await userEvent.click(screen.getByRole('button', { name: 'Hızlı arama (Ctrl+K)' }))
   }
+
+  describe('ay sonu ozeti (Plan 4 Görev 4)', () => {
+    const ozetIstekleri = () => istekYollari.filter((y) => y.includes('/api/ay-ozeti'))
+
+    it('ozet KAPALI baslar: ana ekran acilisi ozet istegi ATMAZ; dugme TEK istek atar', async () => {
+      render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+      await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+      // Mount'un diğer istekleri (takvim, liste, saklama, yedek) bitmiş olsun
+      // ki "istek yok" iddiası işlem ÖNCESİ durumla tatmin olmasın.
+      await waitFor(() => expect(istekYollari.some((y) => y.startsWith('GET /api/randevular'))).toBe(true))
+      expect(screen.queryByRole('region', { name: 'Ay sonu özeti' })).toBeNull()
+      expect(ozetIstekleri()).toEqual([])
+
+      await userEvent.click(screen.getByRole('button', { name: 'Ay sonu özeti' }))
+      const bolge = await screen.findByRole('region', { name: 'Ay sonu özeti' })
+      // Bugün 2026-09-09 (`setSystemTime`): açılış ayı Eylül.
+      expect(within(bolge).getByRole('heading', { name: 'Eylül 2026' })).toBeDefined()
+      await within(bolge).findByText('1.800,00 TL')
+      expect(ozetIstekleri()).toEqual(['GET /api/ay-ozeti?ay=2026-09'])
+    })
+
+    it('borclu satiri GERCEK danisan kartini acar (GET /api/danisanlar/{id}); ekran yeniden render olunca ozet istegi tekrarlanmaz', async () => {
+      render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+      await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+      await userEvent.click(screen.getByRole('button', { name: 'Ay sonu özeti' }))
+      const bolge = await screen.findByRole('region', { name: 'Ay sonu özeti' })
+      const satir = await within(bolge).findByRole('button', { name: /Zeynep Kaya/ })
+
+      expect(document.body.textContent).not.toContain('0555 999 88 77')
+      const once = istekYollari.length
+      await userEvent.click(satir)
+
+      // Zeynep'in (id 3) GERÇEK kartı: sunucudan çekilen dosyanın telefonu.
+      expect(await screen.findByText('0555 999 88 77')).toBeDefined()
+      expect(istekYollari.slice(once)).toContain('GET /api/danisanlar/3')
+      // Başka bir danışanın dosyası istenmedi.
+      expect(
+        istekYollari.slice(once).filter((y) => /^GET \/api\/danisanlar\/\d+$/.test(y)),
+      ).toEqual(['GET /api/danisanlar/3'])
+
+      // Kart açılışı AnaEkran'ı birkaç kez yeniden render etti (yeni
+      // `onDanisanAc` closure'u, yeni `bugun` dizgisi): özet yine TEK istek.
+      expect(screen.getByRole('region', { name: 'Ay sonu özeti' })).toBeDefined()
+      expect(ozetIstekleri()).toEqual(['GET /api/ay-ozeti?ay=2026-09'])
+    })
+  })
 
   it('danisan cipine tiklayinca kart acilir; bakiye YALNIZCA o danisanin seanslarindan', async () => {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)

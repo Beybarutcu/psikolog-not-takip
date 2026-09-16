@@ -103,6 +103,10 @@ pub enum PdfHatasi {
 /// Kullanıcı parolası = sahip parolası = `parola`. İzinler: yazdırma ve
 /// kopyalama açık, değiştirme kapalı. Dosya şifreleme anahtarı her çağrıda
 /// yeniden rastgele üretilir.
+///
+/// **CPU-yoğun ve eşzamanlıdır** (debug derlemede 20 000 satır ≈ 12 sn):
+/// async bağlamda doğrudan değil `tokio::task::spawn_blocking` içinde
+/// çağrılmalıdır, yoksa çalışma zamanı iş parçacığını bloklar.
 pub fn sifreli_pdf(icerik: &RaporIcerigi, parola: &str) -> Result<Vec<u8>, PdfHatasi> {
     if parola.chars().count() < ASGARI_PAROLA {
         return Err(PdfHatasi::ParolaCokKisa);

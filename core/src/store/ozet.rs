@@ -101,6 +101,10 @@ impl std::fmt::Debug for Borclu {
 ///
 /// Katı: tam 7 ASCII karakter, 5. karakter `-`, yıl 4 rakam, ay `01..=12`.
 /// `2026-9`, `2026-13`, `2026-09-01` reddedilir.
+///
+/// `9999-12` de reddedilir: sonraki ayı `10000-01` olurdu — beş haneli yıl
+/// sözlüksel karşılaştırmada `"10000-01..." < "9999-12..."` verir, aralık
+/// boşalır ve ay sessizce sıfır görünürdü.
 fn sonraki_ay(ay: &str) -> Option<String> {
     let b = ay.as_bytes();
     if b.len() != 7 || b[4] != b'-' {
@@ -111,7 +115,7 @@ fn sonraki_ay(ay: &str) -> Option<String> {
     }
     let yil: u32 = ay[..4].parse().ok()?;
     let ay_no: u32 = ay[5..].parse().ok()?;
-    if !(1..=12).contains(&ay_no) {
+    if !(1..=12).contains(&ay_no) || (yil, ay_no) == (9999, 12) {
         return None;
     }
     Some(if ay_no == 12 {
@@ -493,6 +497,10 @@ mod tests {
                 "{kotu}"
             );
         }
+        assert!(matches!(
+            ay_ozeti(&c, "9999-12", Cihaz::Masaustu),
+            Err(DepoHatasi::GecersizVeri(_))
+        ));
         assert_eq!(son_kayitlar(&c, 1000).unwrap().len(), once);
         for iyi in ["2026-01", "2026-12", "2028-02", "2026-10"] {
             assert!(ay_ozeti(&c, iyi, Cihaz::Masaustu).is_ok(), "{iyi}");
@@ -504,6 +512,10 @@ mod tests {
         assert_eq!(sonraki_ay("2026-09").as_deref(), Some("2026-10"));
         assert_eq!(sonraki_ay("2026-12").as_deref(), Some("2027-01"));
         assert_eq!(sonraki_ay("2026-01").as_deref(), Some("2026-02"));
+        // Yil ust siniri: 9999-12'nin sonraki ayi dort haneye sigmaz.
+        assert_eq!(sonraki_ay("9999-11").as_deref(), Some("9999-12"));
+        assert_eq!(sonraki_ay("9999-12"), None);
+        assert_eq!(sonraki_ay("9998-12").as_deref(), Some("9999-01"));
     }
 
     #[test]

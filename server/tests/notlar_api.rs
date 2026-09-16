@@ -2079,6 +2079,104 @@ async fn veri_raporu_sifreli_pdf_doner_ve_disa_aktarma_loglanir() {
     assert!(dokum.lines().next().unwrap().ends_with("|None"), "ayrinti bos olmali: {dokum}");
 }
 
+/// Dal incelemesi karari D1: raporda "Randevular ve odemeler" bolumu --
+/// notsuz ve iptal edilmis randevular da, ucret `1.234,50 TL` bicimiyle,
+/// odendi bilgisiyle. Baskasinin randevusu yok, tasinan randevu yeni
+/// danisanda, ozel not hala yok. Olcum COZULMUS PDF metni uzerinde.
+#[tokio::test]
+async fn veri_raporu_randevular_ve_odemeler_bolumunu_icerir() {
+    let (_d, s) = kurulu_state().await;
+    let cid = danisan_ekle(&s, "Ayse Yilmaz").await;
+    let baska = danisan_ekle(&s, "Mehmet Demir").await;
+    let randevu = |cid: i64, bas: &str, ucret: Option<i64>| {
+        let s = s.clone();
+        let bas = bas.to_string();
+        async move {
+            let (kod, r) = cagir(
+                &s,
+                "POST",
+                "/api/randevular",
+                Some(json!({
+                    "client_id": cid,
+                    "baslangic": bas,
+                    "bitis": format!("{}T23:59", &bas[..10]),
+                    "ucret": ucret,
+                })),
+            )
+            .await;
+            assert_eq!(kod, StatusCode::CREATED, "kurulum: {r}");
+            r[0]["id"].as_i64().unwrap()
+        }
+    };
+    let geldi = randevu(cid, "2026-01-10T09:30", Some(123450)).await;
+    let iptal = randevu(cid, "2026-02-11T10:00", Some(45000)).await;
+    randevu(cid, "2026-03-12T11:15", None).await;
+    let tasinan = randevu(baska, "2026-04-13T12:00", Some(98765)).await;
+    randevu(baska, "2026-05-14T13:00", Some(777700)).await;
+
+    for (id, yol, govde) in [
+        (geldi, "", json!({"durum":"geldi"})),
+        (geldi, "/odeme", json!({"odendi":true})),
+        (iptal, "", json!({"durum":"iptal"})),
+    ] {
+        let (kod, j) = cagir(&s, "PATCH", &format!("/api/randevular/{id}{yol}"), Some(govde)).await;
+        assert!(kod.is_success(), "kurulum: {kod} {j}");
+    }
+    cagir(
+        &s,
+        "PUT",
+        &format!("/api/randevular/{iptal}/ozel-not"),
+        Some(json!({"icerik":"OZEL-KANARYA-RANDEVU"})),
+    )
+    .await;
+    let (kod, j) = cagir(
+        &s,
+        "PUT",
+        &format!("/api/randevular/{tasinan}"),
+        Some(json!({
+            "client_id": cid,
+            "baslangic": "2026-04-13T12:00",
+            "bitis": "2026-04-13T23:59",
+            "ucret": 98765,
+        })),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::OK, "kurulum: tasima {j}");
+
+    let (kod, _b, govde) = rapor_parolayla(&s, cid, RAPOR_PAROLASI).await;
+    assert_eq!(kod, StatusCode::OK, "{}", String::from_utf8_lossy(&govde));
+    let metin = pdf_metni(&govde, RAPOR_PAROLASI).expect("dogru parolayla acilmali");
+    // PDF metin cikarimi satir sonlarini/bosluklari degistirebilir; iddialar
+    // bosluklar atilmis metin uzerinde.
+    let sade: String = metin.chars().filter(|c| !c.is_whitespace()).collect();
+    let icerir = |parca: &str| {
+        let p: String = parca.chars().filter(|c| !c.is_whitespace()).collect();
+        sade.contains(&p)
+    };
+    assert!(icerir("Randevular ve ödemeler (4)"), "{metin}");
+    for satir in [
+        "10.01.2026 09:30 · Geldi · Ücret: 1.234,50 TL · Ödendi: Evet",
+        "11.02.2026 10:00 · İptal · Ücret: 450,00 TL · Ödendi: Hayır",
+        "12.03.2026 11:15 · Planlandı · Ücret girilmemiş · Ödendi: Hayır",
+        "13.04.2026 12:00 · Planlandı · Ücret: 987,65 TL · Ödendi: Hayır",
+    ] {
+        assert!(icerir(satir), "`{satir}` raporda yok:\n{metin}");
+    }
+    assert!(!icerir("7.777,00 TL") && !icerir("14.05.2026"), "baskasinin randevusu: {metin}");
+    assert!(!icerir("OZEL-KANARYA-RANDEVU"), "ozel not rapora SIZDI: {metin}");
+
+    // Tasinan randevu eski danisanin raporundan cikti.
+    let (kod, _b, govde) = rapor_parolayla(&s, baska, RAPOR_PAROLASI).await;
+    assert_eq!(kod, StatusCode::OK);
+    let b_metin: String = pdf_metni(&govde, RAPOR_PAROLASI)
+        .unwrap()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    assert!(b_metin.contains("Randevularveödemeler(1)"), "{b_metin}");
+    assert!(!b_metin.contains("987,65TL") && b_metin.contains("7.777,00TL"), "{b_metin}");
+}
+
 /// Gorev 7: dosya adindaki tarih ISTEMCININ yerel gunudur (duvar saati
 /// sozlesmesi; emsal `saklama-suresi-dolanlar?bugun=`). Iki farkli gun:
 /// sunucunun kendi gunune donen bir uygulama ikisini birden tutturamaz.

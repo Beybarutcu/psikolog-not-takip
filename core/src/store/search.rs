@@ -948,8 +948,28 @@ mod tests {
     /// `uretim_kodu`'nun kaynağı dışarıdan alan hâli — kardeş test
     /// (`depo_katmaninda_ozel_not_tablosu_...`) dizindeki her dosyayı aynı
     /// elemeden geçirmek zorunda: iki ayrı eleme, iki ayrı kaçamak demekti.
+    ///
+    /// # Bulgu (Plan 4 Görev 3): eleme ilk `#[cfg(test)]` geçişinde KESİYORDU
+    ///
+    /// Önceki hâli `split("#[cfg(test)]").next()` idi ve iki biçimde körleşti:
+    ///
+    /// 1. **Dosya ortasındaki test öğesi.** Bu gerçek bir dosyada açıktı:
+    ///    `crypto/keyring.rs`'te `impl KdfParams` içindeki
+    ///    `#[cfg(test)] fn test_fast`'ten sonraki bütün üretim kodu
+    ///    (`generate_data_key`, `wrap_key`, `unwrap_key`...) hiç taranmıyordu.
+    ///    Görev 5 incelemesinin mutasyonu: o satırdan SONRA `private_notes`
+    ///    okuyan bir fonksiyon → yeşil; ÖNCE → kırmızı.
+    /// 2. **Yorumda ya da dizgide geçen işaret.** `split` metni her yerde
+    ///    aradığı için `// bkz. #[cfg(test)]` gibi bir yorum satırı da
+    ///    taramayı orada bitiriyordu.
+    ///
+    /// Artık kaynak yorum/dizgi/karakter farkındalıklı bir tarayıcıyla
+    /// yürünür; yalnızca **kodda** duran `#[cfg(test)]`'in işaretlediği
+    /// `mod`, `fn` ya da `impl` öğesi denk parantezle çıkarılır, dosyanın geri
+    /// kalanı taranır (bkz. `test_ogelerini_cikar`).
     fn uretim_kodunu_ayikla(kaynak: &str) -> String {
-        let ham = kaynak.split("#[cfg(test)]").next().expect("kaynak bos olamaz");
+        let testsiz = test_ogelerini_cikar(kaynak);
+        let ham = testsiz.as_str();
 
         let mut bloksuz = String::with_capacity(ham.len());
         let mut kalan = ham;
@@ -970,6 +990,249 @@ mod tests {
             .filter(|satir| !satir.trim_start().starts_with("//"))
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// Kaynaktan **kodda** duran `#[cfg(test)]`'in işaretlediği öğeyi çıkarır.
+    ///
+    /// Çıkarılan öğe türleri: `mod ad { ... }`, `mod ad;`, `fn` (önünde
+    /// `async`/`const`/`unsafe` olabilir) ve `impl ... { ... }`. Aradaki ek
+    /// öznitelikler (`#[allow(..)]`) ve görünürlük (`pub`, `pub(crate)`) kabul
+    /// edilir. Başka bir öğe (`const`, `use`, `static`, `struct`) çıkarılmaz ve
+    /// taranır: tarama o durumda fazla görür, eksik değil. Blok sonu
+    /// bulunamazsa (denk olmayan parantez) öğe de çıkarılmaz — aynı gerekçe.
+    ///
+    /// Yorum, dizgi ve karakter literali içindeki `#[cfg(test)]` işaret
+    /// sayılmaz; o metin olduğu gibi korunur (yorumları sonraki adım atar).
+    fn test_ogelerini_cikar(kaynak: &str) -> String {
+        const ISARET: &str = "#[cfg(test)]";
+        let mut cikti = String::with_capacity(kaynak.len());
+        let mut i = 0usize;
+        while i < kaynak.len() {
+            if let Some(son) = sozcuk_disi_atla(kaynak, i) {
+                cikti.push_str(&kaynak[i..son]);
+                i = son;
+            } else if kaynak[i..].starts_with(ISARET) {
+                let sonrasi = i + ISARET.len();
+                match test_ogesi_uzunlugu(&kaynak[sonrasi..]) {
+                    Some(uzunluk) => i = sonrasi + uzunluk,
+                    None => {
+                        cikti.push_str(ISARET);
+                        i = sonrasi;
+                    }
+                }
+            } else {
+                let k = kaynak[i..].chars().next().expect("i bir karakter sinirinda");
+                cikti.push(k);
+                i += k.len_utf8();
+            }
+        }
+        cikti
+    }
+
+    /// `#[cfg(test)]`'ten hemen sonraki metin çıkarılabilir bir öğeyse, öğenin
+    /// sonuna kadarki bayt uzunluğu.
+    fn test_ogesi_uzunlugu(s: &str) -> Option<usize> {
+        let bosluk_atla = |i: usize| s.len() - s[i..].trim_start().len();
+        let anahtar = |i: usize, kelime: &str| {
+            s[i..].strip_prefix(kelime).is_some_and(|k| k.starts_with(char::is_whitespace))
+        };
+        let mut i = bosluk_atla(0);
+        while s[i..].starts_with("#[") {
+            i += s[i..].find(']')? + 1;
+            i = bosluk_atla(i);
+        }
+        if s[i..].starts_with("pub") {
+            i += "pub".len();
+            if s[i..].starts_with('(') {
+                i += s[i..].find(')')? + 1;
+            }
+            i = bosluk_atla(i);
+        }
+        if anahtar(i, "mod") {
+            i = bosluk_atla(i + "mod".len());
+            i += s[i..].find(|c: char| !(c.is_alphanumeric() || c == '_'))?;
+            i = bosluk_atla(i);
+            if s[i..].starts_with(';') {
+                return Some(i + 1);
+            }
+        } else {
+            for niteleyici in ["async", "const", "unsafe"] {
+                if anahtar(i, niteleyici) {
+                    i = bosluk_atla(i + niteleyici.len());
+                }
+            }
+            if !anahtar(i, "fn") && !anahtar(i, "impl") && !s[i..].starts_with("impl<") {
+                return None;
+            }
+            // Imzanin sonundaki ilk kod seviyesi `{`: imza icinde dizgi ya da
+            // yorum olabilir, onlar atlanir. Govdesiz bir `fn f();` burada
+            // cikarilmaz.
+            loop {
+                if let Some(son) = sozcuk_disi_atla(s, i) {
+                    i = son;
+                    continue;
+                }
+                match s.as_bytes().get(i)? {
+                    b'{' => break,
+                    b';' => return None,
+                    _ => i += 1,
+                }
+            }
+        }
+        if !s[i..].starts_with('{') {
+            return None;
+        }
+        Some(i + denk_parantez_sonu(&s[i..])?)
+    }
+
+    /// `i`'de bir yorum, dizgi ya da karakter literali başlıyorsa onun
+    /// bittiği bayt konumu; başlamıyorsa `None`. Kapanmamış bir yorum/dizgi
+    /// kaynağın sonuna kadar sürer.
+    ///
+    /// Tanınanlar: `//`, iç içe `/* */`, `"..."` (kaçışlarla), `r"..."`,
+    /// `r#"..."#`, `br"..."`, `'x'`, `'\''`, `'\u{..}'`. `'a` bir ömür
+    /// belirtecidir, karakter değil.
+    fn sozcuk_disi_atla(s: &str, i: usize) -> Option<usize> {
+        let b = s.as_bytes();
+        let tanimlayici = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+        match *b.get(i)? {
+            b'/' if b.get(i + 1) == Some(&b'/') => {
+                Some(s[i..].find('\n').map_or(s.len(), |n| i + n))
+            }
+            b'/' if b.get(i + 1) == Some(&b'*') => {
+                let mut j = i;
+                let mut ic = 0usize;
+                while j < b.len() {
+                    if s[j..].starts_with("/*") {
+                        ic += 1;
+                        j += 2;
+                    } else if s[j..].starts_with("*/") {
+                        ic -= 1;
+                        j += 2;
+                        if ic == 0 {
+                            return Some(j);
+                        }
+                    } else {
+                        j += 1;
+                    }
+                }
+                Some(s.len())
+            }
+            b'r' if (i == 0
+                || !tanimlayici(b[i - 1])
+                || (b[i - 1] == b'b' && (i < 2 || !tanimlayici(b[i - 2]))))
+                && matches!(b.get(i + 1), Some(b'"') | Some(b'#')) =>
+            {
+                let kareler = s[i + 1..].bytes().take_while(|&c| c == b'#').count();
+                if b.get(i + 1 + kareler) != Some(&b'"') {
+                    return None;
+                }
+                let kapanis = format!("\"{}", "#".repeat(kareler));
+                let icerik = i + 1 + kareler + 1;
+                Some(s[icerik..].find(&kapanis).map_or(s.len(), |n| icerik + n + kapanis.len()))
+            }
+            b'"' => {
+                let mut j = i + 1;
+                while j < b.len() && b[j] != b'"' {
+                    j += if b[j] == b'\\' { 2 } else { 1 };
+                }
+                Some((j + 1).min(s.len()))
+            }
+            b'\'' => {
+                if b.get(i + 1) == Some(&b'\\') {
+                    // `'\''`: kacirilan karakterin kendisi `'` olabilir,
+                    // kapanis onun ARKASINDA aranir.
+                    let arka = s.get(i + 3..)?;
+                    Some(i + 3 + arka.find('\'')? + 1)
+                } else {
+                    let k = s[i + 1..].chars().next()?;
+                    let son = i + 1 + k.len_utf8();
+                    (b.get(son) == Some(&b'\'')).then_some(son + 1)
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// `s` `{` ile başlar; eşleşen `}`'den hemen sonraki bayt konumu. Yorum,
+    /// dizgi ve karakter içindeki parantezler sayılmaz (`sozcuk_disi_atla`).
+    fn denk_parantez_sonu(s: &str) -> Option<usize> {
+        let mut derinlik = 0usize;
+        let mut i = 0usize;
+        while i < s.len() {
+            if let Some(son) = sozcuk_disi_atla(s, i) {
+                i = son;
+                continue;
+            }
+            match s.as_bytes()[i] {
+                b'{' => derinlik += 1,
+                b'}' => {
+                    derinlik = derinlik.checked_sub(1)?;
+                    if derinlik == 0 {
+                        return Some(i + 1);
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// Elemenin kendisi. `depo_katmaninda_...` gerçek dosyalar üzerinde
+    /// çalışır ve yalnızca bugünkü dosyaların biçimini sınar; bu test
+    /// gerilemeyi dosyalardan bağımsız, **iki yönlü** yakalar: test öğeleri
+    /// elenmeli (fazla görme), onlardan sonraki üretim kodu taranmalı
+    /// (eksik görme).
+    #[test]
+    fn uretim_kodu_elemesi_test_ogelerini_atar_sonrasini_tarar() {
+        let kaynak = [
+            "fn once() { \"BIRINCI\" }",
+            "// yorumdaki #[cfg(test)] taramayi kesmemeli",
+            "fn yorumdan_sonra() { \"YORUM_SONRASI\" }",
+            "const DIZGI: &str = \"#[cfg(test)]\";",
+            "fn dizgiden_sonra() { \"DIZGI_SONRASI\" }",
+            "#[cfg(test)]",
+            "const TEST_SABITI: u8 = 0;",
+            "impl Tip {",
+            "    #[cfg(test)]",
+            "    pub fn test_hizli() -> Self { Self { a: \"TEST_FN_ICERIGI\" } }",
+            "    pub fn uretim() { \"IMPL_ICI_URETIM\" }",
+            "}",
+            "#[cfg(test)]",
+            "#[allow(dead_code)]",
+            "pub(crate) mod yardim {",
+            "    fn f() { let _ = '{'; let _ = '\\''; let _ = \"}}\"; }",
+            "    // } yorumdaki parantez",
+            "    /* } /* ic } */ } */",
+            "    fn g<'a>(x: &'a str) -> &'a str { let _ = r#\"}\"#; x }",
+            "    mod ic { fn h() { \"TEST_ICERIGI\" } }",
+            "}",
+            "fn sonra() { \"UCUNCU\" }",
+            "#[cfg(test)]",
+            "impl<T> Baska for T { fn x() { \"TEST_IMPL_ICERIGI\" } }",
+            "#[cfg(test)]",
+            "mod dosya_modulu;",
+            "fn en_son() { \"DORDUNCU\" }",
+            "#[cfg(test)]",
+            "mod tests { fn t() { \"TEST_ICERIGI\" } }",
+        ]
+        .join("\n");
+        let uretim = uretim_kodunu_ayikla(&kaynak);
+        for gorunmeli in [
+            "BIRINCI",
+            "YORUM_SONRASI",
+            "DIZGI_SONRASI",
+            "TEST_SABITI",
+            "IMPL_ICI_URETIM",
+            "UCUNCU",
+            "DORDUNCU",
+        ] {
+            assert!(uretim.contains(gorunmeli), "`{gorunmeli}` taranmali:\n{uretim}");
+        }
+        for elenmeli in ["TEST_ICERIGI", "TEST_FN_ICERIGI", "TEST_IMPL_ICERIGI", "dosya_modulu"] {
+            assert!(!uretim.contains(elenmeli), "`{elenmeli}` elenmeli:\n{uretim}");
+        }
     }
 
     /// Parcalanmis dizgi kacamagini gorunur kilar: dizgi tirnaklari,

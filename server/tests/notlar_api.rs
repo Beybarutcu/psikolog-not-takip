@@ -1731,6 +1731,16 @@ fn rota_modulleri_audit_kaydet_cagirmaz() {
 /// `pub async fn` içeren yeni bir dosya, listeye eklenmeden de bu testi
 /// kırar. Elle kalan tek şey `VERI_DISI_ROTALAR` istisnası ve o istisnanın
 /// **gerekli olduğu** burada iki yönlü doğrulanıyor.
+///
+/// **Plan 4 Görev 1 incelemesi (dördüncü kusur): parçalayıcı görünürlüğe
+/// bağlıydı.** Kaynak `"pub async fn "` ile bölünüp ilk parça (`skip(1)`)
+/// atılıyordu. Modüldeki ilk `pub async fn`'den ÖNCE yazılmış kapısız bir
+/// `pub(crate) async fn` o ilk parçanın içinde kalıyor, hiç handler
+/// sayılmıyor ve `lib.rs` onu rotaya bağlayabiliyordu (mutasyonla
+/// gösterildi: `/ay-ozeti` kapısız bir `pub(crate) async fn`'e bağlandı,
+/// 47/47 yeşil). Rotaya bağlanabilmek `pub` olmaya değil `async fn` olmaya
+/// bağlı; artık **her** `async fn` (`pub`, `pub(crate)`, `pub(super)`,
+/// görünürlüksüz) handler adayıdır — bkz. `async_fn_parcalari`.
 #[test]
 fn her_veri_handleri_acik_baglantidan_gecer() {
     const KAPI: &str = "let conn = acik_baglanti(&s)?;";
@@ -1755,12 +1765,12 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
             continue;
         }
 
-        let parcalar: Vec<&str> = kod.split("pub async fn ").skip(1).collect();
+        let parcalar = async_fn_parcalari(&kod);
         // Bos bir veri rota modulu, "hicbir handler yok" diyerek her iddiayi
         // sessizce saglardi.
         assert!(
             !parcalar.is_empty(),
-            "{ad}: veri rota modulu en az bir `pub async fn` icermeli \
+            "{ad}: veri rota modulu en az bir `async fn` icermeli \
              (icermiyorsa VERI_DISI_ROTALAR'a yazilmali)"
         );
 
@@ -1798,6 +1808,69 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
     // bire bir esleme -- sayiyi guncellemek tek basina bir kapiyi geri
     // getirmez.
     assert_eq!(toplam, 31, "toplam veri handler'i sayisi 31 olmali");
+}
+
+/// Kaynağı **her** `async fn` başlangıcından parçalar; her parça fonksiyon
+/// adıyla başlar ve bir sonraki `async fn`'e kadar sürer. Görünürlük
+/// belirteci (`pub`, `pub(crate)`, `pub(super)`, hiçbiri) ayırt edilmez.
+///
+/// `async` bir tanımlayıcının parçası olmamalı (`asenkron_async`); ardından
+/// en az bir boşluk, `fn` ve yine en az bir boşluk gelmeli. `async  fn` ya da
+/// satır sonuyla bölünmüş `async`/`fn` da yakalanır.
+fn async_fn_parcalari(kod: &str) -> Vec<&str> {
+    fn tanimlayici(c: char) -> bool {
+        c.is_alphanumeric() || c == '_'
+    }
+    let mut baslar = Vec::new();
+    let mut arama = 0usize;
+    while let Some(yer) = kod[arama..].find("async") {
+        let bas = arama + yer;
+        arama = bas + "async".len();
+        if kod[..bas].chars().next_back().is_some_and(tanimlayici) {
+            continue;
+        }
+        let kalan = &kod[arama..];
+        let bosluksuz = kalan.trim_start();
+        if bosluksuz.len() == kalan.len() || !bosluksuz.starts_with("fn") {
+            continue;
+        }
+        let fn_sonrasi = &bosluksuz["fn".len()..];
+        let ad = fn_sonrasi.trim_start();
+        if ad.len() == fn_sonrasi.len() {
+            continue;
+        }
+        baslar.push(kod.len() - ad.len());
+    }
+    baslar
+        .iter()
+        .enumerate()
+        .map(|(i, &b)| &kod[b..baslar.get(i + 1).copied().unwrap_or(kod.len())])
+        .collect()
+}
+
+/// Parçalayıcının kendisi: görünürlükten bağımsız yakalama, tanımlayıcı
+/// içindeki `async` hecesinin aday sayılmaması. Parçalayıcı yeniden
+/// `pub async fn`'e daralırsa bu test kırılır.
+#[test]
+fn async_fn_parcalayici_gorunurlukten_bagimsizdir() {
+    let kod = [
+        "use x;",
+        "pub(crate) async fn gizli(s: S) -> R {",
+        "    govde();",
+        "}",
+        "async  fn yalin() {}",
+        "pub(super) async",
+        "fn bolunmus() {}",
+        "fn asenkron_async() {}",
+        "let fn_async = 1;",
+        "pub async fn acik(s: S) -> R {}",
+    ]
+    .join("\n");
+    let adlar: Vec<&str> = async_fn_parcalari(&kod)
+        .iter()
+        .map(|p| p.split(|c: char| c == '(' || c.is_whitespace()).next().unwrap())
+        .collect();
+    assert_eq!(adlar, ["gizli", "yalin", "bolunmus", "acik"]);
 }
 
 // =====================================================================

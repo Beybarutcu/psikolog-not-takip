@@ -33,9 +33,17 @@
 //! Plan 3'teki istemci raporu da içermiyordu; bu görev içeriği taşır, kararı
 //! değiştirmez. Sorgu sütunu hiç okumaz (`risk_notu_rapora_girmez_basvuru_nedeni_girer`).
 //!
-//! # Ekler yalnızca ÜSTVERİ
+//! # Ekler: ad ve üstveri — içerik ASLA
 //!
-//! Tür, eklenme tarihi, boyut. İçerik BLOB'u sorguya hiç girmez.
+//! Dosya adı, tür, eklenme tarihi, boyut. İçerik BLOB'u sorguya hiç girmez.
+//!
+//! Dosya adı rapora **girer** (Plan 4 Görev 7 kararı; Görev 6'da yalnızca
+//! üstveri yazılıyordu ve bu yanlıştı): KVKK md. 11 raporu danışanın **kendi
+//! verisine erişimidir**, dosya adları o verinin parçasıdır, rapor şifrelidir
+//! ve danışanın kendisine verilir; Plan 3'teki istemci raporunda da vardı.
+//! Adlar yükleme sırasında zaten doğrulanıyor (denetim karakteri, çift yönlü
+//! metin, sıfır genişlikli karakter reddi — `attachments::dosya_adi_dogrula`).
+//! Korunan: `ek_adi_rapora_girer_ek_icerigi_girmez`.
 //!
 //! # Log yazmaz — `disa_aktarim_kaydi` ayrı
 //!
@@ -181,23 +189,32 @@ pub fn rapor_icerigi(conn: &Connection, client_id: i64) -> Result<RaporIcerigi, 
         satirlar: not_satirlari,
     };
 
-    // Yalnizca USTVERI: `icerik` sutunu sorguya girmez.
+    // Ad + ustveri; `icerik` sutunu sorguya GIRMEZ (bkz. modul basligi).
     let mut stmt = conn.prepare(
-        "SELECT tur, eklenme_zamani, boyut FROM attachments
+        "SELECT dosya_adi, tur, eklenme_zamani, boyut FROM attachments
          WHERE client_id = ?1
          ORDER BY eklenme_zamani ASC, id ASC",
     )?;
     let ekler = stmt
         .query_map([client_id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
 
     let mut ek_satirlari: Vec<String> = ekler
         .iter()
-        .map(|(tur, zaman, boyut)| {
-            format!("- {} · eklenme: {} · {boyut} bayt", ek_turu_adi(tur), tarih_tr(zaman))
+        .map(|(ad, tur, zaman, boyut)| {
+            format!(
+                "- {ad} · {} · eklenme: {} · {boyut} bayt",
+                ek_turu_adi(tur),
+                tarih_tr(zaman)
+            )
         })
         .collect();
     if ek_satirlari.is_empty() {
@@ -205,7 +222,7 @@ pub fn rapor_icerigi(conn: &Connection, client_id: i64) -> Result<RaporIcerigi, 
     }
     let ek_bolumu = RaporBolumu {
         baslik: format!(
-            "Ekli dosyalar ({}) — yalnızca liste, dosya içerikleri dahil değildir",
+            "Ekli dosyalar ({}) — yalnızca ad ve bilgiler, dosya içerikleri dahil değildir",
             ekler.len()
         ),
         satirlar: ek_satirlari,
@@ -457,19 +474,37 @@ mod tests {
         assert!(!metin.contains("RISK-KANARYASI"), "risk notu rapora girmemeli: {metin}");
     }
 
-    // (f) ek icerigi yok, ek turu var
+    // (f) ek ADI ve turu var, ek ICERIGI yok
     #[test]
-    fn ek_icerigi_rapora_girmez_ek_turu_girer() {
+    fn ek_adi_rapora_girer_ek_icerigi_girmez() {
         let (_d, c) = baglanti();
         let cid = danisan(&c, "Ayse Yilmaz");
-        ek_ekle(&c, cid, "onam.pdf", "application/pdf", "onam", b"EK-ICERIK-KANARYASI", Cihaz::Masaustu)
+        let baska = danisan(&c, "Mehmet Demir");
+        ek_ekle(
+            &c,
+            cid,
+            "EK-ADI-KANARYASI.pdf",
+            "application/pdf",
+            "onam",
+            b"EK-ICERIK-KANARYASI",
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+        // Baska danisanin eki: ad sorgusu danisan filtresini kaybederse gorunur.
+        ek_ekle(&c, baska, "BASKASININ-EKI.pdf", "application/pdf", "test", b"x", Cihaz::Masaustu)
             .unwrap();
 
         let metin = duz(&rapor_icerigi(&c, cid).unwrap());
         assert!(metin.contains("Ekli dosyalar (1)"), "{metin}");
-        assert!(metin.contains("- Onam · eklenme: "), "{metin}");
+        // ARTI YON: dosya adi KVKK md. 11 kapsaminda danisanin verisidir.
+        assert!(
+            metin.contains("- EK-ADI-KANARYASI.pdf · Onam · eklenme: "),
+            "ek adi rapora girmeli: {metin}"
+        );
         assert!(metin.contains("· 19 bayt"), "{metin}");
+        // EKSI YON: icerik gomulmez, baskasinin eki gelmez.
         assert!(!metin.contains("EK-ICERIK-KANARYASI"), "ek icerigi rapora girmemeli: {metin}");
+        assert!(!metin.contains("BASKASININ-EKI"), "baska danisanin eki: {metin}");
     }
 
     #[test]

@@ -1989,6 +1989,9 @@ async fn veri_raporu_sifreli_pdf_doner_ve_disa_aktarma_loglanir() {
         Some(json!({"icerik":"OZEL-KANARYA"})),
     )
     .await;
+    // Plan 4 Gorev 7: ek ADI rapora girer (danisanin kendi verisi), ek
+    // ICERIGI girmez. Ek, log on kosulundan ONCE yukleniyor.
+    ek_yukle(&s, cid, "EK-ADI-KANARYA.pdf", b"EK-ICERIK-KANARYA").await;
     // Plan 3'teki C1 bulgusunun kosulu: seans paneli ayni danisan icin
     // acilmis (not listesi `goruntuleme` yazmis). Disa aktarim satiri bu
     // satirin arkasina saklanmamali.
@@ -2022,6 +2025,9 @@ async fn veri_raporu_sifreli_pdf_doner_ve_disa_aktarma_loglanir() {
     assert!(metin.contains("RESMI-KANARYA"), "resmi not raporda olmali: {metin}");
     assert!(metin.contains("Ayse Yilmaz"), "danisan adi raporda olmali");
     assert!(!metin.contains("OZEL-KANARYA"), "ozel not rapora SIZDI: {metin}");
+    assert!(metin.contains("EK-ADI-KANARYA.pdf"), "ek adi raporda olmali: {metin}");
+    assert!(!metin.contains("EK-ICERIK-KANARYA"), "ek icerigi rapora gomulmemeli: {metin}");
+    assert!(!String::from_utf8_lossy(&govde).contains("EK-ADI-KANARYA"), "ek adi sifreli olmali");
     assert!(
         pdf_metni(&govde, "yanlis-parola-9").map_or(true, |m| !m.contains("RESMI-KANARYA")),
         "yanlis parola icerigi acmamali"

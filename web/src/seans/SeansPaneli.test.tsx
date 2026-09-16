@@ -717,6 +717,37 @@ describe('SeansPaneli — alt satır: durum, ücret, ödendi', () => {
     expect(kutu.checked).toBe(true)
   })
 
+  // Görev 2 inceleme M2: durum düğmelerinin kilidi (`disabled`) testsizdi.
+  // Kaldırıldığında hızlı bir çift tıklama iki PATCH ve sunucuda iki
+  // silinemez denetim satırı üretir.
+  it('durum istegi suruyorken HICBIR alt satir denetimi ikinci istek uretemez; kilit kalkinca uretir', async () => {
+    let coz: () => void = () => {}
+    const onDurumDegis = vi.fn(() => new Promise<void>((r) => { coz = r }))
+    const onOdemeDegis = vi.fn().mockResolvedValue(undefined)
+    kur({ onDurumDegis, onOdemeDegis })
+    const dugme = (ad: string) => screen.getByRole('button', { name: ad }) as HTMLButtonElement
+    const kutu = () => screen.getByRole('checkbox', { name: 'Ödendi' }) as HTMLInputElement
+
+    await userEvent.click(dugme('Geldi'))
+    expect(onDurumDegis).toHaveBeenCalledExactlyOnceWith('geldi')
+    for (const ad of ['Geldi', 'Gelmedi', 'İptal']) expect(dugme(ad).disabled).toBe(true)
+    expect(kutu().disabled).toBe(true)
+
+    await userEvent.click(dugme('Geldi'))
+    await userEvent.click(dugme('Gelmedi'))
+    await userEvent.click(kutu())
+    expect(onDurumDegis).toHaveBeenCalledTimes(1)
+    expect(onOdemeDegis).not.toHaveBeenCalled()
+
+    // ARTI YÖN: kilit kalkınca yeni istek GİDER — "hep kilitli" bir satır da
+    // üstteki iddiaları geçerdi.
+    coz()
+    await waitFor(() => expect(dugme('Gelmedi').disabled).toBe(false))
+    await userEvent.click(dugme('Gelmedi'))
+    expect(onDurumDegis).toHaveBeenCalledTimes(2)
+    expect(onDurumDegis).toHaveBeenLastCalledWith('gelmedi')
+  })
+
   it('durum dugmesi onDurumDegis e kodu gecirir; hata alert ile duyurulur', async () => {
     const onDurumDegis = vi
       .fn()

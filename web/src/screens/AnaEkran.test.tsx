@@ -946,6 +946,10 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
   // Kurulursa ödeme PATCH'i bu söz çözülene kadar yanıt vermez — "işlem
   // BİTTİ" bariyeri kurabilmek için (altıncı biçim).
   let odemeBekletici: Promise<void> | null = null
+  // Kurulursa durum ve ödeme PATCH'leri bu mesajla 500 döner (Görev 2
+  // inceleme M4/M6: hatanın NEREDE ve KAÇ KEZ gösterildiği).
+  let durumHatasi: string | null = null
+  let odemeHatasi: string | null = null
 
   const notGetSayisi = (id: number) =>
     istekler.filter((i) => i.yol === `/api/randevular/${id}/not` && i.method === 'GET').length
@@ -964,6 +968,8 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     ozelYazmaYetkisiz = false
     sunucuOdendi = {}
     odemeBekletici = null
+    durumHatasi = null
+    odemeHatasi = null
     sunucuOzelNotlari = { [randevuA.id]: GIZLI }
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
@@ -1024,7 +1030,13 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
           }),
         } as unknown as Response
       }
+      if (durumHatasi && method === 'PATCH' && /^\/api\/randevular\/\d+$/.test(yol)) {
+        return { ok: false, status: 500, json: async () => ({ hata: durumHatasi }) } as unknown as Response
+      }
       const odeme = /^\/api\/randevular\/(\d+)\/odeme$/.exec(yol)
+      if (odeme && method === 'PATCH' && odemeHatasi) {
+        return { ok: false, status: 500, json: async () => ({ hata: odemeHatasi }) } as unknown as Response
+      }
       if (odeme && method === 'PATCH') {
         if (odemeBekletici) await odemeBekletici
         sunucuOdendi[Number(odeme[1])] = (govde as { odendi: boolean }).odendi
@@ -1511,6 +1523,46 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     expect(odendiKutusu().checked).toBe(false)
     expect(sunucuOdendi[randevuA.id]).toBeUndefined()
   })
+
+  // Görev 2 inceleme M4 + M6. M4: `useTakvimAkisi.durumDegis` içindeki
+  // `throw e` kaldırılınca hiçbir test kırılmıyordu — hata yutulur, panel
+  // "başarılı" sanar ve kullanıcı hiçbir şey duymaz. M6: hata hem panelde
+  // hem sayfa üstündeki takvim bandında görünüyordu ve panel kapansa da
+  // bant kalıyordu. İddia: hata TAM BİR KEZ, alt satırın `alert`inde; panel
+  // kapanınca ekranda hiç yok.
+  it.each([
+    [
+      'durum',
+      () => { durumHatasi = 'DURUM-YAZILAMADI' },
+      'DURUM-YAZILAMADI',
+      async () => userEvent.click(screen.getByRole('button', { name: 'Geldi' })),
+    ],
+    [
+      'odeme',
+      () => { odemeHatasi = 'ODEME-YAZILAMADI' },
+      'ODEME-YAZILAMADI',
+      async () => userEvent.click(odendiKutusu()),
+    ],
+  ])(
+    '%s hatasi YALNIZCA alt satirda, TEK KEZ duyurulur; panel kapaninca ekranda kalmaz',
+    async (_ad, kur, mesaj, eylem) => {
+      kur()
+      await seansAc()
+      await eylem()
+
+      const uyari = await within(screen.getByRole('region', { name: 'Seans' })).findByRole('alert')
+      expect(uyari.textContent).toContain(mesaj)
+      // Tek yerde: sayfanın geri kalanında ikinci bir kopya yok.
+      expect(document.body.textContent!.split(mesaj)).toHaveLength(2)
+      // İşlem gerçekten olmadı ve ekran bunu söylüyor.
+      expect(screen.getByRole('button', { name: 'Geldi' }).getAttribute('aria-pressed')).toBe('false')
+      expect(odendiKutusu().checked).toBe(false)
+
+      await userEvent.click(screen.getByRole('button', { name: 'Seansı kapat' }))
+      expect(screen.queryByRole('region', { name: 'Seans' })).toBeNull()
+      expect(document.body.textContent).not.toContain(mesaj)
+    },
+  )
 
   it('bos notta sablon basliklari gorunur ama HICBIR yazma uretilmez', async () => {
     await seansAc()

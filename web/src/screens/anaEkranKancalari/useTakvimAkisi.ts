@@ -234,27 +234,36 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
   // `kaydet` ve `seriSil` için AYNI ŞEY YAPILMADI — orada sonuç birden çok
   // satırı (ve görünen haftanın dışını) etkileyebilir, dolayısıyla yeniden
   // yükleme doğru olanı.
+  //
+  // # Hata sayfa üstü banda YAZILMAZ (Görev 2 inceleme M6)
+  //
+  // `durumDegis` ve `odemeDegis` hatayı `setHata` ile takvimin sayfa üstü
+  // bandına da yazıyordu; aynı mesaj alt satırın `alert`inde de çıkıyordu ve
+  // panel kapansa bile bantta kalıyordu. Bu iki işlemin TEK çağıranı
+  // `SeansAltSatiri` ve hatayı kendi `alert`inde gösteriyor; burada yalnızca
+  // RED yayılıyor (try/catch yok, ret olduğu gibi çağırana gidiyor). Başarıda
+  // `setHata(null)` da yok: bir PATCH'in başarısı haftanın YÜKLENEMEDİĞİNİ
+  // söyleyen bandı silmemeli.
+  //
+  // Reddin çağırana ULAŞMASI yük taşıyor (inceleme M4): yutulsaydı alt satır
+  // işlemi başarılı sayar, kullanıcı hiçbir şey duymazdı. Ölçen test:
+  // `AnaEkran.test.tsx` > "durum hatasi YALNIZCA alt satirda, TEK KEZ
+  // duyurulur" (ve "odeme ..." eşi).
   async function durumDegis(id: number, durum: string) {
-    try {
-      await takvimApi.randevuDurumu(id, durum)
-      setHata(null)
-      setRandevular((onceki) => onceki.map((r) => (r.id === id ? { ...r, durum } : r)))
-      // Panel açık kalır ve elindeki `randevu` nesnesi bu state'tir; o kopya
-      // güncellenmezse `seciliRandevu.durum` sunucudaki gerçekten sessizce
-      // ayrışır. Plan 4 Görev 2'den beri bu satır YÜK TAŞIYOR: `SeansPaneli`
-      // alt satırı seçili düğmeyi (`aria-pressed`) `randevu.durum`'dan okuyor
-      // ve `key` değişmediği için remount olmuyor — bu tazeleme olmasaydı
-      // "Geldi"ye basınca vurgu eski düğmede kalırdı.
-      //
-      // Nesne tazeleniyor ama KİMLİK aynı kalıyor: seans notu efektleri
-      // `seansId`/`seansDanisanId`/`seansBaslangici` ilkel değerlerine bağlı,
-      // dolayısıyla bu tazeleme yeni bir not isteği ATMAZ (ölçen test:
-      // "Geldi isaretlemek not isteklerini YENIDEN ATMAZ").
-      setSeciliRandevu((secili) => (secili && secili.id === id ? { ...secili, durum } : secili))
-    } catch (e) {
-      setHata(e instanceof Error ? e.message : 'Randevu güncellenemedi.')
-      throw e
-    }
+    await takvimApi.randevuDurumu(id, durum)
+    setRandevular((onceki) => onceki.map((r) => (r.id === id ? { ...r, durum } : r)))
+    // Panel açık kalır ve elindeki `randevu` nesnesi bu state'tir; o kopya
+    // güncellenmezse `seciliRandevu.durum` sunucudaki gerçekten sessizce
+    // ayrışır. Plan 4 Görev 2'den beri bu satır YÜK TAŞIYOR: `SeansPaneli`
+    // alt satırı seçili düğmeyi (`aria-pressed`) `randevu.durum`'dan okuyor
+    // ve `key` değişmediği için remount olmuyor — bu tazeleme olmasaydı
+    // "Geldi"ye basınca vurgu eski düğmede kalırdı.
+    //
+    // Nesne tazeleniyor ama KİMLİK aynı kalıyor: seans notu efektleri
+    // `seansId`/`seansDanisanId`/`seansBaslangici` ilkel değerlerine bağlı,
+    // dolayısıyla bu tazeleme yeni bir not isteği ATMAZ (ölçen test:
+    // "Geldi isaretlemek not isteklerini YENIDEN ATMAZ").
+    setSeciliRandevu((secili) => (secili && secili.id === id ? { ...secili, durum } : secili))
   }
 
   // "Ödendi" işareti — `durumDegis` ile AYNI karar ve aynı gerekçe: sonuç
@@ -269,15 +278,9 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
   // seansa geçip geri döndüğünde panel randevuyu LİSTEDEN alır ve bayat
   // `odendi` ile açılırdı.
   async function odemeDegis(id: number, odendi: boolean) {
-    try {
-      await takvimApi.odemeGuncelle(id, odendi)
-      setHata(null)
-      setRandevular((onceki) => onceki.map((r) => (r.id === id ? { ...r, odendi } : r)))
-      setSeciliRandevu((secili) => (secili && secili.id === id ? { ...secili, odendi } : secili))
-    } catch (e) {
-      setHata(e instanceof Error ? e.message : 'Ödeme kaydedilemedi.')
-      throw e
-    }
+    await takvimApi.odemeGuncelle(id, odendi)
+    setRandevular((onceki) => onceki.map((r) => (r.id === id ? { ...r, odendi } : r)))
+    setSeciliRandevu((secili) => (secili && secili.id === id ? { ...secili, odendi } : secili))
   }
 
   async function sil(id: number) {

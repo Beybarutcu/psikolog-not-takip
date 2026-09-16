@@ -1439,6 +1439,42 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     ).toHaveLength(1)
   })
 
+  // Görev 2 inceleme M1 (ZORUNLU): `useTakvimAkisi.odemeDegis` içinde
+  // `odemeGuncelle(id, true)` SABİTLENDİĞİNDE bütün testler geçiyordu.
+  // Kullanıcı işareti kaldırır, ekran `false`, sunucuya `true` gider —
+  // sessizce yanlış bakiye. Panel birim testi (`SeansPaneli.test.tsx` "iki
+  // yon") yalnızca geri çağrıyı ölçüyor; bu test ÇAĞRI ZİNCİRİNİN sonunu,
+  // giden HTTP gövdesini ölçüyor.
+  it('odeme GERI ALINABILIR: isaretle -> {odendi:true}, kaldir -> {odendi:false}; baska seansa gidip donunce kutu false', async () => {
+    await seansAc()
+    await cakismaSorgusunuBekle(randevuA.id)
+    const once = istekler.length
+
+    await userEvent.click(odendiKutusu())
+    await waitFor(() => expect(sunucuOdendi[randevuA.id]).toBe(true))
+    await waitFor(() => expect(odendiKutusu().disabled).toBe(false))
+    expect(odendiKutusu().checked).toBe(true)
+
+    await userEvent.click(odendiKutusu())
+    await waitFor(() => expect(sunucuOdendi[randevuA.id]).toBe(false))
+    await waitFor(() => expect(odendiKutusu().disabled).toBe(false))
+    expect(odendiKutusu().checked).toBe(false)
+
+    // İki yön, sırasıyla, tam eşitlikle — ve başka hiçbir istek.
+    expect(istekler.slice(once)).toEqual([
+      { yol: `/api/randevular/${randevuA.id}/odeme`, method: 'PATCH', govde: { odendi: true } },
+      { yol: `/api/randevular/${randevuA.id}/odeme`, method: 'PATCH', govde: { odendi: false } },
+    ])
+
+    // Yerel liste de geri alındı: A'ya dönünce kutu `false` açılır (takvim
+    // yeniden yüklenmiyor, değer listedeki kopyadan geliyor).
+    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await screen.findByText(/Mehmet Demir — /)
+    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByText(/Ayşe Yılmaz — /)
+    expect(odendiKutusu().checked).toBe(false)
+  })
+
   it('"Geldi" isaretlenince alt satirda SECILI gorunen dugme Geldi olur (panel remount olmadan)', async () => {
     // `durumDegis` seçili randevunun kopyasını AYNI kimlikle tazeliyor; panel
     // yeniden mount edilmiyor ve `aria-pressed` prop'tan okunuyor. O tazeleme

@@ -150,12 +150,19 @@ fn font() -> Result<&'static ParsedFont, PdfHatasi> {
 }
 
 /// Metnin verilen punto büyüklüğündeki genişliği (pt).
+///
+/// Fontta olmayan bir karakteri (emoji, CJK…) `printpdf` glif 0 olarak yazar
+/// ve `/W` tablosuna koymaz; okuyucu onu `/DW` = 1000, yani **1 em** genişlikte
+/// çizer. Sarma hesabı da aynı genişliği kullanır; aksi hâlde (eski `.notdef`
+/// / 0 genişlik) böyle bir satır hiç sarılmadan sağdan taşardı.
 fn genislik(font: &ParsedFont, metin: &str, punto: f32) -> f32 {
+    let em = u32::from(font.units_per_em.max(1));
     let birim: u32 = metin
         .chars()
         .map(|k| {
-            let gid = font.lookup_glyph_index(k as u32).unwrap_or(0);
-            u32::from(font.get_glyph_width(gid).unwrap_or(0))
+            font.lookup_glyph_index(k as u32)
+                .and_then(|gid| font.get_glyph_width(gid))
+                .map_or(em, u32::from)
         })
         .sum();
     birim as f32 / f32::from(font.units_per_em.max(1)) * punto
@@ -785,20 +792,54 @@ mod tests {
         assert_eq!(metin.matches("uzun").count(), 2000);
     }
 
+    /// İnceleme bulgusu M1: önceki sürüm satırları `sar`'ın kendi kullandığı
+    /// `genislik` ile ölçüyordu (`genislik * 0.5` mutasyonunda yeşil kaldı).
+    /// Burada bitiş x'i üretilen PDF'in içerik akışından ve fontun PDF'teki
+    /// `/W` tablosundan, yani okuyucunun çizeceği gibi hesaplanır; sınır sağ
+    /// kenar boşluğudur (sayfa kenarından daha sıkı).
     #[test]
     fn sarilan_satirlar_sayfa_genisligini_asmaz() {
-        let font = font().unwrap();
-        let azami = Dizgici::azami_genislik();
-        let satirlar = sar(font, &"uzun ".repeat(2000), GOVDE_PT, azami);
-        assert!(satirlar.len() > 50);
-        for s in &satirlar {
-            assert!(genislik(font, s, GOVDE_PT) <= azami, "tasan satir: {s}");
+        let ic = RaporIcerigi {
+            baslik: "RAPOR".into(),
+            bolumler: vec![RaporBolumu {
+                baslik: "B".into(),
+                satirlar: vec!["uzun ".repeat(2000), "A".repeat(500), TURKCE.repeat(40)],
+            }],
+        };
+        let islemler = metin_islemleri(&cozulmus(&ic));
+        assert!(islemler.len() > 50, "sarma gercekten olmali");
+        hepsi_sayfa_icinde(&islemler);
+        let sag = Pt::from(Mm(SAYFA_GENISLIK_MM - KENAR_MM)).0;
+        for m in &islemler {
+            assert!(m.x1 <= sag + 0.01, "sag kenar boslugunu asan satir: {m:?}");
         }
         // Tek basina sigmayan kelime karakterlerine bolunur, karakter kaybolmaz.
+        let font = font().unwrap();
         let dev = "A".repeat(500);
-        let parcalar = sar(font, &dev, GOVDE_PT, azami);
+        let parcalar = sar(font, &dev, GOVDE_PT, Dizgici::azami_genislik());
         assert!(parcalar.len() > 1);
         assert_eq!(parcalar.concat(), dev);
+    }
+
+    /// İnceleme bulgusu M2: fontta olmayan bir karakter (emoji, CJK) sarma
+    /// hesabında okuyucunun çizdiğinden dar sayılırsa satır sağdan taşar.
+    /// `printpdf` böyle bir karakteri glif 0 olarak yazar ve `/W`'ye koymaz;
+    /// okuyucu `/DW` genişliğini kullanır. Ölçü yine içerik akışından.
+    #[test]
+    fn fontta_olmayan_glifler_de_sarilir() {
+        for (ad, satir) in [("emoji", "😀".repeat(500)), ("CJK", "漢".repeat(500))] {
+            let ic = RaporIcerigi {
+                baslik: "RAPOR".into(),
+                bolumler: vec![RaporBolumu { baslik: "B".into(), satirlar: vec![satir] }],
+            };
+            let islemler = metin_islemleri(&cozulmus(&ic));
+            assert!(islemler.len() > 3, "{ad}: 500 karakterlik satir sarilmali");
+            hepsi_sayfa_icinde(&islemler);
+            let sag = Pt::from(Mm(SAYFA_GENISLIK_MM - KENAR_MM)).0;
+            for m in &islemler {
+                assert!(m.x1 <= sag + 0.01, "{ad}: tasan satir: {m:?}");
+            }
+        }
     }
 
     #[test]

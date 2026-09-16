@@ -97,7 +97,7 @@ pub const ANA_PAROLA_MESAJI: &str =
 pub const URETILEMEDI_MESAJI: &str = "Rapor üretilemedi.";
 pub const KAYIT_YAZILAMADI_MESAJI: &str =
     "Dışa aktarım denetim kaydına yazılamadı; rapor verilmedi.";
-pub const GOVDE_GECERSIZ_MESAJI: &str = "İstek gövdesi eksik veya geçersiz.";
+pub const GOVDE_GECERSIZ_MESAJI: &str = crate::guard::GOVDE_GECERSIZ_MESAJI;
 
 fn hata(kod: StatusCode, mesaj: &str) -> ApiHata {
     (kod, Json(json!({ "hata": mesaj })))

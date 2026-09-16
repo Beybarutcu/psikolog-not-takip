@@ -35,7 +35,8 @@
 //! stderr'e dökerdi. Kullanıcının ihtiyacı olan bilgi zaten gövdedeki
 //! `hata` alanında.
 
-use crate::guard::{acik_baglanti, ApiHata};
+use crate::guard::{acik_baglanti, govde_coz, ApiHata};
+use axum::extract::rejection::JsonRejection;
 use crate::state::{AppState, KeystoreDurumu};
 use axum::{extract::State, http::StatusCode, Json};
 use psikolog_core::parola::{parolayi_degistir, ParolaHatasi};
@@ -66,9 +67,10 @@ pub struct ParolaIstegi {
 /// hataları `500`.
 pub async fn degistir(
     State(s): State<AppState>,
-    Json(istek): Json<ParolaIstegi>,
+    istek: Result<Json<ParolaIstegi>, JsonRejection>,
 ) -> Result<Json<Value>, ApiHata> {
     let conn = acik_baglanti(&s)?;
+    let istek = govde_coz(istek)?;
     let ks = match s.keystore_durumu() {
         KeystoreDurumu::Var(ks) => ks,
         // Kapıdan geçmiş bir istek için "kurulum yapılmamış" fiilen

@@ -226,6 +226,176 @@ async fn kilitliyken_gorev7_uclarinin_hepsi_401_doner_ve_veri_sizdirmaz() {
     assert!(!String::from_utf8_lossy(&govde).contains("YENI_GIZLI"));
 }
 
+/// JSON gövde (`Json<T>`) ya da sorgu dizesi (`Sorgu<T>`) alan **her** veri
+/// handler'ı, girdisi bozukken de kilitliyse önce `401` döner; kilit açıkken
+/// aynı bozuk girdi Türkçe `400 {"hata"}` alır ve girdiyi yansıtmaz.
+///
+/// # Bulgu (dal incelemesi M1)
+///
+/// Extractor'lar handler gövdesinden önce çalışıyordu: kilitliyken bozuk
+/// gövdeli `PATCH /randevular/{id}/odeme` → `422` + İngilizce
+/// `invalid type: string "evet"`; parametresiz `GET /ay-ozeti` → `400`.
+/// Düzeltme `guard::govde_coz` belgesinde.
+///
+/// Tablo elle bakımlıdır ama **kaynaktan doğrulanır**: `routes/` altındaki
+/// veri modüllerinde parametre listesinde `Json<` ya da `Sorgu<` geçen her
+/// `async fn` tabloda olmalı (ve tersi), ve o extractor çıplak değil
+/// `Result<...>` olarak alınmalı. Yarın eklenecek bir handler tabloya
+/// yazılmazsa ya da extractor'ı çıplak alırsa bu test kırılır.
+#[tokio::test]
+async fn kilitliyken_govde_ve_sorgu_alan_her_uc_once_401_doner() {
+    let (_d, s, cid, rid) = dolu_state().await;
+    const KANARYA: &str = "GIRDI-KANARYA";
+    let bozuk_govde = Some(format!("\"{KANARYA}\""));
+    // (dosya, handler, metot, yol, bozuk govde -- None ise sorgu ucu)
+    let tablo: Vec<(&str, &str, &str, String, Option<String>)> = vec![
+        ("appointments.rs", "liste", "GET", format!("/api/randevular?x={KANARYA}"), None),
+        ("appointments.rs", "olustur", "POST", "/api/randevular".into(), bozuk_govde.clone()),
+        ("appointments.rs", "durum", "PATCH", format!("/api/randevular/{rid}"), bozuk_govde.clone()),
+        (
+            "appointments.rs",
+            "odeme",
+            "PATCH",
+            format!("/api/randevular/{rid}/odeme"),
+            Some(r#"{"odendi":"evet"}"#.into()),
+        ),
+        ("appointments.rs", "guncelle", "PUT", format!("/api/randevular/{rid}"), bozuk_govde.clone()),
+        (
+            "appointments.rs",
+            "seri_adedi",
+            "GET",
+            format!("/api/randevular/seri/s1?x={KANARYA}"),
+            None,
+        ),
+        (
+            "appointments.rs",
+            "seri_kaldir",
+            "DELETE",
+            format!("/api/randevular/seri/s1?x={KANARYA}"),
+            None,
+        ),
+        ("appointments.rs", "cakisma", "GET", format!("/api/cakisma?x={KANARYA}"), None),
+        ("backup.rs", "al", "POST", "/api/yedek".into(), bozuk_govde.clone()),
+        ("clients.rs", "olustur", "POST", "/api/danisanlar".into(), bozuk_govde.clone()),
+        ("clients.rs", "guncelle_uc", "PATCH", format!("/api/danisanlar/{cid}"), bozuk_govde.clone()),
+        (
+            "clients.rs",
+            "saklama_listesi",
+            "GET",
+            format!("/api/saklama-suresi-dolanlar?x={KANARYA}"),
+            None,
+        ),
+        ("notes.rs", "kaydet", "PUT", format!("/api/randevular/{rid}/not"), bozuk_govde.clone()),
+        (
+            "notes.rs",
+            "danisan_listesi",
+            "GET",
+            format!("/api/danisanlar/{cid}/notlar?limit={KANARYA}"),
+            None,
+        ),
+        ("ozet.rs", "ay_ozeti_uc", "GET", "/api/ay-ozeti".into(), None),
+        ("password.rs", "degistir", "POST", "/api/parola".into(), bozuk_govde.clone()),
+        (
+            "private_notes.rs",
+            "kaydet",
+            "PUT",
+            format!("/api/randevular/{rid}/ozel-not"),
+            bozuk_govde.clone(),
+        ),
+        ("search.rs", "ara_uc", "GET", format!("/api/ara?x={KANARYA}"), None),
+        (
+            "veri_raporu.rs",
+            "veri_raporu",
+            "POST",
+            format!("/api/danisanlar/{cid}/veri-raporu"),
+            bozuk_govde.clone(),
+        ),
+    ];
+
+    // --- Kaynakla birebir ortusme ---
+    let mut kaynaktaki: Vec<(String, String)> = Vec::new();
+    let mut ciplak: Vec<String> = Vec::new();
+    for (ad, kaynak) in rota_kaynaklari() {
+        if VERI_DISI_ROTALAR.contains(&ad.as_str()) {
+            continue;
+        }
+        let kod = kod_satirlari(&kaynak);
+        for parca in async_fn_parcalari(&kod) {
+            let isim = parca.split('(').next().unwrap_or("").trim().to_string();
+            // Parametre listesi: ilk `(` ile imzadaki ilk `) ->` arasi (donus
+            // tipi `Result<(StatusCode, Json<..>)>` parametre sayilmamali).
+            let imza = &parca[..parca.find('{').unwrap_or(parca.len())];
+            let son = imza.find(") ->").or_else(|| imza.rfind(')')).unwrap_or(imza.len());
+            let params = &imza[imza.find('(').map_or(0, |i| i + 1)..son];
+            let mut var = false;
+            for isaret in ["Json<", "Sorgu<"] {
+                for (i, _) in params.match_indices(isaret) {
+                    var = true;
+                    if !params[..i].ends_with("Result<") {
+                        ciplak.push(format!("{ad}::{isim}: `{isaret}` ciplak extractor"));
+                    }
+                }
+            }
+            if var {
+                kaynaktaki.push((ad.clone(), isim));
+            }
+        }
+    }
+    assert!(
+        ciplak.is_empty(),
+        "extractor kapidan ONCE calisir; `Result<...>` alip kapidan sonra cozulmeli:\n{}",
+        ciplak.join("\n")
+    );
+    let mut tablodaki: Vec<(String, String)> =
+        tablo.iter().map(|(a, h, ..)| (a.to_string(), h.to_string())).collect();
+    kaynaktaki.sort();
+    tablodaki.sort();
+    assert_eq!(tablodaki, kaynaktaki, "tablo ile kaynaktaki Json/Sorgu handler'lari ortusmeli");
+
+    // --- ARTI YON: kilit acikken bozuk girdi Turkce 400, girdi yansimaz ---
+    // (Bu olmadan "her seye 401 don" mutasyonu asagidaki dongu ile gecerdi.)
+    for (ad, h, metot, yol, govde) in &tablo {
+        let (kod, _b, yanit) = match govde {
+            Some(g) => {
+                cagir_ham(&s, metot, yol, &[("content-type", "application/json")], g.clone().into_bytes())
+                    .await
+            }
+            None => cagir_ham(&s, metot, yol, &[], Vec::new()).await,
+        };
+        assert_eq!(kod, StatusCode::BAD_REQUEST, "{ad}::{h} acikken bozuk girdi 400 donmeli");
+        let mesaj = hata_metni(&yanit);
+        let beklenen = if govde.is_some() {
+            "İstek gövdesi eksik veya geçersiz."
+        } else {
+            "Sorgu parametreleri eksik veya geçersiz."
+        };
+        assert_eq!(mesaj, beklenen, "{ad}::{h}");
+        let ham = String::from_utf8_lossy(&yanit);
+        assert!(
+            !ham.contains(KANARYA) && !ham.contains("evet") && !ham.contains("invalid type"),
+            "{ad}::{h}: girdi ya da Ingilizce metin yansidi: {ham}"
+        );
+    }
+
+    // --- Kilitliyken: once 401 ---
+    kilitle(&s).await;
+    let mut hatalar = Vec::new();
+    for (ad, h, metot, yol, govde) in &tablo {
+        let (kod, _b, yanit) = match govde {
+            Some(g) => {
+                cagir_ham(&s, metot, yol, &[("content-type", "application/json")], g.clone().into_bytes())
+                    .await
+            }
+            None => cagir_ham(&s, metot, yol, &[], Vec::new()).await,
+        };
+        let ham = String::from_utf8_lossy(&yanit);
+        if kod != StatusCode::UNAUTHORIZED || ham.contains(KANARYA) || ham.contains("evet") {
+            hatalar.push(format!("{ad}::{h} {metot} {yol}: {kod} {ham}"));
+        }
+    }
+    assert!(hatalar.is_empty(), "kilitliyken 401 donmeyen uclar:\n{}", hatalar.join("\n"));
+}
+
 /// Kilitliyken indirme yolu **ham baytları da** sızdırmamalı: JSON gövde
 /// kontrolü tek başına yetmez, bu uç nokta binary döner.
 #[tokio::test]

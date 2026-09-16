@@ -1,4 +1,5 @@
-use crate::guard::{acik_baglanti, depo_hatasi, ApiHata, Sorgu};
+use crate::guard::{acik_baglanti, depo_hatasi, govde_coz, ApiHata, Sorgu};
+use axum::extract::rejection::JsonRejection;
 use crate::state::AppState;
 use axum::{
     extract::{Path, State},
@@ -64,9 +65,10 @@ pub struct GuncellemeIstegi {
 
 pub async fn liste(
     State(s): State<AppState>,
-    Sorgu(q): Sorgu<AralikSorgusu>,
+    q: Result<Sorgu<AralikSorgusu>, ApiHata>,
 ) -> Result<Json<Vec<Randevu>>, ApiHata> {
     let conn = acik_baglanti(&s)?;
+    let Sorgu(q) = q?;
     let liste =
         aralik_getir(&conn, &q.baslangic, &q.bitis, Cihaz::Masaustu).map_err(depo_hatasi)?;
     Ok(Json(liste))
@@ -74,9 +76,10 @@ pub async fn liste(
 
 pub async fn olustur(
     State(s): State<AppState>,
-    Json(istek): Json<YeniRandevuIstegi>,
+    istek: Result<Json<YeniRandevuIstegi>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Vec<Randevu>>), ApiHata> {
     let conn = acik_baglanti(&s)?;
+    let istek = govde_coz(istek)?;
     let yeni = YeniRandevu {
         client_id: istek.client_id,
         baslangic: istek.baslangic,
@@ -97,9 +100,10 @@ pub async fn olustur(
 pub async fn durum(
     State(s): State<AppState>,
     Path(id): Path<i64>,
-    Json(istek): Json<DurumIstegi>,
+    istek: Result<Json<DurumIstegi>, JsonRejection>,
 ) -> Result<Json<Value>, ApiHata> {
     let conn = acik_baglanti(&s)?;
+    let istek = govde_coz(istek)?;
     durum_guncelle(&conn, id, &istek.durum, Cihaz::Masaustu).map_err(depo_hatasi)?;
     Ok(Json(json!({})))
 }
@@ -115,9 +119,10 @@ pub async fn durum(
 pub async fn odeme(
     State(s): State<AppState>,
     Path(id): Path<i64>,
-    Json(istek): Json<OdemeIstegi>,
+    istek: Result<Json<OdemeIstegi>, JsonRejection>,
 ) -> Result<StatusCode, ApiHata> {
     let conn = acik_baglanti(&s)?;
+    let istek = govde_coz(istek)?;
     odeme_guncelle(&conn, id, istek.odendi, Cihaz::Masaustu).map_err(depo_hatasi)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -140,9 +145,10 @@ pub async fn odeme(
 pub async fn guncelle(
     State(s): State<AppState>,
     Path(id): Path<i64>,
-    Json(istek): Json<GuncellemeIstegi>,
+    istek: Result<Json<GuncellemeIstegi>, JsonRejection>,
 ) -> Result<Json<Randevu>, ApiHata> {
     let conn = acik_baglanti(&s)?;
+    let istek = govde_coz(istek)?;
     let yeni = RandevuGuncelleme {
         client_id: istek.client_id,
         baslangic: istek.baslangic,
@@ -209,9 +215,10 @@ pub struct SeriSorgusu {
 pub async fn seri_adedi(
     State(s): State<AppState>,
     Path(seri_id): Path<String>,
-    Sorgu(q): Sorgu<SeriSorgusu>,
+    q: Result<Sorgu<SeriSorgusu>, ApiHata>,
 ) -> Result<Json<Value>, ApiHata> {
     let conn = acik_baglanti(&s)?;
+    let Sorgu(q) = q?;
     let adet = seri_sayisi(&conn, &seri_id, &q.bu_tarihten_itibaren).map_err(depo_hatasi)?;
     let not_adedi =
         seri_silinecek_not_sayisi(&conn, &seri_id, &q.bu_tarihten_itibaren).map_err(depo_hatasi)?;
@@ -230,9 +237,10 @@ pub async fn seri_adedi(
 pub async fn seri_kaldir(
     State(s): State<AppState>,
     Path(seri_id): Path<String>,
-    Sorgu(q): Sorgu<SeriSorgusu>,
+    q: Result<Sorgu<SeriSorgusu>, ApiHata>,
 ) -> Result<Json<Value>, ApiHata> {
     let conn = acik_baglanti(&s)?;
+    let Sorgu(q) = q?;
     let silinen = seriyi_sil(&conn, &seri_id, &q.bu_tarihten_itibaren, Cihaz::Masaustu)
         .map_err(depo_hatasi)?;
     Ok(Json(json!({ "silinen": silinen })))
@@ -261,9 +269,10 @@ pub async fn seri_kaldir(
 /// (Görev 5 kararı) -- bu uç nokta form doğrulaması sırasında sık çağrılır.
 pub async fn cakisma(
     State(s): State<AppState>,
-    Sorgu(q): Sorgu<CakismaSorgusu>,
+    q: Result<Sorgu<CakismaSorgusu>, ApiHata>,
 ) -> Result<Json<SeriCakismasi>, ApiHata> {
     let conn = acik_baglanti(&s)?;
+    let Sorgu(q) = q?;
     let sonuc = match q.tekrar_sayisi {
         Some(n) if n > 1 => {
             seri_cakisanlari_bul(&conn, &q.baslangic, &q.bitis, n, q.haric_id)

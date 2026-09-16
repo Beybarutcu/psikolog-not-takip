@@ -21,9 +21,10 @@ pub struct AySorgusu {
 /// `GET /api/ay-ozeti?ay=YYYY-AA`
 pub async fn ay_ozeti_uc(
     State(s): State<AppState>,
-    Sorgu(q): Sorgu<AySorgusu>,
+    q: Result<Sorgu<AySorgusu>, ApiHata>,
 ) -> Result<Json<AyOzeti>, ApiHata> {
     let conn = acik_baglanti(&s)?;
+    let Sorgu(q) = q?;
     let ozet = ay_ozeti(&conn, &q.ay, Cihaz::Masaustu).map_err(depo_hatasi)?;
     Ok(Json(ozet))
 }

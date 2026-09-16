@@ -71,10 +71,13 @@ fn api_router() -> Router<AppState> {
         // Görev 7'nin ekleyeceği `/danisanlar/{id}` ile çakışmaz -- bu üç
         // segmentli.
         .route("/danisanlar/{id}/arsivle", post(routes::clients::arsivle_uc))
-        // Veri raporu disa aktariminin denetim kaydi (C1). Uc segmentli,
-        // `.../arsivle` ile ayni sinifta: yan etkisi olan bir islem, bu
-        // yuzden `POST`. Gerekce icin bkz. `routes::clients::rapor_kaydi_uc`.
-        .route("/danisanlar/{id}/rapor-kaydi", post(routes::clients::rapor_kaydi_uc))
+        // Danisan veri raporu (Plan 4 Gorev 6): sunucuda uretilen AES-256
+        // parola korumali PDF. `POST` cunku (a) silinemez bir `disa_aktarma`
+        // satiri yazar ve (b) parola GOVDEDE gider, sorgu dizesinde degil.
+        // Plan 3'un ayri `rapor-kaydi` ucu kaldirildi: raporu ureten uc
+        // noktanin kendisi loglar. Sira sozlesmesi icin bkz.
+        // `routes::veri_raporu` modul basligi.
+        .route("/danisanlar/{id}/veri-raporu", post(routes::veri_raporu::veri_raporu))
         .route(
             "/randevular",
             get(routes::appointments::liste).post(routes::appointments::olustur),
@@ -114,7 +117,8 @@ fn api_router() -> Router<AppState> {
         // Asagidaki on dort handler'in da ilk satiri `guard::acik_baglanti`:
         // kilitliyken 401, govdede veri yok, islem uygulanmaz. Toplam veri
         // handler'i sayisi 11 -> 25 (dal incelemesi C1'in ekledigi
-        // `rapor-kaydi` ile 26).
+        // `rapor-kaydi` ile 26; Plan 4 Gorev 6'da o uc kalkti, yerine
+        // `veri-raporu` geldi -- toplam degismedi).
         //
         // `/danisanlar/{id}` iki segmentlidir; uc segmentli
         // `/danisanlar/{id}/arsivle`, `.../notlar` ve `.../ekler` ile

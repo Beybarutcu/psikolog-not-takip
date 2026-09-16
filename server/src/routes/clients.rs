@@ -11,10 +11,14 @@
 //!
 //! # Kilit ve denetim kaydı
 //!
-//! Yedi handler'ın da ilk satırı `guard::acik_baglanti`'dir. Rota katmanı
+//! Altı handler'ın da ilk satırı `guard::acik_baglanti`'dir. Rota katmanı
 //! ikinci bir log satırı yazmaz: çekirdek her yol için hacim kararını zaten
-//! vermiştir (`getir`, `saklama_suresi_dolanlar` ve `veri_raporu_kaydi` ->
-//! `HerCagri`, `listele` -> `OturumBasi`).
+//! vermiştir (`getir` ve `saklama_suresi_dolanlar` -> `HerCagri`, `listele`
+//! -> `OturumBasi`).
+//!
+//! Veri raporu (KVKK md. 11) buradan değil `routes::veri_raporu`'ndan
+//! üretilir; Plan 3'teki ayrı `rapor-kaydi` ucu Plan 4 Görev 6'da kaldırıldı
+//! (raporu üreten uç nokta artık kendisi loglar).
 
 use crate::guard::{acik_baglanti, depo_hatasi, ApiHata, Sorgu};
 use crate::state::AppState;
@@ -25,8 +29,8 @@ use axum::{
 };
 use psikolog_core::store::audit::Cihaz;
 use psikolog_core::store::clients::{
-    arsivle, ekle, getir, guncelle, listele, saklama_suresi_dolanlar, veri_raporu_kaydi, Danisan,
-    DanisanGuncelleme, YeniDanisan,
+    arsivle, ekle, getir, guncelle, listele, saklama_suresi_dolanlar, Danisan, DanisanGuncelleme,
+    YeniDanisan,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -109,48 +113,6 @@ pub async fn guncelle_uc(
     let conn = acik_baglanti(&s)?;
     let danisan = guncelle(&conn, id, &alan, Cihaz::Masaustu).map_err(depo_hatasi)?;
     Ok(Json(danisan))
-}
-
-/// Danışan veri raporunun dışa aktarıldığını denetim kaydına yazar
-/// (`POST /api/danisanlar/{id}/rapor-kaydi`).
-///
-/// # Neden ayrı bir uç nokta var
-///
-/// Veri raporu (KVKK md. 11) bugün **istemcide** birleştiriliyor: arayüz
-/// `GET /api/danisanlar/{id}/notlar` ile notları çekiyor, danışan kartındaki
-/// kimlik ve ek listesiyle bir `.txt` üretip diske yazıyor. Sunucuya giden
-/// tek istek olan not listesi ise `goruntuleme` yazıyor ve **5 dakikalık
-/// pencerede birleşiyor** — seans paneli aynı danışan için açıldıysa dışa
-/// aktarım denetim kaydında **hiçbir iz bırakmıyordu**. Tasarım §4 "her
-/// görüntüleme, düzenleme, **dışa aktarma** ve silme loglanır" diyor;
-/// emsali `attachments::icerik_getir` (tek bir ek indirmesi bile
-/// `DisaAktarma` + `HerCagri`).
-///
-/// # Neden `POST` ve neden gövdesi boş
-///
-/// Yan etkisi olan (silinemez bir satır yazan) bir işlem `GET` olamaz:
-/// tarayıcılar, ön yükleyiciler ve link denetleyicileri `GET`'i güvenli
-/// sayar. Gövde boştur çünkü sunucunun istemciden alacağı hiçbir bilgi
-/// yok — rapor içeriği (ad, not metni, dosya adları) loga **asla** girmez,
-/// yalnızca "hangi danışanın dosyası, ne zaman, hangi cihazdan".
-///
-/// # PLAN 4 NOTU
-///
-/// Plan 4 dışa aktarımı sunucu tarafına taşıyacak ve parola korumalı
-/// üretecek (tasarım §10). O zaman raporu üreten uç noktanın kendisi
-/// loglayacak ve bu uç nokta kaldırılacak. Bugün güvence **sıradadır**:
-/// arayüz burayı önce çağırır, başarısız olursa dışa aktarımı hiç yapmaz
-/// (fail-closed; bkz. `DanisanKarti::raporHazirla` ve Plan 1'in
-/// kurulum/kilit-açma kararı: "kaydedilemeyecek bir erişime izin verilmez").
-///
-/// Var olmayan kimlik `404` döner ve **log yazılmaz**.
-pub async fn rapor_kaydi_uc(
-    State(s): State<AppState>,
-    Path(id): Path<i64>,
-) -> Result<Json<Value>, ApiHata> {
-    let conn = acik_baglanti(&s)?;
-    veri_raporu_kaydi(&conn, id, Cihaz::Masaustu).map_err(depo_hatasi)?;
-    Ok(Json(json!({})))
 }
 
 #[derive(Deserialize)]

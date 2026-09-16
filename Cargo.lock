@@ -3092,6 +3092,7 @@ dependencies = [
  "anyhow",
  "axum",
  "http-body-util",
+ "lopdf 0.45.0",
  "psikolog-core",
  "rusqlite",
  "rust-embed",

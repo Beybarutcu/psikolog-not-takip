@@ -546,6 +546,45 @@ export const danisanApi = {
     }),
   ekleriGetir: (id: number) => istek<EkBilgisi[]>(`/api/danisanlar/${id}/ekler`),
   /**
+   * Danışan veri raporunu (KVKK md. 11) **sunucuda** üretilmiş, AES-256
+   * parola korumalı PDF olarak indirir
+   * (`POST /api/danisanlar/{id}/veri-raporu`, Plan 4 Görev 6).
+   *
+   * - Parola **gövdede** gider; URL'ye (geçmiş, günlükler) asla girmez.
+   * - Denetim kaydını sunucu, raporu ürettiği adımda kendisi yazar; ayrı bir
+   *   "kayıt" çağrısı yoktur.
+   * - İndirme `ekIndir` ile aynı desen: `fetch` → 401 dinleyicileri
+   *   (`basarisizYanitiFirlat`) → `blob:` URL → `download` → URL serbest.
+   *   Hata yolunda (400 ana parola reddi, 401, 404, 500) dosya üretilmez,
+   *   sunucunun `hata` metni fırlatılır ve sayfa gezinmez.
+   *
+   * Dosya adı sunucunun `Content-Disposition`'ından okunur (danışan adı
+   * içermez); okunamazsa sabit bir ad kullanılır.
+   *
+   * Arayüz bağlantısı (parola diyaloğu) Görev 7'dedir.
+   */
+  veriRaporuIndir: async (id: number, parola: string): Promise<void> => {
+    const yanit = await fetch(`/api/danisanlar/${id}/veri-raporu`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ parola }),
+    })
+    if (!yanit.ok) await basarisizYanitiFirlat(yanit)
+
+    const ek = yanit.headers?.get('content-disposition') ?? ''
+    const ad = /filename="([^"]+)"/.exec(ek)?.[1] ?? 'danisan-veri-raporu.pdf'
+    const url = URL.createObjectURL(await yanit.blob())
+    try {
+      const bag = document.createElement('a')
+      bag.href = url
+      bag.download = ad
+      bag.click()
+    } finally {
+      // `ekIndir` ile ayni gerekce: bir sonraki makro gorevde serbest.
+      setTimeout(() => URL.revokeObjectURL(url), 0)
+    }
+  },
+  /**
    * Veri raporu dışa aktarımını denetim kaydına yazdırır
    * (`POST /api/danisanlar/{id}/rapor-kaydi`).
    *

@@ -18,6 +18,9 @@ rust-embed = { version = "8", features = ["mime-guess"] }
 [dev-dependencies]
 tempfile = "3"
 http-body-util = "0.1"
+# Veri raporu HTTP testleri PDF'i parolayla COZUP icerigi dogrular (Plan 4
+# Gorev 6). Surum `core`un sabitledigiyle ayni olmali.
+lopdf = { version = "=0.45.0", default-features = false }
 tower = { version = "0.5", features = ["util"] }
 
 [[bin]]

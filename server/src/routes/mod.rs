@@ -23,3 +23,7 @@ pub mod restore;
 pub mod search;
 pub mod session;
 pub mod setup;
+/// Danışan veri raporu (Plan 4 Görev 6) — sunucuda üretilen AES-256 parola
+/// korumalı PDF; kapının içinde. Özel not bu modüle giremez (yapısal:
+/// `notlar_api.rs::rota_katmani_ozel_nota_yapisal_olarak_ayri_erisir`).
+pub mod veri_raporu;

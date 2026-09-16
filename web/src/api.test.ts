@@ -590,6 +590,10 @@ describe('danışan dosyası uç noktalarında 401', () => {
       'dosyaGetir',
       'rizaKaydet',
       'ekleriGetir',
+      // Plan 4 Gorev 6: sunucuda uretilen sifreli rapor. Donen sey bir
+      // DOSYA indirmesidir (blob), JSON veri degil; ozel nota giden bir yol
+      // acmaz -- sunucu raporu yalnizca resmi notlardan kurar.
+      'veriRaporuIndir',
       // Dal incelemesi C1: disa aktarimin denetim kaydi. Veri GETIRMEZ --
       // govdesi bos bir POST'tur ve yaniti kullanilmaz; nesnenin gizlilik
       // sozunu genisletmez.
@@ -625,6 +629,101 @@ describe('danışan dosyası uç noktalarında 401', () => {
     // rapor uretilirse kayitsiz bir kopya olusur.
     sunucu(() => ({ ok: false, status: 404, govde: { hata: 'Kayıt bulunamadı.' } }))
     await expect(danisanApi.raporKaydiOlustur(7)).rejects.toThrow('Kayıt bulunamadı.')
+  })
+})
+
+// --- Plan 4 Görev 6: sunucuda üretilen şifreli veri raporu -------------
+describe('danisanApi.veriRaporuIndir — parola gövdede, 401 kapısı, gezinme yok', () => {
+  const gercekOlustur = URL.createObjectURL
+  const gercekSerbest = URL.revokeObjectURL
+  let uretilenBloblar: Blob[]
+  let indirilenAdlar: string[]
+  let tiklamaCasusu: { mockRestore: () => void }
+
+  beforeEach(() => {
+    uretilenBloblar = []
+    indirilenAdlar = []
+    URL.createObjectURL = vi.fn((b: Blob) => {
+      uretilenBloblar.push(b)
+      return `blob:rapor-${uretilenBloblar.length}`
+    }) as unknown as typeof URL.createObjectURL
+    URL.revokeObjectURL = vi.fn() as unknown as typeof URL.revokeObjectURL
+    tiklamaCasusu = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        indirilenAdlar.push(this.download)
+      })
+  })
+
+  afterEach(() => {
+    URL.createObjectURL = gercekOlustur
+    URL.revokeObjectURL = gercekSerbest
+    tiklamaCasusu.mockRestore()
+  })
+
+  function raporSunucusu(yanit: { ok: boolean; status?: number; govde?: unknown; bayt?: string }) {
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, s?: RequestInit) => {
+      cagrilar.push({
+        yol: String(girdi),
+        method: s?.method ?? 'GET',
+        govde: typeof s?.body === 'string' ? JSON.parse(s.body) : (s?.body ?? null),
+      })
+      return {
+        ok: yanit.ok,
+        status: yanit.status ?? (yanit.ok ? 200 : 500),
+        headers: new Headers(
+          yanit.ok
+            ? { 'content-disposition': 'attachment; filename="danisan-veri-raporu-2026-09-16.pdf"' }
+            : {},
+        ),
+        json: async () => yanit.govde ?? {},
+        blob: async () => new Blob([yanit.bayt ?? '']),
+      } as unknown as Response
+    }) as unknown as typeof fetch
+  }
+
+  it('POST govdesinde parolayi gonderir, URLde parola YOK, sunucu baytlarini indirir', async () => {
+    raporSunucusu({ ok: true, bayt: '%PDF-SIFRELI' })
+    const onceki = window.location.href
+
+    await danisanApi.veriRaporuIndir(7, 'danisan-parolasi-1')
+
+    expect(cagrilar).toEqual([
+      { yol: '/api/danisanlar/7/veri-raporu', method: 'POST', govde: { parola: 'danisan-parolasi-1' } },
+    ])
+    expect(cagrilar[0].yol).not.toContain('parola')
+    expect(uretilenBloblar).toHaveLength(1)
+    expect(await uretilenBloblar[0].text()).toBe('%PDF-SIFRELI')
+    expect(indirilenAdlar).toEqual(['danisan-veri-raporu-2026-09-16.pdf'])
+    expect(window.location.href).toBe(onceki)
+  })
+
+  it('401de dinleyici throwdan ONCE tetiklenir, dosya uretilmez, sayfa gezinmez', async () => {
+    raporSunucusu({ ok: false, status: 401, govde: { hata: 'Oturum kilitli.' } })
+    const sira: string[] = []
+    const birak = yetkisizOlunca(() => sira.push('dinleyici'))
+    const onceki = window.location.href
+
+    await expect(
+      danisanApi.veriRaporuIndir(7, 'danisan-parolasi-1').catch((e) => {
+        sira.push('throw')
+        throw e
+      }),
+    ).rejects.toBeInstanceOf(YetkisizHata)
+
+    expect(sira).toEqual(['dinleyici', 'throw'])
+    expect(uretilenBloblar).toHaveLength(0)
+    expect(indirilenAdlar).toHaveLength(0)
+    expect(window.location.href).toBe(onceki)
+    birak()
+  })
+
+  it('sunucunun 400 mesaji (ana parola reddi) oldugu gibi firlatilir, dosya uretilmez', async () => {
+    const mesaj =
+      'Rapor için ana parolanızı kullanmayın; danışana vereceğiniz ayrı bir parola seçin.'
+    raporSunucusu({ ok: false, status: 400, govde: { hata: mesaj } })
+    await expect(danisanApi.veriRaporuIndir(7, 'gizliparola')).rejects.toThrow(mesaj)
+    expect(uretilenBloblar).toHaveLength(0)
   })
 })
 

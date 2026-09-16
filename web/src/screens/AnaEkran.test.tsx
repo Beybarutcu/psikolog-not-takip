@@ -930,6 +930,10 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
   // isteğinin başarısızlığı yutulmuyor" iddiası ancak diğer iki istek
   // BAŞARILIYKEN ölçülebilir.
   let gecmisSunucuHatasi = false
+  // Yalnızca seansın KENDİ resmî notunun okunmasını (`GET .../not`) 500'e
+  // düşüren bayrak: `notSunucuHatasi` iki isteği birden düşürüyor ve "hangisi
+  // düşerse düşsün" iddiası ancak ikisi AYRI ayrı kurulursa ölçülür.
+  let resmiNotSunucuHatasi = false
   // Yalnızca ÖZEL NOTUN YAZMA isteğini 401'e düşüren bayrak. Planın en
   // sert kısıtı ("otomatik kayıt sırasında 401 gelirse yazılmamış içerik
   // düşürülemez") özel not için hiç koşulmamıştı.
@@ -956,6 +960,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     notSunucuHatasi = false
     notYetkisiz = false
     gecmisSunucuHatasi = false
+    resmiNotSunucuHatasi = false
     ozelYazmaYetkisiz = false
     sunucuOdendi = {}
     odemeBekletici = null
@@ -982,6 +987,13 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
           ok: false,
           status: 401,
           json: async () => ({ hata: 'Oturum zaman aşımına uğradı.' }),
+        } as unknown as Response
+      }
+      if (resmiNotSunucuHatasi && method === 'GET' && /^\/api\/randevular\/\d+\/not$/.test(yol)) {
+        return {
+          ok: false,
+          status: 500,
+          json: async () => ({ hata: 'Seans notu okunamadi.' }),
         } as unknown as Response
       }
       if (/\/notlar/.test(yol) && gecmisSunucuHatasi) {
@@ -1576,6 +1588,44 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await userEvent.click(within(uyari).getByRole('button', { name: 'Yeniden dene' }))
     expect(await screen.findByLabelText('Seans notu')).toBeDefined()
   })
+
+  // Görev 2 inceleme I1: durum/ödeme satırı panelin içindeydi ve panel
+  // yalnızca iki not isteği de başarılıysa açılıyordu. İki istek AYRI ayrı
+  // düşürülüyor: yalnızca "ikisi birden" kurulsaydı, satırı yalnızca
+  // `not`un hatasına bağlayan bir uygulama da geçerdi.
+  it.each([
+    ['seans notu', () => { resmiNotSunucuHatasi = true }, 'Seans notu okunamadi.'],
+    ['gecmis notlar', () => { gecmisSunucuHatasi = true }, 'Gecmis notlar okunamadi.'],
+  ])(
+    '%s yuklenemezse de Geldi ve Odendi erisilebilir ve GERCEK PATCH uretir',
+    async (_ad, dusur, mesaj) => {
+      dusur()
+      render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+      await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+      await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+
+      const uyari = await screen.findByRole('alert')
+      expect(uyari.textContent).toContain(mesaj)
+      // Ön koşul: gerçekten HATA dalındayız (panel açılmadı).
+      expect(screen.queryByRole('region', { name: 'Seans' })).toBeNull()
+      expect(screen.queryByLabelText('Seans notu')).toBeNull()
+
+      const geldi = () => screen.getByRole('button', { name: 'Geldi' })
+      const once = istekler.length
+      await userEvent.click(geldi())
+      await waitFor(() => expect(geldi().getAttribute('aria-pressed')).toBe('true'))
+      await userEvent.click(odendiKutusu())
+      await waitFor(() => expect(odendiKutusu().disabled).toBe(false))
+
+      // GERÇEK istekler, yol + yöntem + gövde ile.
+      expect(istekler.slice(once).filter((i) => i.method === 'PATCH')).toEqual([
+        { yol: `/api/randevular/${randevuA.id}`, method: 'PATCH', govde: { durum: 'geldi' } },
+        { yol: `/api/randevular/${randevuA.id}/odeme`, method: 'PATCH', govde: { odendi: true } },
+      ])
+      expect(sunucuOdendi[randevuA.id]).toBe(true)
+      expect(odendiKutusu().checked).toBe(true)
+    },
+  )
 
   it('gecmis notlar yuklenemezse BOS LISTE gosterilmez', async () => {
     // Yutulup boş liste gösterilseydi, notu olan bir danışan için ekranda

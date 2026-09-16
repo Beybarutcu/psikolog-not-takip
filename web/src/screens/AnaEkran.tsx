@@ -4,6 +4,7 @@ import { HizliArama } from '../arama/HizliArama'
 import { boyutBicimle } from '../danisan/bicim'
 import { DanisanKarti } from '../danisan/DanisanKarti'
 import { AyOzeti } from '../ozet/AyOzeti'
+import { SeansAltSatiri } from '../seans/SeansAltSatiri'
 import { SeansPaneli } from '../seans/SeansPaneli'
 import { HaftalikTakvim } from '../takvim/HaftalikTakvim'
 import { RandevuPaneli } from '../takvim/RandevuPaneli'
@@ -671,15 +672,30 @@ export function AnaEkran({
           // Yükleme başarısızsa panel AÇILMAZ: "yükleniyor…" yazan bir panel
           // sonsuza kadar öyle kalır ve kullanıcı notunun neden gelmediğini
           // bilemez.
-          <div role="alert" className="mt-4 rounded border border-red-300 bg-red-50 p-3">
-            <p className="text-sm text-red-800">Seans notu yüklenemedi. {seans.hata}</p>
-            <button
-              type="button"
-              className="mt-2 rounded border border-red-300 px-2 py-1 text-sm"
-              onClick={seansAkisi.yenidenDene}
-            >
-              Yeniden dene
-            </button>
+          <div className="mt-4">
+            <div role="alert" className="rounded border border-red-300 bg-red-50 p-3">
+              <p className="text-sm text-red-800">Seans notu yüklenemedi. {seans.hata}</p>
+              <button
+                type="button"
+                className="mt-2 rounded border border-red-300 px-2 py-1 text-sm"
+                onClick={seansAkisi.yenidenDene}
+              >
+                Yeniden dene
+              </button>
+            </div>
+            {/* Durum ve ödeme notlara BAĞLI DEĞİL: notlar okunamasa da
+                işaretlenebilmeli (Görev 2 inceleme I1). Geçmiş notlardan biri
+                kalıcı olarak okunamıyorsa bu dal o danışanın HER seansında
+                açılır; satır burada olmasaydı "Geldi" hiç işaretlenemez, son
+                temas tazelenmez ve dosya imha hatırlatmasına erken düşerdi.
+                `key` panelinkiyle aynı gerekçe: kutunun iyimser yerel değeri
+                seans değişince sıfırlanmalı. */}
+            <SeansAltSatiri
+              key={`seans-alt-${seciliRandevu.id}`}
+              randevu={seciliRandevu}
+              onDurumDegis={(durum) => takvim.durumDegis(seciliRandevu.id, durum)}
+              onOdemeDegis={(odendi) => takvim.odemeDegis(seciliRandevu.id, odendi)}
+            />
           </div>
         ))}
     </div>

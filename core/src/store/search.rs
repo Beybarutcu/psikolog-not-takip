@@ -966,50 +966,33 @@ mod tests {
     /// Artık kaynak yorum/dizgi/karakter farkındalıklı bir tarayıcıyla
     /// yürünür; yalnızca **kodda** duran `#[cfg(test)]`'in işaretlediği
     /// `mod`, `fn` ya da `impl` öğesi denk parantezle çıkarılır, dosyanın geri
-    /// kalanı taranır (bkz. `test_ogelerini_cikar`).
+    /// kalanı taranır.
+    ///
+    /// # Bulgu (Plan 4 Görev 3 incelemesi): yorum ayıklaması İKİNCİ bir ayrıştırıcıydı
+    ///
+    /// Test öğesi elemesi dizgi farkındalıklı olduktan sonra blok yorumları
+    /// hâlâ düz metinde `find("/*")` ile, satır yorumları `starts_with("//")`
+    /// ile atılıyordu. Kodda bir dizgi `/*` içerip eşsiz kalınca
+    /// (`"yedekler/*.db"`) dosyanın GERİ KALANI taranmıyordu; sonraki bir
+    /// dizgide `*/` varsa aradaki üretim kodu siliniyordu. Artık yorum atma da
+    /// aynı tek geçişte, aynı `sozcuk_disi_atla` ile yapılır: yorum yalnızca
+    /// kodda başlıyorsa yorumdur. Kapsanan vakalar
+    /// `uretim_kodu_elemesi_...` testinde tek tek listelenir.
     fn uretim_kodunu_ayikla(kaynak: &str) -> String {
-        let testsiz = test_ogelerini_cikar(kaynak);
-        let ham = testsiz.as_str();
-
-        let mut bloksuz = String::with_capacity(ham.len());
-        let mut kalan = ham;
-        while let Some(bas) = kalan.find("/*") {
-            bloksuz.push_str(&kalan[..bas]);
-            match kalan[bas + 2..].find("*/") {
-                Some(son) => kalan = &kalan[bas + 2 + son + 2..],
-                None => {
-                    kalan = "";
-                    break;
-                }
-            }
-        }
-        bloksuz.push_str(kalan);
-
-        bloksuz
-            .lines()
-            .filter(|satir| !satir.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
-    /// Kaynaktan **kodda** duran `#[cfg(test)]`'in işaretlediği öğeyi çıkarır.
-    ///
-    /// Çıkarılan öğe türleri: `mod ad { ... }`, `mod ad;`, `fn` (önünde
-    /// `async`/`const`/`unsafe` olabilir) ve `impl ... { ... }`. Aradaki ek
-    /// öznitelikler (`#[allow(..)]`) ve görünürlük (`pub`, `pub(crate)`) kabul
-    /// edilir. Başka bir öğe (`const`, `use`, `static`, `struct`) çıkarılmaz ve
-    /// taranır: tarama o durumda fazla görür, eksik değil. Blok sonu
-    /// bulunamazsa (denk olmayan parantez) öğe de çıkarılmaz — aynı gerekçe.
-    ///
-    /// Yorum, dizgi ve karakter literali içindeki `#[cfg(test)]` işaret
-    /// sayılmaz; o metin olduğu gibi korunur (yorumları sonraki adım atar).
-    fn test_ogelerini_cikar(kaynak: &str) -> String {
         const ISARET: &str = "#[cfg(test)]";
         let mut cikti = String::with_capacity(kaynak.len());
         let mut i = 0usize;
         while i < kaynak.len() {
             if let Some(son) = sozcuk_disi_atla(kaynak, i) {
-                cikti.push_str(&kaynak[i..son]);
+                // Yorum atılır; dizgi ve karakter literali korunur (SQL
+                // metni dizgidedir, taranması gereken tam da odur). Satır
+                // yorumunun sonundaki `\n` yoruma dahil değildir, satır
+                // yapısı korunur. Blok yorum hiçbir şeyle değiştirilmez:
+                // `private_/* */notes` birleşik görünür -- fazla görmek,
+                // eksik görmekten iyidir.
+                if !kaynak[i..].starts_with("//") && !kaynak[i..].starts_with("/*") {
+                    cikti.push_str(&kaynak[i..son]);
+                }
                 i = son;
             } else if kaynak[i..].starts_with(ISARET) {
                 let sonrasi = i + ISARET.len();
@@ -1028,6 +1011,13 @@ mod tests {
         }
         cikti
     }
+
+    // Çıkarılan test öğesi türleri: `mod ad { ... }`, `mod ad;`, `fn` (önünde
+    // `async`/`const`/`unsafe` olabilir) ve `impl ... { ... }`. Aradaki ek
+    // öznitelikler (`#[allow(..)]`) ve görünürlük (`pub`, `pub(crate)`) kabul
+    // edilir. Başka bir öğe (`const`, `use`, `static`, `struct`) çıkarılmaz ve
+    // taranır: tarama o durumda fazla görür, eksik değil. Blok sonu
+    // bulunamazsa (denk olmayan parantez) öğe de çıkarılmaz — aynı gerekçe.
 
     /// `#[cfg(test)]`'ten hemen sonraki metin çıkarılabilir bir öğeyse, öğenin
     /// sonuna kadarki bayt uzunluğu.
@@ -1233,6 +1223,79 @@ mod tests {
         for elenmeli in ["TEST_ICERIGI", "TEST_FN_ICERIGI", "TEST_IMPL_ICERIGI", "dosya_modulu"] {
             assert!(!uretim.contains(elenmeli), "`{elenmeli}` elenmeli:\n{uretim}");
         }
+    }
+
+    /// Yorum ayıklaması da dizgi/karakter farkındalıklı olmalı (Plan 4 Görev 3
+    /// incelemesi). Her vakada `SIZINTI` üretim kodudur ve taranmalı; yorum
+    /// içeriği ise elenmeli. Vakalar tek tek denenir ve TÜM başarısızlıklar
+    /// birlikte raporlanır: bir gerileme hangi vakaları açtığını tek koşuda
+    /// gösterir.
+    #[test]
+    fn uretim_kodu_elemesi_yorumu_dizgi_ve_karakterden_ayirir() {
+        let vakalar: [(&str, &str); 7] = [
+            (
+                "dizgide essiz /* -- eskiden dosyanin geri kalani taranmiyordu",
+                "pub const DESEN: &str = \"yedekler/*.db\";\nfn f() { SIZINTI }",
+            ),
+            (
+                "bir dizgide /*, sonrakinde */ -- eskiden aradaki kod siliniyordu",
+                "const A: &str = \"/*\";\nfn f() { SIZINTI }\nconst B: &str = \"*/\";",
+            ),
+            (
+                "raw string icinde tirnak ve /*",
+                "const R: &str = r#\"a \"/*\" b\"#;\nfn f() { SIZINTI }",
+            ),
+            (
+                "karakter literali '/' ardindan '*'",
+                "let (a, b) = ('/', '*');\nlet ab = ['/','*'];\nfn f() { SIZINTI }",
+            ),
+            (
+                "karakter literali '\"' dizgi baslangici sanilmamali",
+                "let t = '\"';\nconst U: &str = \"/*\";\nfn f() { SIZINTI }",
+            ),
+            (
+                "satir yorumunda \" dizgi baslangici sanilmamali",
+                "// \"tirnak acik kaldi\nconst X: &str = \" /* \";\nfn f() { SIZINTI }\n\
+                 const Y: &str = \" */ \";",
+            ),
+            (
+                "blok yorumunda \" dizgi baslangici sanilmamali",
+                "/* \" */\nconst X: &str = \" /* \";\nfn f() { SIZINTI }\nconst Y: &str = \" */ \";",
+            ),
+        ];
+        let mut hatalar = Vec::new();
+        for (ad, kaynak) in vakalar {
+            let uretim = uretim_kodunu_ayikla(kaynak);
+            if !uretim.contains("SIZINTI") {
+                hatalar.push(format!("[{ad}] SIZINTI taranmadi:\n{uretim}"));
+            }
+        }
+
+        // Karsi yon: yorumlar GERCEKTEN atiliyor, dizgideki `//` ve `/*`
+        // yorum sayilmiyor. Bu olmazsa modul basliklarindaki `private_notes`
+        // gecisleri her dosyayi kirmizi yapardi (fazla gorme).
+        let kaynak = [
+            "//! MODUL_YORUMU",
+            "/// BELGE_YORUMU",
+            "fn a() { \"http://DIZGIDEKI_URL\" } // SATIR_SONU_YORUMU",
+            "/* BLOK /* IC_ICE */ BLOK_YORUMU */ fn b() { \"BLOKTAN_SONRA\" }",
+            "fn c() { \"yol/*DIZGIDEKI_DESEN*/\" }",
+        ]
+        .join("\n");
+        let uretim = uretim_kodunu_ayikla(&kaynak);
+        for gorunmeli in ["DIZGIDEKI_URL", "BLOKTAN_SONRA", "DIZGIDEKI_DESEN"] {
+            if !uretim.contains(gorunmeli) {
+                hatalar.push(format!("`{gorunmeli}` taranmali:\n{uretim}"));
+            }
+        }
+        for elenmeli in
+            ["MODUL_YORUMU", "BELGE_YORUMU", "SATIR_SONU_YORUMU", "IC_ICE", "BLOK_YORUMU"]
+        {
+            if uretim.contains(elenmeli) {
+                hatalar.push(format!("`{elenmeli}` elenmeli:\n{uretim}"));
+            }
+        }
+        assert!(hatalar.is_empty(), "{} vaka basarisiz:\n{}", hatalar.len(), hatalar.join("\n---\n"));
     }
 
     /// Parcalanmis dizgi kacamagini gorunur kilar: dizgi tirnaklari,

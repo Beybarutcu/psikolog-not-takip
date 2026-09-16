@@ -101,6 +101,10 @@ impl std::fmt::Debug for Borclu {
 ///
 /// Katı: tam 7 ASCII karakter, 5. karakter `-`, yıl 4 rakam, ay `01..=12`.
 /// `2026-9`, `2026-13`, `2026-09-01` reddedilir.
+///
+/// `9999-12` de reddedilir: sonraki ayı `10000-01` olurdu — beş haneli yıl
+/// sözlüksel karşılaştırmada `"10000-01..." < "9999-12..."` verir, aralık
+/// boşalır ve ay sessizce sıfır görünürdü.
 fn sonraki_ay(ay: &str) -> Option<String> {
     let b = ay.as_bytes();
     if b.len() != 7 || b[4] != b'-' {
@@ -111,7 +115,7 @@ fn sonraki_ay(ay: &str) -> Option<String> {
     }
     let yil: u32 = ay[..4].parse().ok()?;
     let ay_no: u32 = ay[5..].parse().ok()?;
-    if !(1..=12).contains(&ay_no) {
+    if !(1..=12).contains(&ay_no) || (yil, ay_no) == (9999, 12) {
         return None;
     }
     Some(if ay_no == 12 {
@@ -302,6 +306,123 @@ mod tests {
         seans(&c, a, "2026-08-31T23:58", Some(5), "geldi", false);
         assert!(ay_ozeti(&c, "2026-09", Cihaz::Masaustu).unwrap().borclular.is_empty());
         assert_eq!(ay_ozeti(&c, "2026-09", Cihaz::Masaustu).unwrap().bekleyen_kurus, 0);
+
+        // Borclular sorgusunun ALT siniri DAHIL: ayin ilk dakikasindaki
+        // odenmemis seans borcludur. Yukaridaki iki satir yalnizca disarida
+        // kalmayi sinar; `a.baslangic >= ?1` -> `>` mutasyonu onlarla yesildi
+        // (Plan 4 Gorev 3 incelemesi).
+        seans(&c, a, "2026-09-01T00:00", Some(50), "geldi", false);
+        let o = ay_ozeti(&c, "2026-09", Cihaz::Masaustu).unwrap();
+        assert_eq!(o.bekleyen_kurus, 50);
+        assert_eq!(o.borclular.len(), 1, "ay basindaki seans borclu listesinde olmali");
+        assert_eq!((o.borclular[0].client_id, o.borclular[0].borc_kurus), (a, 50));
+        assert_eq!(o.borclular.iter().map(|b| b.borc_kurus).sum::<i64>(), o.bekleyen_kurus);
+    }
+
+    /// Deterministik sozde rastgele uretec (splitmix64). `rand`'in `StdRng`'si
+    /// surumler arasinda ayni diziyi garanti etmez; test kararsizlasmasin.
+    struct Tohum(u64);
+    impl Tohum {
+        fn sonraki(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        }
+        fn asagi(&mut self, n: u64) -> u64 {
+            self.sonraki() % n
+        }
+    }
+
+    /// Degismez (Plan 4 Gorev 3 incelemesi): sabit tohumlu rastgele
+    /// kurulumlarda ozet, SQL'den BAGIMSIZ bir Rust hesabiyla ayni sonucu
+    /// verir ve `bekleyen_kurus == Σ borclular.borc_kurus`.
+    ///
+    /// Ucret `None`/0/deger, dort durum, uc ay (ay sinirlari dahil), rastgele
+    /// odeme ve arsivleme. Ikinci esitlik su an tanim geregi tutar cunku
+    /// "ucret > 0" kosulu toplamda notrdur; iki sorgudan biri ayri bir
+    /// kosul/aralik kazanirsa (ör. yalnizca biri `>=`'yi `>` yaparsa) kirilir.
+    #[test]
+    fn ozet_bagimsiz_hesapla_esit_ve_bekleyen_borclular_toplamidir() {
+        const AYLAR: [(&str, u32); 3] = [("2026-08", 31), ("2026-09", 30), ("2026-10", 31)];
+        const DURUMLAR: [&str; 4] = ["planlandi", "geldi", "gelmedi", "iptal"];
+
+        let mut ay_basi_borcu_goruldu = false;
+        let mut borclu_goruldu = 0;
+        for tohum in [1u64, 7, 42, 2026, 0xDEAD_BEEF] {
+            let (_d, c) = kurulum();
+            let mut r = Tohum(tohum);
+            let danisanlar: Vec<i64> =
+                (0..4).map(|i| danisan(&c, &format!("Danisan {tohum} {i}"))).collect();
+            // (client_id, baslangic, ucret, durum, odendi)
+            let mut kayitlar: Vec<(i64, String, Option<i64>, &str, bool)> = Vec::new();
+            for _ in 0..40 {
+                let cid = danisanlar[r.asagi(4) as usize];
+                let (ay, gun_sayisi) = AYLAR[r.asagi(3) as usize];
+                // Sinirlar agirlikli: ayin ilk dakikasi ve son saati sik secilir.
+                let bas = match r.asagi(4) {
+                    0 => format!("{ay}-01T00:00"),
+                    1 => format!("{ay}-{gun_sayisi:02}T23:00"),
+                    _ => format!("{ay}-{:02}T{:02}:00", 1 + r.asagi(u64::from(gun_sayisi)), r.asagi(23)),
+                };
+                let ucret = match r.asagi(4) {
+                    0 => None,
+                    1 => Some(0),
+                    _ => Some(1 + r.asagi(100_000) as i64),
+                };
+                let durum = DURUMLAR[r.asagi(4) as usize];
+                let odendi = r.asagi(2) == 1;
+                seans(&c, cid, &bas, ucret, durum, odendi);
+                kayitlar.push((cid, bas, ucret, durum, odendi));
+            }
+            for &cid in &danisanlar {
+                if r.asagi(2) == 1 {
+                    arsivle(&c, cid, Cihaz::Masaustu).unwrap();
+                }
+            }
+
+            for (ay, _) in AYLAR {
+                let o = ay_ozeti(&c, ay, Cihaz::Masaustu).unwrap();
+                let bu_ay: Vec<_> = kayitlar
+                    .iter()
+                    .filter(|k| k.3 == "geldi" && k.1.starts_with(ay))
+                    .collect();
+                let beklenen_seans = bu_ay.len() as i64;
+                let toplam = |odendi: bool| -> i64 {
+                    bu_ay.iter().filter(|k| k.4 == odendi).filter_map(|k| k.2).sum()
+                };
+                let mut beklenen_borc: std::collections::BTreeMap<i64, (i64, i64)> =
+                    Default::default();
+                for k in bu_ay.iter().filter(|k| !k.4 && k.2.is_some_and(|u| u > 0)) {
+                    ay_basi_borcu_goruldu |= k.1.ends_with("-01T00:00");
+                    borclu_goruldu += 1;
+                    let e = beklenen_borc.entry(k.0).or_default();
+                    e.0 += k.2.unwrap();
+                    e.1 += 1;
+                }
+                let mut gercek_borc: Vec<(i64, i64, i64)> =
+                    o.borclular.iter().map(|b| (b.client_id, b.borc_kurus, b.seans_sayisi)).collect();
+                gercek_borc.sort_unstable();
+                let beklenen_borc: Vec<(i64, i64, i64)> =
+                    beklenen_borc.into_iter().map(|(cid, (t, n))| (cid, t, n)).collect();
+
+                let bag = format!("tohum {tohum}, ay {ay}");
+                assert_eq!(o.seans_sayisi, beklenen_seans, "{bag}: seans_sayisi");
+                assert_eq!(o.tahsilat_kurus, toplam(true), "{bag}: tahsilat_kurus");
+                assert_eq!(o.bekleyen_kurus, toplam(false), "{bag}: bekleyen_kurus");
+                assert_eq!(gercek_borc, beklenen_borc, "{bag}: borclular");
+                assert_eq!(
+                    o.bekleyen_kurus,
+                    o.borclular.iter().map(|b| b.borc_kurus).sum::<i64>(),
+                    "{bag}: bekleyen == borclular toplami"
+                );
+            }
+        }
+        // ON KOSUL: tohumlar bos ya da sinirsiz bir kurulum uretmedi; aksi
+        // halde esitlikler 0 == 0 uzerinde saglanirdi.
+        assert!(borclu_goruldu >= 10, "yeterli borc uretilmedi: {borclu_goruldu}");
+        assert!(ay_basi_borcu_goruldu, "ayin ilk dakikasinda borclu seans uretilmedi");
     }
 
     #[test]
@@ -376,6 +497,10 @@ mod tests {
                 "{kotu}"
             );
         }
+        assert!(matches!(
+            ay_ozeti(&c, "9999-12", Cihaz::Masaustu),
+            Err(DepoHatasi::GecersizVeri(_))
+        ));
         assert_eq!(son_kayitlar(&c, 1000).unwrap().len(), once);
         for iyi in ["2026-01", "2026-12", "2028-02", "2026-10"] {
             assert!(ay_ozeti(&c, iyi, Cihaz::Masaustu).is_ok(), "{iyi}");
@@ -387,6 +512,10 @@ mod tests {
         assert_eq!(sonraki_ay("2026-09").as_deref(), Some("2026-10"));
         assert_eq!(sonraki_ay("2026-12").as_deref(), Some("2027-01"));
         assert_eq!(sonraki_ay("2026-01").as_deref(), Some("2026-02"));
+        // Yil ust siniri: 9999-12'nin sonraki ayi dort haneye sigmaz.
+        assert_eq!(sonraki_ay("9999-11").as_deref(), Some("9999-12"));
+        assert_eq!(sonraki_ay("9999-12"), None);
+        assert_eq!(sonraki_ay("9998-12").as_deref(), Some("9999-01"));
     }
 
     #[test]

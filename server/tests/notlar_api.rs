@@ -2312,6 +2312,29 @@ async fn uretim_surerken_kilitlenirse_401_pdf_ve_log_yok() {
     assert_eq!(sonra.len(), once.len() + 2, "{sonra:?}");
 }
 
+/// M1: sira "uret -> yeniden dogrula -> kaydet -> ver". Uretim basarisizsa
+/// `500` ve denetim satiri YOK. Kayit uretimden once alinsaydi bu test
+/// kirilirdi (eskiden adimlar yer degistirince her sey yesildi).
+#[tokio::test]
+async fn veri_raporu_uretim_basarisizsa_500_ve_log_yazilmaz() {
+    let (_d, s, cid, _rid) = dolu_state().await;
+    let once = log_satirlari(&s).await.len();
+    let (kod, govde) = akisla_rapor(&s, cid, |_icerik, _parola| {
+        Err(psikolog_core::pdf::PdfHatasi::Uretim("GIZLI-KUTUPHANE-METNI".into()))
+    })
+    .await;
+    assert_eq!(kod, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(hata_metni(&govde), "Rapor üretilemedi.");
+    assert!(!String::from_utf8_lossy(&govde).contains("GIZLI-KUTUPHANE"), "kutuphane metni sizdi");
+    assert_eq!(log_satirlari(&s).await.len(), once, "uretilmeyen rapor loga girmemeli");
+
+    // TERS YON: ayni yardimci gercek ureticiyle satir YAZAR -- yoksa "satir
+    // yok" iddiasi hic yazmayan bir akisla da saglanirdi.
+    let (kod, _) = akisla_rapor(&s, cid, psikolog_core::pdf::sifreli_pdf).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(log_satirlari(&s).await.len(), once + 1);
+}
+
 /// Ana parola kontrolu YAPILAMAZSA rapor verilmez (fail-closed). Yalnizca
 /// `WrongSecret` rapora devam eder; anahtar kaydi okunup yapisal olarak
 /// gecerli gorunen ama KDF'i calistirilamayan bir kayit (`t_cost = 0`:

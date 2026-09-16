@@ -8,6 +8,7 @@ import {
   type EkBilgisi,
 } from '../../api'
 import type { Randevu } from '../../takvim/HaftalikTakvim'
+import { yazmaSaatiOlustur, type RandevuYamasi } from './yazmaSaati'
 
 /**
  * Danışan kartındaki bakiye için randevu penceresi.
@@ -63,6 +64,12 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
   const yetkisizRef = useRef(onYetkisiz)
   yetkisizRef.current = onYetkisiz
 
+  // Kart yüklenirken (istek uçuştayken) işaretlenen ödeme/durum, geç dönen
+  // kart yanıtında ESKİ değere dönmesin: takvim listesiyle AYNI mantıksal
+  // saat (bkz. `yazmaSaati.ts`). Okuma damgası isteklerden hemen önce,
+  // yazma damgası `randevuYamala`da (çağıran onu yalnızca başarıda çağırır).
+  const [yazmaSaati] = useState(yazmaSaatiOlustur)
+
   // Danışan kartı verisi. Seans verisiyle aynı desen: `id` ile eşleşmeyen
   // state boş sayılır (render sırasında), böylece bir danışandan diğerine
   // geçerken ÖNCEKİNİN dosyası bir kare bile görünmez.
@@ -81,6 +88,7 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
     let iptal = false
 
     void (async () => {
+      const okumaDamgasi = yazmaSaati.okumaBasladi()
       try {
         // Üçü birlikte: ek listesi ayrı yakalanıp yutulsaydı, başarısızlık
         // "bu danışanın dosyası yok" diye görünürdü — dosyası olan bir
@@ -95,7 +103,10 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
           id: seciliDanisanId,
           dosya,
           ekler,
-          randevular: tumRandevular.filter((r) => r.client_id === seciliDanisanId),
+          randevular: yazmaSaati.uygula(
+            tumRandevular.filter((r) => r.client_id === seciliDanisanId),
+            okumaDamgasi,
+          ),
           hata: null,
         })
       } catch (e) {
@@ -117,7 +128,7 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
     return () => {
       iptal = true
     }
-  }, [seciliDanisanId, kartTazeleme])
+  }, [seciliDanisanId, kartTazeleme, yazmaSaati])
 
   function ac(clientId: number) {
     setSeciliDanisanId(clientId)
@@ -181,19 +192,23 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
    * alanı) zaten kesin olarak biliniyor — `useTakvimAkisi.durumDegis` ile
    * aynı gerekçe.
    *
-   * Kart başka bir danışana aitse ya da o randevuyu içermiyorsa hiçbir şey
-   * değişmez. Ölçen test: `AnaEkran.test.tsx` > "kart ACIKKEN odeme ve durum
-   * isaretlenince kart bakiyesi YERELDE tazelenir".
+   * Kart başka bir danışana aitse ya da o randevuyu içermiyorsa ekrandaki
+   * hiçbir şey değişmez — ama yazma yine de SAATE işlenir: kart o an
+   * yükleniyorsa (liste henüz boş) geç dönen yanıt bu yamayı alır. Ölçen
+   * testler: `AnaEkran.test.tsx` > "kart ACIKKEN odeme ve durum
+   * isaretlenince kart bakiyesi YERELDE tazelenir" ve "kart YUKLENIRKEN odeme
+   * isaretlenirse gec donen kart yaniti ESKI bakiyeyi gostermez".
    */
   const randevuYamala = useCallback(
-    (id: number, yama: Partial<Pick<Randevu, 'durum' | 'odendi'>>) => {
+    (id: number, yama: RandevuYamasi) => {
+      yazmaSaati.yazmaBitti(id, yama)
       setKartVerisi((onceki) =>
         onceki.randevular.some((r) => r.id === id)
           ? { ...onceki, randevular: onceki.randevular.map((r) => (r.id === id ? { ...r, ...yama } : r)) }
           : onceki,
       )
     },
-    [],
+    [yazmaSaati],
   )
 
   async function ekSil(ekId: number) {

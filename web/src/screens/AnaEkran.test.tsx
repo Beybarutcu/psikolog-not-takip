@@ -2437,6 +2437,52 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     ])
   })
 
+  // Dal incelemesi (ledger KALAN): kartın uçuş yarışı. Kartın tüm-zaman
+  // randevu okuması yazmadan ÖNCE başlar (sunucu ESKİ değeri okur — bu
+  // taklitte liste GET'i yazmaları hiç yansıtmıyor) ve yazmadan SONRA döner.
+  // O an kartın listesi henüz boş olduğu için `randevuYamala`nın yerel
+  // yaması hiçbir şeye değmez; geç yanıt eski bakiyeyi basıyordu. Takvim
+  // listesiyle AYNI mantıksal saat (`yazmaSaati.ts`) bunu kapatıyor.
+  it.each([
+    ['odeme', async () => userEvent.click(screen.getByRole('checkbox', { name: 'Ödendi' }))],
+    ['durum', async () => userEvent.click(screen.getByRole('button', { name: 'Gelmedi' }))],
+  ])(
+    'kart YUKLENIRKEN %s isaretlenirse gec donen kart yaniti ESKI bakiyeyi gostermez',
+    async (_ad, yazmaEylemi) => {
+      render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+      // Gelecek haftadaki 202 (Ayşe, geldi, 450 TL, ödenmemiş) seçili.
+      await userEvent.click(await screen.findByRole('button', { name: 'Sonraki hafta' }))
+      await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+      await screen.findByLabelText('Seans notu')
+      await waitFor(() =>
+        expect(istekYollari.filter((y) => y.startsWith('GET /api/cakisma?'))).toHaveLength(1),
+      )
+
+      const tumZaman =
+        'GET /api/randevular?baslangic=2000-01-01T00%3A00&bitis=2100-01-01T00%3A00'
+      const k = kapi()
+      gecikmeler[tumZaman] = k.bekle
+      await userEvent.click(cip('Ayşe Yılmaz'))
+      // BARİYER: kartın okuması yola çıktı (yazmadan ÖNCE).
+      await waitFor(() => expect(istekYollari).toContain(tumZaman))
+      expect(screen.queryByText('0555 111 22 33')).toBeNull()
+
+      await yazmaEylemi()
+      // BARİYER: yazma sunucuda bitti ve satırın kilidi kalktı.
+      await waitFor(() =>
+        expect(istekYollari.some((y) => y.startsWith('PATCH /api/randevular/202'))).toBe(true),
+      )
+      await waitFor(() =>
+        expect((screen.getByRole('checkbox', { name: 'Ödendi' }) as HTMLInputElement).disabled).toBe(false),
+      )
+
+      k.ac()
+      await screen.findByText('0555 111 22 33')
+      const bakiye = screen.getAllByRole('term').find((e) => e.textContent === 'Bakiye')
+      expect(bakiye?.nextElementSibling?.textContent).toBe(BAKIYE_0)
+    },
+  )
+
   it('baska danisana gecince onceki kartin verisi EKRANDA KALMAZ', async () => {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))

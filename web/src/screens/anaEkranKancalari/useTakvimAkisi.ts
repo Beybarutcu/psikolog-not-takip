@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { takvimApi, YetkisizHata } from '../../api'
 import type { Randevu } from '../../takvim/HaftalikTakvim'
 import { haftaGunleri, haftaninBasi, yerelZaman } from '../../takvim/hafta'
+import { yazmaSaatiOlustur } from './yazmaSaati'
 
 /**
  * Görünen haftanın randevuları ve o listeye bağlı SEÇİM.
@@ -53,34 +54,11 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
 
   // # Uçuştaki yazma × liste yüklemesi (Görev 2 inceleme M7)
   //
-  // `durumDegis` ve `odemeDegis` sonucu listeye YEREL olarak yazıyor (yeniden
-  // yükleme yok). Bir liste GET'i yazma BİTMEDEN başlar ve yazmadan SONRA
-  // dönerse, sunucu okumayı eski değerle yapmış olabilir ve yanıt yerel
-  // değeri ezerdi: kullanıcı "ödendi" işaretler, haftalar arasında gidip
-  // gelir, kutu işaretsiz açılır — sunucuda `true`, ekranda `false`.
-  //
-  // Mantıksal saat: her yükleme başlarken bir damga alır, her BAŞARILI yazma
-  // bittiğinde bir damga alır. Yanıt geldiğinde, damgası yüklemeninkinden
-  // BÜYÜK (yükleme başladığında henüz bitmemiş) yazmaların alanları yanıtın
-  // üstüne uygulanır. Yükleme başlamadan ÖNCE biten yazma sunucunun
-  // okumasına zaten dahildir ve dokunulmaz. Uçuşta olup sonra REDDEDİLEN
-  // yazma kaydedilmez: yanıttaki sunucu değeri doğrudur. Tek kullanıcılı
-  // uygulama: yerel son değer, sunucudaki son değerdir.
-  //
-  // Ölçen test: `AnaEkran.test.tsx` > "ucustaki odeme/durum yazmasi, ONCE
-  // baslayip SONRA donen hafta yuklemesinde ESKI degere donmez".
-  const mantiksalSaat = useRef(0)
-  const bitenYazmalar = useRef(
-    new Map<number, { yama: Partial<Pick<Randevu, 'durum' | 'odendi'>>; damga: number }>(),
-  )
-
-  function yazmaBitti(id: number, yama: Partial<Pick<Randevu, 'durum' | 'odendi'>>) {
-    const onceki = bitenYazmalar.current.get(id)
-    bitenYazmalar.current.set(id, {
-      yama: { ...onceki?.yama, ...yama },
-      damga: ++mantiksalSaat.current,
-    })
-  }
+  // `durumDegis`/`odemeDegis` listeye YEREL yazıyor; yazmadan önce başlayıp
+  // sonra dönen bir hafta GET'i yerel değeri ezerdi. Mantıksal saat
+  // `yazmaSaati.ts`te (gerekçe ve ölçen testler orada); danışan kartı AYNI
+  // mekanizmayı kullanıyor.
+  const [yazmaSaati] = useState(yazmaSaatiOlustur)
 
   /**
    * Oturum kilitlendiğinde takvim tarafının bırakması gerekenler.
@@ -107,15 +85,12 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
     const bitis = yerelZaman(new Date(
       sonGun.getFullYear(), sonGun.getMonth(), sonGun.getDate(), 23, 59,
     ))
-    const okumaDamgasi = ++mantiksalSaat.current
+    const okumaDamgasi = yazmaSaati.okumaBasladi()
     try {
       const sunucudan = await takvimApi.randevulariGetir(baslangic, bitis)
       // Bu yükleme başladığında henüz bitmemiş yazmalar yanıttan önce gelir
-      // (bkz. `bitenYazmalar`).
-      const gelen = sunucudan.map((r) => {
-        const yazma = bitenYazmalar.current.get(r.id)
-        return yazma !== undefined && yazma.damga > okumaDamgasi ? { ...r, ...yazma.yama } : r
-      })
+      // (bkz. `yazmaSaati.ts`).
+      const gelen = yazmaSaati.uygula(sunucudan, okumaDamgasi)
       setRandevular(gelen)
       // Seçili randevu TAZE nesneyle değiştirilir. Panelin `key`'i
       // `randevu-${id}` olduğu için kimlik aynı kaldığında bileşen yeniden
@@ -165,7 +140,7 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
       }
       setHata(e instanceof Error ? e.message : 'Randevular yüklenemedi.')
     }
-  }, [haftaBasi, oturumKapandi])
+  }, [haftaBasi, oturumKapandi, yazmaSaati])
 
   useEffect(() => { void yukle() }, [yukle])
 
@@ -289,7 +264,7 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
   // duyurulur" (ve "odeme ..." eşi).
   async function durumDegis(id: number, durum: string) {
     await takvimApi.randevuDurumu(id, durum)
-    yazmaBitti(id, { durum })
+    yazmaSaati.yazmaBitti(id, { durum })
     setRandevular((onceki) => onceki.map((r) => (r.id === id ? { ...r, durum } : r)))
     // Panel açık kalır ve elindeki `randevu` nesnesi bu state'tir; o kopya
     // güncellenmezse `seciliRandevu.durum` sunucudaki gerçekten sessizce
@@ -332,7 +307,7 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
   // gün testini de o değişiklik getirmeli.
   async function odemeDegis(id: number, odendi: boolean) {
     await takvimApi.odemeGuncelle(id, odendi)
-    yazmaBitti(id, { odendi })
+    yazmaSaati.yazmaBitti(id, { odendi })
     setRandevular((onceki) => onceki.map((r) => (r.id === id ? { ...r, odendi } : r)))
     setSeciliRandevu((secili) => (secili && secili.id === id ? { ...secili, odendi } : secili))
   }

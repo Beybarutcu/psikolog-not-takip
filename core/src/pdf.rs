@@ -590,7 +590,7 @@ mod tests {
                 "1 satir + 200 bos satir",
                 bolum(
                     std::iter::once("ilk".to_string())
-                        .chain(std::iter::repeat(String::new()).take(200))
+                        .chain(std::iter::repeat_n(String::new(), 200))
                         .chain(std::iter::once("BOSLUK-SONRASI-KANARYA".to_string()))
                         .collect(),
                 ),

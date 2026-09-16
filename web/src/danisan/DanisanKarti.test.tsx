@@ -678,7 +678,7 @@ describe('DanisanKarti — veri raporu (KVKK md. 11, parolalı PDF)', () => {
     expect(document.activeElement).toBe(disaAktarDugmesi())
   })
 
-  it('hatada form acik kalir, odak dugmeye ZIPLAMAZ ve yeniden acilis sayilmaz', async () => {
+  it('hatada form acik kalir (dugme yok); Esc hata sonrasinda da vazgecer ve odagi dugmeye verir', async () => {
     const veriRaporuIndir = vi.fn().mockRejectedValue(new Error('Sunucu hatası.'))
     kur({ veriRaporuIndir })
     await ac()

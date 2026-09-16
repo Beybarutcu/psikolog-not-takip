@@ -120,7 +120,7 @@
 
 use crate::state::AppState;
 use axum::{
-    extract::{FromRequestParts, Query},
+    extract::{rejection::JsonRejection, FromRequestParts, Query},
     http::{request::Parts, StatusCode},
     Json,
 };
@@ -173,6 +173,34 @@ where
             // Ingilizce ve axum surumune bagli.
             Err(_) => Err(istek_sorgusu_hatasi()),
         }
+    }
+}
+
+/// JSON gövde çözümleme reddinin tek mesajı. Reddin iç metni kullanılmaz:
+/// İngilizcedir (`invalid type: string "evet", expected a boolean`) ve
+/// hatalı gövdeden parça **yansıtır**.
+pub const GOVDE_GECERSIZ_MESAJI: &str = "İstek gövdesi eksik veya geçersiz.";
+
+/// Handler'ın `Result<Json<T>, JsonRejection>` parametresini **kapıdan sonra**
+/// çözer; red `400 {"hata": GOVDE_GECERSIZ_MESAJI}` olur.
+///
+/// # Neden extractor değil (dal incelemesi M1)
+///
+/// Çıplak `Json<T>` extractor'ı handler gövdesinden ÖNCE çalışır: kilitli
+/// oturumda bozuk gövdeli bir `PATCH /randevular/{id}/odeme` kapıya hiç
+/// varmadan `422` + İngilizce, girdiyi yansıtan bir metin dönüyordu. Oturum
+/// kilitliyken yanıtın kapıdan başka bir şey söylememesi gerekir. Veri
+/// raporunun (Plan 4 Görev 6) deseni genelleştirildi: extractor `Result` olarak
+/// alınır, ilk satır kapı, ikinci satır `govde_coz`. Aynı gerekçeyle
+/// `Sorgu<T>` de `Result<Sorgu<T>, ApiHata>` olarak alınır ve kapıdan sonra
+/// `?` ile açılır. Kilitliyken her iki sınıfın da `401` döndüğü
+/// `tests/notlar_api.rs::kilitliyken_govde_ve_sorgu_alan_her_uc_once_401_doner`
+/// tablosunda, tablonun kaynaktaki handler kümesiyle birebir örtüştüğü aynı
+/// testte doğrulanır.
+pub fn govde_coz<T>(govde: Result<Json<T>, JsonRejection>) -> Result<T, ApiHata> {
+    match govde {
+        Ok(Json(deger)) => Ok(deger),
+        Err(_) => Err((StatusCode::BAD_REQUEST, Json(json!({ "hata": GOVDE_GECERSIZ_MESAJI })))),
     }
 }
 

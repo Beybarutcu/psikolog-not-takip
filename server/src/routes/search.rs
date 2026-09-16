@@ -59,9 +59,10 @@ pub struct AramaSorgusu {
 /// bilgisi `audit_log`'a yazılır.
 pub async fn ara_uc(
     State(s): State<AppState>,
-    Sorgu(q): Sorgu<AramaSorgusu>,
+    q: Result<Sorgu<AramaSorgusu>, ApiHata>,
 ) -> Result<Json<AramaYaniti>, ApiHata> {
     let conn = acik_baglanti(&s)?;
+    let Sorgu(q) = q?;
     let yanit =
         ara(&conn, &q.q, q.limit.unwrap_or(AZAMI_SONUC), Cihaz::Masaustu).map_err(depo_hatasi)?;
     Ok(Json(yanit))

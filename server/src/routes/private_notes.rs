@@ -39,7 +39,8 @@
 //! adlı **ayrı** bir `audit_log.varlik` değeriyle kaydeder — resmî nota
 //! erişimin arkasına saklanmaz.
 
-use crate::guard::{acik_baglanti, depo_hatasi, ApiHata};
+use crate::guard::{acik_baglanti, depo_hatasi, govde_coz, ApiHata};
+use axum::extract::rejection::JsonRejection;
 use crate::state::AppState;
 use axum::{
     extract::{Path, State},
@@ -75,9 +76,10 @@ pub async fn getir(
 pub async fn kaydet(
     State(s): State<AppState>,
     Path(id): Path<i64>,
-    Json(istek): Json<OzelNotIstegi>,
+    istek: Result<Json<OzelNotIstegi>, JsonRejection>,
 ) -> Result<Json<OzelNot>, ApiHata> {
     let conn = acik_baglanti(&s)?;
+    let istek = govde_coz(istek)?;
     let not = ozel_not_kaydet(&conn, id, &istek.icerik, Cihaz::Masaustu).map_err(depo_hatasi)?;
     Ok(Json(not))
 }

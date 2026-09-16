@@ -775,26 +775,74 @@ mod tests {
         );
     }
 
-    /// Özel not tablosuna **kod içinde** dokunmasına izin verilen çekirdek
-    /// modülleri (`core/src/`'ye göre yol). Bunun dışındaki her modül için
+    /// Özel not tablosuna **kod içinde** dokunmasına izin verilen modüller
+    /// (workspace köküne göre yol). Bunun dışındaki her üretim modülü için
     /// tablo adı bir ihlaldir.
     ///
-    /// - `store/notes.rs`: `ozel_not_getir`/`ozel_not_kaydet`'in evi (tek
-    ///   yazma/okuma yolu).
-    /// - `store/schema.rs`: tabloyu ve indeksini YARATAN yer.
-    /// - `store/appointments.rs`: randevu silinince kaç notun cascade ile
-    ///   gideceğini sayar — **içeriğe hiç bakmaz**, yalnızca `COUNT(*)`
+    /// - `core/src/store/notes.rs`: `ozel_not_getir`/`ozel_not_kaydet`'in evi
+    ///   (tek yazma/okuma yolu).
+    /// - `core/src/store/schema.rs`: tabloyu ve indeksini YARATAN yer.
+    /// - `core/src/store/appointments.rs`: randevu silinince kaç notun cascade
+    ///   ile gideceğini sayar — **içeriğe hiç bakmaz**, yalnızca `COUNT(*)`
     ///   (bkz. `silinecek_not_adedi`).
     const OZEL_NOTA_DOKUNABILEN: [&str; 3] =
-        ["store/notes.rs", "store/schema.rs", "store/appointments.rs"];
+        ["core/src/store/notes.rs", "core/src/store/schema.rs", "core/src/store/appointments.rs"];
 
     /// Özel not **okuma/yazma API'sinin** (`ozel_not_` önekli fonksiyonlar ve
-    /// `OzelNot` tipi) geçebileceği tek modül.
-    const OZEL_NOT_API_EVI: &str = "store/notes.rs";
+    /// `OzelNot` tipi) geçebileceği modüller: çekirdekte tanımı, sunucuda tek
+    /// rota modülü. Başka hiçbir üretim modülü (`guard.rs`, `lib.rs`,
+    /// `bin/sunucu.rs`, `src-tauri/src/main.rs`, yarının `export.rs`'i)
+    /// onları çağıramaz, içe aktaramaz.
+    const OZEL_NOT_API_EVLERI: [&str; 2] =
+        ["core/src/store/notes.rs", "server/src/routes/private_notes.rs"];
 
-    /// `core/src/` altındaki her `.rs` dosyası, **özyinelemeli**:
-    /// (`core/src`'ye göre `/` ayraçlı yol, üretim kodu).
-    fn cekirdek_uretim_dosyalari() -> Vec<(String, String)> {
+    /// Özel not **rota modülünü** yönlendiriciye bağlamak için modül adının
+    /// (`private_notes`) kodda geçmesi zorunlu olan yerler: `(dosya, tam metin)`.
+    /// Tam metin dosyanın üretim kodunda **tam bir kez** geçmeli ve yalnızca o
+    /// metin taramadan düşülür — aynı dosyada modül adının BAŞKA bir kullanımı
+    /// (ör. `lib.rs`'te `routes::private_notes::getir`'i bir rapor
+    /// yardımcısından çağırmak) yine ihlaldir.
+    const MODUL_BAGLAMA_ISTISNALARI: [(&str, &str); 2] = [
+        // `routes/mod.rs`: modül bildirimi -- dosya adı tablo adıyla aynı.
+        ("server/src/routes/mod.rs", "pub mod private_notes;"),
+        // `lib.rs`: özel not uç noktasının yönlendiriciye tek bağlandığı satır.
+        ("server/src/lib.rs", "get(routes::private_notes::getir).put(routes::private_notes::kaydet)"),
+    ];
+
+    /// Kök `Cargo.toml`'daki `[workspace] members` listesi. Okunamazsa ya da
+    /// liste bulunamazsa **panik**: boş bir üye kümesi her yasağı sessizce
+    /// sağlardı.
+    fn workspace_uyeleri(kok: &std::path::Path) -> Vec<String> {
+        let toml = std::fs::read_to_string(kok.join("Cargo.toml"))
+            .unwrap_or_else(|e| panic!("kok Cargo.toml okunamadi: {e}"));
+        // `members = [...]` ile BASLAYAN satir (yorumdaki bir "members"
+        // kelimesi sayilmaz); liste birden cok satira yayilabilir.
+        let mut bas = None;
+        let mut konum = 0usize;
+        for satir in toml.split_inclusive('\n') {
+            let sade = satir.trim_start();
+            if sade.strip_prefix("members").is_some_and(|k| k.trim_start().starts_with('=')) {
+                bas = Some(konum);
+                break;
+            }
+            konum += satir.len();
+        }
+        let bas = bas.unwrap_or_else(|| panic!("kok Cargo.toml'da `members = [...]` yok"));
+        let kalan = &toml[bas..];
+        let ac = kalan.find('[').expect("`members` listesi `[` ile baslamali");
+        let kapa = kalan.find(']').expect("`members` listesi `]` ile bitmeli");
+        kalan[ac + 1..kapa]
+            .split(',')
+            .map(|p| p.trim().trim_matches('"').to_string())
+            .filter(|p| !p.is_empty())
+            .collect()
+    }
+
+    /// Workspace'in **bütün üyelerinin** `src/` dizinlerindeki her `.rs`
+    /// dosyası, özyinelemeli: `(workspace köküne göre / ayraçlı yol, üretim
+    /// kodu)`. Üye kümesi `Cargo.toml`'dan türetilir, elle yazılmaz: yarın
+    /// eklenecek bir üye hiçbir şey yapılmadan kapsama girer.
+    fn workspace_uretim_dosyalari() -> Vec<(String, String)> {
         fn yuru(kok: &std::path::Path, dizin: &std::path::Path, cikti: &mut Vec<(String, String)>) {
             let girdiler = std::fs::read_dir(dizin)
                 .unwrap_or_else(|e| panic!("{} okunamadi: {e}", dizin.display()));
@@ -816,14 +864,35 @@ mod tests {
                 }
             }
         }
-        let kok = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let kok = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("core'un ust dizini workspace koku olmali");
+        let uyeler = workspace_uyeleri(kok);
+        // Alt sinir: bugun uc uye. Liste ayristirmasi bozulup tek bir uyeye
+        // (ya da hicbirine) inerse kume daralir ve kavsak disarida kalir.
+        assert!(uyeler.len() >= 3, "workspace uye listesi beklenenden kucuk: {uyeler:?}");
         let mut dosyalar = Vec::new();
-        yuru(&kok, &kok, &mut dosyalar);
+        for uye in &uyeler {
+            let src = kok.join(uye).join("src");
+            assert!(src.is_dir(), "workspace uyesi `{uye}` icin src/ yok: {}", src.display());
+            yuru(kok, &src, &mut dosyalar);
+        }
         dosyalar.sort();
         dosyalar
     }
 
-    /// Özel not sızıntısının **çekirdek genelindeki** yapısal karşılığı.
+    /// Özel not sızıntısının **workspace genelindeki** yapısal karşılığı.
+    ///
+    /// # Bulgu (Plan 4 dal incelemesi I2): tarama `server/src`'nin çoğunu ve `src-tauri`'yi görmüyordu
+    ///
+    /// Üçüncü kez biçim 12. Çekirdek taraması yalnızca `core/src`'ye, rota
+    /// taraması (`server/tests/notlar_api.rs`) yalnızca `server/src/routes/`'a
+    /// bakıyordu. `guard.rs`, `lib.rs`, `state.rs`, `assets.rs`,
+    /// `bin/sunucu.rs` ve `src-tauri/src/main.rs` hiçbirinde yoktu.
+    /// İncelemecinin mutasyonu: `guard.rs`'e `ozel_not_getir` çağıran bir
+    /// `pub fn rapor_yardimcisi` + rapor rotasından çağrı → bütün yapısal
+    /// testler yeşil. Küme artık kök `Cargo.toml`'daki `members`'tan türetilir
+    /// ve her üyenin `src/`'si özyinelemeli taranır.
     ///
     /// # Bulgu (dal incelemesi): tarama kendi dosyasıyla sınırlıydı
     ///
@@ -842,35 +911,67 @@ mod tests {
     /// arıyordu. `core/src/pdf.rs` gibi `store` dışı bir modül tabloya
     /// dokunsa, ya da yeni bir rapor modülü tablo adını hiç anmadan
     /// `notes::ozel_not_getir`'i çağırsa hiçbir test kırılmazdı. Küme artık
-    /// `core/src/`'den **özyinelemeli** türetilir ve iki kural uygulanır:
+    /// `core/src/`'den **özyinelemeli** türetildi (üçüncü bulguda kapsam
+    /// workspace'e genişledi, yukarı bakınız).
     ///
-    /// 1. `private_notes` yalnızca `OZEL_NOTA_DOKUNABILEN` modüllerinde.
+    /// # Kurallar (workspace'in bütün üretim kaynakları)
+    ///
+    /// 1. `private_notes` yalnızca `OZEL_NOTA_DOKUNABILEN` modüllerinde;
+    ///    rota modülünün yönlendiriciye bağlandığı iki tam metin
+    ///    (`MODUL_BAGLAMA_ISTISNALARI`) tam bir kez düşülür.
     /// 2. `ozel_not_` önekli adlar ve `OzelNot` tipi yalnızca
-    ///    `OZEL_NOT_API_EVI`'nde — başka bir çekirdek modül onları
-    ///    çağıramaz, içe aktaramaz.
+    ///    `OZEL_NOT_API_EVLERI`'nde.
     ///
     /// Elle kalan tek şey izin listeleridir ve her girdisi için iki yönlü
     /// ön koşul var — dosya diskte var mı, ve izin GERÇEKTEN gerekli mi
     /// (üretim kodunda fiilen geçiyor mu). Bayat bir izin, kuralı bir
     /// modülden sessizce kaldırırdı.
     ///
-    /// Sınır: çağrı katmanı (`server/`) bu testin kapsamında değildir;
-    /// orada özel not uç noktası meşru olarak `ozel_not_getir`'i çağırır.
+    /// Tarayıcı `uretim_kodunu_ayikla`'dır (yorum/dizgi farkındalıklı tek
+    /// geçiş): yorumda kuralın kendisinden bahsetmek serbesttir, kodda ve
+    /// dizgide geçmek değildir.
     #[test]
-    fn depo_katmaninda_ozel_not_tablosu_yalnizca_izinli_modullerde_gecer() {
-        let dosyalar = cekirdek_uretim_dosyalari();
-        let adlar: Vec<&str> = dosyalar.iter().map(|(a, _)| a.as_str()).collect();
+    fn workspace_genelinde_ozel_not_yalnizca_izinli_modullerde_gecer() {
+        let mut dosyalar = workspace_uretim_dosyalari();
+        let adlar: Vec<String> = dosyalar.iter().map(|(a, _)| a.clone()).collect();
 
         // Dizin okunamaz hale gelirse her iddia BOS kume uzerinde saglanirdi.
         assert!(
-            dosyalar.len() >= 18,
-            "cekirdek kaynak dizini beklenenden kucuk, kume turetilememis: {adlar:?}"
+            dosyalar.len() >= 40,
+            "workspace kaynak kumesi beklenenden kucuk, turetilememis: {adlar:?}"
         );
-        // Ozyineleme GERCEKTEN calisiyor: kok, store/ ve baska bir alt dizin
-        // birlikte kapsamda. Duz bir `read_dir(src)` yalnizca kok dosyalari,
-        // eski `read_dir(src/store)` yalnizca store dosyalarini verirdi.
-        for gerekli in ["lib.rs", "pdf.rs", "store/notes.rs", "crypto/keyring.rs"] {
-            assert!(adlar.contains(&gerekli), "`{gerekli}` taramada yok: {adlar:?}");
+        // Uye turetmesi ve ozyineleme GERCEKTEN calisiyor: her uye, kok ve
+        // alt dizinler birlikte kapsamda; I2'nin kor kaldigi dosyalar adiyla.
+        for gerekli in [
+            "core/src/lib.rs",
+            "core/src/pdf.rs",
+            "core/src/store/notes.rs",
+            "core/src/crypto/keyring.rs",
+            "server/src/lib.rs",
+            "server/src/guard.rs",
+            "server/src/state.rs",
+            "server/src/assets.rs",
+            "server/src/bin/sunucu.rs",
+            "server/src/routes/veri_raporu.rs",
+            "src-tauri/src/main.rs",
+        ] {
+            assert!(adlar.iter().any(|a| a == gerekli), "`{gerekli}` taramada yok: {adlar:?}");
+        }
+
+        // Rota baglama metinleri: dosya var, metin TAM BIR KEZ geciyor (bayat
+        // ya da cogaltilmis istisna kirmizi); yalnizca o metin dusulur.
+        for (dosya, metin) in MODUL_BAGLAMA_ISTISNALARI {
+            let (_, uretim) = dosyalar
+                .iter_mut()
+                .find(|(ad, _)| ad == dosya)
+                .unwrap_or_else(|| panic!("baglama istisnasi bayat: `{dosya}` artik yok"));
+            assert_eq!(
+                uretim.matches(metin).count(),
+                1,
+                "{dosya}: `{metin}` uretim kodunda tam bir kez gecmeli -- istisna bayat \
+                 ya da ayni baglama cogaltilmis"
+            );
+            *uretim = uretim.replacen(metin, "", 1);
         }
 
         for izinli in OZEL_NOTA_DOKUNABILEN {
@@ -889,49 +990,54 @@ mod tests {
             );
         }
 
+        // Ihlaller TOPLU raporlanir: bir gerileme hangi dosyalari actigini
+        // tek kosuda gostersin.
+        let mut ihlaller = Vec::new();
         for (ad, uretim) in &dosyalar {
             if OZEL_NOTA_DOKUNABILEN.contains(&ad.as_str()) {
                 continue;
             }
-            assert!(
-                !uretim.contains("private_notes"),
-                "{ad}: ozel not tablosuna erisim yalnizca {OZEL_NOTA_DOKUNABILEN:?} \
-                 modullerinde olabilir -- yeni bir disa aktarim/rapor modulu \
-                 ozel notu kendi sorgusuna aliyor"
-            );
-            // Parcalanmis dizgi kacamagi burada da gorunur olmali.
-            assert!(
-                !dizgi_parcalari_birlestir(uretim).contains("private_notes"),
-                "{ad}: parcalanmis dizgiyle de olsa private_notes gecmemeli"
-            );
+            // Parcalanmis dizgi kacamagi da gorunur olmali.
+            if uretim.contains("private_notes")
+                || dizgi_parcalari_birlestir(uretim).contains("private_notes")
+            {
+                ihlaller.push(format!(
+                    "{ad}: `private_notes` yalnizca {OZEL_NOTA_DOKUNABILEN:?} icinde gecebilir -- \
+                     yeni bir disa aktarim/rapor modulu ozel not tablosuna uzaniyor"
+                ));
+            }
         }
 
-        // --- Kural 2: ozel not API'si yalnizca kendi evinde ---
-        let (_, ev) = dosyalar
-            .iter()
-            .find(|(ad, _)| ad == OZEL_NOT_API_EVI)
-            .unwrap_or_else(|| panic!("`{OZEL_NOT_API_EVI}` artik yok -- kural bayatladi"));
-        for isaret in ["ozel_not_", "OzelNot"] {
-            // ON KOSUL: isaret evde gercekten geciyor; yoksa (yeniden
-            // adlandirma) asagidaki yasak her yerde bos yere saglanir.
-            assert!(
-                ev.contains(isaret),
-                "{OZEL_NOT_API_EVI}: `{isaret}` uretim kodunda yok -- API yeniden \
-                 adlandirildiysa bu tarama da guncellenmeli"
-            );
-        }
-        for (ad, uretim) in &dosyalar {
-            if ad == OZEL_NOT_API_EVI {
-                continue;
-            }
+        // --- Kural 2: ozel not API'si yalnizca kendi evlerinde ---
+        for ev_adi in OZEL_NOT_API_EVLERI {
+            let (_, ev) = dosyalar
+                .iter()
+                .find(|(ad, _)| ad == ev_adi)
+                .unwrap_or_else(|| panic!("`{ev_adi}` artik yok -- kural bayatladi"));
             for isaret in ["ozel_not_", "OzelNot"] {
+                // ON KOSUL: isaret evde gercekten geciyor; yoksa (yeniden
+                // adlandirma) asagidaki yasak her yerde bos yere saglanir.
                 assert!(
-                    !uretim.contains(isaret) && !dizgi_parcalari_birlestir(uretim).contains(isaret),
-                    "{ad}: `{isaret}` yalnizca {OZEL_NOT_API_EVI} icinde gecebilir -- \
-                     baska bir cekirdek modul ozel not okuma/yazma API'sine eristi"
+                    ev.contains(isaret),
+                    "{ev_adi}: `{isaret}` uretim kodunda yok -- API yeniden adlandirildiysa \
+                     ya da ev onu artik kullanmiyorsa liste guncellenmeli"
                 );
             }
         }
+        for (ad, uretim) in &dosyalar {
+            if OZEL_NOT_API_EVLERI.contains(&ad.as_str()) {
+                continue;
+            }
+            for isaret in ["ozel_not_", "OzelNot"] {
+                if uretim.contains(isaret) || dizgi_parcalari_birlestir(uretim).contains(isaret) {
+                    ihlaller.push(format!(
+                        "{ad}: `{isaret}` yalnizca {OZEL_NOT_API_EVLERI:?} icinde gecebilir -- \
+                         baska bir modul ozel not okuma/yazma API'sine eristi"
+                    ));
+                }
+            }
+        }
+        assert!(ihlaller.is_empty(), "{} ihlal:\n{}", ihlaller.len(), ihlaller.join("\n"));
     }
 
     /// Uretim kodu: test blogu ve YORUMLAR cikarilmis kaynak.
@@ -946,7 +1052,7 @@ mod tests {
     }
 
     /// `uretim_kodu`'nun kaynağı dışarıdan alan hâli — kardeş test
-    /// (`depo_katmaninda_ozel_not_tablosu_...`) dizindeki her dosyayı aynı
+    /// (`workspace_genelinde_ozel_not_...`) workspace'teki her dosyayı aynı
     /// elemeden geçirmek zorunda: iki ayrı eleme, iki ayrı kaçamak demekti.
     ///
     /// # Bulgu (Plan 4 Görev 3): eleme ilk `#[cfg(test)]` geçişinde KESİYORDU
@@ -1169,7 +1275,7 @@ mod tests {
         None
     }
 
-    /// Elemenin kendisi. `depo_katmaninda_...` gerçek dosyalar üzerinde
+    /// Elemenin kendisi. `workspace_genelinde_...` gerçek dosyalar üzerinde
     /// çalışır ve yalnızca bugünkü dosyaların biçimini sınar; bu test
     /// gerilemeyi dosyalardan bağımsız, **iki yönlü** yakalar: test öğeleri
     /// elenmeli (fazla görme), onlardan sonraki üretim kodu taranmalı

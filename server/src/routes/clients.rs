@@ -20,7 +20,8 @@
 //! üretilir; Plan 3'teki ayrı `rapor-kaydi` ucu Plan 4 Görev 6'da kaldırıldı
 //! (raporu üreten uç nokta artık kendisi loglar).
 
-use crate::guard::{acik_baglanti, depo_hatasi, ApiHata, Sorgu};
+use crate::guard::{acik_baglanti, depo_hatasi, govde_coz, ApiHata, Sorgu};
+use axum::extract::rejection::JsonRejection;
 use crate::state::AppState;
 use axum::{
     extract::{Path, State},
@@ -43,9 +44,10 @@ pub async fn liste(State(s): State<AppState>) -> Result<Json<Vec<Danisan>>, ApiH
 
 pub async fn olustur(
     State(s): State<AppState>,
-    Json(yeni): Json<YeniDanisan>,
+    yeni: Result<Json<YeniDanisan>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Danisan>), ApiHata> {
     let conn = acik_baglanti(&s)?;
+    let yeni = govde_coz(yeni)?;
     let danisan = ekle(&conn, &yeni, Cihaz::Masaustu).map_err(depo_hatasi)?;
     Ok((StatusCode::CREATED, Json(danisan)))
 }
@@ -108,9 +110,10 @@ pub async fn getir_uc(
 pub async fn guncelle_uc(
     State(s): State<AppState>,
     Path(id): Path<i64>,
-    Json(alan): Json<DanisanGuncelleme>,
+    alan: Result<Json<DanisanGuncelleme>, JsonRejection>,
 ) -> Result<Json<Danisan>, ApiHata> {
     let conn = acik_baglanti(&s)?;
+    let alan = govde_coz(alan)?;
     let danisan = guncelle(&conn, id, &alan, Cihaz::Masaustu).map_err(depo_hatasi)?;
     Ok(Json(danisan))
 }
@@ -140,9 +143,10 @@ pub struct SaklamaSorgusu {
 /// geçersiz değer `GecersizVeri` -> `400` olur ve mesaj biçimi söyler.
 pub async fn saklama_listesi(
     State(s): State<AppState>,
-    Sorgu(q): Sorgu<SaklamaSorgusu>,
+    q: Result<Sorgu<SaklamaSorgusu>, ApiHata>,
 ) -> Result<Json<Vec<Danisan>>, ApiHata> {
     let conn = acik_baglanti(&s)?;
+    let Sorgu(q) = q?;
     let liste = saklama_suresi_dolanlar(&conn, &q.bugun, Cihaz::Masaustu).map_err(depo_hatasi)?;
     Ok(Json(liste))
 }

@@ -53,3 +53,78 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("uygulama baslatilamadi");
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    /// `core`'un PDF'e gömdüğü her font dosyası (`include_bytes!` ile
+    /// `assets/fonts/` altından), `core/`'a göre yol.
+    fn gomulu_fontlar(tauri_dizini: &Path) -> Vec<PathBuf> {
+        let pdf = tauri_dizini.join("../core/src/pdf.rs");
+        let kaynak = std::fs::read_to_string(&pdf)
+            .unwrap_or_else(|e| panic!("{} okunamadi: {e}", pdf.display()));
+        kaynak
+            .match_indices("include_bytes!(\"")
+            .filter_map(|(i, isaret)| {
+                let yol = &kaynak[i + isaret.len()..];
+                let yol = &yol[..yol.find('"')?];
+                yol.contains("assets/fonts/").then(|| tauri_dizini.join("../core/src").join(yol))
+            })
+            .collect()
+    }
+
+    /// Gömülü fontun lisansı dağıtımla birlikte gider (dal incelemesi M4,
+    /// sürüm engelleyici).
+    ///
+    /// Noto Sans SIL OFL 1.1 ile dağıtılır; OFL, fontun gömülü olduğu
+    /// yazılımla birlikte lisans metninin de dağıtılmasını ister. Metin
+    /// `core/assets/fonts/OFL.txt`'de duruyordu ama uygulama paketine
+    /// girmiyordu — yalnızca `pdf.rs`'teki bir yorum onu anıyordu (biçim 13:
+    /// koşul yorumda yaşıyordu). Artık: `core` bir font GÖMDÜKÇE, o fontun
+    /// dizinindeki `OFL.txt` `tauri.conf.json` `bundle.resources`'ta bir
+    /// hedefe eşlenmiş olmalı.
+    ///
+    /// Sınır: paketleme (dmg) macOS CI'da; burada yapılandırmanın içeriği
+    /// ve kaynak dosyanın varlığı doğrulanır. `tauri-build` derleme sırasında
+    /// kaynağı `target/<profil>/` altına kopyalar, yol yanlışsa derleme kırılır.
+    #[test]
+    fn gomulu_fontun_ofl_lisansi_bundle_kaynaklarinda() {
+        let tauri_dizini = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let fontlar = gomulu_fontlar(tauri_dizini);
+        // ON KOSUL: tarama gercekten gomulu fontu buluyor; yoksa asagidaki
+        // "her fontun lisansi" iddiasi bos kume uzerinde saglanirdi.
+        assert!(!fontlar.is_empty(), "core/src/pdf.rs'te gomulu font bulunamadi");
+
+        let conf: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(tauri_dizini.join("tauri.conf.json"))
+                .expect("tauri.conf.json okunamadi"),
+        )
+        .expect("tauri.conf.json gecerli JSON degil");
+        let kaynaklar = conf["bundle"]["resources"]
+            .as_object()
+            .expect("bundle.resources kaynak->hedef eslemesi (nesne) olmali");
+
+        for font in fontlar {
+            assert!(font.is_file(), "gomulu font diskte yok: {}", font.display());
+            let lisans = font.parent().unwrap().join("OFL.txt");
+            let lisans = lisans
+                .canonicalize()
+                .unwrap_or_else(|e| panic!("{} yok: {e}", lisans.display()));
+            let hedef = kaynaklar.iter().find_map(|(kaynak, hedef)| {
+                (tauri_dizini.join(kaynak).canonicalize().ok()? == lisans).then_some(hedef)
+            });
+            let hedef = hedef.and_then(|h| h.as_str()).unwrap_or_else(|| {
+                panic!(
+                    "{} gomulu ama lisansi ({}) bundle.resources'ta yok: {kaynaklar:?}",
+                    font.display(),
+                    lisans.display()
+                )
+            });
+            assert!(
+                hedef.starts_with("lisanslar/") && hedef.ends_with(".txt"),
+                "lisans paket icinde lisanslar/ altina metin olarak gitmeli: {hedef}"
+            );
+        }
+    }
+}

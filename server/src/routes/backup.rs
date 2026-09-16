@@ -54,7 +54,8 @@
 //! Bu modül `audit::kaydet` **çağırmaz**; hacim kararını çekirdek verdi
 //! (`core::backup::yedek_al_ve_kaydet` -> `DisaAktarma` + `HerCagri`).
 
-use crate::guard::{acik_baglanti, ApiHata};
+use crate::guard::{acik_baglanti, govde_coz, ApiHata};
+use axum::extract::rejection::JsonRejection;
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, Json};
 use psikolog_core::backup::{ayarlari_oku, ayarlari_yaz, yedek_al_ve_kaydet, YedekAyarlari};
@@ -135,9 +136,10 @@ fn istek_hatasi(mesaj: &str) -> ApiHata {
 /// (bkz. o tipin belgesi).
 pub async fn al(
     State(s): State<AppState>,
-    Json(istek): Json<YedekIstegi>,
+    istek: Result<Json<YedekIstegi>, JsonRejection>,
 ) -> Result<Json<Value>, ApiHata> {
     let conn = acik_baglanti(&s)?;
+    let istek = govde_coz(istek)?;
     let hedef = match &istek.hedef_dizin {
         Some(ham) => {
             let yol = dogrula(ham)?;

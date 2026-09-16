@@ -33,7 +33,8 @@
 //! şablon adı ve arama terimi hiçbir biçimde loga ya da sunucu günlüğüne
 //! yazılmaz.
 
-use crate::guard::{acik_baglanti, depo_hatasi, ApiHata, Sorgu};
+use crate::guard::{acik_baglanti, depo_hatasi, govde_coz, ApiHata, Sorgu};
+use axum::extract::rejection::JsonRejection;
 use crate::state::AppState;
 use axum::{
     extract::{Path, State},
@@ -115,9 +116,10 @@ pub async fn getir(
 pub async fn kaydet(
     State(s): State<AppState>,
     Path(id): Path<i64>,
-    Json(istek): Json<NotIstegi>,
+    istek: Result<Json<NotIstegi>, JsonRejection>,
 ) -> Result<Json<SeansNotu>, ApiHata> {
     let conn = acik_baglanti(&s)?;
+    let istek = govde_coz(istek)?;
     let not = not_kaydet(&conn, id, &istek.sablon, &istek.icerik, Cihaz::Masaustu)
         .map_err(depo_hatasi)?;
     Ok(Json(not))
@@ -136,9 +138,10 @@ pub async fn kaydet(
 pub async fn danisan_listesi(
     State(s): State<AppState>,
     Path(id): Path<i64>,
-    Sorgu(q): Sorgu<ListeSorgusu>,
+    q: Result<Sorgu<ListeSorgusu>, ApiHata>,
 ) -> Result<Json<Vec<SeansNotu>>, ApiHata> {
     let conn = acik_baglanti(&s)?;
+    let Sorgu(q) = q?;
     let liste =
         danisan_notlari(&conn, id, limiti_kirp(q.limit), q.once.as_deref(), Cihaz::Masaustu)
             .map_err(depo_hatasi)?;

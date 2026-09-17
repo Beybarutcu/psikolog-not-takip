@@ -3186,13 +3186,13 @@ fn istemci_cagrilari() -> Vec<(String, String)> {
 /// Sessizce bağlanmamış bir uç nokta ile bilinçli olarak bağlanmamış bir uç
 /// nokta arasındaki fark tam olarak budur.
 ///
-/// # `GET /danisanlar/{id}/seanslar` (Plan 5 Görev 4)
-/// Bu uç nokta bu görevde eklendi; görevin kapsamı yalnızca çekirdek +
-/// sunucudur, `web/src` altına dokunulmuyor (arayüz kablolaması Plan 5
-/// Görev 5-6'nın işi). O görev `web/src/api.ts`'e bir çağrı yeri eklediğinde
-/// bu satır kaldırılmalı -- aksi hâlde bu test artık gerçek bir bağlantı
-/// eksikliğini sessizce gizler.
-const ISTEMCISIZ_UCLAR: [(&str, &str); 1] = [("GET", "/api/danisanlar/{}/seanslar")];
+/// `GET /danisanlar/{id}/seanslar` (Plan 5 Görev 4) burada geçici bir
+/// istisnaydı -- Görev 4 yalnızca çekirdek + sunucuyu kapsıyordu, `web/src`a
+/// dokunmuyordu. Plan 5 Görev 5 `web/src/api.ts`e (`danisanApi.seanslar`) ve
+/// `useDanisanSeanslari`e gerçek çağrı yerini ekledi; istisna KALDIRILDI --
+/// aksi hâlde bu test artık gerçek bir bağlantı eksikliğini sessizce
+/// gizlerdi.
+const ISTEMCISIZ_UCLAR: [(&str, &str); 0] = [];
 
 #[test]
 fn her_http_ucunun_bir_istemci_cagri_yeri_var() {

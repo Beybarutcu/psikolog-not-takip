@@ -199,29 +199,53 @@ describe('DanisanlarSekmesi', () => {
     // `api.ts::basarisizYanitiFirlat` — ayrı bir `Bulunamadi` sınıfı yok).
     // Bu test tam o dalı sınar: arşivlenmiş/silinmiş bir danışana tıklayan
     // terapist çökmüş bir ekran DEĞİL, boş bir dosya görmeli.
-    const kapiReddet = kapi<DanisanSeansi[]>()
-    taklit.seanslar = () => kapiReddet.promise
-    const reddetSessizce = kapiReddet.promise.catch(() => {})
+    //
+    // `seansSayisi() === '0'` TEK BAŞINA zayıf bir iddiadır: başlangıç
+    // state'i zaten boş olduğu için "reject hiç yakalanmasa" bile bu sayı
+    // hâlâ '0' görünür (inceleme bulgusu — 10. biçim tam olarak bu tuzak).
+    // Asıl kanıt: `.then`in reddedilme kolu GERÇEKTEN çalıştı mı? Bunu
+    // `unhandledRejection`ı DOĞRUDAN dinleyerek ölçüyoruz -- catch dalı
+    // kaldırılır ya da `throw e` ile yeniden fırlatılırsa üretim kodunun
+    // KENDİ `.then()` zincirinden (test'in kendi `kapiReddet.promise`
+    // referansından BAĞIMSIZ, çünkü `.then()` YENİ bir promise döndürür)
+    // yakalanmamış bir ret çıkar ve bu dinleyici onu yakalar.
+    const yakalanmamislar: unknown[] = []
+    const dinle = (e: unknown) => yakalanmamislar.push(e)
+    process.on('unhandledRejection', dinle)
 
-    render(<Kapsayici seciliDanisanId={1} />)
+    try {
+      const kapiReddet = kapi<DanisanSeansi[]>()
+      taklit.seanslar = () => kapiReddet.promise
+      const reddetSessizce = kapiReddet.promise.catch(() => {})
 
-    // Reddetme, `useDanisanSeanslari`nin `.then` ikinci koluna (`e:
-    // unknown`) düşüyor; `act` içinde çözülüyor ki React state güncellemesi
-    // testin gördüğü render ile aynı turda olsun.
-    await act(async () => {
-      kapiReddet.reddet(new Error('Danışan bulunamadı.'))
-    })
-    await reddetSessizce
+      render(<Kapsayici seciliDanisanId={1} />)
 
-    await waitFor(() => expect(seansSayisi()).toBe('0'))
-    // Bugün hiçbir yerde bir "seans listesi hatası" banner'ı yok (bu görev
-    // seans verisini henüz ekrana basmıyor, bkz. `DanisanlarSekmesi.tsx`
-    // modül başlığı) -- ama gerçek gereksinim tam olarak bu: birileri
-    // catch dalını "404'te hata göster" diye değiştirirse burada bir
-    // `role="alert"` belirmemeli. `dosya.kart.hata` `null` kaldığı için
-    // BUGÜNKÜ tek alarm kaynağı (kart yüklemesi) da devre dışı; ekranda
-    // hiç `alert` OLMAMALI.
-    expect(screen.queryByRole('alert')).toBeNull()
+      // Reddetme, `useDanisanSeanslari`nin `.then` ikinci koluna (`e:
+      // unknown`) düşüyor; `act` içinde çözülüyor ki React state
+      // güncellemesi testin gördüğü render ile aynı turda olsun.
+      await act(async () => {
+        kapiReddet.reddet(new Error('Danışan bulunamadı.'))
+      })
+      await reddetSessizce
+      // `unhandledRejection` Node'da bir sonraki mikro görev turunda
+      // yayılır; bir turluk bekleme bu event loop dönüşünü garantiler.
+      await new Promise((r) => setTimeout(r, 0))
+
+      await waitFor(() => expect(seansSayisi()).toBe('0'))
+      // Bugün hiçbir yerde bir "seans listesi hatası" banner'ı yok (bu görev
+      // seans verisini henüz ekrana basmıyor, bkz. `DanisanlarSekmesi.tsx`
+      // modül başlığı) -- ama gerçek gereksinim tam olarak bu: birileri
+      // catch dalını "404'te hata göster" diye değiştirirse burada bir
+      // `role="alert"` belirmemeli. `dosya.kart.hata` `null` kaldığı için
+      // BUGÜNKÜ tek alarm kaynağı (kart yüklemesi) da devre dışı; ekranda
+      // hiç `alert` OLMAMALI.
+      expect(screen.queryByRole('alert')).toBeNull()
+      // Asıl koruma: reddedilme gerçekten yakalandı, üretim kodunun kendi
+      // zincirinden sızan yakalanmamış bir ret YOK.
+      expect(yakalanmamislar).toEqual([])
+    } finally {
+      process.off('unhandledRejection', dinle)
+    }
   })
 
   it('401 alınca onYetkisiz çağrılır ve seans listesi temizlenir', async () => {

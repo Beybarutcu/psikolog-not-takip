@@ -2022,7 +2022,9 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
     // degisiklik BILINCLI olarak onaylanir. Birincil koruma artik yukaridaki
     // bire bir esleme -- sayiyi guncellemek tek basina bir kapiyi geri
     // getirmez.
-    assert_eq!(toplam, 31, "toplam veri handler'i sayisi 31 olmali");
+    // Plan 5 Gorev 4: `/danisanlar/{id}/seanslar` (routes::danisan_seanslari)
+    // 32. veri handler'i olarak eklendi; kapiyi kullanan tek handler'i var.
+    assert_eq!(toplam, 32, "toplam veri handler'i sayisi 32 olmali");
 }
 
 /// Kapıyı ilk satırda VE uzun bir üretimden sonra ikinci kez çağırmasına izin
@@ -3174,11 +3176,18 @@ fn istemci_cagrilari() -> Vec<(String, String)> {
 
 /// Arayüzden bilinçli olarak çağrılmayan uç noktalar.
 ///
-/// **Bugün boş.** Boş kalması bir hedef değil, bir ölçüm: bir uç nokta
-/// buraya yazılacaksa gerekçesi de buraya yazılır ve o gerekçe kod
-/// incelemesine düşer. Sessizce bağlanmamış bir uç nokta ile bilinçli
-/// olarak bağlanmamış bir uç nokta arasındaki fark tam olarak budur.
-const ISTEMCISIZ_UCLAR: [(&str, &str); 0] = [];
+/// Boş kalması bir hedef değil, bir ölçüm: bir uç nokta buraya yazılacaksa
+/// gerekçesi de buraya yazılır ve o gerekçe kod incelemesine düşer.
+/// Sessizce bağlanmamış bir uç nokta ile bilinçli olarak bağlanmamış bir uç
+/// nokta arasındaki fark tam olarak budur.
+///
+/// # `GET /danisanlar/{id}/seanslar` (Plan 5 Görev 4)
+/// Bu uç nokta bu görevde eklendi; görevin kapsamı yalnızca çekirdek +
+/// sunucudur, `web/src` altına dokunulmuyor (arayüz kablolaması Plan 5
+/// Görev 5-6'nın işi). O görev `web/src/api.ts`'e bir çağrı yeri eklediğinde
+/// bu satır kaldırılmalı -- aksi hâlde bu test artık gerçek bir bağlantı
+/// eksikliğini sessizce gizler.
+const ISTEMCISIZ_UCLAR: [(&str, &str); 1] = [("GET", "/api/danisanlar/{}/seanslar")];
 
 #[test]
 fn her_http_ucunun_bir_istemci_cagri_yeri_var() {

@@ -43,8 +43,11 @@
 //! `AZAMI_ONIZLEME` **karakterinde** kırpar (`chars().take`, bayt değil).
 //! Türkçe harfler (ı, ğ, ş, ö, ü, ç) UTF-8'de çok baytlıdır; bayt üzerinden
 //! kırpma bir karakterin ortasından kesip geçersiz UTF-8 üretebilirdi.
-//! İkinci satır ekranın önizlemesine hiç girmez -- yalnızca ilk satır
-//! okunur, geri kalanı diskten hiç çekilmiş olsa da string'e hiç girmez.
+//! İkinci satır (ve varsa devamı) SQL sorgusuyla diskten okunur --
+//! `p.icerik` sütunu bütünüyle bir `String`'e girer, satır bazında
+//! sınırlanmaz. Garanti daha dar: bu fonksiyonun DÖNÜŞ değerine (dolayısıyla
+//! `DanisanSeansi`'ye ve JSON yanıtına) yalnızca kırpılmış ilk satır girer;
+//! `ilk_satir` çağrısından sonra geri kalanı hiçbir yere taşınmadan düşer.
 //!
 //! # Denetim kaydı: `OturumBasi`, `HerCagri` DEĞİL
 //!
@@ -70,15 +73,20 @@
 //! girdisi) tetiklenebilen, sınırsız ve silinemez bir gürültü yolu açardı.
 //! Bu yüzden önce varlık okunur, yoksa hemen dönülür, log SONRA yazılır.
 //!
-//! # `ucret_kurus: i64` -- `NULL` (ücretsiz/girilmemiş) `0` sayılır
+//! # `ucret_kurus: Option<i64>` -- `NULL` (ücretsiz/girilmemiş) `None` kalır
 //!
-//! `appointments.ucret` sütunu `NULL` olabilir ("ücretsiz seans" ya da
-//! "ücret hiç girilmemiş" -- ikisi şema düzeyinde ayırt edilmez, bkz.
-//! `appointments` modül başlığı). Bu liste bir özet/önizleme ekranıdır (ay
-//! sonu özetindeki gibi kuruş hassasiyetinde bir toplam üretmez), bu yüzden
-//! `NULL` `0`'a sadeleştirilir. Kesin tahsilat/borç hesapları zaten
-//! `store::ozet::ay_ozeti`'nin işidir ve o modül `NULL`'ü toplamlardan
-//! bilerek dışlar.
+//! `appointments.ucret` sütunu `NULL` olabilir ve `NULL`'ün anlamı iki
+//! şeyden biridir: "ücretsiz seans" ya da "ücret hiç girilmemiş" -- ikisi
+//! şema düzeyinde ayırt edilmez (bkz. `schema.rs` ve `appointments` modül
+//! başlığı). Kod tabanının geri kalanı bu ayrımı titizlikle TAŞIR, YUTMAZ:
+//! `appointments::Randevu.ucret: Option<i64>`, `store::ozet::ay_ozeti`
+//! `NULL`'ü toplamlardan bilerek dışlar. Bu alan da aynı kuralı izler:
+//! `NULL` `None` olarak döner, `0`'a sadeleştirilmez -- aksi hâlde "ücreti
+//! hiç girilmemiş seans" ile "ücreti 0 TL girilmiş seans" JSON'da ayırt
+//! edilemez olur ve arayüz "—" (girilmemiş) gösteremez. (İlk sürümde brief'in
+//! verdiği `i64` tipi izlenerek bu sadeleştirme yapılmıştı; inceleme
+//! bulgusuyla düzeltildi -- brief zaten olmayan bir sütun adı (`ucret_kurus`)
+//! varsayıyordu, tipini de birebir izlemek için bir gerekçe yoktu.)
 //!
 //! # `Debug` elle yazılır
 //!
@@ -111,7 +119,9 @@ pub struct DanisanSeansi {
     /// `appointments.baslangic` -- YETKİLİ kaynak, notun kopyası değil.
     pub baslangic: String,
     pub durum: String,
-    pub ucret_kurus: i64,
+    /// `appointments.ucret`'in doğrudan yansıması. `NULL` `None` kalır --
+    /// "ücretsiz" ile "ücret girilmemiş" karıştırılmaz (bkz. modül başlığı).
+    pub ucret_kurus: Option<i64>,
     pub odendi: bool,
     /// Not YOKSA `None`. Boş metinle ("") karıştırılmaz: "not yazılmamış"
     /// ile "not açılmış ama boş bırakılmış" farklı şeylerdir ve arayüz
@@ -167,8 +177,9 @@ pub fn danisan_seanslari(
                 appointment_id: s.get(0)?,
                 baslangic: s.get(1)?,
                 durum: s.get(2)?,
-                // NULL (ucretsiz/girilmemis) -> 0; bkz. modul basligi.
-                ucret_kurus: s.get::<_, Option<i64>>(3)?.unwrap_or(0),
+                // NULL (ucretsiz/girilmemis) NULL/None olarak KALIR --
+                // 0'a sadelestirilmez (bkz. modul basligi).
+                ucret_kurus: s.get(3)?,
                 odendi: s.get::<_, i64>(4)? != 0,
                 not_ilk_satiri: icerik.map(|m| ilk_satir(&m)),
             })
@@ -329,6 +340,20 @@ mod testler {
         let liste = danisan_seanslari(&c, cid, Cihaz::Masaustu).unwrap();
         let sira: Vec<i64> = liste.iter().map(|s| s.appointment_id).collect();
         assert_eq!(sira, vec![en_yeni, orta, en_eski]);
+
+        // IKINCIL siralama anahtari (`, a.id DESC`): yukaridaki uc randevunun
+        // ucu de FARKLI baslangica sahip, yani `, a.id DESC` silinse bu iddia
+        // hala gecerdi (SQLite'in kendi ic sirasi tesaduf eseri tutabilir).
+        // AYNI baslangicli iki randevu ekleyip SONRA eklenenin (buyuk id)
+        // ONCE gelmesini bekleyerek ikincil anahtari ayrica sinariz.
+        let ayni_once = randevu(&c, cid, "2026-09-14T11:00");
+        let ayni_sonra = randevu(&c, cid, "2026-09-14T11:00");
+        let liste2 = danisan_seanslari(&c, cid, Cihaz::Masaustu).unwrap();
+        let konum = |id: i64| liste2.iter().position(|s| s.appointment_id == id).unwrap();
+        assert!(
+            konum(ayni_sonra) < konum(ayni_once),
+            "ayni baslangicta SONRA eklenen (buyuk id) ONCE gelmeli"
+        );
     }
 
     #[test]
@@ -365,14 +390,35 @@ mod testler {
         let (_d, c) = kurulum();
         let cid = danisan(&c, "Ayse");
         let rid = randevu(&c, cid, "2026-09-14T10:00");
-        let uzun = "a".repeat(400);
-        not_kaydet(&c, rid, "serbest", &format!("{uzun}\ngizli ikinci satir"), Cihaz::Masaustu)
+        // KASTEN COK BAYTLI: ilk karakter ASCII ('a', 1 bayt), gerisi
+        // Turkce 's' (2 bayt/karakter). AZAMI_ONIZLEME (120) bayt sayisi
+        // olarak kesilseydi -- `&metin[..120]` gibi bir bayt-eksenli
+        // mutasyon -- kesim tam bu 's' dizisinin ORTASINA duserdi (1 + 119
+        // bayt = 120. bayt, 2'nin kati DEGIL) ve "byte index is not a char
+        // boundary" ile PANIKLER; eski test verisi ("a".repeat(400)) tumu
+        // 1 baytlik ASCII oldugu icin bu sinifi hic sinamiyordu -- bayt
+        // kirpmasi ayni SAYIDA karakter urettigi icin testi de gecerdi.
+        let uzun = format!("a{}", "ş".repeat(400));
+        let ikinci_satir = "gizli ikinci satır çok gizli";
+        not_kaydet(&c, rid, "serbest", &format!("{uzun}\n{ikinci_satir}"), Cihaz::Masaustu)
             .unwrap();
 
         let liste = danisan_seanslari(&c, cid, Cihaz::Masaustu).unwrap();
         let ilk = liste[0].not_ilk_satiri.clone().unwrap();
         assert_eq!(ilk.chars().count(), AZAMI_ONIZLEME);
-        assert!(!ilk.contains("gizli ikinci satir"));
+        assert!(!ilk.contains(ikinci_satir));
+        // Kesin karakter sinirindaki tam icerik: bayt-eksenli bir kirpma
+        // (hizalama tesaduf tutsa bile) burada FARKLI bir dizgi uretirdi.
+        assert_eq!(ilk, format!("a{}", "ş".repeat(AZAMI_ONIZLEME - 1)));
+    }
+
+    #[test]
+    fn azami_onizleme_sabiti_duz_sayiyla_pinlenir() {
+        // Sabit KENDI SAYISIYLA pinlenir: yukaridaki kirpma testi
+        // `AZAMI_ONIZLEME`'ye GORELI oldugu icin sabit 10 yapilsa bile o
+        // test kendini ayarlar ve yesil kalirdi (`routes::notes` modulundeki
+        // ayni sinif bulguyla ayni gerekce).
+        assert_eq!(AZAMI_ONIZLEME, 120, "azami onizleme sozlesmesi 120 karakterdir");
     }
 
     #[test]
@@ -399,9 +445,10 @@ mod testler {
     }
 
     // --- Brief'in yedi testinin disinda, bu modulun kendi ek koruma
-    // testleri: varlik kontrolu ve Debug sizintisi. Brief bu ikisini
-    // istemiyordu ama ikisi de `notes.rs`/`clients.rs`'de zaten kurulu,
-    // testle korunan kurallarin bu moduldeki birebir karsiligi.
+    // testleri: varlik kontrolu, Debug sizintisi ve ucret NULL ayrimi.
+    // Brief bunlari istemiyordu ama uculu de `notes.rs`/`clients.rs`/
+    // `appointments.rs`'de zaten kurulu, testle korunan kurallarin bu
+    // moduldeki birebir karsiligi.
 
     #[test]
     fn olmayan_danisan_bulunamadi_doner_log_yazilmaz() {
@@ -414,6 +461,38 @@ mod testler {
             once,
             "olmayan danisan kimligi silinemez bir log satiri birakmamali"
         );
+    }
+
+    #[test]
+    fn ucret_girilmemis_seans_null_doner_girilmis_seans_deger_doner() {
+        // Sema duzeyinde `appointments.ucret` NULL "ucretsiz" ile "ucret
+        // hic girilmemis"i ayirt etmez; bu fonksiyon o ayrimi YUTMAMALI --
+        // `unwrap_or(0)` (eski surum) ya da baska bir sabit deger mutasyonu
+        // burada kirilir.
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let bos = randevu(&c, cid, "2026-09-14T10:00"); // yardimci ucret: None acar.
+        let dolu = randevu_olustur(
+            &c,
+            &YeniRandevu {
+                client_id: cid,
+                baslangic: "2026-09-15T10:00".into(),
+                bitis: "2026-09-15T11:00".into(),
+                ucret: Some(45000),
+            },
+            Cihaz::Masaustu,
+        )
+        .unwrap()
+        .id;
+
+        let liste = danisan_seanslari(&c, cid, Cihaz::Masaustu).unwrap();
+        let bul = |id: i64| liste.iter().find(|s| s.appointment_id == id).unwrap();
+        assert_eq!(
+            bul(bos).ucret_kurus,
+            None,
+            "ucret girilmemis seans NULL/None kalmali, 0'a sadelesmemeli"
+        );
+        assert_eq!(bul(dolu).ucret_kurus, Some(45000));
     }
 
     #[test]

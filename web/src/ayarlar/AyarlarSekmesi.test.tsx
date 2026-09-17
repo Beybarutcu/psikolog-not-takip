@@ -94,10 +94,22 @@ function tsDosyalariniTara(dizin: string): string[] {
  * "Parolayı değiştir" alt-dizisini İÇERİR ("değiştir" kökü + "ir" eki).
  * Ardından bir HARF gelmiyorsa (noktalama, tırnak, satır sonu) bu UI
  * metninin kendisidir; harf geliyorsa bir çekim ekidir ve yoksayılır.
+ *
+ * Karşılaştırma BÜYÜK/KÜÇÜK HARFE DUYARSIZ (inceleme bulgusu — Görev 2
+ * düzeltmesi): `regex`'e yalnızca `i` bayrağı eklemek YETERSİZ olurdu,
+ * çünkü JavaScript'in bayrak-bazlı büyük/küçük harf katlaması İngilizce
+ * kuralını kullanıyor ('İ' -> 'i' + BİRLEŞEN NOKTA (U+0307) iki kod noktası,
+ * 'I' -> 'i'). Bunun yerine hem kaynağı hem YASAK metni
+ * `toLocaleLowerCase('tr')` ile TÜRKÇE kurala göre küçültüyoruz ('İ' -> 'i',
+ * 'I' -> 'ı', tek kod noktası) ve regex'i küçültülmüş dizeye karşı
+ * çalıştırıyoruz. Kaynak zaten tamamen küçük harfe indiği için harf sınırı
+ * sınıfı da yalnızca küçük harfleri listeliyor.
  */
 function yasakMetinGeciyorMu(kaynak: string, metin: string): boolean {
-  const kacisli = metin.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return new RegExp(`${kacisli}(?![a-zA-ZçÇğĞıİöÖşŞüÜ])`, 'u').test(kaynak)
+  const kaynakKucuk = kaynak.toLocaleLowerCase('tr')
+  const metinKucuk = metin.toLocaleLowerCase('tr')
+  const kacisli = metinKucuk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`${kacisli}(?![a-zçğıöşü])`, 'u').test(kaynakKucuk)
 }
 
 describe('yönetim panelleri yalnızca Ayarlar sekmesinde', () => {
@@ -109,8 +121,9 @@ describe('yönetim panelleri yalnızca Ayarlar sekmesinde', () => {
    * ortam farkı) bu test SIFIR dosya tarar ve altındaki `for` döngüsü hiç
    * `it()` üretmeden koşusuz YEŞİL kalır — koruma hiç yokmuş gibi (bkz.
    * `docs/test-yesil-ama-korumuyor.md` #3, ortama bağlı etkisizleşen test).
-   * Eşik bugünkü taranan sayının (36) belirgin altında ama "boş tarama" ile
-   * "gerçek tarama"yı kesin ayıracak kadar yüksek.
+   * Eşik bugünkü taranan dosya sayısının (33 — toplam 36 testin geri kalanı
+   * bu asgari koruma testi ve 2 davranış testi) belirgin altında ama
+   * "boş tarama" ile "gerçek tarama"yı kesin ayıracak kadar yüksek.
    */
   it('taranan dosya sayısı asgari korumayı karşılar', () => {
     expect(taranan.length).toBeGreaterThan(20)

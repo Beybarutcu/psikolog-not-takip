@@ -130,9 +130,16 @@ export function AyOzeti({
   ]
 
   return (
+    // Görev 3 ürün kararı: KUTU değil PANEL. Eskiden ayrı, kendi başına
+    // duran bir kart gibiydi (`rounded border ... bg-white`) — artık
+    // `TakvimSekmesi`nin üst satırının ALTINDA açılan bir panel olduğu için
+    // kendi kutu çerçevesini taşımıyor; üstteki satırdan yalnızca ince bir
+    // ayraçla (`border-t`) ayrılıyor. Kapsam cümlesi (`KAPSAM_CUMLESI`)
+    // panelin İÇİNDE, en altta ve küçük puntoda kalmaya devam ediyor: kural
+    // doğru ama panelin başlığı değil.
     <section
       aria-label="Ay sonu özeti"
-      className="mb-4 rounded border border-slate-200 bg-white p-3 text-sm"
+      className="mb-4 border-t border-slate-200 pt-3 text-sm"
     >
       <div className="flex items-center gap-2">
         <button

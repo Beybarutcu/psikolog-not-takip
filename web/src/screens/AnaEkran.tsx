@@ -1,13 +1,8 @@
 import { useState } from 'react'
-import { aramaApi, danisanApi, takvimApi } from '../api'
-import { HizliArama } from '../arama/HizliArama'
+import { danisanApi } from '../api'
 import { AyarlarSekmesi } from '../ayarlar/AyarlarSekmesi'
 import { DanisanKarti } from '../danisan/DanisanKarti'
-import { AyOzeti } from '../ozet/AyOzeti'
-import { SeansAltSatiri } from '../seans/SeansAltSatiri'
-import { SeansPaneli } from '../seans/SeansPaneli'
-import { HaftalikTakvim } from '../takvim/HaftalikTakvim'
-import { RandevuPaneli } from '../takvim/RandevuPaneli'
+import { TakvimSekmesi } from '../takvim/TakvimSekmesi'
 import { useDanisanDosyasi } from './anaEkranKancalari/useDanisanDosyasi'
 import { useDanisanListesi } from './anaEkranKancalari/useDanisanListesi'
 import { useParolaFormu } from './anaEkranKancalari/useParolaFormu'
@@ -75,21 +70,23 @@ export function AnaEkran({
     onYetkisiz: () => takvim.oturumKapandi(),
   })
   const parola = useParolaFormu()
-  // Ay sonu özeti KAPALI başlar: sunucu her görüntülemeyi denetim kaydına
-  // yazıyor ve açılışta kendiliğinden istek atan bir özet, terapistin hiç
-  // bakmadığı bir görüntülemeyi silinemez biçimde kaydederdi.
-  const [ozetAcik, setOzetAcik] = useState(false)
-  // Açık özetin DIŞARIDAN tazelenme sayacı (dal incelemesi I1). Kart
-  // bakiyesi durum/ödeme yazmasından sonra yerelde yamanıyor; özet ise
-  // yalnızca ay değişince istek atıyordu — özet açıkken "Ödendi" işaretlenince
-  // kart `0,00 TL`, özet aynı borcu hâlâ gösteriyordu. Özet kapalıyken sayaç
-  // artsa da istek GİTMEZ: `AyOzeti` monte değil, açıldığında zaten tek bir
-  // taze istek atar.
+  // Ay sonu özetinin KAPALI başlama state'i artık `TakvimSekmesi`'nde
+  // yaşıyor (Görev 3): o bileşen `AyOzeti`'ni koşullu mount eden JSX'i de
+  // taşıyor, dolayısıyla "kapalı başlar" kuralı tek bir dosyada, doğrudan
+  // test edilebilir kalıyor (bkz. `TakvimSekmesi.tsx` modül başlığı).
+  //
+  // Açık özetin DIŞARIDAN tazelenme sayacı (dal incelemesi I1) BURADA
+  // kalıyor: kart bakiyesi durum/ödeme yazmasından sonra yerelde yamanıyor
+  // (`dosya.randevuYamala`, bu bileşenin GÖRDÜĞÜ bir kanca) — özet ise
+  // yalnızca ay değişince istek atıyordu; özet açıkken "Ödendi" işaretlenince
+  // kart `0,00 TL`, özet aynı borcu hâlâ gösteriyordu. Sayaç `TakvimSekmesi`ye
+  // `ozet.disTazeleme` olarak PROP'la geçiyor — `dosya` kancası ona görünmüyor
+  // (bkz. `TakvimSekmesi.tsx`'teki "neden PROP" gerekçesi). Özet kapalıyken
+  // sayaç artsa da istek GİTMEZ: `AyOzeti` monte değil, açıldığında zaten tek
+  // bir taze istek atar.
   const [ozetTazeleme, setOzetTazeleme] = useState(0)
 
-  const { seciliRandevu, seciliBosSaat } = takvim
   const { seciliDanisanId, kart } = dosya
-  const seans = seansAkisi.seans
   // Yerel değişkene alınıyor: `liste.arsivOnayi` üzerinden daralan tür bir
   // callback'in içine taşınmaz (TS özelliği bir yana, onay metniyle
   // "Evet, arşivle"nin AYNI danışanı görmesi bu satırla garanti).
@@ -149,41 +146,25 @@ export function AnaEkran({
 
   return (
     <div className="p-8">
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Terapi Notları</h1>
-        <div className="flex items-center gap-2">
-          {/* Hızlı arama her zaman monte: Ctrl+K dinleyicisi bileşenin
-              kendi içinde. Kapalıyken yalnızca kısayolu duyuran bir düğme
-              basar; hiçbir istek atmaz. */}
-          <HizliArama
-            ara={aramaApi.ara}
-            onDanisanSec={danisanKartiAc}
-            onSeansSec={seansaGit}
-          />
-          <button
-            type="button"
-            className="rounded-lg border px-4 py-2"
-            aria-expanded={ozetAcik}
-            onClick={() => setOzetAcik((acik) => !acik)}
-          >
-            Ay sonu özeti
-          </button>
-          <button className="rounded-lg border px-4 py-2" onClick={kilitle}>
-            Kilitle
-          </button>
-        </div>
-      </div>
+      <h1 className="mb-4 text-2xl font-semibold">Terapi Notları</h1>
 
-      {/* Borçlu satırı GERÇEK danışan kartını açar: danışan çipiyle aynı
-          `danisanKartiAc` yolu (`AnaEkran.test.tsx` "ay sonu ozeti" bloğu
-          kartın isteğini ölçer). */}
-      {ozetAcik && (
-        <AyOzeti
-          bugun={yerelGun(new Date())}
-          disTazeleme={ozetTazeleme}
-          onDanisanAc={danisanKartiAc}
-        />
-      )}
+      {/* Takvim ürünün asıl işi (Görev 3 ürün kararı): eskiden ekranın EN
+          ALTINDAYDI, ay özeti kutusunun ve yedekleme/parola panellerinin
+          ARKASINDA. Hızlı arama, ay özeti düğmesi ve Kilitle de bu bileşenin
+          İÇİNDE — bkz. `TakvimSekmesi.tsx` modül başlığı. Sekme geçişi henüz
+          bağlı değil (Görev 8'de bağlanacak); bu bileşen şimdilik eskisiyle
+          aynı yerde (en üstte) her zaman çiziliyor. */}
+      <TakvimSekmesi
+        takvim={takvim}
+        seansAkisi={seansAkisi}
+        ozet={{ bugun: yerelGun(new Date()), disTazeleme: ozetTazeleme }}
+        danisanlar={liste.danisanlar}
+        onDanisanAc={danisanKartiAc}
+        onSeansSec={seansaGit}
+        onDurumDegis={durumDegis}
+        onOdemeDegis={odemeDegis}
+        kilitle={kilitle}
+      />
 
       <div className="mb-4">
         <div className="flex items-center gap-3">
@@ -335,41 +316,6 @@ export function AnaEkran({
         onGeriYukle={onGeriYukle}
       />
 
-      {takvim.hata && <p className="mb-4 text-sm text-red-600">{takvim.hata}</p>}
-
-      <div className="flex items-start gap-4">
-        <div className="flex-1">
-          <HaftalikTakvim
-            randevular={takvim.randevular}
-            haftaBasi={takvim.haftaBasi}
-            onHaftaDegis={takvim.haftaDegis}
-            onRandevuSec={takvim.randevuSec}
-            onBosSaatSec={takvim.bosSaatSec}
-          />
-        </div>
-
-        {takvim.panelAcik && (
-          <RandevuPaneli
-            // Seçim değişince (başka bir randevu ya da boş saat) bileşen
-            // yeniden mount edilmeli — aksi hâlde panelin iç state'i (silme
-            // onayı, doldurulmuş form alanları) önceki seçimden yeni seçime
-            // sızar (bkz. Görev 10 inceleme Bulgu 1). `key` kimliği seçili
-            // randevunun ya da seçili boş saatin kimliğine bağlanıyor.
-            key={seciliRandevu ? `randevu-${seciliRandevu.id}` : `bos-${seciliBosSaat}`}
-            zaman={seciliBosSaat ?? seciliRandevu?.baslangic ?? ''}
-            randevu={seciliRandevu}
-            danisanlar={liste.danisanlar}
-            onKaydet={takvim.kaydet}
-            onSil={takvim.sil}
-            onSeriSil={takvim.seriSil}
-            seriSayisiAl={takvimApi.seriSayisi}
-            silinecekNotSayisiAl={takvimApi.silinecekNotSayisi}
-            onKapat={takvim.panelKapat}
-            cakismaKontrol={takvimApi.cakismaKontrol}
-          />
-        )}
-      </div>
-
       {seciliDanisanId !== null &&
         (kart.hata !== null ? (
           // Yükleme başarısızsa kart AÇILMAZ: yarı dolu bir danışan kartı
@@ -414,63 +360,6 @@ export function AnaEkran({
               onKapat={dosya.kapat}
             />
           )
-        ))}
-
-      {/* Seans paneli YALNIZCA mevcut bir randevu seçiliyken açılır: boş bir
-          saatte henüz bir `appointment_id` yok ve not ona bağlanır. */}
-      {seciliRandevu !== null &&
-        (seans.hata === null ? (
-          <SeansPaneli
-            // Seans değişince panel yeniden mount edilmeli: sekme seçimi
-            // (özellikle "Özel Notlarım") bir seanstan diğerine sızmamalı.
-            key={`seans-${seciliRandevu.id}`}
-            randevu={seciliRandevu}
-            gecmisNotlar={seans.gecmisNotlar}
-            not={seans.not}
-            ozelNot={seans.ozelNot}
-            ozelHata={seans.ozelHata}
-            onNotKaydet={seansAkisi.notKaydet}
-            onOzelNotKaydet={seansAkisi.ozelNotKaydet}
-            onOzelSekme={seansAkisi.ozelSekmeAcildi}
-            onOzelYenidenDene={seansAkisi.ozelYenidenDene}
-            onKapat={takvim.panelKapat}
-            // Alt satır (Plan 4 Görev 2). Kimlik burada, render anında
-            // bağlanıyor: panel bu `key` ile yalnızca O randevu için mount
-            // edildiğinden closure'daki `id` panelin ömrü boyunca doğru.
-            // Her renderda taze closure'lar zararsız — panel bunları hiçbir
-            // efektin bağımlılığına koymuyor, yalnızca tıklamada çağırıyor.
-            onDurumDegis={(durum) => durumDegis(seciliRandevu.id, durum)}
-            onOdemeDegis={(odendi) => odemeDegis(seciliRandevu.id, odendi)}
-          />
-        ) : (
-          // Yükleme başarısızsa panel AÇILMAZ: "yükleniyor…" yazan bir panel
-          // sonsuza kadar öyle kalır ve kullanıcı notunun neden gelmediğini
-          // bilemez.
-          <div className="mt-4">
-            <div role="alert" className="rounded border border-red-300 bg-red-50 p-3">
-              <p className="text-sm text-red-800">Seans notu yüklenemedi. {seans.hata}</p>
-              <button
-                type="button"
-                className="mt-2 rounded border border-red-300 px-2 py-1 text-sm"
-                onClick={seansAkisi.yenidenDene}
-              >
-                Yeniden dene
-              </button>
-            </div>
-            {/* Durum ve ödeme notlara BAĞLI DEĞİL: notlar okunamasa da
-                işaretlenebilmeli (Görev 2 inceleme I1). Geçmiş notlardan biri
-                kalıcı olarak okunamıyorsa bu dal o danışanın HER seansında
-                açılır; satır burada olmasaydı "Geldi" hiç işaretlenemez, son
-                temas tazelenmez ve dosya imha hatırlatmasına erken düşerdi.
-                `key` panelinkiyle aynı gerekçe: kutunun iyimser yerel değeri
-                seans değişince sıfırlanmalı. */}
-            <SeansAltSatiri
-              key={`seans-alt-${seciliRandevu.id}`}
-              randevu={seciliRandevu}
-              onDurumDegis={(durum) => durumDegis(seciliRandevu.id, durum)}
-              onOdemeDegis={(odendi) => odemeDegis(seciliRandevu.id, odendi)}
-            />
-          </div>
         ))}
     </div>
   )

@@ -8,6 +8,13 @@ import { DanisanlarSekmesi } from './DanisanlarSekmesi'
 
 // `danisanApi.seanslar` test başına değiştirilebilir. `null` iken GERÇEK
 // istemci çalışır. Desen `AyOzeti.test.tsx`deki `taklit` ile AYNI.
+//
+// `notApi.notGetir` de burada sabit bir taklitle örtülüyor: `DanisanDosyasi`
+// artık gerçekten mount olduğunda (kart.dosya doldurulduğu için, bkz.
+// `sahteKart`) açılışta en yeni seansın notunu ÇEKMEYE çalışır. Bu dosyanın
+// testleri not içeriğiyle ilgilenmiyor (onu `DanisanDosyasi.test.tsx` ölçer)
+// — taklit yalnızca gerçek `fetch`in jsdom'da başarısız olup gürültülü bir
+// reddedilmeyi konsola yazmasını önlüyor.
 const taklit = vi.hoisted(() => ({
   seanslar: null as null | ((clientId: number) => Promise<DanisanSeansi[]>),
 }))
@@ -20,6 +27,18 @@ vi.mock('../api', async (importOriginal) => {
       ...gercek.danisanApi,
       seanslar: (clientId: number) => (taklit.seanslar ?? gercek.danisanApi.seanslar)(clientId),
     },
+    notApi: {
+      ...gercek.notApi,
+      notGetir: (randevuId: number) =>
+        Promise.resolve({
+          appointment_id: randevuId,
+          client_id: 0,
+          seans_zamani: '2026-09-14T10:00',
+          sablon: 'serbest',
+          icerik: '',
+          guncelleme_zamani: '2026-09-14T10:05:00',
+        }),
+    },
   }
 })
 
@@ -27,8 +46,37 @@ afterEach(() => {
   taklit.seanslar = null
 })
 
+// `kart.dosya !== null` olmadıkça `DanisanlarSekmesi` sağ kolonda
+// `DanisanDosyasi`yi (dolayısıyla `SeansListesi`yi) hiç MOUNT etmiyor —
+// bu, `useDanisanDosyasi`nin kendi akışı (kart.dosya, kart.ekler ve
+// kart.randevular AYRI bir yükleme). Bu dosyanın testleri seans listesinin
+// akışını (`useDanisanSeanslari`) ölçüyor, danışan dosyasının kendisini
+// değil; bu yüzden `dosya` burada minimal ama GEÇERLİ bir sahte kayıtla
+// dolduruluyor (gerçek alan adları `DanisanKarti.test.tsx`teki fixture ile
+// aynı).
 function sahteKart(seciliDanisanId: number | null): KartVerisi {
-  return { id: seciliDanisanId, dosya: null, ekler: [], randevular: [], hata: null }
+  return {
+    id: seciliDanisanId,
+    dosya:
+      seciliDanisanId === null
+        ? null
+        : {
+            id: seciliDanisanId,
+            ad_soyad: `Danışan ${seciliDanisanId}`,
+            telefon: null,
+            durum: 'aktif',
+            dogum_tarihi: null,
+            basvuru_nedeni: null,
+            risk_notu: null,
+            riza_tarihi: null,
+            riza_dosya_id: null,
+            son_temas: null,
+            saklama_bitis: null,
+          },
+    ekler: [],
+    randevular: [],
+    hata: null,
+  }
 }
 
 function sahteDosya(seciliDanisanId: number | null): ReturnType<typeof useDanisanDosyasi> {
@@ -67,18 +115,20 @@ function sahteListe(): ReturnType<typeof useDanisanListesi> {
   }
 }
 
-function seansSayisi(): string | null {
-  return screen.getByTestId('danisan-dosyasi-sag-kolon').getAttribute('data-seans-sayisi')
+// `SeansListesi` boşken `<p data-testid="seans-listesi">`, doluyken
+// `<ul data-testid="seans-listesi">` basıyor (bkz. o dosya); ikisinde de
+// satır sayısı `<li>` adedinden okunabiliyor. Eskiden burada
+// `data-seans-sayisi` diye bir test probu vardı (Görev 5) — bu görev onu
+// kaldırdı, aşağıdaki sayım artık GERÇEK render'dan okunuyor.
+function seansSayisi(): number {
+  return screen.getByTestId('seans-listesi').querySelectorAll('li').length
 }
 
 /**
  * Gerçek kullanım şeklinin (`AnaEkran`, Görev 8'de) KÜÇÜLTÜLMÜŞ hâli:
  * `useDanisanSeanslari`i BURADA çağırır ve sonucunu `DanisanlarSekmesi`ye
  * prop olarak geçirir — tıpkı `liste`/`dosya`nın da kendi kancalarından
- * geldiği gibi. `seanslar` verisinin kendisi bu görevde ekrana BASILMIYOR
- * (bkz. `DanisanlarSekmesi.tsx` modül başlığı); bu yüzden akışın
- * gözlemlenebilir kanıtı `data-seans-sayisi` — sağ kolonun her render'da
- * `useDanisanSeanslari`nin ürettiği listenin UZUNLUĞUNU taşıyan bir prob.
+ * geldiği gibi.
  */
 function Kapsayici({
   seciliDanisanId,
@@ -150,11 +200,11 @@ describe('DanisanlarSekmesi', () => {
 
     const { rerender } = render(<Kapsayici seciliDanisanId={1} />)
     await waitFor(() => expect(cagrilanIdler).toContain(1))
-    await waitFor(() => expect(seansSayisi()).toBe('1'))
+    await waitFor(() => expect(seansSayisi()).toBe(1))
 
     rerender(<Kapsayici seciliDanisanId={2} />)
     await waitFor(() => expect(cagrilanIdler).toContain(2))
-    await waitFor(() => expect(seansSayisi()).toBe('1'))
+    await waitFor(() => expect(seansSayisi()).toBe(1))
     // İKİ ayrı çağrı: yalnızca ilk seçimde istek atılıp sonucun ikinci
     // danışan için de aynen kullanılmadığının kanıtı.
     expect(cagrilanIdler).toEqual([1, 2])
@@ -183,14 +233,14 @@ describe('DanisanlarSekmesi', () => {
     await act(async () => {
       kapi2.coz([])
     })
-    await waitFor(() => expect(seansSayisi()).toBe('0'))
+    await waitFor(() => expect(seansSayisi()).toBe(0))
 
     // 1'in GECİKEN yanıtı şimdi gelir: dolu bir liste. Ekran hâlâ 2
     // numaralı danışanı gösteriyor, bu yanıt görünmemeli.
     await act(async () => {
       kapi1.coz([seans({ appointment_id: 999 }), seans({ appointment_id: 998 })])
     })
-    expect(seansSayisi()).toBe('0')
+    expect(seansSayisi()).toBe(0)
   })
 
   it('bilinmeyen/silinmiş danışan (404) boş dosya olarak ele alınır, hata banner BASILMAZ', async () => {
@@ -200,7 +250,7 @@ describe('DanisanlarSekmesi', () => {
     // Bu test tam o dalı sınar: arşivlenmiş/silinmiş bir danışana tıklayan
     // terapist çökmüş bir ekran DEĞİL, boş bir dosya görmeli.
     //
-    // `seansSayisi() === '0'` TEK BAŞINA zayıf bir iddiadır: başlangıç
+    // `seansSayisi() === 0` TEK BAŞINA zayıf bir iddiadır: başlangıç
     // state'i zaten boş olduğu için "reject hiç yakalanmasa" bile bu sayı
     // hâlâ '0' görünür (inceleme bulgusu — 10. biçim tam olarak bu tuzak).
     // Asıl kanıt: `.then`in reddedilme kolu GERÇEKTEN çalıştı mı? Bunu
@@ -231,7 +281,7 @@ describe('DanisanlarSekmesi', () => {
       // yayılır; bir turluk bekleme bu event loop dönüşünü garantiler.
       await new Promise((r) => setTimeout(r, 0))
 
-      await waitFor(() => expect(seansSayisi()).toBe('0'))
+      await waitFor(() => expect(seansSayisi()).toBe(0))
       // Bugün hiçbir yerde bir "seans listesi hatası" banner'ı yok (bu görev
       // seans verisini henüz ekrana basmıyor, bkz. `DanisanlarSekmesi.tsx`
       // modül başlığı) -- ama gerçek gereksinim tam olarak bu: birileri
@@ -265,7 +315,7 @@ describe('DanisanlarSekmesi', () => {
     await act(async () => {
       kapi1.coz([seans({ appointment_id: 1 }), seans({ appointment_id: 2 })])
     })
-    await waitFor(() => expect(seansSayisi()).toBe('2'))
+    await waitFor(() => expect(seansSayisi()).toBe(2))
 
     rerender(<Kapsayici seciliDanisanId={2} onYetkisiz={onYetkisiz} />)
     await act(async () => {
@@ -274,6 +324,6 @@ describe('DanisanlarSekmesi', () => {
     await reddetSessizce
 
     await waitFor(() => expect(onYetkisiz).toHaveBeenCalledTimes(1))
-    expect(seansSayisi()).toBe('0')
+    expect(seansSayisi()).toBe(0)
   })
 })

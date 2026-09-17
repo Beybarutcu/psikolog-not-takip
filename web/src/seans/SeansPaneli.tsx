@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import type { OzelNot, SeansNotu } from '../api'
 import type { Randevu } from '../takvim/HaftalikTakvim'
-import { AYLAR } from '../takvim/hafta'
+import { zamanMetni } from '../tarih'
 import { GecmisNotlar } from './GecmisNotlar'
 import { NotEditoru } from './NotEditoru'
 import { SeansAltSatiri } from './SeansAltSatiri'
@@ -115,21 +115,6 @@ const OZEL_SEKME_SINIFI = 'border-violet-400 bg-violet-100 text-violet-900'
 const OZEL_GOVDE_SINIFI = 'border-violet-400 bg-violet-50'
 const RESMI_GOVDE_SINIFI = 'border-slate-200 bg-white'
 
-/**
- * "2026-09-07T10:00" -> "7 Eylül 2026, 10:00".
- *
- * `baslangic` yerel naive biçimde geliyor; parçalar olduğu gibi doğru.
- * `Date`'e çevirmiyoruz — zaman dilimi çevrimi burada yalnızca kayma riski
- * üretirdi (bkz. `hafta.ts::zamandanDate`).
- */
-function seansZamani(zaman: string): string {
-  const [tarih, saat] = zaman.split('T')
-  const [yil, ay, gun] = (tarih ?? '').split('-')
-  const ayAdi = AYLAR[Number(ay) - 1]
-  if (!saat || ayAdi === undefined) return zaman
-  return `${Number(gun)} ${ayAdi} ${yil}, ${saat.slice(0, 5)}`
-}
-
 export function SeansPaneli({
   randevu,
   gecmisNotlar,
@@ -200,7 +185,7 @@ export function SeansPaneli({
             Seans
           </h2>
           <p className="text-sm text-slate-600">
-            {randevu.danisan_adi} — {seansZamani(randevu.baslangic)}
+            {randevu.danisan_adi} — {zamanMetni(randevu.baslangic)}
           </p>
         </div>
         <button type="button" className="rounded border px-3 py-1 text-sm" onClick={onKapat}>

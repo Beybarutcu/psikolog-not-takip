@@ -2,7 +2,7 @@ import type { DanisanSeansi } from '../api'
 import { yerelGun } from '../screens/anaEkranKancalari/yerelGun'
 import type { useDanisanDosyasi } from '../screens/anaEkranKancalari/useDanisanDosyasi'
 import type { useDanisanListesi } from '../screens/anaEkranKancalari/useDanisanListesi'
-import { DanisanKarti } from './DanisanKarti'
+import { DanisanDosyasi } from './DanisanDosyasi'
 
 /**
  * Danışanlar sekmesi: solda danışan listesi, sağda açık danışanın dosyası
@@ -24,20 +24,18 @@ import { DanisanKarti } from './DanisanKarti'
  * çağrılıyor — bu bileşen yalnızca SONUCU görüyor (bkz. `AnaEkran.tsx`
  * modül başlığı "Kancalar AnaEkran.tsx'te çağrılır, bileşene prop iner").
  *
- * # Sağ kolon: bugün `DanisanKarti`, YARIN `DanisanDosyasi` (Görev 6-7)
+ * # Sağ kolon: `DanisanDosyasi` (Seanslar/Bilgiler alt sekmeleri, Görev 6)
  *
- * Ürün tasarımı sağ kolonda Seanslar/Bilgiler alt sekmeli bir "dosya"
- * öngörüyor (`DanisanDosyasi`, Görev 6). O bileşen henüz yok; bu görevin
- * işi yalnızca İKİ KOLONLU kabuğu ve seans listesi VERİ AKIŞINI kurmak.
- * Sağ kolon bu yüzden şimdilik bugünkü `DanisanKarti`'yi barındırıyor —
- * Görev 7 onu `DosyaBilgileri`'ye (aynı içerik, yeni ad) taşıyacak ve bu
- * bileşen o zaman `DanisanDosyasi`'ye geçecek.
+ * `seanslar` prop'u (`useDanisanSeanslari`, çağıranın sorumluluğu) artık
+ * gerçekten EKRANA BASILIYOR: `DanisanDosyasi`nin Seanslar alt sekmesi
+ * solda `SeansListesi`yi, sağda seçili seansın notunu gösterir. "Bilgiler"
+ * alt sekmesi bugün eski `DanisanKarti`yi barındırıyor — Görev 7 onu
+ * `DosyaBilgileri`'ye (aynı içerik, yeni ad ve uyarı dili) taşıyacak.
  *
- * `seanslar` prop'u bu yüzden BURADA henüz EKRANA BASILMIYOR: veri akışı
- * (`useDanisanSeanslari`, çağıranın sorumluluğu) hazır ve doğru — yalnızca
- * tüketen bileşen (`SeansListesi`/`DanisanDosyasi`) henüz yok. Prop'u kabul
- * etmemek, Görev 6'nın onu AnaEkran'a kadar geri gidip yeniden bağlaması
- * demek olurdu.
+ * Eskiden burada `data-seans-sayisi` diye GEÇİCİ bir test probu vardı
+ * (Görev 5): seans verisi henüz render edilmediği için akışın tek kanıtı
+ * bir öznitelikti. Bu görev probu KALDIRDI; testler artık gerçek render'ı
+ * (`SeansListesi`nin ekrana bastığı satırları) ölçüyor.
  */
 export function DanisanlarSekmesi({
   liste,
@@ -189,9 +187,8 @@ export function DanisanlarSekmesi({
         )}
       </div>
 
-      {/* SAĞ KOLON — dosya. Bkz. modül başlığı: bugün `DanisanKarti`,
-          Görev 6-7 `DanisanDosyasi`/`DosyaBilgileri`ye taşıyacak. */}
-      <div data-testid="danisan-dosyasi-sag-kolon" data-seans-sayisi={seanslar.length}>
+      {/* SAĞ KOLON — dosya. Bkz. modül başlığı. */}
+      <div data-testid="danisan-dosyasi-sag-kolon">
         {seciliDanisanId === null && (
           // Ürün amacı burada: "terapist bir danışana tıkladığında o
           // danışanın dosyası açılsın" — hiçbir şey seçilmemişken sağ kolon
@@ -217,16 +214,17 @@ export function DanisanlarSekmesi({
             </div>
           ) : (
             kart.dosya !== null && (
-              <DanisanKarti
+              <DanisanDosyasi
                 // Bkz. AnaEkran.tsx'teki aynı gerekçe: birincil hat
                 // (`kart` türetmesi + bu koşullu render) danışan değişince
                 // `kart.dosya`'yı `null` yapıp bileşeni unmount ediyor; bu
                 // `key` bugün ulaşılamaz ama gevşeyen bir türetmede yük
-                // taşımaya hazır duruyor.
+                // taşımaya hazır duruyor. Aynı zamanda `DanisanDosyasi`nin
+                // KENDİ iç state'ini (seçili seans, not, sekme) her danışan
+                // değişiminde sıfırlar.
                 key={`danisan-${kart.dosya.id}`}
-                danisan={kart.dosya}
-                ekler={kart.ekler}
-                randevular={kart.randevular}
+                kart={kart}
+                seanslar={seanslar}
                 bugun={yerelGun(new Date())}
                 veriRaporuIndir={veriRaporuIndir}
                 ekYukle={dosya.ekYukle}

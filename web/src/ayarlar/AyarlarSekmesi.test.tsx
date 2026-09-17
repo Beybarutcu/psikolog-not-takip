@@ -53,16 +53,20 @@ const YASAK = [
  * oralarda GERÇEKLEŞEMEMESİ yüzünden dışarıda: `App.tsx` bu üçünü
  * `AnaEkran`'IN YERİNE, birbirini dışlayan dallarda render ediyor (bkz.
  * `App.tsx`) — `AnaEkran` hiçbir zaman bunları içermez, bunlar hiçbir zaman
- * `AnaEkran`'ı içermez. Üçü de tasarım §8'in istediği kendi meşru "Yedekten
- * geri yükle" düğmesine/başlığına sahip (bozuk anahtar, ilk kurulum, elle
- * geri yükleme ekranının kendi başlığı) ve metin Ayarlar sekmesindeki
- * YEDEKLEME panelininkiyle KELİMESİ KELİMESİNE aynı olduğu için düz
- * alt-dizi taraması onları da yakalar; ayırt eden metin değil, hangi
- * ekranın parçası oldukları.
+ * `AnaEkran`'ı içermez. Üçü de tasarım §8'in istediği kendi meşru geri
+ * yükleme düğmesine/başlığına sahip (bozuk anahtar, ilk kurulum, elle geri
+ * yükleme ekranının kendi başlığı).
  *
- * Mutasyonla sınandı: bu küme boşaltılınca test üç dosyada da KIRMIZI
- * dönüyor (bkz. görev raporu) — yani bu satırlar gerçekten yük taşıyor,
- * süslü bir "elbette" değil.
+ * Mutasyonla sınandı (bkz. görev raporu) — ama üçü AYNI GEREKÇEYLE kırmızı
+ * dönmüyor, bu yüzden hepsini tek cümlede eşitlemek yanlış olurdu:
+ * `KeystoreBozukEkrani.tsx` ve `KurulumSihirbazi.tsx`'teki düğme metni
+ * "Yedekten geri yükle" ile KELİMESİ KELİMESİNE aynı — küme boşaltılınca bu
+ * ikisi gerçekten KIRMIZI döner, kelime-sınırı savunması onları kurtarmaz.
+ * `GeriYuklemeEkrani.tsx`'in başlığı ise "Yedekten geri yükleme" (fazladan
+ * "me" eki) — küme boşaltılsa bile kelime-sınırı lookahead'i (ardından gelen
+ * "m" harfi) bunu zaten eler; burada kalması bir GÜVENLİK MARJI (başlık
+ * yarın "Yedekten geri yükle"ye kısaltılırsa yine dışarıda kalsın diye),
+ * bugünkü davranış için zorunlu değil.
  */
 const KAPI_EKRANLARI = new Set([
   'screens/GeriYuklemeEkrani.tsx',

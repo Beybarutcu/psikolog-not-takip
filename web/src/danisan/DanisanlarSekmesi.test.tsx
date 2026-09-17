@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { DanisanSeansi } from '../api'
+import { YetkisizHata, type DanisanSeansi } from '../api'
 import type { KartVerisi, useDanisanDosyasi } from '../screens/anaEkranKancalari/useDanisanDosyasi'
 import type { useDanisanListesi } from '../screens/anaEkranKancalari/useDanisanListesi'
 import { useDanisanSeanslari } from '../screens/anaEkranKancalari/useDanisanSeanslari'
@@ -80,8 +80,15 @@ function seansSayisi(): string | null {
  * gözlemlenebilir kanıtı `data-seans-sayisi` — sağ kolonun her render'da
  * `useDanisanSeanslari`nin ürettiği listenin UZUNLUĞUNU taşıyan bir prob.
  */
-function Kapsayici({ seciliDanisanId }: { seciliDanisanId: number | null }) {
-  const { seanslar } = useDanisanSeanslari({ clientId: seciliDanisanId, onYetkisiz: () => {} })
+function Kapsayici({
+  seciliDanisanId,
+  onYetkisiz = () => {},
+}: {
+  seciliDanisanId: number | null
+  /** Varsayılan no-op: yalnızca 401 testi gerçek bir `vi.fn()` geçirir. */
+  onYetkisiz?: () => void
+}) {
+  const { seanslar } = useDanisanSeanslari({ clientId: seciliDanisanId, onYetkisiz })
   return (
     <DanisanlarSekmesi
       liste={sahteListe()}
@@ -105,13 +112,16 @@ function seans(oz: Partial<DanisanSeansi> = {}): DanisanSeansi {
   }
 }
 
-/** Test açıkça çözene kadar bekleyen bir söz (`AyOzeti.test.tsx`in `kapi`sı). */
+/** Test açıkça çözene/reddedene kadar bekleyen bir söz (`AyOzeti.test.tsx`in
+ * `kapi`sı — burada `reddet` de ekli, 401/404 testleri için). */
 function kapi<T>() {
   let coz!: (v: T) => void
-  const promise = new Promise<T>((c) => {
+  let reddet!: (e: unknown) => void
+  const promise = new Promise<T>((c, r) => {
     coz = c
+    reddet = r
   })
-  return { promise, coz }
+  return { promise, coz, reddet }
 }
 
 describe('DanisanlarSekmesi', () => {
@@ -180,6 +190,66 @@ describe('DanisanlarSekmesi', () => {
     await act(async () => {
       kapi1.coz([seans({ appointment_id: 999 }), seans({ appointment_id: 998 })])
     })
+    expect(seansSayisi()).toBe('0')
+  })
+
+  it('bilinmeyen/silinmiş danışan (404) boş dosya olarak ele alınır, hata banner BASILMAZ', async () => {
+    // `danisanApi.seanslar` gerçek istemcide sunucunun 404'ünü 401 ve
+    // "veritabanı bozuk" DIŞINDA sıradan bir `Error` olarak fırlatır (bkz.
+    // `api.ts::basarisizYanitiFirlat` — ayrı bir `Bulunamadi` sınıfı yok).
+    // Bu test tam o dalı sınar: arşivlenmiş/silinmiş bir danışana tıklayan
+    // terapist çökmüş bir ekran DEĞİL, boş bir dosya görmeli.
+    const kapiReddet = kapi<DanisanSeansi[]>()
+    taklit.seanslar = () => kapiReddet.promise
+    const reddetSessizce = kapiReddet.promise.catch(() => {})
+
+    render(<Kapsayici seciliDanisanId={1} />)
+
+    // Reddetme, `useDanisanSeanslari`nin `.then` ikinci koluna (`e:
+    // unknown`) düşüyor; `act` içinde çözülüyor ki React state güncellemesi
+    // testin gördüğü render ile aynı turda olsun.
+    await act(async () => {
+      kapiReddet.reddet(new Error('Danışan bulunamadı.'))
+    })
+    await reddetSessizce
+
+    await waitFor(() => expect(seansSayisi()).toBe('0'))
+    // Bugün hiçbir yerde bir "seans listesi hatası" banner'ı yok (bu görev
+    // seans verisini henüz ekrana basmıyor, bkz. `DanisanlarSekmesi.tsx`
+    // modül başlığı) -- ama gerçek gereksinim tam olarak bu: birileri
+    // catch dalını "404'te hata göster" diye değiştirirse burada bir
+    // `role="alert"` belirmemeli. `dosya.kart.hata` `null` kaldığı için
+    // BUGÜNKÜ tek alarm kaynağı (kart yüklemesi) da devre dışı; ekranda
+    // hiç `alert` OLMAMALI.
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('401 alınca onYetkisiz çağrılır ve seans listesi temizlenir', async () => {
+    // Kardeş kanca `useDanisanDosyasi` için `AnaEkran.test.tsx`de bu sınıfın
+    // çok sayıda testi var; bu kancanın kendi 401 dalı (84-88. satırlar,
+    // `onYetkisiz()` + `setDurum(null)`) hiç ölçülmüyordu.
+    const onYetkisiz = vi.fn()
+    const kapi1 = kapi<DanisanSeansi[]>()
+    const kapi2Reddet = kapi<DanisanSeansi[]>()
+    const reddetSessizce = kapi2Reddet.promise.catch(() => {})
+    taklit.seanslar = (clientId: number) => (clientId === 1 ? kapi1.promise : kapi2Reddet.promise)
+
+    const { rerender } = render(<Kapsayici seciliDanisanId={1} onYetkisiz={onYetkisiz} />)
+    // Önce DOLU bir liste yüklensin ki aşağıdaki "temizlendi" iddiası
+    // anlamlı olsun -- başlangıç zaten boş olsaydı 401'in HİÇBİR ŞEY
+    // yapmadığı bir mutasyon da bu testi yeşil geçirirdi.
+    await act(async () => {
+      kapi1.coz([seans({ appointment_id: 1 }), seans({ appointment_id: 2 })])
+    })
+    await waitFor(() => expect(seansSayisi()).toBe('2'))
+
+    rerender(<Kapsayici seciliDanisanId={2} onYetkisiz={onYetkisiz} />)
+    await act(async () => {
+      kapi2Reddet.reddet(new YetkisizHata('Oturum kilitli.'))
+    })
+    await reddetSessizce
+
+    await waitFor(() => expect(onYetkisiz).toHaveBeenCalledTimes(1))
     expect(seansSayisi()).toBe('0')
   })
 })

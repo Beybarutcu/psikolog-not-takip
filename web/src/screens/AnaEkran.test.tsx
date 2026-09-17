@@ -2894,26 +2894,8 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     }
   })
 
-  it('form kapaninca girilen parolalar STATE ten silinir', async () => {
-    // Gizlenmiş ama duran bir parola alanı, katman bir sonraki açılışta
-    // dolu gelirdi (`HizliArama`nın "kapanınca sonuçlar silinir"
-    // kararıyla aynı ilke).
-    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
-
-    const bolum = await parolaFormunuAc()
-    await parolayiDoldur('gizli-parola-123', 'yepyeni-parola')
-    expect((screen.getByLabelText('Mevcut parolanız') as HTMLInputElement).value).toBe(
-      'gizli-parola-123',
-    )
-
-    await userEvent.click(within(bolum).getByRole('button', { name: 'Vazgeç' }))
-    await userEvent.click(within(bolum).getByRole('button', { name: 'Parolayı değiştir' }))
-
-    expect((screen.getByLabelText('Mevcut parolanız') as HTMLInputElement).value).toBe('')
-    expect((screen.getByLabelText('Yeni parola') as HTMLInputElement).value).toBe('')
-    expect((screen.getByLabelText('Yeni parola (tekrar)') as HTMLInputElement).value).toBe('')
-  })
+  // "form kapaninca girilen parolalar STATE ten silinir" ->
+  // `AyarlarSekmesi.test.tsx`e taşındı (Görev 2): panel artık orada.
 
   it('parola alanlari `type=password`', async () => {
     // Ekran görünürken danışan odada olabilir (`HizliArama`nın kendi
@@ -3149,34 +3131,8 @@ describe('AnaEkran — yedekleme (tasarim §7)', () => {
     expect(screen.getByRole('alert').textContent).toContain('Salt okunur bir disk olabilir.')
   })
 
-  it('klasor secilmemisse uyari cikar; klasor secilince yedek HEMEN alinir', async () => {
-    yedekListeHatasi = 'Yedek klasörü belli değil. Yedeklerinizin bulunduğu klasörün yolunu yazın.'
-    sunucuYedekleri = []
-    await ekraniAc()
-
-    expect((await screen.findByRole('alert')).textContent).toMatch(/klasörü belli değil/i)
-    // Klasor secilmeden hicbir yedek DENENMEZ: sunucu zaten reddederdi ve
-    // her deneme bos yere bir istek olurdu.
-    expect(yedekIstekleri).toEqual([])
-
-    await userEvent.click(screen.getByRole('button', { name: 'Yedek klasörünü değiştir' }))
-    await userEvent.type(
-      screen.getByLabelText(/yedeklerin yazılacağı klasörün yolu/i),
-      '/Volumes/USB/yedek',
-    )
-    await userEvent.click(screen.getByRole('button', { name: 'Kaydet ve yedek al' }))
-
-    // Klasoru secmek ile ilk yedegi almak TEK islem: ayri bir "ayarla"
-    // adimi olsaydi kullanici "yedegim var" sanip yedeksiz kalirdi.
-    await waitFor(() => expect(yedekIstekleri.length).toBe(1))
-    expect(yedekIstekleri[0]).toEqual({ damga: BUGUN, hedef_dizin: '/Volumes/USB/yedek' })
-
-    // Uyari kalkiyor ve yeni klasor ekranda.
-    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
-    expect(screen.getByRole('region', { name: 'Yedekleme' }).textContent).toContain(
-      '/Volumes/USB/yedek',
-    )
-  })
+  // "klasor secilmemisse uyari cikar; klasor secilince yedek HEMEN alinir"
+  // -> `AyarlarSekmesi.test.tsx`e taşındı (Görev 2): panel artık orada.
 
   it('"Simdi yedek al" ayni gun icin bile yeniden yedek alir', async () => {
     // Otomatik yedek gunde bir kez; ELLE yedek kullanicinin acik istegidir

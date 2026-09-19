@@ -30,6 +30,17 @@ type Props = {
   seanslar: DanisanSeansi[]
   secili: number | null
   onSecim: (appointmentId: number) => void
+  /**
+   * `useDanisanSeanslari`nin seçili danışan için yanıtı (başarı ya da hata)
+   * ALDIĞINI işaretler. Varsayılan `true`: bu bileşenin KENDİ testleri ve
+   * `DanisanDosyasi.test.tsx`'teki sahte kartlar zaten sabit bir liste
+   * geçiyor, "yükleniyor" durumuyla ilgilenmiyorlar — prop'u atlayan her
+   * çağıran eskisi gibi davranmaya devam eder. Gerçek akışta (`AnaEkran`,
+   * Görev 8) `false` başlar, yanıt gelince `true` olur; `e2e/kabuk.spec.ts`
+   * bunu bir SENKRONİZASYON BARİYERİ olarak okur (bkz.
+   * `useDanisanSeanslari.ts` modül başlığındaki aynı gerekçe).
+   */
+  yuklendi?: boolean
 }
 
 const DURUM_ADLARI: Record<string, string> = {
@@ -73,19 +84,24 @@ function notOnizlemesi(satir: string | null) {
   return <span className="truncate text-slate-600">{satir}</span>
 }
 
-export function SeansListesi({ seanslar, secili, onSecim }: Props) {
+export function SeansListesi({ seanslar, secili, onSecim, yuklendi = true }: Props) {
   const etkiliSecili = secili ?? seanslar[0]?.appointment_id ?? null
+  const yuklendiOzniteligi = yuklendi ? 'evet' : 'hayir'
 
   if (seanslar.length === 0) {
     return (
-      <p data-testid="seans-listesi" className="text-sm text-slate-500">
+      <p data-testid="seans-listesi" data-yuklendi={yuklendiOzniteligi} className="text-sm text-slate-500">
         Bu danışanın kayıtlı bir seansı yok.
       </p>
     )
   }
 
   return (
-    <ul data-testid="seans-listesi" className="flex flex-col gap-1 text-sm">
+    <ul
+      data-testid="seans-listesi"
+      data-yuklendi={yuklendiOzniteligi}
+      className="flex flex-col gap-1 text-sm"
+    >
       {seanslar.map((s) => {
         const aktif = s.appointment_id === etkiliSecili
         return (

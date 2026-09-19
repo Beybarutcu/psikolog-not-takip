@@ -74,6 +74,8 @@ import { SeansListesi } from './SeansListesi'
 type Props = {
   kart: KartVerisi
   seanslar: DanisanSeansi[]
+  /** Bkz. `SeansListesi.tsx` — burada yalnızca DEVRALINIP iletiliyor. */
+  yuklendi?: boolean
   bugun: string
   veriRaporuIndir: (danisanId: number, parola: string) => Promise<void>
   ekYukle: (dosya: File, tur: string) => Promise<void>
@@ -91,6 +93,7 @@ type Yama = { durum?: string; odendi?: boolean }
 export function DanisanDosyasi({
   kart,
   seanslar,
+  yuklendi,
   bugun,
   veriRaporuIndir,
   ekYukle,
@@ -224,7 +227,12 @@ export function DanisanDosyasi({
           aria-labelledby="danisan-dosyasi-sekme-seanslar"
           className="mt-3 grid grid-cols-[16rem_1fr] gap-4"
         >
-          <SeansListesi seanslar={seanslarYamali} secili={secili} onSecim={setSeciliManuel} />
+          <SeansListesi
+            seanslar={seanslarYamali}
+            secili={secili}
+            onSecim={setSeciliManuel}
+            yuklendi={yuklendi}
+          />
 
           <div>
             {seciliSeans === null ? (

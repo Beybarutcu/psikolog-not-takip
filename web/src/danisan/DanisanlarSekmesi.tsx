@@ -41,6 +41,7 @@ export function DanisanlarSekmesi({
   liste,
   dosya,
   seanslar,
+  yuklendi,
   onDanisanSec,
   veriRaporuIndir,
 }: {
@@ -49,6 +50,8 @@ export function DanisanlarSekmesi({
   /** Açık danışanın seans listesi (`useDanisanSeanslari`, çağıran taraf
    * sağlıyor). Bkz. modül başlığı — Görev 6'ya kadar ekrana BASILMAZ. */
   seanslar: DanisanSeansi[]
+  /** Bkz. `SeansListesi.tsx` — burada yalnızca DEVRALINIP iletiliyor. */
+  yuklendi?: boolean
   onDanisanSec: (clientId: number) => void
   veriRaporuIndir: (danisanId: number, parola: string) => Promise<void>
 }) {
@@ -225,6 +228,7 @@ export function DanisanlarSekmesi({
                 key={`danisan-${kart.dosya.id}`}
                 kart={kart}
                 seanslar={seanslar}
+                yuklendi={yuklendi}
                 bugun={yerelGun(new Date())}
                 veriRaporuIndir={veriRaporuIndir}
                 ekYukle={dosya.ekYukle}

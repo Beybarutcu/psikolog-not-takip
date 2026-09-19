@@ -69,6 +69,20 @@ export function useDanisanSeanslari({
 
   // Bkz. modül başlığı: ekrana giden liste burada türetilir.
   const seanslar = durum !== null && durum.id === clientId ? durum.liste : []
+  // `yuklendi`: seçili danışan için yanıt (başarı YA DA hata) geldi mi —
+  // AYRI bir state DEĞİL, `seanslar` ile aynı türetmeden okunur (`durum.id
+  // === clientId`). 401'de `setDurum(null)` çağrıldığı için o an tekrar
+  // `false`'a düşer; oturum zaten kapanıyor, ekranın "yüklendi" demesinin
+  // bir anlamı kalmıyor.
+  //
+  // Görev 8 bunu e2e'deki bir SENKRONİZASYON BARİYERİ olarak kullanıyor
+  // (`e2e/kabuk.spec.ts`): "danışana tıklayınca notu görünür" iddiası
+  // listenin GERÇEKTEN sunucudan geldiğini beklemeden de (liste henüz
+  // `[]`) teknik olarak "geçebilirdi" — `data-yuklendi` olmadan test
+  // yalnızca metnin auto-retry ile er geç belirmesine güveniyordu; bu
+  // öznitelik o güveni açık bir koşula çeviriyor (bkz.
+  // `docs/test-yesil-ama-korumuyor.md` 6. biçim).
+  const yuklendi = durum !== null && durum.id === clientId
 
   useEffect(() => {
     if (clientId === null) return
@@ -93,5 +107,5 @@ export function useDanisanSeanslari({
     )
   }, [clientId])
 
-  return { seanslar }
+  return { seanslar, yuklendi }
 }

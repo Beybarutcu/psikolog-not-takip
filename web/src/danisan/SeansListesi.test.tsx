@@ -160,4 +160,22 @@ describe('SeansListesi', () => {
     expect(screen.getByText('Bu danışanın kayıtlı bir seansı yok.')).toBeDefined()
     expect(screen.queryAllByRole('button')).toHaveLength(0)
   })
+
+  // `data-yuklendi`: `e2e/kabuk.spec.ts`nin senkronizasyon bariyeri (bkz.
+  // `useDanisanSeanslari.ts` modül başlığı). Varsayılan `true`: prop'u hiç
+  // geçmeyen çağıranlar (bu dosyadaki diğer testler) eskisi gibi davranır.
+  it('yuklendi prop verilmezse data-yuklendi="evet" olur (varsayılan)', () => {
+    render(<SeansListesi seanslar={[seans()]} secili={null} onSecim={() => {}} />)
+    expect(screen.getByTestId('seans-listesi').getAttribute('data-yuklendi')).toBe('evet')
+  })
+
+  it('yuklendi=false iken boş listede bile data-yuklendi="hayir" olur', () => {
+    render(<SeansListesi seanslar={[]} secili={null} onSecim={() => {}} yuklendi={false} />)
+    expect(screen.getByTestId('seans-listesi').getAttribute('data-yuklendi')).toBe('hayir')
+  })
+
+  it('yuklendi=true iken dolu listede data-yuklendi="evet" olur', () => {
+    render(<SeansListesi seanslar={[seans()]} secili={null} onSecim={() => {}} yuklendi={true} />)
+    expect(screen.getByTestId('seans-listesi').getAttribute('data-yuklendi')).toBe('evet')
+  })
 })

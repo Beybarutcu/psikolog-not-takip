@@ -125,10 +125,11 @@ function seansSayisi(): number {
 }
 
 /**
- * Gerçek kullanım şeklinin (`AnaEkran`, Görev 8'de) KÜÇÜLTÜLMÜŞ hâli:
+ * Gerçek kullanım şeklinin (`AnaEkran`, Görev 8) KÜÇÜLTÜLMÜŞ hâli:
  * `useDanisanSeanslari`i BURADA çağırır ve sonucunu `DanisanlarSekmesi`ye
  * prop olarak geçirir — tıpkı `liste`/`dosya`nın da kendi kancalarından
- * geldiği gibi.
+ * geldiği gibi. `yuklendi` de aynı hattan (bkz. `SeansListesi.test.tsx`
+ * "veri henüz yüklenmedi" testi — buradaki asıl kanıt ORADA).
  */
 function Kapsayici({
   seciliDanisanId,
@@ -138,12 +139,13 @@ function Kapsayici({
   /** Varsayılan no-op: yalnızca 401 testi gerçek bir `vi.fn()` geçirir. */
   onYetkisiz?: () => void
 }) {
-  const { seanslar } = useDanisanSeanslari({ clientId: seciliDanisanId, onYetkisiz })
+  const { seanslar, yuklendi } = useDanisanSeanslari({ clientId: seciliDanisanId, onYetkisiz })
   return (
     <DanisanlarSekmesi
       liste={sahteListe()}
       dosya={sahteDosya(seciliDanisanId)}
       seanslar={seanslar}
+      yuklendi={yuklendi}
       onDanisanSec={() => {}}
       veriRaporuIndir={async () => {}}
     />
@@ -208,6 +210,29 @@ describe('DanisanlarSekmesi', () => {
     // İKİ ayrı çağrı: yalnızca ilk seçimde istek atılıp sonucun ikinci
     // danışan için de aynen kullanılmadığının kanıtı.
     expect(cagrilanIdler).toEqual([1, 2])
+  })
+
+  // `yuklendi`: gerçek uçtan uca akışın (`e2e/kabuk.spec.ts`) DAYANDIĞI
+  // senkronizasyon bariyeri burada birim seviyesinde ölçülüyor: yanıt gelene
+  // kadar `false`, geldikten sonra `true`. Asıl kanıt (mutasyon turunda
+  // ölçülen) `SeansListesi.test.tsx`teki iki doğrudan test; bu test yalnızca
+  // hattın (`useDanisanSeanslari` → `DanisanlarSekmesi` → `DanisanDosyasi` →
+  // `SeansListesi`) GERÇEKTEN bağlı olduğunu kanıtlıyor.
+  it('data-yuklendi yanıt gelene kadar "hayir", geldikten sonra "evet"', async () => {
+    const kapi1 = kapi<DanisanSeansi[]>()
+    taklit.seanslar = () => kapi1.promise
+
+    render(<Kapsayici seciliDanisanId={1} />)
+
+    expect(screen.getByTestId('seans-listesi').getAttribute('data-yuklendi')).toBe('hayir')
+
+    await act(async () => {
+      kapi1.coz([seans({ appointment_id: 1 })])
+    })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('seans-listesi').getAttribute('data-yuklendi')).toBe('evet'),
+    )
   })
 
   it('geciken yanıt yeni seçimin listesini ezmez', async () => {

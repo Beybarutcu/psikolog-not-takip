@@ -15,14 +15,21 @@ import { tarihBicimle } from './bicim'
  * O cümle kaldırıldı, yerine ne yapılacağını söyleyen bilgilendirici bir
  * cümle geldi ("İmzalı onam formunu buraya ekleyebilirsiniz.").
  *
- * # Göze çarpma KALDI, suçlama GİTTİ
+ * # Alarm DEĞİL, bilgi (Görev 7 düzeltmesi)
  *
- * Eksik onam kaydı hâlâ pratik bir bilgi — terapist tek bakışta hangi
- * danışanda onam eksik görebilmeli. Bu yüzden `role="alert"` ve amber renk
- * duruyor; taşıdıkları artık bir ihlal iddiası değil, "bu alan henüz
- * doldurulmadı" bilgisi. Ayrıca bölüm zaten `DanisanDosyasi`nin "Bilgiler"
- * alt sekmesinin ARKASINDA (Görev 6) — ana ekranı işgal eden bir uyarı
- * değil, istenince gidilen bir bilgi.
+ * İlk sürümde metin değişmişti ama `role="alert"` ve amber renk kalmıştı —
+ * incelemede bu, ürün amacıyla çelişen bir yarı-adım olarak işaretlendi:
+ * terapist kendi danışan dosyasında, imzalanmış bir onam için sarı bir
+ * alarm kutusu ve ekran okuyucuda KESİNTİLİ (assertive) bir duyuru
+ * görmeye devam ediyordu — tam olarak kullanıcının şikâyet ettiği "laf
+ * gibi duran KVKK uyarısı" hissi. Bölüm zaten `DanisanDosyasi`nin
+ * "Bilgiler" alt sekmesinin ARKASINDA (Görev 6, kullanıcı bilerek oraya
+ * gidiyor) — bir de kesintili duyuru yapmasına gerek yok. Bu yüzden
+ * `role="alert"` ve amber KALDIRILDI: eksik onam artık düz bir bilgi
+ * cümlesi, `rizaVar` dalındaki "Açık rıza alındı: …" ile AYNI nötr
+ * biçimde basılıyor (bkz. `AyarlarSekmesi.tsx`'teki Yedekleme bölümünün
+ * "artık sarı kutu DEĞİL" kararıyla aynı emsal). Bilgi kaybolmuyor —
+ * yalnızca göze çarpma biçimi "alarm"dan "metin"e indi.
  *
  * # Bilgi düzeltilebilir olmalı
  *
@@ -91,10 +98,10 @@ export function RizaBolumu({ rizaTarihi, rizaDosyaId, ekler, onKaydet }: Props) 
           Açık rıza alındı: {tarihBicimle((rizaTarihi ?? '').trim())}
         </p>
       ) : (
-        <p
-          role="alert"
-          className="mt-1 rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-900"
-        >
+        // ALARM DEĞİL, BİLGİ (Görev 7 düzeltmesi): `role="alert"` yok, amber
+        // yok — `rizaVar` dalındaki "Açık rıza alındı: …" ile AYNI nötr
+        // biçim. Gerekçe modül başlığında.
+        <p className="mt-1 text-sm text-slate-700">
           Bu danışan için onam kaydı yok. İmzalı onam formunu buraya ekleyebilirsiniz.
         </p>
       )}

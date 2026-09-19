@@ -237,17 +237,14 @@ describe('DosyaBilgileri — bakiye ne sayar, ne saymaz', () => {
 })
 
 describe('DosyaBilgileri — onam ve saklama', () => {
-  it('riza alinmamissa belirgin uyari gosterir', () => {
+  it('riza alinmamissa bilgi cumlesi gosterir', () => {
     kur({ danisan: { ...danisan, riza_tarihi: null, riza_dosya_id: null } })
-    const uyarilar = screen.getAllByRole('alert')
-    expect(uyarilar.some((u) => /onam kaydı yok/i.test(u.textContent ?? ''))).toBe(true)
+    expect(screen.getByText(/onam kaydı yok/i)).toBeDefined()
   })
 
-  it('ARTI YON: riza varsa o uyari YOKTUR', () => {
+  it('ARTI YON: riza varsa o cumle YOKTUR', () => {
     kur()
-    expect(
-      screen.queryAllByRole('alert').some((u) => /onam kaydı yok/i.test(u.textContent ?? '')),
-    ).toBe(false)
+    expect(screen.queryByText(/onam kaydı yok/i)).toBeNull()
   })
 
   // --- Görev 7: KVKK uyarı dili -> bilgi dili --------------------------
@@ -269,6 +266,23 @@ describe('DosyaBilgileri — onam ve saklama', () => {
     // baş harfi atlıyor.
     kur()
     expect(screen.getByLabelText(/mzalı onam/i)).toBeDefined()
+  })
+
+  // --- İncelemeci düzeltmesi (Görev 7): alarm DEĞİL, bilgi -------------
+  //
+  // İkisi BİRLİKTE anlam taşır (2. biçim, aynı ilke): yalnızca birincisi
+  // olsaydı, bölümü TÜMDEN SİLMEK de testi geçirirdi; yalnızca ikincisi
+  // olsaydı `role="alert"`in geri gelmesini YAKALAMAZDI.
+
+  it('onam kaydı yokken role="alert" BULUNMAZ (alarm degil bilgi)', () => {
+    kur({ danisan: { ...danisan, riza_tarihi: null, riza_dosya_id: null } })
+    expect(screen.queryAllByRole('alert')).toHaveLength(0)
+  })
+
+  it('onam kaydı yokken de tarih kaydetmeyi ve imzalı dosya secmeyi SUNAR', () => {
+    kur({ danisan: { ...danisan, riza_tarihi: null, riza_dosya_id: null } })
+    expect(screen.getByLabelText('Açık rıza tarihi')).toBeDefined()
+    expect(screen.getByLabelText(/mzalı onam dosyası/i)).toBeDefined()
   })
 
   it('saklama bitis tarihi ve kalan sure gorunur', () => {

@@ -39,24 +39,17 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-describe('RizaBolumu — rıza yoksa uyarı', () => {
-  it('riza alinmamissa belirgin uyari gosterir', () => {
+describe('RizaBolumu — rıza yoksa bilgi cümlesi', () => {
+  it('riza alinmamissa bilgi cumlesi gosterir', () => {
     kur()
-    const uyari = screen.getByRole('alert')
-    expect(uyari.textContent).toMatch(/onam kaydı yok/i)
-    // Sarı şerit KALDI (Görev 7): eksik onam hâlâ göze çarpan bir bilgi,
-    // ama artık bir ihlal iddiası taşımıyor — yalnızca metin değişti
-    // (bkz. `RizaBolumu.tsx` modül başlığı "Göze çarpma KALDI, suçlama
-    // GİTTİ"). Renk, bölümün geri kalanından ayrışmasının tek görsel
-    // işareti.
-    expect(uyari.className).toContain('amber')
+    expect(screen.getByText(/onam kaydı yok/i)).toBeDefined()
   })
 
-  it('ARTI YON: riza alinmissa uyari YOKTUR ve tarih gorunur', () => {
-    // Bu yarı olmadan "her zaman uyaran" bir bileşen de üstteki testi
+  it('ARTI YON: riza alinmissa cumle YOKTUR ve tarih gorunur', () => {
+    // Bu yarı olmadan "her zaman gösteren" bir bileşen de üstteki testi
     // geçerdi (tek yönlü mutasyon kapsamı).
     kur({ rizaTarihi: '2026-03-01' })
-    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByText(/onam kaydı yok/i)).toBeNull()
     expect(screen.getByText(/01\.03\.2026/)).toBeDefined()
   })
 
@@ -65,7 +58,26 @@ describe('RizaBolumu — rıza yoksa uyarı', () => {
     // yolu boş dizgiyi olduğu gibi geri döndürürse `!== null` kontrolü
     // sessizce "rıza var" derdi.
     kur({ rizaTarihi: '   ' })
-    expect(screen.getByRole('alert')).toBeDefined()
+    expect(screen.getByText(/onam kaydı yok/i)).toBeDefined()
+  })
+
+  // --- İncelemeci düzeltmesi (Görev 7): alarm DEĞİL, bilgi -------------
+  //
+  // İlk sürümde metin değişmişti ama `role="alert"` + amber kalmıştı —
+  // terapist kendi danışan dosyasında imzalanmış bir onam için hâlâ sarı
+  // bir alarm kutusu ve ekran okuyucuda kesintili (assertive) bir duyuru
+  // görüyordu. İkisi BİRLİKTE anlam taşır (2. biçim): yalnızca birincisi
+  // olsaydı, bölümü TÜMDEN SİLMEK de testi geçirirdi.
+
+  it('onam kaydı yokken role="alert" BULUNMAZ (alarm degil bilgi)', () => {
+    kur()
+    expect(screen.queryAllByRole('alert')).toHaveLength(0)
+  })
+
+  it('onam kaydı yokken de tarih kaydetmeyi ve imzalı dosya secmeyi SUNAR', () => {
+    kur()
+    expect(screen.getByLabelText('Açık rıza tarihi')).toBeDefined()
+    expect(screen.getByLabelText('İmzalı onam dosyası')).toBeDefined()
   })
 })
 
@@ -205,7 +217,9 @@ describe('RizaBolumu — rızayı kaydetme', () => {
 
     // Sunucudan gelen mesaj OLDUĞU GİBİ: hangi alanın neden reddedildiğini
     // yalnızca o söylüyor (AnaEkran'daki danışan ekleme ile aynı karar).
-    // `getAllByRole`: rıza hâlâ alınmadığı için sarı şerit de `alert`.
+    // `getAllByRole`: eksik onam artık `alert` değil (Görev 7 düzeltmesi);
+    // DOM'daki TEK `alert` bu kayıt hatasıdır, `getAllByRole` yine de
+    // (tekil bir listeyle) çalışır.
     await waitFor(() =>
       expect(
         screen

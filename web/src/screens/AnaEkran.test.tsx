@@ -2502,12 +2502,10 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
 
     // ARTI YÖN: veri gelince Mehmet'in kendi kartı gerçekten açılıyor
     // (hiçbir şey göstermeyen bir ekran da üstteki iddiayı geçerdi).
+    // Eksik onam artık `role="alert"` DEĞİL (Görev 7 düzeltmesi: alarm
+    // değil bilgi), bu yüzden metinle ölçülüyor.
     m.ac()
-    expect(
-      (await screen.findAllByRole('alert')).some((u) =>
-        /onam kaydı yok/i.test(u.textContent ?? ''),
-      ),
-    ).toBe(true)
+    expect(await screen.findByText(/onam kaydı yok/i)).toBeDefined()
   })
 
   // Plan 4 Görev 7 — rapor SUNUCUDA üretilir. Plan 3'ün istemci testleri
@@ -2692,9 +2690,9 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     // başına kanaryanın yokluğu bu testte hiçbir şey söylemezdi.
     expect(document.body.textContent).not.toContain('RISK-NOTU-KANARYA')
     expect(document.body.textContent).not.toContain('0555 111 22 33')
-    expect(
-      screen.queryAllByRole('alert').some((u) => /onam kaydı yok/i.test(u.textContent ?? '')),
-    ).toBe(false)
+    // Eksik onam artık `role="alert"` DEĞİL (Görev 7 düzeltmesi); metinle
+    // ölçülüyor.
+    expect(screen.queryByText(/onam kaydı yok/i)).toBeNull()
   })
 
   it('kart acikken aramadan seansa gidilince kart KAPANIR', async () => {

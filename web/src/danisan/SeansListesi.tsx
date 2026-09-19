@@ -16,13 +16,15 @@ import { zamanMetni } from '../tarih'
  *
  * # `secili === null` iken en yeni seans GÖRSEL olarak vurgulanır
  *
- * `DanisanDosyasi` açılışta hiçbir seansı `secili` yapmadan render
- * edebilir (ilk render, kancadan henüz bir seçim türetilmemiş). Sunucu
- * listeyi en yeniden eskiye döndürdüğü için `seanslar[0]` her zaman en
- * yeni seanstır; `secili` verilmemişse o satır vurgulanır. Bu yalnızca bir
- * GÖRSEL türetme — "hangi notun yüklendiği" kararını `DanisanDosyasi`
- * kendi tarafında AYNI kuralla (render sırasında) verir, buradaki vurgu
- * ondan bağımsız ikinci bir kopya değil, aynı kuralın ekrana yansımasıdır.
+ * `DanisanDosyasi` `secili`yi RENDER SIRASINDA türetiyor (`seciliManuel`
+ * geçerliyse o, değilse en yenisi — bkz. o dosyanın modül başlığı), yani
+ * liste doluyken bu bileşene fiilen HİÇBİR ZAMAN `null` geçmiyor —
+ * `DanisanDosyasi.test.tsx`'teki testler bu hattı zaten ölçüyor. `secili
+ * === null` yedeği burada yine de duruyor çünkü bu bileşen KENDİ BAŞINA
+ * (bu dosyanın kendi testlerinde olduğu gibi) `secili={null}` ile
+ * çağrılabilir bir SÖZLEŞME taşıyor: sahibi olmayan bir çağıran "hiçbir
+ * şey seçmedim" derse bileşen yine de sunucunun sıraladığı en yeniyi
+ * (`seanslar[0]`) vurgular, boş bir listeye düşmez.
  */
 type Props = {
   seanslar: DanisanSeansi[]

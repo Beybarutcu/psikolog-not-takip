@@ -61,7 +61,7 @@ function tarihBicimle(iso: string): string {
  *
  * `seans_zamani` sunucuda yerel naive biçimde duruyor; `Date`'e
  * ÇEVİRMİYORUZ — dizgeyi parçalamak burada tek doğru yol (aynı gerekçe
- * `takvim/hafta.ts` ve `SeansPaneli::seansZamani`'nda). `Date` kullanmak,
+ * `takvim/hafta.ts` ve `tarih.ts::zamanMetni`'nde). `Date` kullanmak,
  * saat farkına göre tarihi bir gün kaydırabilirdi ve kaydırılan şey
  * listenin SIRALAMA ANAHTARI olurdu.
  *

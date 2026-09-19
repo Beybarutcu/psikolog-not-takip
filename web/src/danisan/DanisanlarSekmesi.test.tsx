@@ -277,9 +277,21 @@ describe('DanisanlarSekmesi', () => {
         kapiReddet.reddet(new Error('Danışan bulunamadı.'))
       })
       await reddetSessizce
-      // `unhandledRejection` Node'da bir sonraki mikro görev turunda
-      // yayılır; bir turluk bekleme bu event loop dönüşünü garantiler.
-      await new Promise((r) => setTimeout(r, 0))
+      // `unhandledRejection` Node'da HANGİ event loop turunda yayılacağını
+      // GARANTİ ETMEZ (V8'in reddetme izleyicisi kendi iç mikro görev
+      // kuyruğuna bağlı) -- eski hâli TEK bir `setTimeout(0)`e güveniyordu
+      // ve bu, yüklü bir makinede (paralel koşan başka test dosyaları, aynı
+      // worker'daki başka zamanlayıcılar) o turu KAÇIRABİLİRDİ: kararsız
+      // testin şüphesi tam olarak buydu (inceleme turu notu). Sabit TEK
+      // turun yerine birkaç makro görev turu boyunca bekleniyor: iyi
+      // durumda (asla yakalanmayacak) hepsi çalışır ve maliyeti önemsizdir
+      // (<1 ms), gerçek bir regresyonda ise sinyal ilk birkaç turda zaten
+      // yakalanmış olur -- `test-kurulum.ts`teki `waitFor` payının aynı
+      // gerekçesi ("biraz daha geç ama GERÇEK bir asılı kalmayı hâlâ
+      // yakalar").
+      for (let tur = 0; tur < 10; tur++) {
+        await new Promise((r) => setTimeout(r, 0))
+      }
 
       await waitFor(() => expect(seansSayisi()).toBe(0))
       // Bugün hiçbir yerde bir "seans listesi hatası" banner'ı yok (bu görev

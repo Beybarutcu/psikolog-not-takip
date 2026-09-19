@@ -26,6 +26,15 @@ import { SeansListesi } from './SeansListesi'
  * uzayını karıştırırdı (iki farklı `role="tab"` grubu aynı `id`leri
  * üretirdi). Bu yüzden burada kendi `id`leri olan küçük bir şerit yazıldı.
  *
+ * `tabIndex` bilerek DOKUNULMUYOR (ikisi de varsayılan, yani Tab ile
+ * ulaşılabilir) — tıpkı `kabuk/Sekmeler.tsx` gibi. Roving tabindex
+ * (`tabIndex={secili?0:-1}` + ok tuşu işleyicisi) yarım yazılırsa yalnızca
+ * seçili sekme Tab durağı alır ve ok tuşu olmadan diğerine hiç
+ * ULAŞILAMAZ — klavye kullanan bir terapist "Bilgiler"e (rıza, ekler,
+ * saklama süresi, KVKK veri raporu) hiç geçemez. Doğru düzeltme ya
+ * `onKeyDown` ile tam roving tabindex deseni (bkz. `SeansPaneli.tsx::
+ * sekmeTusu`) ya da hiç dokunmamak; ikinciyi seçtik.
+ *
  * # "Bilgiler" bugün eski `DanisanKarti`, Görev 7'de `DosyaBilgileri`
  *
  * Görev 7 `DanisanKarti`nin içeriğini `DosyaBilgileri`ye taşıyıp KVKK
@@ -160,25 +169,13 @@ export function DanisanDosyasi({
     setYamalar((onceki) => ({ ...onceki, [id]: { ...onceki[id], odendi } }))
   }
 
-  // `SeansAltSatiri` `Randevu` (takvimin tipi) bekliyor ama `DanisanSeansi`
-  // bitiş saatini ve seri kimliğini TAŞIMIYOR. Bileşen bu iki alanı hiç
-  // OKUMUYOR (yalnızca `durum`/`ucret`/`odendi`, bkz. `SeansAltSatiri.tsx`);
-  // aşağıdaki `bitis`/`seri_id` yalnızca tip sözleşmesini doldurmak için
-  // konan, ekranda hiçbir yere gitmeyen zararsız dolgu değerlerdir.
-  const seciliRandevu: Randevu | null =
-    seciliSeans === null || kart.dosya === null
+  // `SeansAltSatiri` yalnızca `durum`/`ucret`/`odendi` istiyor (`Pick`,
+  // bkz. o dosyadaki gerekçe) — `DanisanSeansi`nin TAŞIMADIĞI `Randevu`
+  // alanları (`bitis`, `seri_id`, …) için dolgu değer ÜRETMEK gerekmiyor.
+  const seciliRandevuOzeti: Pick<Randevu, 'durum' | 'ucret' | 'odendi'> | null =
+    seciliSeans === null
       ? null
-      : {
-          id: seciliSeans.appointment_id,
-          client_id: kart.dosya.id,
-          danisan_adi: kart.dosya.ad_soyad,
-          baslangic: seciliSeans.baslangic,
-          bitis: seciliSeans.baslangic,
-          durum: seciliSeans.durum,
-          ucret: seciliSeans.ucret_kurus,
-          odendi: seciliSeans.odendi,
-          seri_id: null,
-        }
+      : { durum: seciliSeans.durum, ucret: seciliSeans.ucret_kurus, odendi: seciliSeans.odendi }
 
   const seanslarSekmesiSecili = altSekme === 'seanslar'
 
@@ -191,7 +188,6 @@ export function DanisanDosyasi({
           id="danisan-dosyasi-sekme-seanslar"
           aria-selected={seanslarSekmesiSecili}
           aria-controls={seanslarSekmesiSecili ? 'danisan-dosyasi-panel-seanslar' : undefined}
-          tabIndex={seanslarSekmesiSecili ? 0 : -1}
           onClick={() => setAltSekme('seanslar')}
           className={
             'rounded-t border-b-2 px-3 py-1 text-sm ' +
@@ -208,7 +204,6 @@ export function DanisanDosyasi({
           id="danisan-dosyasi-sekme-bilgiler"
           aria-selected={!seanslarSekmesiSecili}
           aria-controls={!seanslarSekmesiSecili ? 'danisan-dosyasi-panel-bilgiler' : undefined}
-          tabIndex={seanslarSekmesiSecili ? -1 : 0}
           onClick={() => setAltSekme('bilgiler')}
           className={
             'rounded-t border-b-2 px-3 py-1 text-sm ' +
@@ -258,9 +253,18 @@ export function DanisanDosyasi({
                   />
                 )}
 
-                {seciliRandevu !== null && (
+                {seciliRandevuOzeti !== null && (
                   <SeansAltSatiri
-                    randevu={seciliRandevu}
+                    // ZORUNLU: `SeansAltSatiri` "Ödendi" kutusunun ilk
+                    // değerini yalnızca MOUNT'ta okur (`useState(randevu.
+                    // odendi)`, bkz. o dosyanın modül başlığı — "seans
+                    // değişince sıfırlanması çağıranın `key`ine bağlı").
+                    // `key` verilmezse bir seansın "ödendi" kutusu bir
+                    // SONRAKİ seçilen seansta ekranda kalır (yeniden mount
+                    // olmadığı için) — takvim tarafındaki emsalle aynı
+                    // desen (`TakvimSekmesi.tsx::key={`seans-alt-${id}`}`).
+                    key={`seans-alt-${seciliSeans.appointment_id}`}
+                    randevu={seciliRandevuOzeti}
                     onDurumDegis={durumDegis}
                     onOdemeDegis={odemeDegis}
                   />

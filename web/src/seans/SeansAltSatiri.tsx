@@ -38,7 +38,14 @@ import { tlMetni } from '../para'
  * panel kapansa da üstteki bant kalıyordu.
  */
 type Props = {
-  randevu: Randevu
+  // `Pick` bilerek DAR: bileşen yalnızca `durum`/`ucret`/`odendi` okur (bkz.
+  // aşağıdaki gövde). Çağıranın `DanisanSeansi`den (danışan dosyası,
+  // `DanisanDosyasi.tsx`) `Randevu`nun TAŞIMADIĞI `bitis`/`seri_id`
+  // alanlarını dolgu değerle üretmesini GEREKTİRMESİN diye — tam `Randevu`
+  // zorunlu olsaydı o dolgu üretimi geri gelirdi ve bileşen ileride bu iki
+  // alanı gerçekten okumaya başlarsa (ör. "randevuyu düzenle" düğmesi)
+  // derleme zamanında YAKALANMAZDI (inceleme bulgusu, Görev 6 fix turu).
+  randevu: Pick<Randevu, 'durum' | 'ucret' | 'odendi'>
   onDurumDegis: (durum: string) => Promise<void>
   onOdemeDegis: (odendi: boolean) => Promise<void>
 }

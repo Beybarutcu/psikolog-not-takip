@@ -29,8 +29,8 @@ import { DanisanDosyasi } from './DanisanDosyasi'
  * `seanslar` prop'u (`useDanisanSeanslari`, çağıranın sorumluluğu) artık
  * gerçekten EKRANA BASILIYOR: `DanisanDosyasi`nin Seanslar alt sekmesi
  * solda `SeansListesi`yi, sağda seçili seansın notunu gösterir. "Bilgiler"
- * alt sekmesi bugün eski `DanisanKarti`yi barındırıyor — Görev 7 onu
- * `DosyaBilgileri`'ye (aynı içerik, yeni ad ve uyarı dili) taşıyacak.
+ * alt sekmesi `DosyaBilgileri`yi barındırıyor (eskiden `DanisanKarti`;
+ * Görev 7 aynı içeriği taşıyıp KVKK uyarı dilini bilgi diline çevirdi).
  *
  * Eskiden burada `data-seans-sayisi` diye GEÇİCİ bir test probu vardı
  * (Görev 5): seans verisi henüz render edilmediği için akışın tek kanıtı

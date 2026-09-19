@@ -574,7 +574,7 @@ describe('web/src üretim kaynaklarında istemci rapor üretimi YOK', () => {
     // (ör. `./*.ts`) kavşak dosyaları sessizce kümeden düşerdi.
     for (const beklenen of [
       './api.ts',
-      './danisan/DanisanKarti.tsx',
+      './danisan/DosyaBilgileri.tsx',
       './screens/AnaEkran.tsx',
       './screens/anaEkranKancalari/yerelGun.ts',
     ]) {
@@ -586,6 +586,8 @@ describe('web/src üretim kaynaklarında istemci rapor üretimi YOK', () => {
     expect(Object.keys(tumKaynaklar)).toContain(TEST_KURULUMU)
     // Silinen üretici geri gelmedi.
     expect(yollar).not.toContain('./danisan/veriRaporu.ts')
+    // Görev 7'de taşınan/silinen eski dosya geri gelmedi.
+    expect(yollar).not.toContain('./danisan/DanisanKarti.tsx')
     // Okuma boş değil: api.ts'teki iki indirme GERÇEKTEN bulunuyor — boş
     // bir okuma aşağıdaki "yok" iddialarını hiçbir şeyi sınamayan yeşile
     // çevirirdi.

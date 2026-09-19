@@ -4,7 +4,7 @@ import type { KartVerisi } from '../screens/anaEkranKancalari/useDanisanDosyasi'
 import type { Randevu } from '../takvim/HaftalikTakvim'
 import { NotEditoru } from '../seans/NotEditoru'
 import { SeansAltSatiri } from '../seans/SeansAltSatiri'
-import { DanisanKarti } from './DanisanKarti'
+import { DosyaBilgileri } from './DosyaBilgileri'
 import { SeansListesi } from './SeansListesi'
 
 /**
@@ -35,11 +35,12 @@ import { SeansListesi } from './SeansListesi'
  * `onKeyDown` ile tam roving tabindex deseni (bkz. `SeansPaneli.tsx::
  * sekmeTusu`) ya da hiç dokunmamak; ikinciyi seçtik.
  *
- * # "Bilgiler" bugün eski `DanisanKarti`, Görev 7'de `DosyaBilgileri`
+ * # "Bilgiler" — `DosyaBilgileri` (eskiden `DanisanKarti`, Görev 7)
  *
- * Görev 7 `DanisanKarti`nin içeriğini `DosyaBilgileri`ye taşıyıp KVKK
- * uyarı dilini değiştirecek. Bu görevin işi yalnızca "Bilgiler" alt
- * sekmesinin YERİNİ açmak; içerik bugünkü `DanisanKarti` ile aynen kalıyor.
+ * Görev 6 "Bilgiler" alt sekmesinin YERİNİ açtı (o zaman eski `DanisanKarti`
+ * aynen render ediliyordu). Görev 7 içeriği `DosyaBilgileri`ye taşıdı ve
+ * KVKK uyarı dilini bilgi diline çevirdi (bkz. `DosyaBilgileri.tsx` ve
+ * `RizaBolumu.tsx` modül başlıkları); davranış ve yetenekler AYNEN kaldı.
  *
  * # Seans notu bu bileşenin İÇİNDE yüklenir, `SeansPaneli`nin aksine
  *
@@ -281,7 +282,7 @@ export function DanisanDosyasi({
           className="mt-3"
         >
           {kart.dosya !== null && (
-            <DanisanKarti
+            <DosyaBilgileri
               danisan={kart.dosya}
               ekler={kart.ekler}
               randevular={kart.randevular}

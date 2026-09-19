@@ -6,15 +6,30 @@ import { boyutBicimle, kalanGun, tarihBicimle } from './bicim'
 import { RizaBolumu } from './RizaBolumu'
 
 /**
- * Danışan kartı: kimlik, başvuru nedeni, risk notu, bakiye, rıza durumu,
- * saklama süresi, ekli dosyalar ve veri raporu.
+ * `DanisanDosyasi`nin "Bilgiler" alt sekmesi: kimlik, başvuru nedeni, risk
+ * notu, bakiye, onam durumu, saklama süresi, ekli dosyalar ve veri raporu
+ * (Plan 5 Görev 7 — eskiden `DanisanKarti`, içeriği buraya taşındı).
  *
- * # Kart, özel nota HİÇ dokunmaz
+ * # Neden taşındı, ne DEĞİŞTİ ne KALDI
+ *
+ * Ürün kararı (kullanıcının kendi sözleriyle): KVKK ve güvenlikle ilgili
+ * bölümler ekranda "laf" gibi, uygulamanın amacı buymuş gibi duruyordu; bu
+ * bölümler istenildiğinde gidilip ULAŞILACAK şeyler olmalı. Rıza zaten
+ * terapiye başlarken kâğıt üzerinde imzalanıyor; bu ekranın işi onu
+ * DENETLEMEK değil, imzalı kâğıdı (tarih + dosya) SAKLAYABİLMEK. Görev 6 bu
+ * içeriği ana ekrandan "Bilgiler" alt sekmesinin ARKASINA taşıdı (görünürlük
+ * kararı); Görev 7 burada yalnızca DİLİ değiştirdi: suçlayıcı uyarı
+ * cümleleri bilgi cümlelerine çevrildi (bkz. `RizaBolumu.tsx` ve aşağıdaki
+ * "Veri raporu" bölümü). HİÇBİR YETENEK kaybolmadı — onam tarihi kaydetme,
+ * imzalı onam dosyası yükleme, ekli dosyalar, saklama süresi ve KVKK veri
+ * raporu dışa aktarma hepsi aynen çalışıyor; ölçüsü `DosyaBilgileri.test.tsx`.
+ *
+ * # Bilgiler, özel nota HİÇ dokunmaz
  *
  * Buradaki hiçbir prop özel not taşımıyor ve bileşenin `ozelNotApi`'ye giden
- * bir yolu yok. Kart not da ÇEKMİYOR: veri raporu Plan 4'ten beri sunucuda
- * üretiliyor ve sunucu onu yalnızca resmî not tablosundan kuruyor (bkz.
- * aşağıdaki "Veri raporu" bölümü).
+ * bir yolu yok. Bu bölüm not da ÇEKMİYOR: veri raporu Plan 4'ten beri
+ * sunucuda üretiliyor ve sunucu onu yalnızca resmî not tablosundan kuruyor
+ * (bkz. aşağıdaki "Danışan veri raporu" bölümü).
  *
  * # Bakiye neyi sayar
  *
@@ -36,36 +51,41 @@ import { RizaBolumu } from './RizaBolumu'
  * seans panelinin alt satırındaki "Ödendi" kutusunu ekledi: süzgeç artık
  * gerçekten eliyor ve açıklama "gelinmiş ve ödenmemiş seanslar" diyor.
  *
- * Kart açıkken seans panelinin alt satırından bir seans "ödendi" ya da bir
- * durum işaretlenirse, çağıran (`AnaEkran`) bu kartın `randevular` listesini
- * YERELDE yamar (`useDanisanDosyasi.randevuYamala`); kart yeniden çekilmez
- * (silinemez `goruntuleme` satırı). Bu bileşen yalnızca prop'tan hesaplar.
+ * Bölüm açıkken seans panelinin alt satırından bir seans "ödendi" ya da bir
+ * durum işaretlenirse, çağıran (`AnaEkran` ya da `DanisanDosyasi`) bu
+ * bölümün `randevular` listesini YERELDE yamar; bölüm yeniden çekilmez
+ * (silinemez bir `goruntuleme` satırı). Bu bileşen yalnızca prop'tan
+ * hesaplar.
  *
  * # Risk notu KATLANMIŞ gösterilir
  *
  * `GecmisNotlar`'ın katlama kararı burada da geçerli ve daha güçlü: risk
- * notu bu ekrandaki en hassas tek alan, kart danışanın adının hemen altında
- * duruyor ve terapist kartı danışan odadayken açıyor (telefon, rıza, ek
- * dosya işleri için). Notun var olduğu görünür kalır — bağlam bu —, içeriği
- * yalnızca istenince basılır.
+ * notu bu ekrandaki en hassas tek alan ve terapist bu sekmeyi danışan
+ * odadayken açabiliyor (telefon, onam, ek dosya işleri için). Notun var
+ * olduğu görünür kalır — bağlam bu —, içeriği yalnızca istenince basılır.
  *
- * # Kartın danışanı ÜRETİMDE DEĞİŞMEZ
+ * # Bu bölümün danışanı ÜRETİMDE DEĞİŞMEZ
  *
- * `AnaEkran` kartı `kart = kartVerisi.id === seciliDanisanId ? kartVerisi :
- * BOS_KART` ile türetiyor ve `{kart.dosya !== null && <DanisanKarti … />}`
- * ile basıyor. Danışan değiştiği anda `kart.dosya` `null` olur ve bu
- * bileşen UNMOUNT edilir; yani monte bir kartın `danisan.id`'si hiçbir
- * zaman değişmez.
+ * İki çağıran yolu da aynı invaryantı garanti eder: `AnaEkran`
+ * (`useDanisanDosyasi`) `kart = kartVerisi.id === seciliDanisanId ?
+ * kartVerisi : BOS_KART` türetip `{kart.dosya !== null && <DosyaBilgileri
+ * … />}` ile, kendi `key`iyle basıyor; `DanisanlarSekmesi` → `DanisanDosyasi`
+ * yolunda ise AYNI `kart` türetmesi `DanisanDosyasi`ye prop olarak geliyor ve
+ * `DanisanDosyasi`nin kendisi `DanisanlarSekmesi`nin verdiği
+ * `key={`danisan-${kart.dosya.id}`}` ile UNMOUNT/REMOUNT ediliyor. Her iki
+ * yolda da danışan değiştiği anda bu bileşenin bir örneği ya doğrudan ya da
+ * ebeveyni üzerinden UNMOUNT edilir; yani monte bir örneğin `danisan.id`'si
+ * hiçbir zaman değişmez.
  *
  * Bunun sonucu, bu dosyadaki "danışan değişimi" savunmalarının
  * (`raporForm` ve `ekForm` türetmeleri, `RizaBolumu`'nün `key`'i)
  * bugün **ulaşılamaz** olmasıdır. Bilerek duruyorlar — birincil hat
  * gevşetilirse yük taşımaya başlarlar — ama bir koruma sözü olarak
- * sayılmamalılar: koruma `AnaEkran`'daki türetmenin kendisidir ve
- * `AnaEkran.test.tsx` > "baska danisana gecince onceki kartin verisi
+ * sayılmamalılar: koruma yukarıdaki türetme + koşullu render'ın kendisidir
+ * ve `AnaEkran.test.tsx` > "baska danisana gecince onceki kartin verisi
  * EKRANDA KALMAZ" testinde ölçülür. Buradaki sentetik `rerender` testleri
- * "birincil hat unutulursa ne kalır" sorusunu ölçüyor, "bugün ne çalışıyor"
- * sorusunu değil.
+ * (`DosyaBilgileri.test.tsx`) "birincil hat unutulursa ne kalır" sorusunu
+ * ölçüyor, "bugün ne çalışıyor" sorusunu değil.
  *
  * # Veri raporu SUNUCUDA üretilir, parolalı PDF olarak iner (Plan 4 Görev 7)
  *
@@ -94,9 +114,15 @@ import { RizaBolumu } from './RizaBolumu'
  *   (Vazgeç, Esc, başarı) odak "Danışan veri raporu dışa aktar" düğmesine
  *   döner.
  * - İndirmeyi, denetim kaydını ve 401 davranışını `danisanApi.veriRaporuIndir`
- *   ile sunucu üstleniyor; kart ne not çeker, ne metin kurar, ne Blob üretir.
- *   İstemcide rapor metni üretilemeyeceği `istemciRaporUretimi.test.ts`'te
+ *   ile sunucu üstleniyor; bu bileşen ne not çeker, ne metin kurar, ne Blob
+ *   üretir. İstemcide rapor metni üretilemeyeceği `istemciRaporUretimi.test.ts`'te
  *   `web/src`'nin tamamında yapısal olarak ölçülüyor.
+ * - Başlık ve açıklama Görev 7'de değişti: eski "Veri raporu — Danışanın
+ *   kendi verisine erişim talebi için (KVKK md. 11)." KVKK madde numarasıyla
+ *   açılan, denetim havası taşıyan bir cümleydi. Yenisi aynı bilgiyi (kim
+ *   isteyebilir, ne biçimde gelir) düz cümleyle veriyor; özel notların
+ *   rapora girmediği uyarısı — davranışsal bir gerçek, ton meselesi değil —
+ *   korundu.
  */
 type Props = {
   danisan: DanisanDosyasi
@@ -142,7 +168,7 @@ function bosRaporFormu(danisanId: number): RaporFormu {
   return { danisanId, acik: false, parola: '', tekrar: '', hata: null, indirildi: false }
 }
 
-export function DanisanKarti({
+export function DosyaBilgileri({
   danisan,
   ekler,
   randevular,
@@ -155,8 +181,8 @@ export function DanisanKarti({
 }: Props) {
   // Rapor formu HANGİ danışan için açıldığını taşıyor ve ekrana giden hâli
   // render sırasında türetiliyor (`ekFormu` ile aynı desen): A için yazılmış
-  // bir parola B'nin kartında durup B'nin raporuna gitmemeli.
-  // İKİNCİL HAT — kart danışan değişince zaten unmount ediliyor (bkz. modül
+  // bir parola B'nin bölümünde durup B'nin raporuna gitmemeli.
+  // İKİNCİL HAT — bölüm danışan değişince zaten unmount ediliyor (bkz. modül
   // başlığı).
   const [raporFormu, setRaporFormu] = useState<RaporFormu>(() => bosRaporFormu(danisan.id))
   const raporForm =
@@ -195,13 +221,13 @@ export function DanisanKarti({
   // danışan için açıldığını taşıyor ve ekrana giden hâli render sırasında
   // türetiliyor — `ekFormu` ile aynı desen. Düz bir `boolean` olsaydı,
   // A'nın notunu açtıktan sonra B'ye geçmek B'nin risk notunu SORULMADAN
-  // ekrana basardı. (İkincil hat: kart bugün zaten unmount ediliyor,
+  // ekrana basardı. (İkincil hat: bölüm bugün zaten unmount ediliyor,
   // bkz. modül başlığı.)
   const [riskAcikOlan, setRiskAcikOlan] = useState<number | null>(null)
   const riskAcik = riskAcikOlan === danisan.id
   // Yükleme formu HANGİ danışan için doldurulduğunu taşıyor ve ekrana giden
   // hâli render sırasında türetiliyor (aşağıda). A için seçilmiş bir dosya
-  // B'nin kartında durursa, "Yükle"ye basmak o dosyayı B'nin dosyasına
+  // B'nin bölümünde durursa, "Yükle"ye basmak o dosyayı B'nin dosyasına
   // ekler — yanlış danışanın dosyasına belge. Sıfırlamayı bir efekte
   // bırakmak, seçim değişimi ile efekt arasındaki karede aynı riski açık
   // bırakırdı (`AnaEkran`'daki `seansVerisi` ile aynı gerekçe).
@@ -295,11 +321,11 @@ export function DanisanKarti({
 
   return (
     <section
-      aria-labelledby="danisan-karti-basligi"
+      aria-labelledby="dosya-bilgileri-basligi"
       className="mt-4 rounded-lg border border-slate-300 p-4"
     >
       <div className="mb-3 flex items-start justify-between gap-3">
-        <h2 id="danisan-karti-basligi" className="text-lg font-semibold">
+        <h2 id="dosya-bilgileri-basligi" className="text-lg font-semibold">
           {danisan.ad_soyad}
         </h2>
         <button
@@ -321,12 +347,11 @@ export function DanisanKarti({
         <dt className="font-medium text-slate-600">Risk notu</dt>
         {/* KATLANMIŞ — `GecmisNotlar` ile aynı gerekçe, oradan daha
             güçlüsüyle: risk notu ("geçmişte bir kez kendine zarar verme")
-            bu ekrandaki en hassas tek alan ve kart, danışanın adının hemen
-            altında duruyor. Danışan odada olabilir ve terapist kartı onun
-            önünde açar (telefon, rıza, ek dosya işleri için). Kendiliğinden
-            basılan bir risk notu, omzun üstünden okunabilir hâle gelir.
-            Notun VAR OLDUĞU görünür kalıyor (bağlam bu), içeriği ancak
-            istenince açılıyor. */}
+            bu ekrandaki en hassas tek alan ve terapist bu sekmeyi danışan
+            odadayken açabilir (telefon, onam, ek dosya işleri için).
+            Kendiliğinden basılan bir risk notu, omzun üstünden okunabilir
+            hâle gelir. Notun VAR OLDUĞU görünür kalıyor (bağlam bu),
+            içeriği ancak istenince açılıyor. */}
         <dd>
           {danisan.risk_notu === null ? (
             'Kayıtlı değil'
@@ -367,15 +392,15 @@ export function DanisanKarti({
 
       <div className="mt-3">
         <RizaBolumu
-          // `key`: rıza formu prop'lardan İLK MOUNT'ta dolduruluyor. Danışan
-          // değişip bileşen yeniden mount edilmezse A'nın rıza tarihi B'nin
+          // `key`: onam formu prop'lardan İLK MOUNT'ta dolduruluyor. Danışan
+          // değişip bileşen yeniden mount edilmezse A'nın onam tarihi B'nin
           // formunda durur ve "Kaydet" B'ye A'nın tarihini yazardı.
           //
-          // İKİNCİL HAT — bugün ULAŞILAMAZ: bu kartın kendisi danışan
+          // İKİNCİL HAT — bugün ULAŞILAMAZ: bu bölümün kendisi danışan
           // değişince unmount ediliyor (bkz. modül başlığı), dolayısıyla
           // `RizaBolumu` de her seferinde taze mount oluyor ve bu `key`
           // hiçbir zaman değişmiyor. Ölçüldüğü tek yer sentetik `rerender`
-          // testi (`DanisanKarti.test.tsx` > "A nin riza tarihi B nin
+          // testi (`DosyaBilgileri.test.tsx` > "A nin riza tarihi B nin
           // formunda KALMAZ").
           key={`riza-${danisan.id}`}
           rizaTarihi={danisan.riza_tarihi}
@@ -406,7 +431,8 @@ export function DanisanKarti({
         )}
         {/* Plan global kısıtı: süresi dolan dosyalar yalnızca listelenir,
             silme kararını her zaman insan verir. Ekran bunu her durumda
-            söylüyor ki "uygulama halleder" beklentisi oluşmasın. */}
+            söylüyor ki "uygulama halleder" beklentisi oluşmasın. Bu cümle
+            bir uyarı DEĞİL, ürün sözü — Görev 7'de KALDI. */}
         <p className="mt-1 text-slate-600">
           Süre dolduğunda dosya kendiliğinden silinmez; imha kararı her zaman sizindir.
         </p>
@@ -564,10 +590,15 @@ export function DanisanKarti({
       </section>
 
       <div className="mt-3 rounded border border-slate-200 p-3 text-sm">
-        <h3 className="font-semibold">Veri raporu</h3>
+        <h3 className="font-semibold">Danışan veri raporu</h3>
+        {/* Görev 7: KVKK madde numarasıyla açılan denetim havalı cümle
+            ("Danışanın kendi verisine erişim talebi için (KVKK md. 11).")
+            kaldırıldı; aynı bilgi düz, bilgilendirici bir cümleyle veriliyor.
+            Özel notların rapora girmediği uyarısı KALDI — bu davranışsal bir
+            gerçek, ton meselesi değil. */}
         <p className="mt-1 text-slate-600">
-          Danışanın kendi verisine erişim talebi için (KVKK md. 11). Terapistin özel notları
-          rapora dahil edilmez.
+          Danışan kendi kaydını isterse, parola korumalı bir PDF olarak verilir. Terapistin
+          özel notları rapora dahil edilmez.
         </p>
         {!raporForm.acik && (
           <button

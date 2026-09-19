@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DanisanDosyasi, EkBilgisi } from '../api'
 import type { Randevu } from '../takvim/HaftalikTakvim'
-import { DanisanKarti } from './DanisanKarti'
+import { DosyaBilgileri } from './DosyaBilgileri'
 
 const danisan: DanisanDosyasi = {
   id: 12,
@@ -76,7 +76,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function kur(ozel: Partial<React.ComponentProps<typeof DanisanKarti>> = {}) {
+function kur(ozel: Partial<React.ComponentProps<typeof DosyaBilgileri>> = {}) {
   const props = {
     danisan,
     ekler,
@@ -89,10 +89,10 @@ function kur(ozel: Partial<React.ComponentProps<typeof DanisanKarti>> = {}) {
     onKapat: vi.fn(),
     ...ozel,
   }
-  return { ...props, ...render(<DanisanKarti {...props} />) }
+  return { ...props, ...render(<DosyaBilgileri {...props} />) }
 }
 
-describe('DanisanKarti — kimlik ve bağlam', () => {
+describe('DosyaBilgileri — kimlik ve bağlam', () => {
   it('iletisim, basvuru nedeni ve bakiye gorunur', () => {
     kur()
     expect(screen.getByText('Ayşe Yılmaz')).toBeDefined()
@@ -141,7 +141,7 @@ describe('DanisanKarti — kimlik ve bağlam', () => {
 // Bakiye para meselesidir: yanlış bir sayı, hiç sayı olmamasından kötüdür.
 // Sayılan küme İÇEREN (whitelist) bir kuralla tanımlı — dışlayıcı `WHERE`
 // deseni (`durum != 'iptal'`) bu kod tabanında bilerek yayılmıyor.
-describe('DanisanKarti — bakiye ne sayar, ne saymaz', () => {
+describe('DosyaBilgileri — bakiye ne sayar, ne saymaz', () => {
   it('gelinmis ve odenmemis seanslarin ucreti TOPLANIR', () => {
     kur({
       randevular: [
@@ -236,18 +236,39 @@ describe('DanisanKarti — bakiye ne sayar, ne saymaz', () => {
   })
 })
 
-describe('DanisanKarti — rıza ve saklama', () => {
+describe('DosyaBilgileri — onam ve saklama', () => {
   it('riza alinmamissa belirgin uyari gosterir', () => {
     kur({ danisan: { ...danisan, riza_tarihi: null, riza_dosya_id: null } })
     const uyarilar = screen.getAllByRole('alert')
-    expect(uyarilar.some((u) => /açık rıza kaydı yok/i.test(u.textContent ?? ''))).toBe(true)
+    expect(uyarilar.some((u) => /onam kaydı yok/i.test(u.textContent ?? ''))).toBe(true)
   })
 
   it('ARTI YON: riza varsa o uyari YOKTUR', () => {
     kur()
     expect(
-      screen.queryAllByRole('alert').some((u) => /açık rıza kaydı yok/i.test(u.textContent ?? '')),
+      screen.queryAllByRole('alert').some((u) => /onam kaydı yok/i.test(u.textContent ?? '')),
     ).toBe(false)
+  })
+
+  // --- Görev 7: KVKK uyarı dili -> bilgi dili --------------------------
+  //
+  // İkisi BİRLİKTE anlam taşır (bkz. `docs/test-yesil-ama-korumuyor.md`
+  // 2. biçim): yalnızca birincisi olsaydı, bölümü TÜMDEN SİLMEK de testi
+  // geçirirdi. İkincisi bölümün hâlâ ÇALIŞTIĞINI, yalnızca dilinin
+  // değiştiğini ölçüyor.
+
+  it('dosya bilgileri suçlayıcı KVKK uyarısı içermez', () => {
+    kur({ danisan: { ...danisan, riza_tarihi: null, riza_dosya_id: null } })
+    expect(screen.queryByText(/uyumsuzluğudur/)).toBeNull()
+  })
+
+  it('onam bölümü imzalı dosya yüklemeyi hâlâ sunar', () => {
+    // NOT: baş harf küçük/büyük harf DUYARSIZ eşleşmiyor -- Türkçe 'İ'
+    // JS'in varsayılan (yerel olmayan) `/i` bayrağında 'i'ye KATLANMIYOR
+    // (bkz. `AyarlarSekmesi.test.tsx`teki aynı tuzak); bu yüzden regex
+    // baş harfi atlıyor.
+    kur()
+    expect(screen.getByLabelText(/mzalı onam/i)).toBeDefined()
   })
 
   it('saklama bitis tarihi ve kalan sure gorunur', () => {
@@ -275,7 +296,7 @@ describe('DanisanKarti — rıza ve saklama', () => {
   })
 })
 
-describe('DanisanKarti — ekli dosyalar', () => {
+describe('DosyaBilgileri — ekli dosyalar', () => {
   it('ekli dosyalar listelenir, icerik indirme baglantisiyla acilir', async () => {
     kur()
     const bolum = screen.getByRole('region', { name: 'Ekli dosyalar' })
@@ -405,7 +426,7 @@ describe('DanisanKarti — ekli dosyalar', () => {
   })
 })
 
-describe('DanisanKarti — ek silme (dal incelemesi: DELETE /api/ekler/{id})', () => {
+describe('DosyaBilgileri — ek silme (dal incelemesi: DELETE /api/ekler/{id})', () => {
   it('tek tiklama SILMEZ; onay istenir', async () => {
     // Silme geri alınamaz (BLOB gider). Tek tıklamayla silen bir düğme,
     // yanlış satıra basan kullanıcıya hiçbir şans bırakmazdı — randevu
@@ -483,7 +504,7 @@ const FORM = { name: 'Rapor parolası belirleyin' }
 // yalnızca parolayı toplar ve `veriRaporuIndir`'i çağırır; indirmenin kendisi
 // (401, Blob, dosya adı) `api.test.ts`'te, rapor İÇERİĞİ (özel not yok,
 // resmî not var, ek adı var) sunucunun HTTP testinde ölçülüyor.
-describe('DanisanKarti — veri raporu (KVKK md. 11, parolalı PDF)', () => {
+describe('DosyaBilgileri — veri raporu (KVKK md. 11, parolalı PDF)', () => {
   const ac = () =>
     userEvent.click(screen.getByRole('button', { name: 'Danışan veri raporu dışa aktar' }))
   // Satır içi form: `role="group"` (M4). Sorgular ADIYLA: adsız bir
@@ -514,6 +535,21 @@ describe('DanisanKarti — veri raporu (KVKK md. 11, parolalı PDF)', () => {
     expect(diyalog().textContent).toContain(
       'Bu parolayı danışana ayrıca iletin. Ana parolanızı kullanmayın.',
     )
+  })
+
+  // Görev 7 brief Adım 2, üçüncü test: "veri raporu parola olmadan
+  // indirilemez" (mevcut kısayoldan taşındı — hiçbir alan doldurulmadan
+  // "Raporu oluştur" tıklanması da asgari karakter kontrolüne takılıp
+  // isteği durdurmalı, aşağıdaki "kisaysa" testinin sıfır-karakter ucu).
+  it('veri raporu parola olmadan indirilemez', async () => {
+    const veriRaporuIndir = vi.fn()
+    kur({ veriRaporuIndir })
+    await ac()
+    await olustur()
+    expect(within(diyalog()).getByRole('alert').textContent).toMatch(
+      /Rapor parolası en az 8 karakter/,
+    )
+    expect(veriRaporuIndir).not.toHaveBeenCalled()
   })
 
   it('parolalar eslesmezse ya da kisaysa istek GITMEZ ve alan adiyla hata gosterilir', async () => {
@@ -716,7 +752,7 @@ describe('DanisanKarti — veri raporu (KVKK md. 11, parolalı PDF)', () => {
   })
 })
 
-describe('DanisanKarti — kapanış ve gizlilik', () => {
+describe('DosyaBilgileri — kapanış ve gizlilik', () => {
   it('Kapat dugmesi onKapat cagirir', async () => {
     const { onKapat } = kur()
     await userEvent.click(screen.getByRole('button', { name: 'Danışan kartını kapat' }))
@@ -739,11 +775,11 @@ describe('DanisanKarti — kapanış ve gizlilik', () => {
 // bir danışandan diğerine sızan state hiçbir zaman görünmez.
 // UYARI — bu blok ÜRETİMDE ULAŞILAMAYAN bir durumu ölçer.
 //
-// Buradaki `rerender`, AYNI `DanisanKarti` örneğine farklı bir `danisan.id`
+// Buradaki `rerender`, AYNI `DosyaBilgileri` örneğine farklı bir `danisan.id`
 // veriyor. Üretimde bu OLUŞAMAZ: `AnaEkran` kartı
 // `kart = kartVerisi.id === seciliDanisanId ? kartVerisi : BOS_KART` ile
 // türetiyor, danışan değişince `kart.dosya` `null` olur ve kart
-// `{kart.dosya !== null && <DanisanKarti … />}` koşulundan düşerek UNMOUNT
+// `{kart.dosya !== null && <DosyaBilgileri … />}` koşulundan düşerek UNMOUNT
 // EDİLİR. Yani monte bir kartın `danisan.id`'si hiçbir zaman değişmez.
 //
 // Aynı endişe için dört savunma var ve YALNIZCA BİRİNCİSİ yük taşıyor:
@@ -752,7 +788,7 @@ describe('DanisanKarti — kapanış ve gizlilik', () => {
 //      kartin verisi EKRANDA KALMAZ" (uçuşta bekletilen bir istekle, yani
 //      sıfırlamayı bir efekte bırakan mutasyonu da yakalayarak).
 //   2. `AnaEkran`'daki `key={danisan-…}`,
-//   3. `DanisanKarti`'nın `raporForm` / `ekForm` türetmeleri,
+//   3. `DosyaBilgileri`'nın `raporForm` / `ekForm` türetmeleri,
 //   4. `RizaBolumu`'nün `key`'i
 //      — üçü de (1) çalışırken erişilemez; derinlemesine savunma olarak
 //      meşru ama birincil hat DEĞİL.
@@ -761,7 +797,7 @@ describe('DanisanKarti — kapanış ve gizlilik', () => {
 // kart monte kalacak biçimde değiştirilirse, kartın kendi türetmeleri ne
 // kadarını kurtarır". Bu değerli bir sorudur; "bugün üretimde şu koruma
 // çalışıyor" DEĞİLDİR.
-describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender`)', () => {
+describe('DosyaBilgileri — danışan değişimi (ikincil hat, sentetik `rerender`)', () => {
   it('A icin yazilan rapor parolasi B secilince EKRANDA KALMAZ ve B nin raporuna GITMEZ', async () => {
     const digeri: DanisanDosyasi = {
       ...danisan,
@@ -782,7 +818,7 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),
       onKapat: vi.fn(),
     }
-    const { rerender } = render(<DanisanKarti danisan={danisan} {...ortak} />)
+    const { rerender } = render(<DosyaBilgileri danisan={danisan} {...ortak} />)
 
     await userEvent.click(screen.getByRole('button', { name: 'Danışan veri raporu dışa aktar' }))
     await userEvent.type(screen.getByLabelText('Rapor parolası'), 'A-NIN-PAROLASI')
@@ -790,7 +826,7 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
     // Ön koşul: parola gerçekten DOM'da.
     expect(document.body.innerHTML).toContain('A-NIN-PAROLASI')
 
-    rerender(<DanisanKarti danisan={digeri} {...ortak} />)
+    rerender(<DosyaBilgileri danisan={digeri} {...ortak} />)
 
     expect(document.body.innerHTML).not.toContain('A-NIN-PAROLASI')
     expect(screen.queryByRole('group', FORM)).toBeNull()
@@ -824,12 +860,12 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),
       onKapat: vi.fn(),
     }
-    const { rerender } = render(<DanisanKarti danisan={danisan} {...ortak} />)
+    const { rerender } = render(<DosyaBilgileri danisan={danisan} {...ortak} />)
 
     const dosya = new File(['x'], 'A-nin-onami.pdf', { type: 'application/pdf' })
     await userEvent.upload(screen.getByLabelText('Yüklenecek dosya'), dosya)
 
-    rerender(<DanisanKarti danisan={digeri} {...ortak} />)
+    rerender(<DosyaBilgileri danisan={digeri} {...ortak} />)
     await userEvent.click(screen.getByRole('button', { name: 'Dosyayı yükle' }))
 
     expect(ekYukle).not.toHaveBeenCalled()
@@ -856,11 +892,11 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),
       onKapat: vi.fn(),
     }
-    const { rerender } = render(<DanisanKarti danisan={danisan} {...ortak} />)
+    const { rerender } = render(<DosyaBilgileri danisan={danisan} {...ortak} />)
     await userEvent.click(screen.getByRole('button', { name: 'Risk notunu göster' }))
     expect(screen.getByText(/Geçmişte bir kez kendine zarar verme/)).toBeDefined()
 
-    rerender(<DanisanKarti danisan={digeri} {...ortak} />)
+    rerender(<DosyaBilgileri danisan={digeri} {...ortak} />)
     expect(document.body.textContent).not.toContain('B-NIN-RISK-NOTU')
     // ARTI YÖN: B'nin notu gerçekten var ve istenince açılıyor (notu hiç
     // göstermeyen bir sürüm de üstteki iddiayı geçerdi).
@@ -888,10 +924,10 @@ describe('DanisanKarti — danışan değişimi (ikincil hat, sentetik `rerender
       onRizaKaydet: vi.fn().mockResolvedValue(undefined),
       onKapat: vi.fn(),
     }
-    const { rerender } = render(<DanisanKarti danisan={danisan} {...ortak} />)
+    const { rerender } = render(<DosyaBilgileri danisan={danisan} {...ortak} />)
     expect((screen.getByLabelText('Açık rıza tarihi') as HTMLInputElement).value).toBe('2026-03-01')
 
-    rerender(<DanisanKarti danisan={digeri} {...ortak} />)
+    rerender(<DosyaBilgileri danisan={digeri} {...ortak} />)
     expect((screen.getByLabelText('Açık rıza tarihi') as HTMLInputElement).value).toBe('2020-01-02')
     expect((screen.getByLabelText('İmzalı onam dosyası') as HTMLSelectElement).value).toBe('')
   })

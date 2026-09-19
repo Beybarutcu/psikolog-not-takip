@@ -317,7 +317,7 @@ export async function ekIndir(ek: { id: number; dosya_adi: string }): Promise<vo
     bag.click()
   } finally {
     // Kişisel veri taşıyan bir blob URL'i sayfa ömrü boyunca canlı
-    // bırakmak, onu adresi bilen her koda açık tutardı (`DanisanKarti`'nin
+    // bırakmak, onu adresi bilen her koda açık tutardı (`DosyaBilgileri`'nin
     // rapor blob'u için verilen kararın aynısı). Bir sonraki makro
     // görevde serbest bırakılıyor: aynı karede iptal etmek bazı
     // tarayıcılarda indirmeyi yarıda keser.
@@ -689,7 +689,7 @@ export const danisanApi = {
    * # Geri alınamaz
    *
    * Dosya BLOB'u gider; yedek dışında geri dönüşü yoktur. Çağıran taraf
-   * (`DanisanKarti`) bu yüzden iki adımlı onay gösterir. Sunucudaki
+   * (`DosyaBilgileri`) bu yüzden iki adımlı onay gösterir. Sunucudaki
    * `attachments::sil` ayrıca **sarkan `clients.riza_dosya_id`'yi aynı
    * transaction'da temizler** (`riza_tarihi` korunur) — onay metni bunu
    * söylemek zorunda, çünkü silinen dosya rıza belgesiyse danışanın rıza

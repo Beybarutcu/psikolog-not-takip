@@ -43,10 +43,12 @@ describe('RizaBolumu — rıza yoksa uyarı', () => {
   it('riza alinmamissa belirgin uyari gosterir', () => {
     kur()
     const uyari = screen.getByRole('alert')
-    expect(uyari.textContent).toMatch(/açık rıza kaydı yok/i)
-    // Sarı şerit: plan bunu açıkça istiyor ("rızasız işlenen bir dosya
-    // KVKK açısından en somut uyumsuzluktur"). Renk, kartın geri kalanından
-    // ayrışmasının tek görsel işareti.
+    expect(uyari.textContent).toMatch(/onam kaydı yok/i)
+    // Sarı şerit KALDI (Görev 7): eksik onam hâlâ göze çarpan bir bilgi,
+    // ama artık bir ihlal iddiası taşımıyor — yalnızca metin değişti
+    // (bkz. `RizaBolumu.tsx` modül başlığı "Göze çarpma KALDI, suçlama
+    // GİTTİ"). Renk, bölümün geri kalanından ayrışmasının tek görsel
+    // işareti.
     expect(uyari.className).toContain('amber')
   })
 
@@ -86,7 +88,7 @@ describe('RizaBolumu — imzalı onam dosyası', () => {
 
   // --- Dal incelemesi I3: onam bağlantısı da SPA'yı yıkmaz -------------
   //
-  // İki bağlantı vardı (`DanisanKarti` ek listesi ve buradaki onam
+  // İki bağlantı vardı (`DosyaBilgileri` ek listesi ve buradaki onam
   // bağlantısı) ve ikisi de aynı hataya sahipti. Yalnızca birini
   // düzeltmek, kod tabanındaki tanıdık hata sınıfı olurdu ("kilit_ac
   // düzeltildi, kilitle unutuldu").
@@ -110,7 +112,7 @@ describe('RizaBolumu — imzalı onam dosyası', () => {
     try {
       kur({ rizaTarihi: '2026-03-01', rizaDosyaId: 5 })
       const bag = screen.getByRole('link', { name: /onam-formu\.pdf/ })
-      // Dinleyici DOCUMENT uzerinde (gerekce icin bkz. DanisanKarti.test).
+      // Dinleyici DOCUMENT uzerinde (gerekce icin bkz. DosyaBilgileri.test).
       let iptalEdildi = false
       document.addEventListener('click', (e) => {
         iptalEdildi = e.defaultPrevented
@@ -143,7 +145,7 @@ describe('RizaBolumu — imzalı onam dosyası', () => {
         expect(screen.getByText('Oturum kilitli. Lütfen parolanızı girin.')).toBeDefined(),
       )
       // Bölüm hâlâ ekranda: "sayfa gezinmedi"nin birim testi karşılığı.
-      expect(screen.getByRole('region', { name: 'Aydınlatma ve açık rıza' })).toBeDefined()
+      expect(screen.getByRole('region', { name: 'Onam' })).toBeDefined()
     } finally {
       globalThis.fetch = gercekFetch
     }

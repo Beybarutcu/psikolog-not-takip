@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { danisanApi } from '../api'
 import { AyarlarSekmesi } from '../ayarlar/AyarlarSekmesi'
-import { DanisanKarti } from '../danisan/DanisanKarti'
+import { DosyaBilgileri } from '../danisan/DosyaBilgileri'
 import { TakvimSekmesi } from '../takvim/TakvimSekmesi'
 import { useDanisanDosyasi } from './anaEkranKancalari/useDanisanDosyasi'
 import { useDanisanListesi } from './anaEkranKancalari/useDanisanListesi'
@@ -332,7 +332,7 @@ export function AnaEkran({
           </div>
         ) : (
           kart.dosya !== null && (
-            <DanisanKarti
+            <DosyaBilgileri
               // İKİNCİL HAT — bugün ULAŞILAMAZ, bilerek duruyor.
               //
               // Birincil hat `useDanisanDosyasi`'ndeki `kart` türetmesi + bu
@@ -346,7 +346,7 @@ export function AnaEkran({
               // Satır yine de duruyor: türetme bir gün "kartı monte tut,
               // yalnızca içeriği değiştir" biçiminde gevşetilirse `key` o
               // anda yük taşımaya başlar ve maliyeti sıfır. Sentetik
-              // `rerender` testleri (`DanisanKarti.test.tsx` > "ikincil
+              // `rerender` testleri (`DosyaBilgileri.test.tsx` > "ikincil
               // hat") tam olarak o senaryoyu ölçüyor.
               key={`danisan-${kart.dosya.id}`}
               danisan={kart.dosya}

@@ -393,7 +393,7 @@ test('danisan dosyasi: ek dosya, riza ve saklama suresi', async ({ page }) => {
   // İŞLEM ÖNCESİ DURUM açıkça sabitleniyor: aşağıdaki her iddia bu üç
   // satırdan farklı bir ekran gerektiriyor, yani hiçbiri "zaten öyleydi"
   // ile tatmin olamaz.
-  await expect(page.getByText(/açık rıza kaydı yok/)).toBeVisible()
+  await expect(page.getByText(/onam kaydı yok/)).toBeVisible()
   await expect(page.getByText(/Saklama süresi henüz hesaplanmadı/)).toBeVisible()
   await expect(page.getByText('Bu danışana henüz dosya eklenmemiş.')).toBeVisible()
 
@@ -439,7 +439,7 @@ test('danisan dosyasi: ek dosya, riza ve saklama suresi', async ({ page }) => {
   await expect(page.getByRole('link', { name: `İmzalı onam belgesi: ${ekAdi}` })).toBeVisible()
   // EKSİ YÖN: uyarı şeridi gitti. Kaydetmeden ÖNCE görünür olduğu yukarıda
   // ölçüldüğü için bu sayım işlem öncesi durumla tatmin olamaz.
-  await expect(page.getByText(/açık rıza kaydı yok/)).toHaveCount(0)
+  await expect(page.getByText(/onam kaydı yok/)).toHaveCount(0)
 
   // Saklama süresi, danışanın SON TEMASINDAN hesaplanıyor ve son temas
   // yalnızca "geldi" işaretlenince ileri taşınıyor (`son_temasi_isaretle`).

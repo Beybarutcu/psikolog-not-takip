@@ -2505,7 +2505,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     m.ac()
     expect(
       (await screen.findAllByRole('alert')).some((u) =>
-        /açık rıza kaydı yok/i.test(u.textContent ?? ''),
+        /onam kaydı yok/i.test(u.textContent ?? ''),
       ),
     ).toBe(true)
   })
@@ -2693,7 +2693,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     expect(document.body.textContent).not.toContain('RISK-NOTU-KANARYA')
     expect(document.body.textContent).not.toContain('0555 111 22 33')
     expect(
-      screen.queryAllByRole('alert').some((u) => /açık rıza kaydı yok/i.test(u.textContent ?? '')),
+      screen.queryAllByRole('alert').some((u) => /onam kaydı yok/i.test(u.textContent ?? '')),
     ).toBe(false)
   })
 

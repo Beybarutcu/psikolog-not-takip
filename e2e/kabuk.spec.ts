@@ -135,5 +135,13 @@ test('danışana tıklayınca geçmiş seansları ve notu açılır', async ({ p
   // `docs/test-yesil-ama-korumuyor.md` 6. biçim: "işlem öncesi durumla
   // tatmin olan assertion").
   await expect(page.getByTestId('seans-listesi')).toHaveAttribute('data-yuklendi', 'evet')
-  await expect(page.getByText('Geçen haftanın notu')).toBeVisible()
+  // Not metni İKİ YERDE birden görünüyor: seans listesindeki önizleme
+  // satırında ("geçmiş seansları" — bkz. test adı) VE seçili seansın not
+  // editöründe ("notu açılır"). `getByText` tek başına artık BELİRSİZ
+  // (strict mode ihlali, iki eşleşme) — bu da ürünün çalıştığının bir
+  // kanıtı; ikisi ayrı ayrı, kendi rolleriyle doğrulanıyor.
+  await expect(page.getByTestId('seans-listesi')).toContainText('Geçen haftanın notu')
+  await expect(page.getByRole('textbox', { name: 'Seans notu' })).toHaveValue(
+    'Geçen haftanın notu',
+  )
 })

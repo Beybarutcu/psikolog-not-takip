@@ -41,11 +41,18 @@ function ayBasligi(ay: string): string {
   return `${AYLAR[Number(a) - 1]} ${yil}`
 }
 
+/**
+ * Görev 8: "Danışan ekle" formu Danışanlar sekmesinin İÇİNDE (eskiden ana
+ * ekranda HER ZAMAN görünüyordu); randevu kurmak Takvim sekmesinde kalmayı
+ * gerektirir — bu yüzden yardımcı, eklendikten sonra Takvim'e GERİ dönüyor.
+ */
 async function danisanEkle(page: Page, ad: string) {
+  await page.getByRole('tab', { name: 'Danışanlar', exact: true }).click()
   await page.getByRole('button', { name: 'Danışan ekle', exact: true }).click()
   await page.getByLabel('Ad soyad', { exact: true }).fill(ad)
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
   await expect(page.getByText(ad, { exact: true }).first()).toBeVisible()
+  await page.getByRole('tab', { name: 'Takvim', exact: true }).click()
 }
 
 /** Takvimdeki randevu bloğu (yalnızca `data-durum` taşıyan ızgara blokları). */

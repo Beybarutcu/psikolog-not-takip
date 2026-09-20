@@ -4,6 +4,8 @@ import { kurulumYap } from './yardimcilar'
 test('danisan ekle, randevu olustur, geldi isaretle', async ({ page }) => {
   await kurulumYap(page)
 
+  // Görev 8: "Danışan ekle" formu Danışanlar sekmesinin İÇİNDE.
+  await page.getByRole('tab', { name: 'Danışanlar', exact: true }).click()
   await page.getByRole('button', { name: 'Danışan ekle' }).click()
   await page.getByLabel('Ad soyad').fill('Ayşe Yılmaz')
   // "Danışan ekle" düğmesi "Ekle" alt dizesini içerdiği için isim eşleşmesi
@@ -12,6 +14,8 @@ test('danisan ekle, randevu olustur, geldi isaretle', async ({ page }) => {
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
   await expect(page.getByText('Ayşe Yılmaz')).toBeVisible()
 
+  // Boş saat düğmesi Takvim sekmesinde.
+  await page.getByRole('tab', { name: 'Takvim', exact: true }).click()
   // Izgarada bos bir saate tikla; hangi hafta olursa olsun ilk bos hucre yeterli.
   await page.locator('button[aria-label$="10:00 boş"]').first().click()
   // `exact: true` sart: `getByLabel` varsayilan olarak ALT DIZGI arar ve
@@ -43,11 +47,13 @@ test('kilitliyken randevu ucu veri sizdirmaz', async ({ page, request }) => {
   // yanit govdesinin bu adi GERCEKTEN icermedigini dogrulayabilmek icin.
   // Yalnizca durum kodunu kontrol etmek testin adinin ("veri sizdirmaz")
   // iddia ettigini kanitlamiyordu.
+  await page.getByRole('tab', { name: 'Danışanlar', exact: true }).click()
   await page.getByRole('button', { name: 'Danışan ekle' }).click()
   await page.getByLabel('Ad soyad').fill('Zeynep Kaya')
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
   await expect(page.getByText('Zeynep Kaya')).toBeVisible()
 
+  await page.getByRole('tab', { name: 'Takvim', exact: true }).click()
   await page.locator('button[aria-label$="10:00 boş"]').first().click()
   await page.getByLabel('Danışan', { exact: true }).selectOption({ label: 'Zeynep Kaya' })
   await page.getByLabel('Ücret (TL)').fill('300')
@@ -84,11 +90,13 @@ test('kilitliyken randevu ucu veri sizdirmaz', async ({ page, request }) => {
 test('mevcut randevunun ucreti guncellenir, kopya olusmaz', async ({ page }) => {
   await kurulumYap(page)
 
+  await page.getByRole('tab', { name: 'Danışanlar', exact: true }).click()
   await page.getByRole('button', { name: 'Danışan ekle' }).click()
   await page.getByLabel('Ad soyad').fill('Elif Şahin')
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
   await expect(page.getByText('Elif Şahin')).toBeVisible()
 
+  await page.getByRole('tab', { name: 'Takvim', exact: true }).click()
   // Bu dosyadaki diger testlerin kullandigi 10:00 satirindan farkli bir saat
   // secilir: dosyalar arasi yalitim var (her spec kendi sunucusunda), ama
   // dosya ICINDEKI testler ayni sunucuyu paylasiyor.
@@ -136,11 +144,13 @@ test('mevcut randevunun ucreti guncellenir, kopya olusmaz', async ({ page }) => 
 test('seri kurulur ve tek adimda iptal edilir', async ({ page }) => {
   await kurulumYap(page)
 
+  await page.getByRole('tab', { name: 'Danışanlar', exact: true }).click()
   await page.getByRole('button', { name: 'Danışan ekle' }).click()
   await page.getByLabel('Ad soyad').fill('Deniz Arslan')
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
   await expect(page.getByText('Deniz Arslan')).toBeVisible()
 
+  await page.getByRole('tab', { name: 'Takvim', exact: true }).click()
   await page.locator('button[aria-label$="12:00 boş"]').first().click()
   await page.getByLabel('Danışan', { exact: true }).selectOption({ label: 'Deniz Arslan' })
   await page.getByLabel('Her hafta tekrarla').check()

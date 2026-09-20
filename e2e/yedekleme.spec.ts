@@ -30,11 +30,18 @@ const YEDEK_KLASORU = mkdtempSync(join(tmpdir(), 'psikolog-e2e-yedek-'))
 test('yedek klasoru secilir ve yedek gercekten alinir', async ({ page }) => {
   await kurulumYap(page)
 
+  // Görev 8: "Danışan ekle" formu Danışanlar sekmesinin İÇİNDE.
+  await page.getByRole('tab', { name: 'Danışanlar', exact: true }).click()
   await page.getByRole('button', { name: 'Danışan ekle' }).click()
   await page.getByLabel('Ad soyad').fill('Ayşe Yılmaz')
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
   await expect(page.getByText('Ayşe Yılmaz')).toBeVisible()
 
+  // Yedekleme bölümü Ayarlar sekmesinin İÇİNDE. Ad `/^Ayarlar/` ile
+  // aranıyor: hiç yedek alınmamışken `Sekmeler` erişilebilir adı "Ayarlar —
+  // ilgilenilmesi gereken bir şey var" olur (bkz. `kabuk/Sekmeler.tsx`
+  // `uyaran` prop'u) — bu bir hata değil, tasarımın kendisi.
+  await page.getByRole('tab', { name: /^Ayarlar/ }).click()
   const bolum = page.getByRole('region', { name: 'Yedekleme' })
   // ON KOSUL: klasor secilmeden yedek ALINAMAZ ve bu SESSIZ gecilmez
   // (tasarim §7: "ana ekranda kalici uyari").
@@ -63,11 +70,13 @@ test('yedekten geri yukleme, yedekten SONRAKI kaydi geri alir', async ({ page })
   // ise DURDUGUNU goruyoruz.
   await kurulumYap(page)
 
+  await page.getByRole('tab', { name: 'Danışanlar', exact: true }).click()
   await page.getByRole('button', { name: 'Danışan ekle' }).click()
   await page.getByLabel('Ad soyad').fill('Yedekten Sonra Eklenen')
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
   await expect(page.getByText('Yedekten Sonra Eklenen')).toBeVisible()
 
+  await page.getByRole('tab', { name: /^Ayarlar/ }).click()
   const bolum = page.getByRole('region', { name: 'Yedekleme' })
   await bolum.getByRole('button', { name: 'Yedekten geri yükle' }).click()
   await expect(page.getByRole('heading', { name: 'Yedekten geri yükleme' })).toBeVisible()
@@ -96,7 +105,10 @@ test('yedekten geri yukleme, yedekten SONRAKI kaydi geri alir', async ({ page })
   await page.getByRole('button', { name: 'Aç' }).click()
   await expect(page.getByRole('heading', { name: 'Terapi Notları' })).toBeVisible()
 
-  // KANIT: yedekteki danisan YERINDE, yedekten sonra eklenen GITTI.
+  // KANIT: yedekteki danisan YERINDE, yedekten sonra eklenen GITTI. Kilit
+  // açılınca `AnaEkran` YENİDEN MONTE olur ve açılış sekmesi Takvim'dir
+  // (bkz. `AnaEkran.tsx::ACILIS_SEKMESI`); çip Danışanlar sekmesinde.
+  await page.getByRole('tab', { name: 'Danışanlar', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })).toBeVisible()
   await expect(page.getByText('Yedekten Sonra Eklenen')).toHaveCount(0)
 })
@@ -106,6 +118,7 @@ test('yanlis parolayla geri yukleme reddedilir ve veri DEGISMEZ', async ({ page 
   // reddedilmemeli, YANLIS parolayla gelen de veriyi kaybetmemeli.
   await kurulumYap(page)
 
+  await page.getByRole('tab', { name: /^Ayarlar/ }).click()
   const bolum = page.getByRole('region', { name: 'Yedekleme' })
   await bolum.getByRole('button', { name: 'Yedekten geri yükle' }).click()
   await page.getByRole('radio').first().check()
@@ -120,5 +133,6 @@ test('yanlis parolayla geri yukleme reddedilir ve veri DEGISMEZ', async ({ page 
   // veritabanina dokunmadi.
   await page.getByRole('button', { name: 'Geri dön' }).click()
   await expect(page.getByRole('heading', { name: 'Terapi Notları' })).toBeVisible()
+  await page.getByRole('tab', { name: 'Danışanlar', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })).toBeVisible()
 })

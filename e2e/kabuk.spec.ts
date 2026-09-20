@@ -20,14 +20,25 @@ import { kurulumYap } from './yardimcilar'
  * (`e2e/yardimcilar.ts::kurulumYap`) ve bu dosya onu KULLANIYOR, kopyalamadı.
  */
 
-/** Danışan ekler, verilen saate randevu kurar ve takvimdeki bloğunu döndürür. */
+/**
+ * Danışan ekler, verilen saate randevu kurar ve takvimdeki bloğunu döndürür.
+ *
+ * Görev 8: "Danışan ekle" formu artık Danışanlar sekmesinin İÇİNDE
+ * (eskiden ana ekranda HER ZAMAN görünüyordu); boş saat düğmesi ise Takvim
+ * sekmesinde. Bu yüzden yardımcı İKİ sekme arasında gidip geliyor — bu,
+ * `danisanaGit`in AKSİNE, elle yapılan bir geçiş: danışan eklemek sekme
+ * DEĞİŞTİRMEZ (bkz. `DanisanlarSekmesi.tsx`), randevu kurmak da Takvim
+ * sekmesinde kalınmasını gerektirir.
+ */
 async function danisanVeRandevu(page: Page, ad: string, saat: string) {
+  await page.getByRole('tab', { name: 'Danışanlar' }).click()
   await page.getByRole('button', { name: 'Danışan ekle' }).click()
   await page.getByLabel('Ad soyad').fill(ad)
   // `exact: true`: "Danışan ekle" düğmesi de "Ekle" alt dizgisini içeriyor.
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
   await expect(page.getByText(ad, { exact: true })).toBeVisible()
 
+  await page.getByRole('tab', { name: 'Takvim' }).click()
   await page.locator(`button[aria-label$="${saat} boş"]`).first().click()
   // `exact: true` şart: danışan listesindeki "… adlı danışanı arşivle"
   // düğmesi de "Danışan" alt dizgisiyle eşleşir.
@@ -82,6 +93,10 @@ test('takvim çipinden danışana gidince sekme değişir, geri dönünce takvim
 
   // Randevu panelini AÇMADAN, danışan listesindeki çipten dosyayı aç
   // (`danisanaGit` — tek giriş noktası, bkz. `AnaEkran.tsx` modül başlığı).
+  // Çip Danışanlar sekmesinin İÇİNDE — `danisanVeRandevu` Takvim'de
+  // bıraktığı için önce oraya geçiliyor (bu, `danisanaGit`in kendisi
+  // DEĞİL: yalnızca çipi GÖREBİLMEK için gereken elle sekme değişimi).
+  await page.getByRole('tab', { name: 'Danışanlar' }).click()
   await page
     .getByRole('button', { name: 'Fatma Çelik dosyasını aç', exact: true })
     .click()
@@ -108,7 +123,10 @@ test('danışana tıklayınca geçmiş seansları ve notu açılır', async ({ p
   await randevuVeNotOlustur(page, 'Ayşe', 'Geçen haftanın notu')
 
   await page.getByRole('tab', { name: 'Danışanlar' }).click()
-  await page.getByRole('button', { name: /Ayşe/ }).click()
+  // Tam ad DEĞİL "dosyasını aç" ile eşleşen bir düzenli ifade: "Ayşe" alt
+  // dizgisi aynı satırdaki "Ayşe adlı danışanı arşivle" düğmesiyle de
+  // örtüşüyor (strict mode ihlali — iki eleman bulunur).
+  await page.getByRole('button', { name: /Ayşe dosyasını aç/ }).click()
 
   // SENKRONİZASYON BARİYERİ: sayım/görünürlük iddiasından ÖNCE listenin
   // sunucudan GERÇEKTEN geldiğini bekle. `data-yuklendi` olmadan aşağıdaki

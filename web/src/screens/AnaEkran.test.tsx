@@ -3363,3 +3363,65 @@ describe('AnaEkran — yedekleme (tasarim §7)', () => {
     expect(yedekIstekleri[0].damga).toBe(BUGUN)
   })
 })
+
+// Görev 8: `AnaEkran.tsx` modül başlığı "Yalnızca SEÇİLİ sekmenin paneli
+// monte edilir" kuralının DOĞRUDAN testi. Dosyadaki diğer testlerin hiçbiri
+// bunu BAĞIMSIZ ölçmüyor — hepsi ZATEN doğru sekmeye geçtiği için üç panel
+// birden çizilse bile çoğu yeşil kalırdı (yalnızca `e2e/kabuk.spec.ts`teki
+// "Şimdi yedek al görünmez" iddiası bunu yakalardı, o da yalnızca yavaş
+// e2e turunda). Bu test aynı korumayı birim seviyesinde, hızlı ve doğrudan
+// sağlıyor.
+describe('AnaEkran — sekme izolasyonu (Görev 8)', () => {
+  const gercekFetch = globalThis.fetch
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 9, 12, 0))
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
+      const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      const method = secenekler?.method ?? 'GET'
+      const ekUc = ekUcYaniti(yol, secenekler)
+      if (ekUc) return ekUc
+      const notlar = notYaniti(yol, method, null)
+      if (notlar) return notlar
+      if (/^\/api\/danisanlar\/\d+\/seanslar$/.test(yol)) return jsonYanit([])
+      if (yol.startsWith('/api/danisanlar')) return jsonYanit(danisanlar)
+      if (yol.startsWith('/api/randevular')) return jsonYanit([])
+      throw new Error(`beklenmeyen istek: ${yol}`)
+    }) as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    globalThis.fetch = gercekFetch
+    vi.restoreAllMocks()
+  })
+
+  it('yalnizca SECILI sekmenin paneli monte edilir: diger sekmelerin icerigi DOM da hic YOK', async () => {
+    // Sunucu her görüntülemeyi SİLİNEMEZ bir denetim kaydına yazıyor
+    // (`store::audit`); görünmeyen bir sekmenin YİNE DE monte edilmesi hem
+    // gereksiz istekler hem de ekranda BASILI OLMAMASI gereken bölümlerin
+    // (danışan listesi, yedekleme klasörü) sessizce DOM'da durması demek.
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await screen.findByTestId('takvim-sekmesi')
+
+    // Takvim aktifken Danışanlar'ın ve Ayarlar'ın içeriği DOM'da YOK.
+    expect(screen.queryByRole('button', { name: 'Danışan ekle' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Yedekleme' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Parola' })).toBeNull()
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    // Danışanlar aktifken Takvim'in ve Ayarlar'ın içeriği DOM'da YOK.
+    expect(screen.queryByTestId('takvim-sekmesi')).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Yedekleme' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Parola' })).toBeNull()
+
+    await userEvent.click(screen.getByRole('tab', { name: /^Ayarlar/ }))
+    // Ayarlar aktifken Takvim'in ve Danışanlar'ın içeriği DOM'da YOK.
+    expect(screen.queryByTestId('takvim-sekmesi')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Danışan ekle' })).toBeNull()
+    // Ayarlar bölümü kendisi GÖRÜNÜR — üç panelin de aslında monte
+    // olabildiğini, yalnızca YANLIŞ ANDA olmadığını kanıtlıyor.
+    expect(screen.getByRole('region', { name: 'Yedekleme' })).toBeDefined()
+  })
+})

@@ -2125,6 +2125,13 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   ]
 
   let yetkisiz: boolean
+  // IMPORTANT-A düzeltmesi: `yetkisiz` TÜM istekleri 401 yapıyor —
+  // `dosyaGetir` hiçbir koşulda veri üretemediği için "yarım kart"
+  // riski hiç OLUŞAMIYORDU (`DanisanDosyasi` `kart.dosya !== null` şartına
+  // bağlı, bkz. `DanisanlarSekmesi.tsx`). Bu bayrak yalnızca EK LİSTESİ
+  // isteğini (`Promise.all`'daki İKİNCİ istek) 401 yapar, `dosyaGetir`
+  // BAŞARILI kalır — gerçek yarım-kart senaryosu.
+  let ekIstegiYetkisiz: boolean
   let istekYollari: string[]
   // İndirilen Blob'lar (`danisanApi.veriRaporuIndir` sunucu yanıtını sarar).
   let uretilenBloblar: Blob[]
@@ -2160,6 +2167,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(2026, 8, 9, 12, 0))
     yetkisiz = false
+    ekIstegiYetkisiz = false
     istekYollari = []
     gecikmeler = {}
     sunucuOdemeleri = {}
@@ -2267,7 +2275,17 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
       }
 
       const ekler = /^\/api\/danisanlar\/(\d+)\/ekler$/.exec(yol)
-      if (ekler) return jsonYanit(Number(ekler[1]) === 1 ? sunucuEkleri : [])
+      if (ekler) {
+        // IMPORTANT-A: yalnızca bu istek 401 dönebilir (bkz.
+        // `ekIstegiYetkisiz` tanımı) — `dosyaGetir` BAŞARILI kalır.
+        if (ekIstegiYetkisiz) {
+          return {
+            ok: false, status: 401,
+            json: async () => ({ hata: 'Oturum zaman aşımına uğradı.' }),
+          } as unknown as Response
+        }
+        return jsonYanit(Number(ekler[1]) === 1 ? sunucuEkleri : [])
+      }
 
       // Plan 4 Gorev 7: sunucuda uretilen sifreli rapor. ACIKCA
       // karsilaniyor; asagidaki `/api/danisanlar` on ek eslesmesine
@@ -2914,27 +2932,70 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   it('401 kart YUKLENIRKEN gelirse yarim kart acilmaz', async () => {
     // Yarı dolu bir danışan kartı (rıza alanı boş görünen) "rıza alınmamış"
     // diye okunurdu — dosya aslında dolu olabilir.
+    //
+    // IMPORTANT-A düzeltmesi: eskiden `yetkisiz = true` TÜM istekleri 401
+    // yapıyordu — `dosyaGetir` hiçbir koşulda veri üretemediği için
+    // `DanisanDosyasi` zaten hiç MONTE OLAMIYORDU (yalnızca `kart.dosya
+    // !== null` iken çiziliyor, bkz. `DanisanlarSekmesi.tsx`) ve "yarım
+    // kart" riski hiç OLUŞAMIYORDU — test hiçbir şeyi ölçmüyordu (mutasyonla
+    // doğrulandı: `useDanisanDosyasi`nin 401 dalı TAMAMEN silinince takım
+    // yine 654/654 yeşil kalıyordu). Şimdi yalnızca EK LİSTESİ isteği
+    // (`Promise.all`'daki İKİNCİ istek) 401 dönüyor, `dosyaGetir` BAŞARILI
+    // kalıyor — gerçek yarım-kart senaryosu bu.
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await danisanlarSekmesineGec()
     await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
-    yetkisiz = true
+    ekIstegiYetkisiz = true
+    // Ek listesi isteği KAPIDA bekletiliyor: `dosyaGetir` başarıyla
+    // dönebilir ama `Promise.all` yine de tamamlanamaz. Bu, atomiklik
+    // mutasyonunu (üç isteği sıralı `await`e çevirip ilk yanıtı hemen
+    // state'e yazmak) YAKALAMAK için zorunlu — atomiklik BOZULSAYDI,
+    // `dosyaGetir` döner dönmez (ekler HÂLÂ uçuştayken) kart YARIM açılırdı
+    // ve bunu ancak TAM OLARAK bu pencerede, sonuç netleşmeden ÖNCE
+    // ölçebiliriz (bkz. `docs/test-yesil-ama-korumuyor.md` 6. biçim).
+    const k = kapi()
+    gecikmeler['GET /api/danisanlar/1/ekler'] = k.bekle
     await userEvent.click(cip('Ayşe Yılmaz'))
 
-    // CRITICAL-2 düzeltmesi: asıl kanıt dosyanın (kendi küçük şeridinin)
-    // HİÇ MONTE OLMAMASI — "Risk notunu göster" ve "onam kaydı yok" gibi
-    // içerikler zaten yalnızca "Bilgiler" alt sekmesinde basılıyor ve bu
-    // teste hiç geçilmiyor, yani onların yokluğu TEK BAŞINA bu testte
-    // hiçbir şey kanıtlamazdı (varsayılan "Seanslar" alt sekmesinde de
-    // görünmezlerdi — kart TAM açılsa bile). `DanisanDosyasi`'nin kendi
-    // şeridi (Seanslar/Bilgiler ikisi) MONTE OLMAMALI.
+    // BARİYER: `dosyaGetir` GERÇEKTEN döndü (kartın TEK BAŞARILI parçası),
+    // ek listesi ise hâlâ kapıda.
+    await waitFor(() => expect(istekYollari).toContain('GET /api/danisanlar/1'))
+    // BU ANDA BİLE (dosya geldi, ekler uçuşta) yarım kart AÇILMAMALI —
+    // atomiklik bozulsaydı burada telefon/şerit görünürdü.
+    expect(screen.queryByRole('tab', { name: 'Seanslar' })).toBeNull()
+    expect(document.body.textContent).not.toContain('0555 111 22 33')
+
+    // Ek listesi isteği şimdi serbest bırakılıyor; 401 olarak döner.
+    k.ac()
+
+    // (1) "yüklenemedi" uyarısı YOK: 401 genel bir sunucu hatası değil,
+    // oturum kapanmasıdır — `useDanisanDosyasi` bunu AYRI bir dalda
+    // (`YetkisizHata`) ele alır, `kart.hata`'ya YAZMAZ.
     await waitFor(() =>
-      expect(screen.queryByRole('tab', { name: 'Seanslar' })).toBeNull(),
+      expect(screen.queryByText(/Danışan dosyası yüklenemedi/)).toBeNull(),
     )
+    // (2) Dosya AÇILMADI: kendi küçük şeridi (Seanslar/Bilgiler) DOM'da
+    // yok, sağ kolon yönlendirme metnini gösteriyor — `Promise.all`
+    // atomikliği sayesinde `dosyaGetir`in BAŞARILI yanıtı da EKRANA
+    // SIZMIYOR.
+    expect(screen.queryByRole('tab', { name: 'Seanslar' })).toBeNull()
     expect(screen.queryByRole('tab', { name: 'Bilgiler' })).toBeNull()
+    expect(
+      screen.getByText('Bir danışanın dosyasını açmak için soldaki listeden bir danışan seçin.'),
+    ).toBeDefined()
     // İkinci savunma katmanı: gövdede hiçbir alan da yok.
     expect(document.body.textContent).not.toContain('RISK-NOTU-KANARYA')
     expect(document.body.textContent).not.toContain('0555 111 22 33')
     expect(screen.queryByText(/onam kaydı yok/i)).toBeNull()
+
+    // (3) `takvim.oturumKapandi()` GERÇEKTEN çağrıldı: Takvim sekmesindeki
+    // randevu listesi de temizlendi (Ayşe'nin bu haftaki randevusu artık
+    // ızgarada yok). Bu, `useDanisanDosyasi`'nin `onYetkisiz` geri
+    // çağrısının (`takvim.oturumKapandi`) gerçekten tetiklendiğinin —
+    // yalnızca kartın kendi state'ini değil, takvim seçimini de
+    // kapattığının — kanıtı.
+    await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
+    expect(screen.queryByRole('button', { name: 'Ayşe Yılmaz' })).toBeNull()
   })
 
   it('kart acikken aramadan seansa gidilince kart KAPANIR', async () => {
@@ -3251,6 +3312,16 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     )
 
     expect(istekYollari.filter((y) => y.includes('/api/saklama-suresi-dolanlar'))).toHaveLength(1)
+
+    // IMPORTANT-B düzeltmesi: yukarıdaki iddia Ayarlar'a hiç GERİ
+    // dönmüyordu — `cekildiRef` koruması (bkz. `useDanisanListesi.ts`)
+    // olmadan da (yalnızca `ayarlarGorunur` kontrolüyle) bu noktaya kadar
+    // TEK istek atılırdı, çünkü henüz Ayarlar'a İKİNCİ kez girilmemişti.
+    // Ayarlar → Takvim → Ayarlar tam turu: `cekildiRef` olmadan bu geçiş
+    // İKİNCİ bir SİLİNEMEZ görüntüleme kaydı bırakırdı.
+    await userEvent.click(screen.getByRole('tab', { name: /^Ayarlar/ }))
+    await screen.findByRole('region', { name: 'Saklama süresi dolan dosyalar' })
+    expect(istekYollari.filter((y) => y.includes('/api/saklama-suresi-dolanlar'))).toHaveLength(1)
   })
 
   it('depolama esigi asilinca uyari gorunur; asilmayinca GORUNMEZ', async () => {
@@ -3434,13 +3505,32 @@ describe('AnaEkran — yedekleme (tasarim §7)', () => {
 
   // IMPORTANT-1: `uyaran` bağlantısı (`AnaEkran.tsx` → `Sekmeler`) hiçbir
   // testte doğrudan ölçülmüyordu; `uyaran={undefined}` mutasyonu tüm takımı
-  // yeşil bırakıyordu (inceleme). İki yönlü test: yedek YOKKEN (klasör hiç
-  // seçilmemiş — KALICI olarak yedeksiz kalan gerçekçi durum, otomatik
-  // yedek denemesinin ANINDA başarıyla kapanabileceği `sunucuYedekleri=[]`
-  // durumunun aksine burada `yedek` state'i bir daha ASLA dolmuyor, yani
-  // test bir yarış koşuluna düşmüyor) nokta VAR; yedek VARKEN (ve hata
-  // yokken) YOK.
-  it('IMPORTANT-1: hic yedek yokken (klasor secilmemis) Ayarlar sekmesinin erisilebilir adinda uyari VAR', async () => {
+  // yeşil bırakıyordu (inceleme). İki yönlü test: nokta yedek YOKKEN VAR,
+  // yedek VARKEN (ve hata yokken) YOK.
+  //
+  // DÜZELTME (ikinci inceleme turu, MINOR): bu test aslında `yedekYok`
+  // dalını DEĞİL, `yedekleme.uyari` dalını sınıyor — `yedekListeHatasi`
+  // hem `yedek`i `null` bırakır (`yedekYok = true`) HEM DE `useYedekleme`
+  // effect'inin `catch`inde `uyari`yi doldurur (bkz. o dosyanın kaynağı),
+  // yani `AnaEkran.tsx`teki `ilgilenilmesiGereken = yedekYok ||
+  // yedekleme.uyari !== null` ifadesindeki `yedekYok`'u TEK BAŞINA
+  // yalıtmıyor. Bu, HOOK'UN TASARIMI GEREĞİ mümkün DEĞİL: `yedek` boş
+  // kalan HER yol (klasör hiç seçilmemiş → `listele()` hata verir → hem
+  // `yedek=null` HEM `uyari` dolar; klasör seçili ama liste boş → otomatik
+  // `al()` HEMEN tetiklenir → ya BAŞARILI olup `yedekYok`'u false'a
+  // düşürür ya da BAŞARISIZ olup `uyari`yi doldurur) `uyari`yi de
+  // beraberinde dolduruyor ya da `yedekYok`'u false'a çeviriyor; `yedek
+  // === null` VEYA `yedekler.length === 0` durup `uyari === null` kalan
+  // KARARLI bir durum `useYedekleme.ts`'nin bugünkü mantığında YOK.
+  // Dolayısıyla `yedekYok` dalı bu iki testten (IMPORTANT-1 + IMPORTANT-4)
+  // BAĞIMSIZ ölçülemiyor; ikisi birlikte `ilgilenilmesiGereken`in HER İKİ
+  // terimini de en az bir kez `true` yapıyor (mutasyon turunda ayrı ayrı
+  // doğrulandı — IMPORTANT-4'ün mutasyonu yalnızca `uyari` terimini
+  // kaldırıp IMPORTANT-1'i YEŞİL bıraktı), ki bu, formülün İKİ teriminin
+  // de gerçekten katkıda bulunduğunu (birinin ölü kod olmadığını) kanıtlar
+  // — yalnızca `yedekYok`ın TEK BAŞINA (uyari sıfırken) da tetikleyici
+  // olduğunu doğrudan göstermez.
+  it('IMPORTANT-1: yedek klasoru hic secilmemisken (yedek=null, ayrica uyari da dolar) Ayarlar sekmesinin erisilebilir adinda uyari VAR', async () => {
     yedekListeHatasi = 'Yedek klasörü henüz seçilmedi.'
     await ekraniAc()
     await waitFor(() =>

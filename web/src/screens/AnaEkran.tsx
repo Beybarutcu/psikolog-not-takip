@@ -219,6 +219,12 @@ export function AnaEkran({
   // nokta onun yerini tutmalı, yoksa terapist Ayarlar'ı açmadıkça disk dolu
   // uyarısından habersiz kalır.
   const ilgilenilmesiGereken = yedekYok || yedekleme.uyari !== null
+  // KAYIT İÇİN (bilinçli kapsam dışı bırakma): nokta `liste.saklamaDolanlar`ı
+  // KASITLI OLARAK kapsamıyor. Noktanın bunu bilebilmesi için saklama
+  // listesinin AÇILIŞTA (Ayarlar'a hiç girilmeden) sorgulanması gerekirdi —
+  // tam da IMPORTANT-3'ün kapattığı SİLİNEMEZ görüntüleme kaydını geri
+  // getirir. Hatırlatma yalnızca Ayarlar'da, kullanıcı oraya gittiğinde
+  // görünür; "noktaya saklamayı da ekleyelim" IMPORTANT-3'ü YENİDEN AÇAR.
 
   return (
     <div className="p-8">

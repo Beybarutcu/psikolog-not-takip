@@ -13,9 +13,9 @@ import { RandevuPaneli } from './RandevuPaneli'
  * Takvim sekmesi: ürünün asıl işi (Görev 3 ürün kararı). Eskiden takvim ana
  * ekranın EN ALTINDA, ay özeti kutusunun ve yedekleme/parola panellerinin
  * ARKASINDA duruyordu — bu bileşen onu kendi sekmesine alıp en üste
- * çıkarıyor. Sekme geçişi (hangi sekmenin göründüğü) henüz burada
- * BAĞLANMIYOR; bu Görev 8'in işi (bkz. `AnaEkran.tsx` modül başlığı) —
- * bu bileşen şimdilik AnaEkran tarafından her zaman çizilen tek bölüm.
+ * çıkarıyor. Sekme geçişi (hangi sekmenin göründüğü) `AnaEkran`da bağlanır
+ * (Görev 8, bkz. o dosyanın modül başlığı): bu bileşen yalnızca `sekme ===
+ * 'takvim'` iken monte edilir, kendi görünürlüğünü BİLMEZ.
  *
  * # `aramaApi` ve `takvimApi` neden PROP DEĞİL
  *

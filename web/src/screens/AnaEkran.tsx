@@ -1,10 +1,13 @@
 import { useState } from 'react'
 import { danisanApi } from '../api'
 import { AyarlarSekmesi } from '../ayarlar/AyarlarSekmesi'
-import { DosyaBilgileri } from '../danisan/DosyaBilgileri'
+import { DanisanlarSekmesi } from '../danisan/DanisanlarSekmesi'
+import { Sekmeler } from '../kabuk/Sekmeler'
+import { ACILIS_SEKMESI, type SekmeKodu } from '../kabuk/sekme'
 import { TakvimSekmesi } from '../takvim/TakvimSekmesi'
 import { useDanisanDosyasi } from './anaEkranKancalari/useDanisanDosyasi'
 import { useDanisanListesi } from './anaEkranKancalari/useDanisanListesi'
+import { useDanisanSeanslari } from './anaEkranKancalari/useDanisanSeanslari'
 import { useParolaFormu } from './anaEkranKancalari/useParolaFormu'
 import { useSeansNotlari } from './anaEkranKancalari/useSeansNotlari'
 import { useTakvimAkisi } from './anaEkranKancalari/useTakvimAkisi'
@@ -12,39 +15,59 @@ import { useYedekleme } from './anaEkranKancalari/useYedekleme'
 import { yerelGun } from './anaEkranKancalari/yerelGun'
 
 /**
- * Ana ekran: takvim, danışan listesi, danışan kartı, seans paneli, yedekleme
- * ve parola bölümlerini bir arada tutar.
+ * Ana ekran: sekme kabuğu (Takvim / Danışanlar / Ayarlar) + tüm veri
+ * akışlarının kancaları.
  *
  * # Veri akışları KANCALARDA, ekran yalnızca bağlıyor
  *
- * Beş ayrı yükleme akışı var ve her birinin kendi yaşam döngüsü kuralları
+ * Altı ayrı yükleme akışı var ve her birinin kendi yaşam döngüsü kuralları
  * (`store::audit` hacim politikası yüzünden hangi isteğin ne zaman
  * atılabileceği, 401'de neyin ekrandan silineceği, geciken yanıtların hangi
  * state'i ezmeyeceği). Hepsi tek bir bileşende dokuz `useEffect` olarak
- * durduğunda bir akışın kuralını okumak için diğer dördünü de okumak
+ * durduğunda bir akışın kuralını okumak için diğer beşini de okumak
  * gerekiyordu. Ayrım akış başına:
  *
- *   - `useTakvimAkisi`   — görünen haftanın randevuları ve SEÇİM (omurga)
- *   - `useSeansNotlari`  — açık seansın resmî notu, geçmişi ve özel notu
- *   - `useDanisanDosyasi`— açık danışan kartı, ekleri ve depolama durumu
- *   - `useDanisanListesi`— danışan listesi, ekleme, arşivleme, saklama uyarısı
- *   - `useYedekleme`     — otomatik/elle yedek ve KALICI uyarı
- *   - `useParolaFormu`   — parola değiştirme (yükleme değil, ama kendi başına
- *                          bir akış; parolalar form kapanınca siliniyor)
+ *   - `useTakvimAkisi`     — görünen haftanın randevuları ve SEÇİM (omurga)
+ *   - `useSeansNotlari`    — açık seansın resmî notu, geçmişi ve özel notu
+ *   - `useDanisanDosyasi`  — açık danışan kartı, ekleri ve depolama durumu
+ *   - `useDanisanListesi`  — danışan listesi, ekleme, arşivleme, saklama uyarısı
+ *   - `useDanisanSeanslari`— açık danışanın Seanslar alt sekmesindeki listesi
+ *   - `useYedekleme`       — otomatik/elle yedek ve KALICI uyarı
+ *   - `useParolaFormu`     — parola değiştirme (yükleme değil, ama kendi başına
+ *                            bir akış; parolalar form kapanınca siliniyor)
  *
- * # 401 temizliği İKİ YÖNLÜ ve bu yüzden burada bağlanıyor
+ * # 401 temizliği İKİ (aslında ÜÇ) YÖNLÜ ve bu yüzden burada bağlanıyor
  *
- * Takvim yüklemesi 401 alırsa açık danışan kartı da kapanmalı; seans ve
- * danışan akışları 401 alırsa takvim seçimi kapanmalı. İki kanca birbirini
- * doğrudan göremez, dolayısıyla bağ burada, geri çağrılarla kuruluyor.
- * Kancalar bu geri çağrıları içeride bir `ref`te tutuyor — böylece efekt
- * bağımlılıkları İLKEL kimliklerle sınırlı kalıyor ve her render yeni bir
- * istek atmıyor (silinemez `goruntuleme` satırları).
+ * Takvim yüklemesi 401 alırsa açık danışan kartı da kapanmalı; seans, danışan
+ * ve seans-listesi akışları 401 alırsa takvim seçimi kapanmalı. Kancalar
+ * birbirini doğrudan göremez, dolayısıyla bağ burada, geri çağrılarla
+ * kuruluyor. Kancalar bu geri çağrıları içeride bir `ref`te tutuyor — böylece
+ * efekt bağımlılıkları İLKEL kimliklerle sınırlı kalıyor ve her render yeni
+ * bir istek atmıyor (silinemez `goruntuleme` satırları).
  *
- * Temizliğin KAPSAMI akışa göre farklı ve bilerek öyle: seans/özel not 401'i
- * yalnızca takvim seçimini kapatır (açık kart hassas veri göstermiyor
- * demek değil — kart kendi isteğini attığında kendi 401'ini alır), takvim ve
- * kart 401'i ikisini birden kapatır.
+ * Temizliğin KAPSAMI akışa göre farklı ve bilerek öyle: seans/özel not/seans-
+ * listesi 401'i yalnızca takvim seçimini kapatır (açık kart hassas veri
+ * göstermiyor demek değil — kart kendi isteğini attığında kendi 401'ini
+ * alır), takvim ve kart 401'i ikisini birden kapatır.
+ *
+ * # Sekme kabuğu — Görev 8
+ *
+ * `sekme` state'i BURADA yaşıyor: hangi panelin (Takvim/Danışanlar/Ayarlar)
+ * göründüğü, açık danışan dosyasının hangi akışları tetiklediğiyle (401
+ * temizliği, `danisanaGit`) iç içe. Yalnızca SEÇİLİ sekmenin paneli monte
+ * edilir (`DanisanDosyasi`'nin kendi Seanslar/Bilgiler alt sekmeleriyle AYNI
+ * desen) — üç panel birden ayakta tutulsaydı üçü de kendi `useEffect`
+ * zincirini çalıştırır, görünmeyen bir sekmenin verisi de sürekli tazelenirdi
+ * (ör. takvim görünmüyorken bile haftalık randevu isteği atması).
+ *
+ * `danisanaGit(clientId)` TEK giriş noktası: sekme state'i burada, açık
+ * danışan dosyası `useDanisanDosyasi`'de — biri diğerini görmediği için bu
+ * fonksiyon ikisini birleştiriyor. Danışana giden HER yol (takvimdeki
+ * randevu çipi, hızlı arama, ay özetindeki borçlu satırı, danışan
+ * listesindeki çip, saklama süresi hatırlatması) AYNI fonksiyonu çağırıyor;
+ * ayrı bir "yalnızca sekme değiştir" ya da "yalnızca dosya aç" yolu YOK —
+ * biri unutulup diğeri çağrılırsa (ör. dosya açılır ama sekme değişmez)
+ * kullanıcı Takvim sekmesinde kalır ve hiçbir şey olmamış sanır.
  */
 export function AnaEkran({
   kilitle,
@@ -64,6 +87,10 @@ export function AnaEkran({
   const takvim = useTakvimAkisi({ onYetkisiz: () => dosya.kapat() })
   const liste = useDanisanListesi()
   const dosya = useDanisanDosyasi({ onYetkisiz: () => takvim.oturumKapandi() })
+  const seanslar = useDanisanSeanslari({
+    clientId: dosya.seciliDanisanId,
+    onYetkisiz: () => takvim.oturumKapandi(),
+  })
   const yedekleme = useYedekleme()
   const seansAkisi = useSeansNotlari({
     randevu: takvim.seciliRandevu,
@@ -86,15 +113,26 @@ export function AnaEkran({
   // bir taze istek atar.
   const [ozetTazeleme, setOzetTazeleme] = useState(0)
 
-  const { seciliDanisanId, kart } = dosya
-  // Yerel değişkene alınıyor: `liste.arsivOnayi` üzerinden daralan tür bir
-  // callback'in içine taşınmaz (TS özelliği bir yana, onay metniyle
-  // "Evet, arşivle"nin AYNI danışanı görmesi bu satırla garanti).
-  const { arsivOnayi } = liste
+  // Sekme kabuğu (bkz. modül başlığı). `ACILIS_SEKMESI`: uygulamanın amacı
+  // takvim, terapist her açılışta önce başka bir sekmeyi geçmek zorunda
+  // kalmamalı.
+  const [sekme, setSekme] = useState<SekmeKodu>(ACILIS_SEKMESI)
 
-  function danisanKartiAc(clientId: number) {
+  /**
+   * Danışan dosyasına giden TEK yol (bkz. modül başlığı). Eski adı
+   * `danisanKartiAc`'tı; Görev 8 sekmeyi de değiştirdiği için yeniden
+   * adlandırıldı — davranış (arşiv bilgisini temizle, dosyayı aç) AYNEN
+   * korunuyor, yalnızca `setSekme('danisanlar')` EKLENDİ.
+   *
+   * Danışanlar sekmesindeyken bir çipe tıklamak da AYNI fonksiyonu çağırır:
+   * `setSekme('danisanlar')` o durumda no-op'tur (zaten o sekmedeyiz), ayrı
+   * bir dal yazmak yalnızca iki farklı davranışın senkron kalması riskini
+   * eklerdi.
+   */
+  function danisanaGit(clientId: number) {
     liste.setArsivBilgisi(null)
     dosya.ac(clientId)
+    setSekme('danisanlar')
   }
 
   /**
@@ -102,7 +140,10 @@ export function AnaEkran({
    * içinde SUNUCUDAN GELEN listeden kurulur (bkz. `bekleyenSeans`).
    *
    * Açık danışan kartı burada kapatılıyor: kartın state'i başka bir kancada
-   * ve gidilen seans başka bir danışana ait olabilir.
+   * ve gidilen seans başka bir danışana ait olabilir. Sekme DEĞİŞTİRİLMİYOR:
+   * hızlı arama yalnızca `TakvimSekmesi`nin İÇİNDE render ediliyor (bkz. o
+   * dosyadaki `HizliArama` çağrısı), yani bu fonksiyon zaten yalnızca Takvim
+   * sekmesi açıkken tetiklenebilir.
    */
   function seansaGit(appointmentId: number, tarih: string) {
     takvim.seansaGit(appointmentId, tarih)
@@ -144,223 +185,84 @@ export function AnaEkran({
     return danisanApi.veriRaporuIndir(danisanId, parola, yerelGun(new Date()))
   }
 
+  // Ayarlar sekmesinde çıkacak uyarı noktası (bkz. `kabuk/Sekmeler.tsx`
+  // modül başlığı — tasarım §4: "hiç yedek alınmamışsa bu bir sarı kutu
+  // olarak ana ekranı işgal etmez, Ayarlar sekmesinde bir nokta olarak
+  // durur"). `yedekleme.yedek === null`: henüz hiç yanıt gelmedi YA DA klasör
+  // hiç seçilmedi; `yedekler.length === 0`: klasör seçili ama liste boş —
+  // ikisi de "şu an güvenilir bir yedek yok" anlamına gelir ve nokta AYNI
+  // şekilde görünür.
+  const yedekYok = yedekleme.yedek === null || yedekleme.yedek.yedekler.length === 0
+
   return (
     <div className="p-8">
       <h1 className="mb-4 text-2xl font-semibold">Terapi Notları</h1>
 
-      {/* Takvim ürünün asıl işi (Görev 3 ürün kararı): eskiden ekranın EN
-          ALTINDAYDI, ay özeti kutusunun ve yedekleme/parola panellerinin
-          ARKASINDA. Hızlı arama, ay özeti düğmesi ve Kilitle de bu bileşenin
-          İÇİNDE — bkz. `TakvimSekmesi.tsx` modül başlığı. Sekme geçişi henüz
-          bağlı değil (Görev 8'de bağlanacak); bu bileşen şimdilik eskisiyle
-          aynı yerde (en üstte) her zaman çiziliyor. */}
-      <TakvimSekmesi
-        takvim={takvim}
-        seansAkisi={seansAkisi}
-        ozet={{ bugun: yerelGun(new Date()), disTazeleme: ozetTazeleme }}
-        danisanlar={liste.danisanlar}
-        onDanisanAc={danisanKartiAc}
-        onSeansSec={seansaGit}
-        onDurumDegis={durumDegis}
-        onOdemeDegis={odemeDegis}
-        kilitle={kilitle}
-      />
+      <Sekmeler secili={sekme} onSecim={setSekme} uyaran={yedekYok ? 'ayarlar' : undefined} />
 
-      <div className="mb-4">
-        <div className="flex items-center gap-3">
-          <span className="text-sm font-medium text-slate-600">Danışanlar</span>
-          <button
-            className="rounded border px-3 py-1 text-sm"
-            onClick={() => liste.setFormAcik((acik) => !acik)}
-          >
-            Danışan ekle
-          </button>
+      {sekme === 'takvim' && (
+        <div
+          role="tabpanel"
+          id="sekme-panel-takvim"
+          aria-labelledby="sekme-takvim"
+          className="mt-4"
+        >
+          {/* Takvim ürünün asıl işi (Görev 3 ürün kararı). Hızlı arama, ay
+              özeti düğmesi ve Kilitle de bu bileşenin İÇİNDE — bkz.
+              `TakvimSekmesi.tsx` modül başlığı. */}
+          <TakvimSekmesi
+            takvim={takvim}
+            seansAkisi={seansAkisi}
+            ozet={{ bugun: yerelGun(new Date()), disTazeleme: ozetTazeleme }}
+            danisanlar={liste.danisanlar}
+            onDanisanAc={danisanaGit}
+            onSeansSec={seansaGit}
+            onDurumDegis={durumDegis}
+            onOdemeDegis={odemeDegis}
+            kilitle={kilitle}
+          />
         </div>
+      )}
 
-        {liste.formAcik && (
-          <div className="mt-2 flex items-end gap-2">
-            <div>
-              <label className="block text-sm" htmlFor="yeni-danisan-ad-soyad">
-                Ad soyad
-              </label>
-              <input
-                id="yeni-danisan-ad-soyad"
-                className="mt-1 rounded border p-2"
-                value={liste.yeniAdSoyad}
-                onChange={(e) => liste.setYeniAdSoyad(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="block text-sm" htmlFor="yeni-danisan-telefon">
-                Telefon
-              </label>
-              <input
-                id="yeni-danisan-telefon"
-                className="mt-1 rounded border p-2"
-                value={liste.yeniTelefon}
-                onChange={(e) => liste.setYeniTelefon(e.target.value)}
-              />
-            </div>
-            <button
-              className="rounded bg-slate-900 px-3 py-2 text-sm text-white"
-              onClick={() => void liste.ekle()}
-            >
-              Ekle
-            </button>
-          </div>
-        )}
+      {sekme === 'danisanlar' && (
+        <div
+          role="tabpanel"
+          id="sekme-panel-danisanlar"
+          aria-labelledby="sekme-danisanlar"
+          className="mt-4"
+        >
+          <DanisanlarSekmesi
+            liste={liste}
+            dosya={dosya}
+            seanslar={seanslar.seanslar}
+            yuklendi={seanslar.yuklendi}
+            onDanisanSec={danisanaGit}
+            veriRaporuIndir={veriRaporuIndir}
+          />
+        </div>
+      )}
 
-        {liste.hata && <p className="mt-1 text-sm text-red-600">{liste.hata}</p>}
-        {/* `role="status"`: arşivleme sonucu ekranda sessizce beliriyordu.
-            Ekran okuyucu kullanıcısı düğmeye bastıktan sonra hiçbir şey
-            duymuyor, danışanın listeden düşmesini de göremiyordu. Kibar
-            (`polite`) duyuru, kullanıcının o an yazdığı şeyi kesmeden işlemin
-            olduğunu söyler. */}
-        {liste.arsivBilgisi && (
-          <p role="status" className="mt-1 text-sm text-slate-600">
-            {liste.arsivBilgisi}
-          </p>
-        )}
-
-        {liste.danisanlar.length > 0 && (
-          <ul className="mt-2 flex flex-wrap gap-2 text-sm text-slate-700">
-            {liste.danisanlar.map((d) => (
-              <li
-                key={d.id}
-                className="flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1"
-              >
-                {/* Erişilebilir ad "Ayşe Yılmaz dosyasını aç": takvimdeki
-                    randevu bloğunun adı düz "Ayşe Yılmaz" ve iki özdeş adlı
-                    düğme hem ekran okuyucu kullanıcısını hem de ada göre
-                    arayan testleri belirsiz bırakırdı (aynı gerekçe
-                    yanındaki "Arşivle" düğmesinde). */}
-                <button
-                  type="button"
-                  className="underline"
-                  aria-label={`${d.ad_soyad} dosyasını aç`}
-                  onClick={() => danisanKartiAc(d.id)}
-                >
-                  {d.ad_soyad}
-                </button>
-                {/* Erişilebilir ad danışanın ADINI taşır. Önceki hâlinde her
-                    satırdaki düğmenin adı yalnızca "Arşivle" idi: listede on
-                    danışan varken ekran okuyucu kullanıcısı on özdeş düğme
-                    duyuyor, hangisinin kime ait olduğunu yalnızca GÖRSEL
-                    bağlamdan (yanındaki isim) çıkarabiliyordu -- bu, yıkıcı
-                    bir işlemde kabul edilemez.
-                    Eski gerekçe (takvimdeki randevu düğmesiyle ad çakışması)
-                    burada geçerli değil: randevu bloğunun erişilebilir adı
-                    düz "Ayşe Yılmaz", buranınki "Ayşe Yılmaz adlı danışanı
-                    arşivle" -- ad ile arama yapan testler ve kullanıcı ikisini
-                    ayırt eder. Görünen metin kısa kalıyor (`Arşivle`); değişen
-                    yalnızca erişilebilir ad. */}
-                <button
-                  type="button"
-                  className="text-slate-500 underline disabled:opacity-50"
-                  aria-label={`${d.ad_soyad} adlı danışanı arşivle`}
-                  title="Danışanı arşivle"
-                  disabled={liste.arsivSuruyor}
-                  onClick={() => {
-                    liste.setArsivBilgisi(null)
-                    liste.setArsivOnayi(d)
-                  }}
-                >
-                  Arşivle
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {/* İki adımlı onay. Metin ne olduğunu ve ne OLMADIĞINI birlikte
-            söylüyor: kullanıcı ne "sildim, gitti" ne de "hiçbir şey olmadı"
-            sanmalı. */}
-        {arsivOnayi && (
-          <div className="mt-2 rounded bg-amber-50 p-2">
-            <p className="text-sm text-amber-900">
-              {arsivOnayi.ad_soyad} arşivlensin mi? Danışan listeden ve randevu seçiminden
-              kaldırılır. Geçmiş randevuları, notları ve dosyaları silinmez — kayıtlar
-              durmaya devam eder, yalnızca listede görünmez.
-            </p>
-            <div className="mt-2 flex gap-2">
-              <button
-                className="rounded bg-amber-700 px-3 py-1 text-sm text-white disabled:opacity-50"
-                disabled={liste.arsivSuruyor}
-                onClick={() => void liste.arsivle(arsivOnayi)}
-              >
-                Evet, arşivle
-              </button>
-              <button
-                className="rounded border px-3 py-1 text-sm"
-                disabled={liste.arsivSuruyor}
-                onClick={() => liste.setArsivOnayi(null)}
-              >
-                Vazgeç
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Yedekleme, parola, depolama ve saklama panelleri Ayarlar sekmesine
-          taşındı (Görev 2, ürün kararı: asıl iş olan takvim en altta
-          kalıyordu). Kancalar burada kalıyor — yalnızca prop olarak
-          geçiriliyor — çünkü 401 temizliği iki yönlü ve bu dosyada bağlanıyor
-          (bkz. modül başlığı). Sekme geçişi henüz bağlı değil (Görev 3-8'de
-          bağlanacak); bu bileşen şimdilik eskisiyle aynı yerde çiziliyor. */}
-      <AyarlarSekmesi
-        yedekleme={yedekleme}
-        parola={parola}
-        saklama={{ dolanlar: liste.saklamaDolanlar, onAc: danisanKartiAc }}
-        depolama={dosya.depolama}
-        onGeriYukle={onGeriYukle}
-      />
-
-      {seciliDanisanId !== null &&
-        (kart.hata !== null ? (
-          // Yükleme başarısızsa kart AÇILMAZ: yarı dolu bir danışan kartı
-          // (rıza alanı boş görünen) "rıza alınmamış" diye okunurdu.
-          <div role="alert" className="mt-4 rounded border border-red-300 bg-red-50 p-3">
-            <p className="text-sm text-red-800">Danışan dosyası yüklenemedi. {kart.hata}</p>
-            <button
-              type="button"
-              className="mt-2 rounded border border-red-300 px-2 py-1 text-sm"
-              onClick={dosya.yenidenDene}
-            >
-              Yeniden dene
-            </button>
-          </div>
-        ) : (
-          kart.dosya !== null && (
-            <DosyaBilgileri
-              // İKİNCİL HAT — bugün ULAŞILAMAZ, bilerek duruyor.
-              //
-              // Birincil hat `useDanisanDosyasi`'ndeki `kart` türetmesi + bu
-              // koşullu render: danışan değişince `kart.dosya` `null` olur ve
-              // kart zaten UNMOUNT edilir, yani bu `key` hiçbir zaman
-              // değişerek bir remount tetiklemez (kaldırıldığında hiçbir test
-              // kırılmaz — ölçülmüş). Birincil hattın ölçüldüğü yer:
-              // `AnaEkran.test.tsx` > "baska danisana gecince onceki kartin
-              // verisi EKRANDA KALMAZ".
-              //
-              // Satır yine de duruyor: türetme bir gün "kartı monte tut,
-              // yalnızca içeriği değiştir" biçiminde gevşetilirse `key` o
-              // anda yük taşımaya başlar ve maliyeti sıfır. Sentetik
-              // `rerender` testleri (`DosyaBilgileri.test.tsx` > "ikincil
-              // hat") tam olarak o senaryoyu ölçüyor.
-              key={`danisan-${kart.dosya.id}`}
-              danisan={kart.dosya}
-              ekler={kart.ekler}
-              randevular={kart.randevular}
-              bugun={yerelGun(new Date())}
-              veriRaporuIndir={veriRaporuIndir}
-              ekYukle={dosya.ekYukle}
-              ekSil={dosya.ekSil}
-              onRizaKaydet={dosya.rizaKaydet}
-              onKapat={dosya.kapat}
-            />
-          )
-        ))}
+      {sekme === 'ayarlar' && (
+        <div
+          role="tabpanel"
+          id="sekme-panel-ayarlar"
+          aria-labelledby="sekme-ayarlar"
+          className="mt-4"
+        >
+          {/* Yedekleme, parola, depolama ve saklama panelleri Ayarlar
+              sekmesinde (Görev 2, ürün kararı: asıl iş olan takvim en altta
+              kalıyordu). Kancalar burada kalıyor — yalnızca prop olarak
+              geçiriliyor — çünkü 401 temizliği bu dosyada bağlanıyor (bkz.
+              modül başlığı). */}
+          <AyarlarSekmesi
+            yedekleme={yedekleme}
+            parola={parola}
+            saklama={{ dolanlar: liste.saklamaDolanlar, onAc: danisanaGit }}
+            depolama={dosya.depolama}
+            onGeriYukle={onGeriYukle}
+          />
+        </div>
+      )}
     </div>
   )
 }

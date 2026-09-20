@@ -28,6 +28,7 @@ const SUNUCULAR = [
   { ad: 'takvim', spec: 'takvim.spec.ts', port: 7702 },
   { ad: 'yedekleme', spec: 'yedekleme.spec.ts', port: 7703 },
   { ad: 'odeme', spec: 'odeme.spec.ts', port: 7704 },
+  { ad: 'kabuk', spec: 'kabuk.spec.ts', port: 7705 },
 ] as const
 
 // Bir spec dosyası hiçbir projeye bağlı değilse Playwright onu SESSİZCE

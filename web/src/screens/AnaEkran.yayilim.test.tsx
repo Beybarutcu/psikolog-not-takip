@@ -409,6 +409,50 @@ describe('C1 — resmî not iki ekranda TEK yazma yolundan', () => {
     await waitFor(() => expect(putlar(202).length).toBe(once + 1))
     expect((putlar(202)[once].govde as NotKaydi).icerik).toBe('ESKI D!')
   })
+  // `useSeansNotlari` `yazmaSaati`nin dördüncü kullanıcısı: takvim panelinin not
+  // okuması ESKİ metni okuyup geç dönerken dosyanın tahliyesi biterse takvim
+  // editörü eski metinle açılmamalı (taslak o sırada temizlenmiş olur —
+  // tek savunma saat).
+  it('ters yarış D: takvim panelinin not GET\'i eski metni okuyup geç dönerken dosya tahliyesi biterse takvim YENİ metni gösterir', async () => {
+    notlar[202] = { sablon: 'serbest', icerik: 'ESKI' }
+    ciz()
+    await danisanlarda()
+    await userEvent.click(listeSatiri('14 Eylül 2026, 10:00'))
+    await waitFor(() => expect(editor().value).toBe('ESKI'))
+    const kPut = kapi()
+    const kGet = kapi()
+    onceBekle['PUT /api/randevular/202/not'] = kPut.bekle
+    sonraBekle['GET /api/randevular/202/not'] = kGet.bekle
+    await userEvent.type(editor(), ' D')
+    await takvimeDon()
+    await userEvent.click(await screen.findByRole('button', { name: 'Sonraki hafta' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    // BARİYER: takvimin GET'i sunucuda ESKİ metni okudu, yanıt yolda.
+    await waitFor(() => expect(notGetleri(202).length).toBe(2))
+    expect(notlar[202].icerik).toBe('ESKI')
+
+    kPut.ac()
+    await waitFor(() => expect(notlar[202].icerik).toBe('ESKI D'))
+    await new Promise((r) => setTimeout(r, 30))
+    kGet.ac()
+    await waitFor(() => expect(editor().value).toBe('ESKI D'))
+  })
+
+  it('dosyada ESKİ bir seansın notu düzeltilince takvim panelinin "Önceki seans notları" kopyası da tazelenir', async () => {
+    notlar[201] = { sablon: 'serbest', icerik: 'ilk hali' }
+    ciz()
+    await takvimde202Ac()
+    await paneldenDosyayaGit()
+    await userEvent.click(listeSatiri('7 Eylül 2026, 10:00'))
+    await waitFor(() => expect(editor().value).toBe('ilk hali'))
+    await userEvent.type(editor(), ' duzeltildi')
+    await kaydedildiBekle()
+
+    await takvimeDon()
+    const gecmis = await screen.findByRole('region', { name: 'Önceki seans notları' })
+    await userEvent.click(within(gecmis).getByRole('button', { name: /7 Eylül 2026, 10:00/ }))
+    expect(gecmis.textContent).toContain('ilk hali duzeltildi')
+  })
 })
 
 describe('C2 — durum/ödeme yazmaları iki ekranda TEK yoldan', () => {

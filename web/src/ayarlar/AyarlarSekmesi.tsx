@@ -80,7 +80,14 @@ type Props = {
  */
 export function AyarlarSekmesi({ yedekleme, parola, saklama, depolama, onGeriYukle }: Props) {
   return (
-    <div>
+    // `data-testid`: `TakvimSekmesi`/`DanisanlarSekmesi` ile AYNI desen —
+    // sekme izolasyonu testinin (`AnaEkran.test.tsx`) bu köke ihtiyacı var.
+    // `getByRole` tabanlı bir sorgu `hidden` özniteliğini (erişilebilirlik
+    // ağacından) ATLAR; bir mutasyon paneli koşulsuz monte edip yalnızca
+    // `hidden` ile gizlese `queryByRole` yine de `null` döner ve testi
+    // YANILTIRDI (inceleme IMPORTANT-2). `data-testid` sorgusu `hidden`'ı
+    // GÖRMEZDEN GELMEZ, gerçek DOM varlığını ölçer.
+    <div data-testid="ayarlar-sekmesi">
       <h2 className="mb-4 text-xl font-semibold">Ayarlar</h2>
 
       {/* SAKLAMA HATIRLATMASI — tasarım §7: "süresi dolan dosyalar ana

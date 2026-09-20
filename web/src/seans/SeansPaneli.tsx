@@ -93,6 +93,14 @@ type Props = {
   onOzelYenidenDene?: () => void
   onKapat: () => void
   /**
+   * Başlıktaki danışan adına tıklanınca çağrılır: Danışanlar sekmesi bu
+   * danışanın dosyasıyla açılır (bkz. `AnaEkran.tsx::danisanaGit` — inceleme
+   * CRITICAL-1: Görev 8 öncesi takvimden danışana giden TEK yol hızlı arama
+   * ve ay özetiydi; seçili bir randevunun panelinden doğrudan danışana
+   * gitmenin yolu YOKTU, brief'in Adım 1'i buydu).
+   */
+  onDanisanAc: (clientId: number) => void
+  /**
    * Alt satırdaki durum düğmesi (`geldi` / `gelmedi` / `iptal`). Seçili
    * düğme `randevu.durum`'dan okunur, yerel kopyadan DEĞİL: çağıran taraf
    * başarıda seçili randevunun kopyasını aynı kimlikle tazeliyor ve panel
@@ -128,6 +136,7 @@ export function SeansPaneli({
   onKapat,
   onDurumDegis,
   onOdemeDegis,
+  onDanisanAc,
 }: Props) {
   const [sekme, setSekme] = useState<'resmi' | 'ozel'>('resmi')
   const ozelAcik = sekme === 'ozel'
@@ -185,7 +194,19 @@ export function SeansPaneli({
             Seans
           </h2>
           <p className="text-sm text-slate-600">
-            {randevu.danisan_adi} — {zamanMetni(randevu.baslangic)}
+            {/* CRITICAL-1: takvimden danışana giden yol. Erişilebilir ad
+                danışan listesindeki çiple AYNI kalıp ("… dosyasını aç") —
+                iki farklı yoldan gelen iki buton aynı işi aynı isimle
+                anlatmalı. */}
+            <button
+              type="button"
+              className="underline"
+              aria-label={`${randevu.danisan_adi} dosyasını aç`}
+              onClick={() => onDanisanAc(randevu.client_id)}
+            >
+              {randevu.danisan_adi}
+            </button>{' '}
+            — {zamanMetni(randevu.baslangic)}
           </p>
         </div>
         <button type="button" className="rounded border px-3 py-1 text-sm" onClick={onKapat}>

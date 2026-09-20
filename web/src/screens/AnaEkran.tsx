@@ -56,17 +56,27 @@ import { yerelGun } from './anaEkranKancalari/yerelGun'
  * göründüğü, açık danışan dosyasının hangi akışları tetiklediğiyle (401
  * temizliği, `danisanaGit`) iç içe. Yalnızca SEÇİLİ sekmenin paneli monte
  * edilir (`DanisanDosyasi`'nin kendi Seanslar/Bilgiler alt sekmeleriyle AYNI
- * desen) — üç panel birden ayakta tutulsaydı üçü de kendi `useEffect`
- * zincirini çalıştırır, görünmeyen bir sekmenin verisi de sürekli tazelenirdi
- * (ör. takvim görünmüyorken bile haftalık randevu isteği atması).
+ * desen) — bunun kazancı, panelin İÇİNDE yaşayan durumlar (ör.
+ * `TakvimSekmesi`'ndeki `ozetAcik`, `DanisanDosyasi`'nin alt sekme seçimi)
+ * için gerçek: görünmeyen bir sekmenin interaktif öğeleri DOM'da aynı anda
+ * durmaz (mutasyon 3'ün ölçtüğü kural, bkz. `AnaEkran.test.tsx` "sekme
+ * izolasyonu"). Kancaların KENDİSİ (`useTakvimAkisi`, `useYedekleme` vb.)
+ * BURADA, AnaEkran'da yaşadığı için panel montajından BAĞIMSIZ çalışmaya
+ * devam eder — bu yüzden IMPORTANT-3: saklama süresi dolanlar isteği gibi,
+ * SİLİNEMEZ bir denetim kaydı yazan bir isteği görünmeyen bir sekmede
+ * durdurmak için panel montajına güvenilemez, kancaya AÇIKÇA bir
+ * `ayarlarGorunur` parametresi geçmek gerekiyor (bkz. `useDanisanListesi`
+ * çağrısı aşağıda).
  *
  * `danisanaGit(clientId)` TEK giriş noktası: sekme state'i burada, açık
  * danışan dosyası `useDanisanDosyasi`'de — biri diğerini görmediği için bu
- * fonksiyon ikisini birleştiriyor. Danışana giden HER yol (takvimdeki
- * randevu çipi, hızlı arama, ay özetindeki borçlu satırı, danışan
- * listesindeki çip, saklama süresi hatırlatması) AYNI fonksiyonu çağırıyor;
- * ayrı bir "yalnızca sekme değiştir" ya da "yalnızca dosya aç" yolu YOK —
- * biri unutulup diğeri çağrılırsa (ör. dosya açılır ama sekme değişmez)
+ * fonksiyon ikisini birleştiriyor. Danışana giden HER yol (seans
+ * panelindeki danışan adı düğmesi — bkz. `SeansPaneli.tsx`, inceleme
+ * CRITICAL-1: randevu ÇİPİNİN kendisi DEĞİL, çip yalnızca seansı seçer —
+ * hızlı arama, ay özetindeki borçlu satırı, danışan listesindeki çip,
+ * saklama süresi hatırlatması) AYNI fonksiyonu çağırıyor; ayrı bir
+ * "yalnızca sekme değiştir" ya da "yalnızca dosya aç" yolu YOK — biri
+ * unutulup diğeri çağrılırsa (ör. dosya açılır ama sekme değişmez)
  * kullanıcı Takvim sekmesinde kalır ve hiçbir şey olmamış sanır.
  */
 export function AnaEkran({
@@ -82,10 +92,23 @@ export function AnaEkran({
    */
   onGeriYukle: () => void
 }) {
+  // Sekme kabuğu (bkz. modül başlığı). `ACILIS_SEKMESI`: uygulamanın amacı
+  // takvim, terapist her açılışta önce başka bir sekmeyi geçmek zorunda
+  // kalmamalı. Diğer kancalardan ÖNCE tanımlanıyor: `liste`nin saklama
+  // hatırlatması isteği (IMPORTANT-3) `sekme === 'ayarlar'` değerine ihtiyaç
+  // duyuyor.
+  const [sekme, setSekme] = useState<SekmeKodu>(ACILIS_SEKMESI)
+
   // `dosya` aşağıda tanımlanıyor; closure çağrıldığı anda okunuyor, bu
   // yüzden kancaların bildirim sırası bir kısıt değil (bkz. modül başlığı).
   const takvim = useTakvimAkisi({ onYetkisiz: () => dosya.kapat() })
-  const liste = useDanisanListesi()
+  // IMPORTANT-3 düzeltmesi: saklama süresi dolanlar isteği yalnızca Ayarlar
+  // sekmesi GÖRÜNÜRKEN atılır. `clients::saklama_suresi_dolanlar` her
+  // çağrıda `LogHacmi::HerCagri` ile SİLİNEMEZ bir `goruntuleme` satırı
+  // yazıyor (bkz. `useDanisanListesi.ts` modül başlığı); veri artık yalnızca
+  // Ayarlar sekmesinde gösterildiği için terapist Ayarlar'ı hiç açmasa bile
+  // mount'ta atılan bir istek kalıcı, hiç görülmeyecek bir kayıt bırakırdı.
+  const liste = useDanisanListesi({ ayarlarGorunur: sekme === 'ayarlar' })
   const dosya = useDanisanDosyasi({ onYetkisiz: () => takvim.oturumKapandi() })
   const seanslar = useDanisanSeanslari({
     clientId: dosya.seciliDanisanId,
@@ -112,11 +135,6 @@ export function AnaEkran({
   // sayaç artsa da istek GİTMEZ: `AyOzeti` monte değil, açıldığında zaten tek
   // bir taze istek atar.
   const [ozetTazeleme, setOzetTazeleme] = useState(0)
-
-  // Sekme kabuğu (bkz. modül başlığı). `ACILIS_SEKMESI`: uygulamanın amacı
-  // takvim, terapist her açılışta önce başka bir sekmeyi geçmek zorunda
-  // kalmamalı.
-  const [sekme, setSekme] = useState<SekmeKodu>(ACILIS_SEKMESI)
 
   /**
    * Danışan dosyasına giden TEK yol (bkz. modül başlığı). Eski adı
@@ -193,12 +211,24 @@ export function AnaEkran({
   // ikisi de "şu an güvenilir bir yedek yok" anlamına gelir ve nokta AYNI
   // şekilde görünür.
   const yedekYok = yedekleme.yedek === null || yedekleme.yedek.yedekler.length === 0
+  // IMPORTANT-4 düzeltmesi: nokta yalnızca "hiç yedek yok" durumunu değil,
+  // "yedekler var ama BUGÜNKÜ otomatik yedek BAŞARISIZ oldu" durumunu da
+  // kapsamalı. Tasarım §7: "Yedek alınamazsa (disk dolu, klasör erişilemez)
+  // ana ekranda KALICI uyarı çıkar; sessiz geçilmez." Yedekleme artık
+  // Ayarlar sekmesinin İÇİNDE olduğu için bu uyarı Takvim'den GÖRÜNMEZ —
+  // nokta onun yerini tutmalı, yoksa terapist Ayarlar'ı açmadıkça disk dolu
+  // uyarısından habersiz kalır.
+  const ilgilenilmesiGereken = yedekYok || yedekleme.uyari !== null
 
   return (
     <div className="p-8">
       <h1 className="mb-4 text-2xl font-semibold">Terapi Notları</h1>
 
-      <Sekmeler secili={sekme} onSecim={setSekme} uyaran={yedekYok ? 'ayarlar' : undefined} />
+      <Sekmeler
+        secili={sekme}
+        onSecim={setSekme}
+        uyaran={ilgilenilmesiGereken ? 'ayarlar' : undefined}
+      />
 
       {sekme === 'takvim' && (
         <div

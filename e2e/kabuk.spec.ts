@@ -75,6 +75,13 @@ test('açılışta takvim görünür, yedekleme görünmez', async ({ page }) =>
   await kurulumYap(page)
 
   await expect(page.getByRole('tab', { name: 'Takvim' })).toHaveAttribute('aria-selected', 'true')
+  // SENKRONİZASYON BARİYERİ (MINOR-2 düzeltmesi): aşağıdaki "yok" iddiaları
+  // Takvim panelinin KENDİ içeriği gerçekten render olduktan SONRA
+  // ölçülüyor — yalnızca `kurulumYap`'ın beklediği üst başlık değil.
+  // `kurulumYap` yalnızca AnaEkran'ın (kabuğun) monte olduğunu kanıtlıyordu;
+  // bu satır Takvim panelinin de kendi verisiyle (hafta başlığı) çizildiğini
+  // kanıtlıyor, ki "yok" iddiası işlem ÖNCESİ bir kareyi ölçmesin (biçim 6).
+  await expect(page.getByRole('button', { name: 'Sonraki hafta' })).toBeVisible()
   // Yedekleme, parola gibi ayarlar bölümleri artık Ayarlar sekmesinin
   // İÇİNDE — açılışta (Takvim sekmesindeyken) hiçbiri DOM'da olmamalı.
   // Eskiden bu bölüm ana ekranı sarı bir kutu olarak işgal ediyordu (Görev 2
@@ -84,19 +91,33 @@ test('açılışta takvim görünür, yedekleme görünmez', async ({ page }) =>
   await expect(page.getByText('Parolayı değiştir')).toHaveCount(0)
 })
 
-test('takvim çipinden danışana gidince sekme değişir, geri dönünce takvim aynı kalır', async ({
+test('takvimdeki randevudan danisan adina tiklayinca Danisanlar sekmesi o danisanin dosyasiyla acilir', async ({
   page,
 }) => {
+  // İnceleme CRITICAL-1: bu testin ESKİ hâli (adı "takvim çipinden
+  // danışana gidince...") aslında takvim ÇİPİNE hiç dokunmuyordu — önce
+  // elle Danışanlar sekmesine geçip LİSTE çipine tıklıyordu. Randevu
+  // çipinin kendisi yalnızca seansı SEÇER (`onSec`); Görev 8'in brief'i
+  // Adım 1'de istediği "takvimdeki randevudan danışana git" yolu o zaman
+  // GERÇEKTEN yoktu (`SeansPaneli`nin danışan açan bir düğmesi yoktu).
+  // Bu test artık o gerçek yolu kullanıyor: randevuya tıkla (seans paneli
+  // AÇILIR, davranış DEĞİŞMEDİ) → panelin BAŞLIĞINDAKİ danışan adına
+  // tıkla (`SeansPaneli.tsx`'e eklenen düğme, `danisanaGit`i çağırıyor).
   await kurulumYap(page)
 
   const blok = await danisanVeRandevu(page, 'Fatma Çelik', '16:00')
 
-  // Randevu panelini AÇMADAN, danışan listesindeki çipten dosyayı aç
-  // (`danisanaGit` — tek giriş noktası, bkz. `AnaEkran.tsx` modül başlığı).
-  // Çip Danışanlar sekmesinin İÇİNDE — `danisanVeRandevu` Takvim'de
-  // bıraktığı için önce oraya geçiliyor (bu, `danisanaGit`in kendisi
-  // DEĞİL: yalnızca çipi GÖREBİLMEK için gereken elle sekme değişimi).
-  await page.getByRole('tab', { name: 'Danışanlar' }).click()
+  // Randevu ÇİPİNE tıklamak yalnızca seansı seçer — davranış DEĞİŞMEDİ,
+  // sekme hâlâ Takvim.
+  await blok.click()
+  await expect(page.getByLabel('Seans notu', { exact: true })).toBeVisible()
+  await expect(page.getByRole('tab', { name: 'Takvim' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  )
+
+  // Panelin başlığındaki danışan adına tıklamak `danisanaGit`i tetikler —
+  // danışan listesindeki çiple AYNI erişilebilir ad kalıbı.
   await page
     .getByRole('button', { name: 'Fatma Çelik dosyasını aç', exact: true })
     .click()
@@ -105,6 +126,10 @@ test('takvim çipinden danışana gidince sekme değişir, geri dönünce takvim
     'aria-selected',
     'true',
   )
+  // SENKRONİZASYON BARİYERİ: aşağıdaki iddialardan ÖNCE dosyanın GERÇEKTEN
+  // sunucudan geldiğini bekle (biçim 6) — `aria-selected` tek başına
+  // sekmenin DEĞİŞTİĞİNİ kanıtlar ama dosyanın AÇILDIĞINI kanıtlamaz.
+  await expect(page.getByTestId('seans-listesi')).toHaveAttribute('data-yuklendi', 'evet')
   // Danışan dosyası kendi küçük şeridiyle "Seanslar" alt sekmesinde açılır.
   await expect(page.getByRole('tab', { name: 'Seanslar', exact: true })).toHaveAttribute(
     'aria-selected',

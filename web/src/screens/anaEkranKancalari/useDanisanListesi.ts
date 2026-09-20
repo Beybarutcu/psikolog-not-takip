@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { danisanApi, takvimApi, type Danisan } from '../../api'
 import { yerelGun } from './yerelGun'
 
@@ -10,8 +10,21 @@ import { yerelGun } from './yerelGun'
  * ayrıştırmak, tek bir işlemin sırasını (kaydet → alanları temizle →
  * listeyi tazele) iki dosyaya bölmek olurdu ve o sıranın kendisi bir karar
  * (bkz. `ekle`).
+ *
+ * # `ayarlarGorunur` — IMPORTANT-3 düzeltmesi
+ *
+ * Saklama süresi dolanlar isteği artık yalnızca ÇAĞIRAN TARAFIN (`AnaEkran`)
+ * Ayarlar sekmesini GÖSTERİYOR olmasına bağlı. Veri Görev 8'den beri yalnızca
+ * Ayarlar sekmesinde gösteriliyor (`AyarlarSekmesi`) ama bu kanca
+ * `AnaEkran`'da KOŞULSUZ çağrılıyor (401 temizliği için gerekli, bkz.
+ * `AnaEkran.tsx` modül başlığı) — panel montajına güvenilemez, çünkü panel
+ * montajı bu kancanın GÖRMEDİĞİ bir şey. Sunucudaki
+ * `clients::saklama_suresi_dolanlar` her çağrıda `LogHacmi::HerCagri` ile
+ * SİLİNEMEZ bir `goruntuleme` satırı yazıyor: terapist Ayarlar'ı HİÇ
+ * açmasa bile eski (koşulsuz mount'ta atan) davranış kalıcı, hiç
+ * görülmeyecek bir kayıt bırakırdı.
  */
-export function useDanisanListesi() {
+export function useDanisanListesi({ ayarlarGorunur }: { ayarlarGorunur: boolean }) {
   const [danisanlar, setDanisanlar] = useState<Danisan[]>([])
   const [formAcik, setFormAcik] = useState(false)
   const [yeniAdSoyad, setYeniAdSoyad] = useState('')
@@ -43,22 +56,28 @@ export function useDanisanListesi() {
     })
   }, [])
 
-  // Saklama hatırlatması YALNIZCA ilk yüklemede çekiliyor, hafta
-  // değişiminde ya da her tazelemede DEĞİL: sunucudaki
+  // Saklama hatırlatması YALNIZCA Ayarlar sekmesi İLK KEZ görünür olduğunda
+  // çekiliyor — ne bileşen mount'unda (IMPORTANT-3, bkz. modül başlığı), ne
+  // hafta değişiminde, ne her Ayarlar'a dönüşte DEĞİL: sunucudaki
   // `clients::saklama_suresi_dolanlar` her çağrıda `LogHacmi::HerCagri` ile
   // SİLİNEMEZ bir `goruntuleme` satırı yazıyor. Liste gün içinde değişmez
   // (girdi yerel takvim günü), dolayısıyla tekrar sormanın kazancı yok,
-  // maliyeti kalıcı.
+  // maliyeti kalıcı. `cekildiRef`: `ayarlarGorunur` sekmeler arasında
+  // gidip gelirken tekrar `true` olabilir, ikinci (ve sonraki) her geçiş
+  // NO-OP kalmalı.
   //
   // Hata YUTULUYOR: hatırlatma ikincil bir bilgi; alınamadığında ana ekranı
   // hata bandıyla kaplamak, terapistin takvimini görmesini engellerdi.
   // (Kilit hâli zaten `api.ts`'in merkezî 401 dinleyicisiyle ele alınıyor.)
+  const cekildiRef = useRef(false)
   useEffect(() => {
+    if (!ayarlarGorunur || cekildiRef.current) return
+    cekildiRef.current = true
     void danisanApi
       .saklamaSuresiDolanlar(yerelGun(new Date()))
       .then(setSaklamaDolanlar)
       .catch(() => {})
-  }, [])
+  }, [ayarlarGorunur])
 
   async function ekle() {
     if (yeniAdSoyad.trim() === '') {

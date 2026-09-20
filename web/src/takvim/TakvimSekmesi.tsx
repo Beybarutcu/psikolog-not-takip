@@ -192,6 +192,9 @@ export function TakvimSekmesi({
             onKapat={takvim.panelKapat}
             onDurumDegis={(durum) => onDurumDegis(seciliRandevu.id, durum)}
             onOdemeDegis={(odendi) => onOdemeDegis(seciliRandevu.id, odendi)}
+            // CRITICAL-1: aynı `onDanisanAc` — danışan çipi, hızlı arama, ay
+            // özeti ile AYNI yol (bkz. `AnaEkran.tsx::danisanaGit`).
+            onDanisanAc={onDanisanAc}
           />
         ) : (
           // Yükleme başarısızsa panel AÇILMAZ: "yükleniyor…" yazan bir panel

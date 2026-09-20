@@ -85,7 +85,61 @@ export function taslakDus(anahtar: string): void {
   taslaklar.delete(anahtar)
 }
 
+/**
+ * # "Canlı" taslak: kilit kurtarması DEĞİL (son inceleme C1, ters yarış)
+ *
+ * Aynı resmî nota iki editör bakıyor (takvim ve danışan dosyası, aynı
+ * `not-<id>` anahtarı) ve sekme değişirken biri giderken diğeri geliyor.
+ * Gelen editör, giden editörün taslağını mount'ta bulabilir: giden editör
+ * henüz ekrandan kalkmamıştır (yeni editör AYNI render'da kuruluyor, eskinin
+ * unmount tahliyesi commit'ten SONRA çalışıyor) ya da kaydı/tahliyesi
+ * uçuştadır. İki durumda da bu bir KİLİT kurtarması DEĞİLDİR — metin şu anda
+ * sunucuya gidiyor — ve "oturum kilitlendiğinde kaydedilmemişti" şeridi
+ * yanlış bilgi olurdu. Canlı bir taslak yine de GERİ YÜKLENİR (sunucudaki
+ * eski metni göstermek, bir tuşla yazılanı ezmek demekti) ama şerit
+ * gösterilmez.
+ *
+ * Kilit (401) kurtarmasıyla ayrım: kilitte `AnaEkran` unmount olur, bütün
+ * editörler kapanır ve uçuştaki kayıtlar 401 ile biter — kilit açıldığında
+ * taslağın ne sahibi ne uçuşu vardır, şerit görünür. Tahliye başka bir
+ * sebeple başarısız olursa da aynı: işaret kalkar, taslak kalır, sonraki
+ * mount onu olağan kurtarma olarak (şeritle) görür.
+ *
+ * İki SAYAÇ, küme değil: aynı anahtarın iki kaydı aynı anda uçuşta olabilir
+ * (zamanlayıcının kaydı + unmount tahliyesi) ve ilk biten işareti
+ * kaldırmamalı.
+ */
+const ucustakiler = new Map<string, number>()
+const acikEditorler = new Map<string, number>()
+
+function sayac(harita: Map<string, number>, anahtar: string, artir: boolean): void {
+  const n = (harita.get(anahtar) ?? 0) + (artir ? 1 : -1)
+  if (n > 0) harita.set(anahtar, n)
+  else harita.delete(anahtar)
+}
+
+/** Bu anahtarın kaydı uçuşa çıktı (`true`) / bitti (`false`). */
+export function taslakUcusta(anahtar: string, ucusta: boolean): void {
+  sayac(ucustakiler, anahtar, ucusta)
+}
+
+/** Bu anahtarla bir editör monte oldu (`true`) / kalktı (`false`). */
+export function taslakEditoru(anahtar: string, acik: boolean): void {
+  sayac(acikEditorler, anahtar, acik)
+}
+
+/**
+ * Taslak canlı mı: kaydı uçuşta ya da sahibi olan bir editör hâlâ monte.
+ * Mount sırasında (render'da) sorulur — sorulan editörün KENDİ kaydı henüz
+ * yapılmamıştır, dolayısıyla yalnızca BAŞKA editörler sayılır.
+ */
+export function taslakCanliMi(anahtar: string): boolean {
+  return ucustakiler.has(anahtar) || acikEditorler.has(anahtar)
+}
+
 /** Yalnızca testler için: depo modül düzeyinde olduğu için testler arası sızar. */
 export function taslaklariUnut(): void {
   taslaklar.clear()
+  ucustakiler.clear()
+  acikEditorler.clear()
 }

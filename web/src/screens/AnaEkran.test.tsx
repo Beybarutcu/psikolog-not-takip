@@ -1468,7 +1468,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     const gecmis = screen.getByRole('region', { name: 'Önceki seans notları' })
     // Başlık "Önceki seans notları" ve gösterilen tek not gerçekten önceki.
     expect(within(gecmis).getAllByRole('button')).toHaveLength(1)
-    expect(gecmis.textContent).toContain('17.08.2026')
+    expect(gecmis.textContent).toContain('17 Ağustos 2026')
     // Bu seanstan SONRAKİ seansın notu ekranın hiçbir yerinde yok — açılınca
     // içeriği de görünmemeli.
     await userEvent.click(within(gecmis).getAllByRole('button')[0])
@@ -2861,7 +2861,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
       'kaygi',
     )
     await userEvent.click(
-      await screen.findByRole('button', { name: /14\.09\.2026 10:00 seansına git/ }),
+      await screen.findByRole('button', { name: /14 Eylül 2026, 10:00 seansına git/ }),
     )
 
     // Seans paneli hedef randevuyla açıldı: başlıkta o seansın saati var.
@@ -3019,7 +3019,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
       'kaygi',
     )
     await userEvent.click(
-      await screen.findByRole('button', { name: /14\.09\.2026 10:00 seansına git/ }),
+      await screen.findByRole('button', { name: /14 Eylül 2026, 10:00 seansına git/ }),
     )
 
     await waitFor(() =>
@@ -3065,7 +3065,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
       'kaygi',
     )
     await userEvent.click(
-      await screen.findByRole('button', { name: /14\.09\.2026 10:00 seansına git/ }),
+      await screen.findByRole('button', { name: /14 Eylül 2026, 10:00 seansına git/ }),
     )
 
     // Görünen haftanın (eski) yüklemesi ŞİMDİ dönüyor: bekleyen seçimi

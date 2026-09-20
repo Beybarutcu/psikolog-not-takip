@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
 import { YetkisizHata } from '../api'
 import { SABLON_ADLARI, SABLON_KODLARI, sablonMetni } from './sablon'
-import { taslakDus, taslakOku, taslakTemizle, taslakYaz } from './taslak'
+import {
+  taslakCanliMi,
+  taslakDus,
+  taslakEditoru,
+  taslakOku,
+  taslakTemizle,
+  taslakUcusta,
+  taslakYaz,
+} from './taslak'
 
 /**
  * Otomatik kayıtlı seans notu editörü.
@@ -94,11 +102,17 @@ type Props = {
    * editör eski metni göstermeye devam eder, terapist tek bir tuşa basınca da
    * otomatik kayıt eski metni PUT edip diğer ekranda yazılanı SİLERDİ.
    *
-   * Kural: bu değer değişince, editör TEMİZSE (ekrandaki hâl sunucuda olduğu
-   * bilinen hâl, uçuşta kayıt yok) yeni hâli benimser. Editör KİRLİYSE
-   * (kullanıcı yazmış) DOKUNULMAZ — yazılan metin, sunucudan gelen bir
-   * değişiklik uğruna silinmez; kullanıcının kendi kaydı kazanır. Kendi
-   * kaydının sonucu geri geldiğinde değer zaten ekrandakiyle aynıdır ve
+   * Kural: bu değer değişince (uçuşta kendi kaydı yokken)
+   *   - ekrandaki metin ZATEN bu değerse (editör, uçuştaki bir tahliyenin
+   *     taslağıyla açılmıştı — bkz. `taslak.ts::taslakUcusta`) yalnızca
+   *     "kaydedildi" bilgisi güncellenir; bekleyen zamanlayıcı aynı metni
+   *     ikinci kez yazmaz;
+   *   - editör TEMİZSE (ekrandaki hâl sunucuda olduğu bilinen hâl) yeni hâli
+   *     benimser;
+   *   - editör KİRLİYSE (kullanıcı yazmış) DOKUNULMAZ — yazılan metin,
+   *     sunucudan gelen bir değişiklik uğruna silinmez; kullanıcının kendi
+   *     kaydı kazanır.
+   * Kendi kaydının sonucu geri geldiğinde değer bilinen hâlle aynıdır ve
    * hiçbir şey olmaz.
    *
    * Verilmezse (özel not editörü, eski çağıranlar) davranış eskisiyle aynı.
@@ -182,6 +196,14 @@ export function NotEditoru({
     gecerli.current = false
   }, [])
 
+  // Bu anahtarın taslağının SAHİBİ olarak kayıt (bkz. `taslak.ts` "Canlı
+  // taslak"): aynı notun öbür editörü (sekme değişimi) bu editör hâlâ
+  // ekrandayken monte olursa taslağı bir kilit kurtarması sanmasın.
+  useEffect(() => {
+    taslakEditoru(taslakAnahtari, true)
+    return () => taslakEditoru(taslakAnahtari, false)
+  }, [taslakAnahtari])
+
   // Unmount sırasında (panel kapandı, başka randevu seçildi) elde bekleyen
   // içeriği hemen yazmak için son değerler bir ref'te tutuluyor. Efektin
   // temizliği sırasında state okunamaz.
@@ -191,6 +213,10 @@ export function NotEditoru({
   async function kaydetDene(kayit: Kayit, anahtarAdi: string) {
     setDurum({ tur: 'kaydediliyor' })
     ucustaki.current = imza(kayit)
+    // Uçuşta işareti (bkz. `taslak.ts` "Canlı taslak"): kayıt sürerken sekme
+    // değişir ve aynı notun öbür editörü bu taslağı bulursa, onu bir kilit
+    // kurtarması sanmasın.
+    taslakUcusta(anahtarAdi, true)
     try {
       await onKaydet(kayit)
       // Bu iki satır `gecerli` kontrolünden ÖNCE: kayıt gerçekten olduysa
@@ -208,6 +234,8 @@ export function NotEditoru({
       ucustaki.current = null
       if (!gecerli.current) return
       setDurum({ tur: 'hata', kilit: e instanceof YetkisizHata })
+    } finally {
+      taslakUcusta(anahtarAdi, false)
     }
   }
 
@@ -235,6 +263,10 @@ export function NotEditoru({
     setDurum({ tur: 'bekliyor' })
 
     const zamanlayici = setTimeout(() => {
+      // Bu arada sunucuda TAM bu hâlin olduğu öğrenildiyse (başka bir
+      // editörün tahliyesi aynı metni yazdı, bkz. `sunucuHali`) ikinci kez
+      // yazılmaz — her yazma silinemez bir denetim satırı.
+      if (imza(kayit) === sonKaydedilen.current) return
       void kaydetDene(kayit, taslakAnahtari)
     }, gecikmeMs)
     return () => clearTimeout(zamanlayici)
@@ -255,10 +287,19 @@ export function NotEditoru({
     if (disIcerik === undefined || disSablon === undefined) return
     const dis = imza({ sablon: disSablon, icerik: disIcerik })
     if (dis === sonKaydedilen.current) return
-    const temiz =
-      imza({ sablon: son.current.sablon, icerik: son.current.icerik }) === sonKaydedilen.current &&
-      ucustaki.current === null
-    if (!temiz) return
+    if (ucustaki.current !== null) return
+    const ekrandaki = imza({ sablon: son.current.sablon, icerik: son.current.icerik })
+    if (ekrandaki === dis) {
+      // Ekrandaki metin ZATEN sunucudaki: bu editör uçuştaki bir tahliyenin
+      // taslağıyla açılmıştı (bkz. `taslak.ts::taslakUcusta`) ve o tahliye
+      // şimdi bitti. İçerik değişmez; yalnızca "kaydedildi" bilgisi
+      // güncellenir, bekleyen zamanlayıcı aynı metni ikinci kez yazmaz.
+      sonKaydedilen.current = dis
+      taslakTemizle(son.current.taslakAnahtari, { sablon: disSablon, icerik: disIcerik })
+      setDurum({ tur: 'temiz' })
+      return
+    }
+    if (ekrandaki !== sonKaydedilen.current) return // KİRLİ: kullanıcının metni kazanır
     sonKaydedilen.current = dis
     setIcerik(disIcerik)
     setSablon(disSablon)
@@ -272,12 +313,17 @@ export function NotEditoru({
     const { sablon: s, icerik: i, onKaydet: k, taslakAnahtari: a } = son.current
     const kayit = { sablon: s, icerik: i }
     if (imza(kayit) === sonKaydedilen.current || imza(kayit) === ucustaki.current) return
+    // Uçuşta işareti: aynı anahtarla monte olan başka bir editör (sekme
+    // değişimi, bkz. `taslak.ts` "Canlı taslak") bu taslağı bir kilit
+    // kurtarması sanıp "oturum kilitlendi" şeridi göstermesin.
+    taslakUcusta(a, true)
     void k(kayit)
       .then(() => taslakTemizle(a, kayit))
       .catch(() => {
         // Yutuluyor: bileşen artık ekranda değil, gösterilecek bir yer yok.
         // İçerik taslakta duruyor; hata mesajı yerine metnin kendisi korunur.
       })
+      .finally(() => taslakUcusta(a, false))
   }, [])
 
   function sablonDegis(yeni: string) {
@@ -392,7 +438,16 @@ function baslangicDurumu(anahtar: string, sunucuIcerik: string, sunucuSablon: st
     // fark edilmez.
     taslakTemizle(anahtar, taslak)
   }
-  return { icerik: taslak.icerik, sablon: taslak.sablon, geriYuklendi: farkli }
+  // CANLI bir taslak (öbür editör hâlâ ekranda ya da kaydı uçuşta — sekme
+  // değişimi) KİLİT kurtarması değildir: içerik yine taslaktan gelir
+  // (sunucudaki eski metin, bir tuşla yazılanı ezerdi) ama "oturum
+  // kilitlendiğinde kaydedilmemişti" şeridi yanlış bilgi olurdu (bkz.
+  // `taslak.ts` "Canlı taslak").
+  return {
+    icerik: taslak.icerik,
+    sablon: taslak.sablon,
+    geriYuklendi: farkli && !taslakCanliMi(anahtar),
+  }
 }
 
 function durumMetni(durum: Durum): string {

@@ -155,10 +155,10 @@ describe('SeansPaneli — geçmiş bağlam', () => {
   it('sol tarafta son seanslarin notlari gorunur', () => {
     kur()
     // Başlık: seans tarihi + şablon adı + son düzenleme.
-    expect(screen.getByRole('button', { name: /31\.08\.2026 10:00.*DAP.*05\.09\.2026/ })).toBeDefined()
-    expect(screen.getByRole('button', { name: /24\.08\.2026 10:00.*SOAP.*31\.08\.2026/ })).toBeDefined()
+    expect(screen.getByRole('button', { name: /31 Ağustos 2026, 10:00.*DAP.*05\.09\.2026/ })).toBeDefined()
+    expect(screen.getByRole('button', { name: /24 Ağustos 2026, 10:00.*SOAP.*31\.08\.2026/ })).toBeDefined()
     expect(
-      screen.getByRole('button', { name: /17\.08\.2026 10:00.*Serbest.*20\.09\.2026/ }),
+      screen.getByRole('button', { name: /17 Ağustos 2026, 10:00.*Serbest.*20\.09\.2026/ }),
     ).toBeDefined()
   })
 
@@ -174,8 +174,8 @@ describe('SeansPaneli — geçmiş bağlam', () => {
       .map((d) => d.textContent ?? '')
 
     // Seans tarihleri ekranda, ve azalan sırada.
-    const seansTarihleri = metinler.map((m) => /Seans: (\d{2}\.\d{2}\.\d{4})/.exec(m)?.[1])
-    expect(seansTarihleri).toEqual(['31.08.2026', '24.08.2026', '17.08.2026'])
+    const seansTarihleri = metinler.map((m) => /Seans: (\d{1,2} \S+ \d{4})/.exec(m)?.[1])
+    expect(seansTarihleri).toEqual(['31 Ağustos 2026', '24 Ağustos 2026', '17 Ağustos 2026'])
 
     // "Son düzenleme" hâlâ var ama SIRALI DEĞİL: ekrandaki tek tarih o
     // olsaydı liste sırasız görünürdü. Bu iddia olmadan üstteki, seans
@@ -191,7 +191,7 @@ describe('SeansPaneli — geçmiş bağlam', () => {
     kur({
       gecmisNotlar: [{ ...gecmisNotlar[0], seans_zamani: '2026-08-31T00:30' }],
     })
-    expect(screen.getByRole('button', { name: /Seans: 31\.08\.2026 00:30/ })).toBeDefined()
+    expect(screen.getByRole('button', { name: /Seans: 31 Ağustos 2026, 00:30/ })).toBeDefined()
   })
 
   it('liste SUNUCUDAN geldigi sirada basilir, guncelleme zamanina gore yeniden siralanmaz', () => {

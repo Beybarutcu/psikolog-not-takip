@@ -10,16 +10,16 @@ import { zamanMetni } from '../tarih'
  * # Kontrollü bileşen: seçimi TUTMAZ
  *
  * `Sekmeler` ile aynı ilke (bkz. `kabuk/Sekmeler.tsx` modül başlığı):
- * `secili` dışarıdan gelir, tıklama yalnızca `onSecim` ile bildirilir. Sahip
- * `DanisanDosyasi`'dir — çünkü seçili seansın notunu YÜKLEMEK de onun işi ve
- * "hangi seans açık" bilgisi ikisi arasında paylaşılmak zorunda.
+ * `secili` dışarıdan gelir, tıklama yalnızca `onSecim` ile bildirilir. Seçimin
+ * sahibi `useDanisanSeanslari`dir (son inceleme M1: sekme gidip gelince
+ * korunsun diye `AnaEkran`'da yaşıyor).
  *
  * # `secili === null` iken en yeni seans GÖRSEL olarak vurgulanır
  *
- * `DanisanDosyasi` `secili`yi RENDER SIRASINDA türetiyor (`seciliManuel`
- * geçerliyse o, değilse en yenisi — bkz. o dosyanın modül başlığı), yani
- * liste doluyken bu bileşene fiilen HİÇBİR ZAMAN `null` geçmiyor —
- * `DanisanDosyasi.test.tsx`'teki testler bu hattı zaten ölçüyor. `secili
+ * `useDanisanSeanslari` seçimi türetiyor (elle seçilen geçerliyse o, değilse
+ * bugünden önceki en yeni seans — son inceleme I3, bkz.
+ * `danisan/seansSecimi.ts`), yani liste doluyken bu bileşene üretimde
+ * fiilen `null` geçmiyor. `secili
  * === null` yedeği burada yine de duruyor çünkü bu bileşen KENDİ BAŞINA
  * (bu dosyanın kendi testlerinde olduğu gibi) `secili={null}` ile
  * çağrılabilir bir SÖZLEŞME taşıyor: sahibi olmayan bir çağıran "hiçbir

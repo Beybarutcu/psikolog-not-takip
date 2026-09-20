@@ -4,7 +4,7 @@ import type { Randevu } from '../../takvim/HaftalikTakvim'
 export type RandevuYamasi = Partial<Pick<Randevu, 'durum' | 'odendi'>>
 
 /**
- * # Uçuştaki yazma × randevu listesi okuması (Görev 2 inceleme M7)
+ * # Uçuştaki yazma × liste okuması (Görev 2 inceleme M7)
  *
  * `durumDegis` ve `odemeDegis` sonucu listelere YEREL olarak yazıyor (yeniden
  * yükleme yok). Bir liste GET'i yazma BİTMEDEN başlar ve yazmadan SONRA
@@ -20,22 +20,41 @@ export type RandevuYamasi = Partial<Pick<Randevu, 'durum' | 'odendi'>>
  * olup sonra REDDEDİLEN yazma kaydedilmez: yanıttaki sunucu değeri doğrudur.
  * Tek kullanıcılı uygulama: yerel son değer, sunucudaki son değerdir.
  *
- * TEK mekanizma, iki kullanıcı: takvim listesi (`useTakvimAkisi`) ve açık
- * danışan kartının randevuları (`useDanisanDosyasi`). Her kanca kendi
- * örneğini tutar — okumalar ve yazmalar aynı kancanın içinde damgalanıyor.
+ * # TEK mekanizma, beş kullanıcı
+ *
+ * Aynı seans verisine birden çok ekran bakıyor ve her birinin kendi
+ * önbelleği var; yazmalar TEK yoldan (`AnaEkran`) geçip hepsine yayılıyor
+ * (son inceleme C1/C2). Yayılan her önbellek bu saatle korunuyor:
+ *
+ *   1. takvim listesi (`useTakvimAkisi`)             — durum/ödeme
+ *   2. açık danışan kartının randevuları (`useDanisanDosyasi`) — durum/ödeme
+ *   3. danışan dosyasının seans listesi (`useDanisanSeanslari`) — durum/
+ *      ödeme/not önizlemesi
+ *   4. takvimdeki açık seansın resmî notu (`useSeansNotlari`) — not
+ *   5. danışan dosyasındaki seçili seansın notu (`useDosyaNotu`) — not
+ *
+ * Her kanca kendi örneğini tutar — okumalar kancanın içinde, yazmalar ise
+ * kancanın dışa açtığı yama fonksiyonunda (`randevuYamala`, `yamala`,
+ * `notYansit`) damgalanıyor; `AnaEkran` başarılı her yazmada ilgili bütün
+ * kancaların yama fonksiyonunu çağırır.
+ *
+ * Kayıtlar farklı alanlarla tanımlanıyor (`Randevu.id`, `DanisanSeansi.
+ * appointment_id`, `SeansNotu.appointment_id`); bu yüzden fabrika kimliği
+ * okuyan fonksiyonu alıyor — hepsi AYNI randevu kimliği uzayında.
  *
  * Ölçen testler: `AnaEkran.test.tsx` > "ucustaki odeme/durum yazmasi, ONCE
- * baslayip SONRA donen hafta yuklemesinde ESKI degere donmez" (takvim) ve
+ * baslayip SONRA donen hafta yuklemesinde ESKI degere donmez" (takvim),
  * "kart YUKLENIRKEN odeme isaretlenirse gec donen kart yaniti ESKI bakiyeyi
- * gostermez" (kart).
+ * gostermez" (kart) ve "C1 ters yaris" / "C2 seans listesi ucus" blokları
+ * (seans listesi ve iki not önbelleği).
  *
- * Bileşen dışı bir fabrika: çağıran `useState(yazmaSaatiOlustur)` ile TEK
- * örnek tutar, kimliği ömür boyu sabittir (efekt bağımlılıklarına girse de
- * yeniden çalıştırma tetiklemez).
+ * Bileşen dışı bir fabrika: çağıran `useState(() => yazmaSaatiOlustur(...))`
+ * ile TEK örnek tutar, kimliği ömür boyu sabittir (efekt bağımlılıklarına
+ * girse de yeniden çalıştırma tetiklemez).
  */
-export function yazmaSaatiOlustur() {
+export function yazmaSaatiOlustur<T, Y extends Partial<T>>(kimlik: (kayit: T) => number) {
   let saat = 0
-  const bitenYazmalar = new Map<number, { yama: RandevuYamasi; damga: number }>()
+  const bitenYazmalar = new Map<number, { yama: Y; damga: number }>()
 
   return {
     /** Okuma İSTEĞİ ATILMADAN hemen önce çağrılır; dönen damga `uygula`ya gider. */
@@ -43,18 +62,21 @@ export function yazmaSaatiOlustur() {
       return ++saat
     },
     /** Yalnızca BAŞARILI yazmadan sonra çağrılır. */
-    yazmaBitti(id: number, yama: RandevuYamasi) {
+    yazmaBitti(id: number, yama: Y) {
       const onceki = bitenYazmalar.get(id)
       bitenYazmalar.set(id, { yama: { ...onceki?.yama, ...yama }, damga: ++saat })
     },
     /** Okuma başladığında henüz bitmemiş yazmaları yanıtın üstüne uygular. */
-    uygula<T extends Randevu>(liste: T[], okumaDamgasi: number): T[] {
+    uygula<U extends T>(liste: U[], okumaDamgasi: number): U[] {
       return liste.map((r) => {
-        const yazma = bitenYazmalar.get(r.id)
+        const yazma = bitenYazmalar.get(kimlik(r))
         return yazma !== undefined && yazma.damga > okumaDamgasi ? { ...r, ...yazma.yama } : r
       })
     },
   }
 }
 
-export type YazmaSaati = ReturnType<typeof yazmaSaatiOlustur>
+/** Takvim listesi ve kartın ortak örneği: `Randevu.id` ile, durum/ödeme yamasıyla. */
+export function randevuSaatiOlustur() {
+  return yazmaSaatiOlustur<Randevu, RandevuYamasi>((r) => r.id)
+}

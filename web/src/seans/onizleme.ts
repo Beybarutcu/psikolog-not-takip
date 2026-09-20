@@ -31,7 +31,7 @@ const BASLIK_SATIRLARI = new Set(
  * Kural (ilk boş olmayan, şablon başlığı olmayan satır; `''` yalnızca içerik
  * tamamen boşsa; yalnızca başlıklardan oluşan notta ilk başlık; karakterde
  * kırpma) iki dilde yazılı. Ayrışmaları ORTAK örnek dosyasıyla ölçülüyor:
- * `onizlemeOrnekleri.json` hem `onizleme.test.ts` hem sunucunun
+ * `core/src/store/onizleme_ornekleri.json` hem `onizleme.test.ts` hem sunucunun
  * `onizleme_ortak_ornekleri_saglar` testi tarafından okunur. Başlık listesi
  * `SABLONLAR`dan (şema tohumuyla `sablon.test.ts` üzerinden eşit) türetiliyor,
  * ikinci kez elle yazılmıyor.

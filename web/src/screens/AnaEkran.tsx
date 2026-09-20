@@ -1,13 +1,16 @@
 import { useState } from 'react'
-import { danisanApi } from '../api'
+import { danisanApi, notApi } from '../api'
 import { AyarlarSekmesi } from '../ayarlar/AyarlarSekmesi'
+import type { DosyaAltSekme } from '../danisan/DanisanDosyasi'
 import { DanisanlarSekmesi } from '../danisan/DanisanlarSekmesi'
 import { Sekmeler } from '../kabuk/Sekmeler'
 import { ACILIS_SEKMESI, type SekmeKodu } from '../kabuk/sekme'
+import { notOnizlemesi } from '../seans/onizleme'
 import { TakvimSekmesi } from '../takvim/TakvimSekmesi'
 import { useDanisanDosyasi } from './anaEkranKancalari/useDanisanDosyasi'
 import { useDanisanListesi } from './anaEkranKancalari/useDanisanListesi'
 import { useDanisanSeanslari } from './anaEkranKancalari/useDanisanSeanslari'
+import { useDosyaNotu } from './anaEkranKancalari/useDosyaNotu'
 import { useParolaFormu } from './anaEkranKancalari/useParolaFormu'
 import { useSeansNotlari } from './anaEkranKancalari/useSeansNotlari'
 import { useTakvimAkisi } from './anaEkranKancalari/useTakvimAkisi'
@@ -31,7 +34,9 @@ import { yerelGun } from './anaEkranKancalari/yerelGun'
  *   - `useSeansNotlari`    — açık seansın resmî notu, geçmişi ve özel notu
  *   - `useDanisanDosyasi`  — açık danışan kartı, ekleri ve depolama durumu
  *   - `useDanisanListesi`  — danışan listesi, ekleme, arşivleme, saklama uyarısı
- *   - `useDanisanSeanslari`— açık danışanın Seanslar alt sekmesindeki listesi
+ *   - `useDanisanSeanslari`— açık danışanın Seanslar alt sekmesindeki listesi,
+ *                            seçili seansı ve yamaları
+ *   - `useDosyaNotu`       — danışan dosyasında seçili seansın resmî notu
  *   - `useYedekleme`       — otomatik/elle yedek ve KALICI uyarı
  *   - `useParolaFormu`     — parola değiştirme (yükleme değil, ama kendi başına
  *                            bir akış; parolalar form kapanınca siliniyor)
@@ -78,6 +83,23 @@ import { yerelGun } from './anaEkranKancalari/yerelGun'
  * "yalnızca sekme değiştir" ya da "yalnızca dosya aç" yolu YOK — biri
  * unutulup diğeri çağrılırsa (ör. dosya açılır ama sekme değişmez)
  * kullanıcı Takvim sekmesinde kalır ve hiçbir şey olmamış sanır.
+ *
+ * # TEK yazma yolu, her önbelleğe yayılım (son inceleme C1/C2)
+ *
+ * Aynı seansa iki ekran bakıyor: takvim (`useTakvimAkisi` + `useSeansNotlari`)
+ * ve danışan dosyası (`useDanisanSeanslari` + `useDosyaNotu`), artı açık kart
+ * (`useDanisanDosyasi`) ve ay özeti. Eskiden dosya `takvimApi`/`notApi`'yi
+ * doğrudan çağırıp sonucu yalnızca kendi yerel state'ine yazıyordu: dosyada
+ * yazılan not takvime dönünce ESKİ görünüyor ve tek bir tuş eski metni PUT
+ * edip yazılanı sunucudan SİLİYORDU (klinik not kaybı); dosyada işaretlenen
+ * ödeme sekme gidip gelince kayboluyor, kartın bakiyesi hiç tazelenmiyordu;
+ * takvimde yazılan not dosya listesinde "Not yazılmamış" kalıyordu.
+ *
+ * Şimdi üç yazma (`seansNotuKaydet`, `durumDegis`, `odemeDegis`) YALNIZCA
+ * burada ve başarılı her yazmanın sonucu, hangi ekrandan gelirse gelsin,
+ * ilgili BÜTÜN önbelleklere aynı çağrıdan yayılıyor. İki ekranı ayrı ayrı
+ * yamalamak değil: tek yol, çok alıcı. Her alıcı yamayı kendi `yazmaSaati`ne
+ * de işliyor, ki o an uçuşta olan bir okuma yazmayı ezmesin.
  */
 export function AnaEkran({
   kilitle,
@@ -114,10 +136,28 @@ export function AnaEkran({
     clientId: dosya.seciliDanisanId,
     onYetkisiz: () => takvim.oturumKapandi(),
   })
+  // Danışan dosyasının alt sekmesi (Seanslar/Bilgiler). BURADA, bileşende
+  // değil (son inceleme M1): `DanisanDosyasi` sekme gidip gelince yeniden
+  // monte oluyor ve kendi state'inde tutulan alt sekme her girişte
+  // sıfırlanıyordu.
+  const [dosyaAltSekme, setDosyaAltSekme] = useState<DosyaAltSekme>('seanslar')
+  // Dosyada seçili seansın notu. İstek YALNIZCA görünürken (bkz.
+  // `useDosyaNotu` başlığı): Danışanlar sekmesi + Seanslar alt sekmesi + kart
+  // yüklenmiş (dosya bileşeni kart yüklenmeden hiç çizilmiyor; çizilmeyen bir
+  // not için silinemez görüntüleme kaydı bırakılmamalı).
+  const dosyaNotu = useDosyaNotu({
+    appointmentId: seanslar.seciliSeansId,
+    gorunur:
+      sekme === 'danisanlar' &&
+      dosyaAltSekme === 'seanslar' &&
+      dosya.kart.dosya !== null &&
+      dosya.kart.hata === null,
+  })
   const yedekleme = useYedekleme()
   const seansAkisi = useSeansNotlari({
     randevu: takvim.seciliRandevu,
     onYetkisiz: () => takvim.oturumKapandi(),
+    notYaz: seansNotuKaydet,
   })
   const parola = useParolaFormu()
   // Ay sonu özetinin KAPALI başlama state'i artık `TakvimSekmesi`'nde
@@ -147,8 +187,23 @@ export function AnaEkran({
    * bir dal yazmak yalnızca iki farklı davranışın senkron kalması riskini
    * eklerdi.
    */
-  function danisanaGit(clientId: number) {
+  function danisanaGit(clientId: number, appointmentId?: number) {
     liste.setArsivBilgisi(null)
+    // Seçim ve alt sekme: takvimdeki bir seanstan gelindiyse dosya O seans
+    // seçili, Seanslar alt sekmesinde açılır (son inceleme I3). Başka bir
+    // danışana geçilince ikisi de sıfırlanır — bir danışanda seçilmiş seans
+    // ya da açık bırakılmış Bilgiler, başka danışanın dosyasına taşınmaz.
+    // AYNI danışana yeniden tıklamak (seans kimliği olmadan) hiçbir şeyi
+    // sıfırlamaz ve YENİDEN ÇEKMEZ: dosyanın verisi tek yazma yolundan taze
+    // tutuluyor (bkz. modül başlığı), yeniden çekmek yalnızca silinemez bir
+    // görüntüleme satırı daha bırakırdı.
+    if (appointmentId !== undefined) {
+      seanslar.seansSec(clientId, appointmentId)
+      setDosyaAltSekme('seanslar')
+    } else if (clientId !== dosya.seciliDanisanId) {
+      seanslar.seansSec(clientId, null)
+      setDosyaAltSekme('seanslar')
+    }
     dosya.ac(clientId)
     setSekme('danisanlar')
   }
@@ -187,16 +242,49 @@ export function AnaEkran({
    * tazelenir", "ozet KAPALIYKEN ... ozet istegi YOK", "odeme yazmasi
    * REDDEDILIRSE ...".
    */
+  //
+  // Son inceleme C2: danışan dosyasının alt satırı da BU iki fonksiyonu
+  // çağırıyor (eskiden `takvimApi`'yi doğrudan çağırıp yalnızca kendi yerel
+  // yamasını tutuyordu). Dosyanın seans listesi (`seanslar.yamala`) de aynı
+  // çağrıdan besleniyor — hangi ekrandan işaretlenirse işaretlensin takvim,
+  // kart, ay özeti ve dosya listesi aynı değeri gösterir.
   async function durumDegis(id: number, durum: string) {
     await takvim.durumDegis(id, durum)
     dosya.randevuYamala(id, { durum })
+    seanslar.yamala(id, { durum })
     setOzetTazeleme((n) => n + 1)
   }
 
   async function odemeDegis(id: number, odendi: boolean) {
     await takvim.odemeDegis(id, odendi)
     dosya.randevuYamala(id, { odendi })
+    seanslar.yamala(id, { odendi })
     setOzetTazeleme((n) => n + 1)
+  }
+
+  /**
+   * Resmî notun TEK yazma yolu (son inceleme C1). Takvimdeki editör
+   * (`useSeansNotlari.notKaydet` → `notYaz`) ve danışan dosyasındaki editör
+   * (`DanisanDosyasi` → `onNotKaydet`) ikisi de buraya geliyor; başarılı
+   * kaydın sonucu ÜÇ önbelleğe birden yayılıyor:
+   *
+   *   - `seansAkisi.notYansit` — takvimde bu seans açıksa editörün notu,
+   *   - `dosyaNotu.notYansit`  — dosyada bu seans seçiliyse editörün notu,
+   *   - `seanslar.yamala`      — dosya listesindeki önizleme (`not_ilk_satiri`,
+   *                              sunucuyla AYNI kural: `seans/onizleme.ts`).
+   *
+   * Reddedilen kayıt hiçbir şeyi yamamaz: ret `await`ten fırlar ve editöre
+   * ulaşır (editör hatayı gösterir, metin taslakta kalır).
+   *
+   * Özel not bu yoldan GEÇMEZ ve geçmemeli: onun tek yazma yolu
+   * `useSeansNotlari` içinde, ayrı uç noktada (yalnızca izinli üç dosyada
+   * geçebilir — `istemciRaporUretimi.test.ts`).
+   */
+  async function seansNotuKaydet(id: number, kayit: { sablon: string; icerik: string }) {
+    const yeni = await notApi.notKaydet(id, kayit.sablon, kayit.icerik)
+    seansAkisi.notYansit(id, yeni)
+    dosyaNotu.notYansit(id, yeni)
+    seanslar.yamala(id, { not_ilk_satiri: notOnizlemesi(yeni.icerik) })
   }
 
   function veriRaporuIndir(danisanId: number, parola: string): Promise<void> {
@@ -228,13 +316,22 @@ export function AnaEkran({
 
   return (
     <div className="p-8">
-      <h1 className="mb-4 text-2xl font-semibold">Terapi Notları</h1>
-
-      <Sekmeler
-        secili={sekme}
-        onSecim={setSekme}
-        uyaran={ilgilenilmesiGereken ? 'ayarlar' : undefined}
-      />
+      {/* Tasarım §4: "Üstte tek satır: uygulama adı, sekmeler, sağda
+          `Kilitle`." Kilitle eskiden yalnızca Takvim sekmesinin içindeydi
+          (son inceleme I1): risk notu ya da açık bir dosya ekrandayken
+          kilitlemek için önce Takvim'e geçmek gerekiyordu. Kabuğun satırında
+          olduğu için artık HER sekmede erişilebilir. */}
+      <div className="mb-4 flex items-center gap-6">
+        <h1 className="text-2xl font-semibold">Terapi Notları</h1>
+        <Sekmeler
+          secili={sekme}
+          onSecim={setSekme}
+          uyaran={ilgilenilmesiGereken ? 'ayarlar' : undefined}
+        />
+        <button type="button" className="ml-auto rounded-lg border px-4 py-2" onClick={kilitle}>
+          Kilitle
+        </button>
+      </div>
 
       {sekme === 'takvim' && (
         <div
@@ -243,9 +340,9 @@ export function AnaEkran({
           aria-labelledby="sekme-takvim"
           className="mt-4"
         >
-          {/* Takvim ürünün asıl işi (Görev 3 ürün kararı). Hızlı arama, ay
-              özeti düğmesi ve Kilitle de bu bileşenin İÇİNDE — bkz.
-              `TakvimSekmesi.tsx` modül başlığı. */}
+          {/* Takvim ürünün asıl işi (Görev 3 ürün kararı). Hızlı arama ve ay
+              özeti düğmesi bu bileşenin İÇİNDE — bkz. `TakvimSekmesi.tsx`
+              modül başlığı. Kilitle kabuğun üst satırında (yukarıda). */}
           <TakvimSekmesi
             takvim={takvim}
             seansAkisi={seansAkisi}
@@ -255,7 +352,6 @@ export function AnaEkran({
             onSeansSec={seansaGit}
             onDurumDegis={durumDegis}
             onOdemeDegis={odemeDegis}
-            kilitle={kilitle}
           />
         </div>
       )}
@@ -270,10 +366,15 @@ export function AnaEkran({
           <DanisanlarSekmesi
             liste={liste}
             dosya={dosya}
-            seanslar={seanslar.seanslar}
-            yuklendi={seanslar.yuklendi}
-            onDanisanSec={danisanaGit}
+            seanslar={seanslar}
+            dosyaNotu={dosyaNotu}
+            altSekme={dosyaAltSekme}
+            onAltSekme={setDosyaAltSekme}
+            onDanisanSec={(id) => danisanaGit(id)}
             veriRaporuIndir={veriRaporuIndir}
+            onNotKaydet={seansNotuKaydet}
+            onDurumDegis={durumDegis}
+            onOdemeDegis={odemeDegis}
           />
         </div>
       )}
@@ -293,7 +394,7 @@ export function AnaEkran({
           <AyarlarSekmesi
             yedekleme={yedekleme}
             parola={parola}
-            saklama={{ dolanlar: liste.saklamaDolanlar, onAc: danisanaGit }}
+            saklama={{ dolanlar: liste.saklamaDolanlar, onAc: (id) => danisanaGit(id) }}
             depolama={dosya.depolama}
             onGeriYukle={onGeriYukle}
           />

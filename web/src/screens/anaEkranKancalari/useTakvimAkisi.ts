@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { takvimApi, YetkisizHata } from '../../api'
 import type { Randevu } from '../../takvim/HaftalikTakvim'
 import { haftaGunleri, haftaninBasi, yerelZaman } from '../../takvim/hafta'
-import { yazmaSaatiOlustur } from './yazmaSaati'
+import { randevuSaatiOlustur } from './yazmaSaati'
 
 /**
  * Görünen haftanın randevuları ve o listeye bağlı SEÇİM.
@@ -58,7 +58,7 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
   // sonra dönen bir hafta GET'i yerel değeri ezerdi. Mantıksal saat
   // `yazmaSaati.ts`te (gerekçe ve ölçen testler orada); danışan kartı AYNI
   // mekanizmayı kullanıyor.
-  const [yazmaSaati] = useState(yazmaSaatiOlustur)
+  const [yazmaSaati] = useState(randevuSaatiOlustur)
 
   /**
    * Oturum kilitlendiğinde takvim tarafının bırakması gerekenler.

@@ -321,13 +321,13 @@ export function DosyaBilgileri({
 
   return (
     <section
-      aria-labelledby="dosya-bilgileri-basligi"
+      // Danışanın ADI burada başlık olarak BASILMIYOR (son inceleme I2): ad
+      // artık `DanisanDosyasi`'nin başlığında, iki alt sekmede de görünür.
+      // Burada ikinci kez basmak Bilgiler'de aynı adlı iki başlık demekti.
+      aria-label="Danışan bilgileri"
       className="mt-4 rounded-lg border border-slate-300 p-4"
     >
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <h2 id="dosya-bilgileri-basligi" className="text-lg font-semibold">
-          {danisan.ad_soyad}
-        </h2>
+      <div className="mb-3 flex items-start justify-end gap-3">
         <button
           type="button"
           className="rounded border px-3 py-1 text-sm"

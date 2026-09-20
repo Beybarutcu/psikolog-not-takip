@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import ornekler from './onizlemeOrnekleri.json'
+import ornekler from '../../../core/src/store/onizleme_ornekleri.json'
 import { AZAMI_ONIZLEME, notOnizlemesi } from './onizleme'
 
 // Ortak örnekler: aynı dosyayı sunucunun `onizleme_ortak_ornekleri_saglar`

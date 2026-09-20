@@ -248,9 +248,11 @@ async function ayarlarSekmesineGec() {
  * notu, rıza, ekler, Bakiye — `DosyaBilgileri`, bkz. `DanisanDosyasi.tsx`
  * modül başlığı "Kendi küçük sekme şeridi"). Bu şerit `kabuk/Sekmeler`den
  * AYRI — üst kabuğun Takvim/Danışanlar/Ayarlar şeridiyle karıştırılmamalı.
- * Varsayılan alt sekme "Seanslar"dır; danışan dosyası her açıldığında (ve
- * Danışanlar sekmesinden çıkıp GERİ girildiğinde — o an dosya bileşeni
- * yeniden mount olur) "Seanslar"a döner.
+ * Varsayılan alt sekme "Seanslar"dır; BAŞKA bir danışanın dosyası açılınca
+ * (ya da takvimden bir seansla gelinince) "Seanslar"a döner. Danışanlar
+ * sekmesinden çıkıp geri girmek alt sekmeyi artık SIFIRLAMAZ (son inceleme
+ * M1: alt sekme `AnaEkran`'da yaşıyor) — zaten Bilgiler'deyken tıklamak
+ * zararsız bir tekrardır.
  */
 async function dosyaBilgileriSekmesineGec() {
   // `findByRole` (senkron `getByRole` DEĞİL): bazı çağrı yerlerinde dosya
@@ -2612,23 +2614,21 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
 
     // Kart yeniden ÇEKİLMEDİ (GET /api/danisanlar/1 YOK), takvim listesi de
     // yeniden ÇEKİLMEDİ (GET /api/randevular?... aralık sorgusu YOK) — asıl
-    // korunan iddia bu. MINOR-1 düzeltmesi: pencere TAM EŞİTLİKLE ölçülüyor
-    // (eski hâl); ara sıradaki üç `GET .../not` gevşetilerek gizlenmedi —
-    // bunlar `bakiye()`nin her çağrısında Danışanlar sekmesine dönüşün
-    // `DanisanDosyasi`yi YENİDEN MONTE etmesinden (bkz. o bileşenin kendi
-    // not okuma efekti) kaynaklanan, DETERMİNİSTİK ve İSTİKRARLI bir dizi
-    // (üç kez ölçüldü, sıra hep AYNI): yazma → not GET → yazma → not GET →
-    // yazma → not GET. Tam eşitlik, gelecekte bu sıraya sessizce bir
-    // dördüncü/beşinci istek eklenirse (ör. kart/takvim GERÇEKTEN yeniden
-    // çekilirse) yine kırılır.
+    // korunan iddia bu. Pencere TAM EŞİTLİKLE ölçülüyor (MINOR-1).
+    //
+    // Son inceleme M1: eskiden buradaki her yazmanın ardından bir `GET
+    // .../not` da vardı — `bakiye()`nin her çağrısında Danışanlar sekmesine
+    // dönüş `DanisanDosyasi`yi yeniden monte ediyor ve bileşen AYNI notu
+    // yeniden istiyordu (silinemez `goruntuleme` satırı). Not artık
+    // `AnaEkran`'da yaşayan `useDosyaNotu`'da; sekme dönüşü onu yeniden
+    // istemez (ve bu testte dosya Bilgiler alt sekmesinde kaldığı için hiç
+    // istenmez — alt sekme de artık dönüşte korunuyor). Pencerede YALNIZCA
+    // üç yazma kalmalı.
     const pencere = istekYollari.slice(once)
     expect(pencere).toEqual([
       'PATCH /api/randevular/202/odeme',
-      'GET /api/randevular/202/not',
       'PATCH /api/randevular/202/odeme',
-      'GET /api/randevular/202/not',
       'PATCH /api/randevular/202',
-      'GET /api/randevular/202/not',
     ])
   })
 

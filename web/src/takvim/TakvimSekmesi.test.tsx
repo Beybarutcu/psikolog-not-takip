@@ -55,6 +55,7 @@ function bosSeansAkisi(): ReturnType<typeof useSeansNotlari> {
   return {
     seans: { id: null, not: null, ozelNot: null, ozelHata: null, gecmisNotlar: [], hata: null },
     notKaydet: vi.fn(async () => {}),
+    notYansit: vi.fn(),
     ozelNotKaydet: vi.fn(async () => {}),
     ozelSekmeAcildi: vi.fn(),
     ozelYenidenDene: vi.fn(),
@@ -75,7 +76,6 @@ function varsayilanProplar(ozelleştirme?: { ozetIstegi?: (ay: string) => Promis
     onSeansSec: vi.fn(),
     onDurumDegis: vi.fn(async () => {}),
     onOdemeDegis: vi.fn(async () => {}),
-    kilitle: vi.fn(),
   }
 }
 

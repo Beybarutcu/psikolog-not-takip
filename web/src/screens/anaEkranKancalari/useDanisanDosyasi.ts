@@ -8,7 +8,7 @@ import {
   type EkBilgisi,
 } from '../../api'
 import type { Randevu } from '../../takvim/HaftalikTakvim'
-import { yazmaSaatiOlustur, type RandevuYamasi } from './yazmaSaati'
+import { randevuSaatiOlustur, type RandevuYamasi } from './yazmaSaati'
 
 /**
  * Danışan kartındaki bakiye için randevu penceresi.
@@ -68,7 +68,7 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
   // kart yanıtında ESKİ değere dönmesin: takvim listesiyle AYNI mantıksal
   // saat (bkz. `yazmaSaati.ts`). Okuma damgası isteklerden hemen önce,
   // yazma damgası `randevuYamala`da (çağıran onu yalnızca başarıda çağırır).
-  const [yazmaSaati] = useState(yazmaSaatiOlustur)
+  const [yazmaSaati] = useState(randevuSaatiOlustur)
 
   // Danışan kartı verisi. Seans verisiyle aynı desen: `id` ile eşleşmeyen
   // state boş sayılır (render sırasında), böylece bir danışandan diğerine

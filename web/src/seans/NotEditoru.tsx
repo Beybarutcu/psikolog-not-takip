@@ -83,6 +83,27 @@ type Props = {
    * İÇERİĞİNE enjekte ederdi.
    */
   sablonSecilebilir?: boolean
+  /**
+   * Sunucuda olduğu bilinen EN SON hâl — editör monte olduktan SONRA başka
+   * bir yoldan yazılmış olabilir (son inceleme C1, ters yarış).
+   *
+   * Takvim ile danışan dosyası aynı resmî nota iki ayrı editörle bakıyor ve
+   * yalnızca biri aynı anda ekranda. Sekme değişirken giden editör bekleyen
+   * metnini unmount'ta PUT ediyor; gelen editör o PUT BİTMEDEN, eski içerikle
+   * monte olabiliyor. `baslangicIcerik` yalnızca mount'ta okunduğu için bu
+   * editör eski metni göstermeye devam eder, terapist tek bir tuşa basınca da
+   * otomatik kayıt eski metni PUT edip diğer ekranda yazılanı SİLERDİ.
+   *
+   * Kural: bu değer değişince, editör TEMİZSE (ekrandaki hâl sunucuda olduğu
+   * bilinen hâl, uçuşta kayıt yok) yeni hâli benimser. Editör KİRLİYSE
+   * (kullanıcı yazmış) DOKUNULMAZ — yazılan metin, sunucudan gelen bir
+   * değişiklik uğruna silinmez; kullanıcının kendi kaydı kazanır. Kendi
+   * kaydının sonucu geri geldiğinde değer zaten ekrandakiyle aynıdır ve
+   * hiçbir şey olmaz.
+   *
+   * Verilmezse (özel not editörü, eski çağıranlar) davranış eskisiyle aynı.
+   */
+  sunucuHali?: Kayit
 }
 
 const VARSAYILAN_GECIKME_MS = 2000
@@ -114,6 +135,7 @@ export function NotEditoru({
   taslakAnahtari,
   etiket = 'Seans notu',
   sablonSecilebilir = true,
+  sunucuHali,
 }: Props) {
   // Mount anında taslak deposuna bakılır: kilit (401) yüzünden unmount olmuş
   // bir editörün yazılmamış metni burada durur ve sunucudan gelen
@@ -221,6 +243,27 @@ export function NotEditoru({
     // sıfırlanır ve otomatik kayıt hiç ateşlenmezdi.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [icerik, sablon, gecikmeMs, taslakAnahtari])
+
+  // Dışarıdan gelen sunucu hâli (bkz. `sunucuHali` prop'u). Yalnızca editör
+  // TEMİZKEN benimsenir: ekrandaki hâl sunucuda olduğu bilinen hâl ve uçuşta
+  // kayıt yok. Benimsenince `sonKaydedilen` de güncellenir — yoksa yukarıdaki
+  // kayıt efekti yeni içeriği "kaydedilmesi gereken değişiklik" sanıp geri
+  // yazardı (her yazma silinemez bir denetim satırı).
+  const disIcerik = sunucuHali?.icerik
+  const disSablon = sunucuHali?.sablon
+  useEffect(() => {
+    if (disIcerik === undefined || disSablon === undefined) return
+    const dis = imza({ sablon: disSablon, icerik: disIcerik })
+    if (dis === sonKaydedilen.current) return
+    const temiz =
+      imza({ sablon: son.current.sablon, icerik: son.current.icerik }) === sonKaydedilen.current &&
+      ucustaki.current === null
+    if (!temiz) return
+    sonKaydedilen.current = dis
+    setIcerik(disIcerik)
+    setSablon(disSablon)
+    setGeriYuklendi(false)
+  }, [disIcerik, disSablon])
 
   // Unmount: bekleyen içerik varsa zamanlayıcıyı beklemeden gönderilir.
   // Kilit (401) senaryosunda bu istek de 401 alır ve reddedilir — sorun

@@ -1,9 +1,13 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { YetkisizHata, type DanisanSeansi } from '../api'
+import { YetkisizHata, type Danisan, type DanisanSeansi } from '../api'
 import type { KartVerisi, useDanisanDosyasi } from '../screens/anaEkranKancalari/useDanisanDosyasi'
 import type { useDanisanListesi } from '../screens/anaEkranKancalari/useDanisanListesi'
 import { useDanisanSeanslari } from '../screens/anaEkranKancalari/useDanisanSeanslari'
+import { useDosyaNotu } from '../screens/anaEkranKancalari/useDosyaNotu'
+import type { DosyaAltSekme } from './DanisanDosyasi'
 import { DanisanlarSekmesi } from './DanisanlarSekmesi'
 
 // `danisanApi.seanslar` test başına değiştirilebilir. `null` iken GERÇEK
@@ -94,9 +98,9 @@ function sahteDosya(seciliDanisanId: number | null): ReturnType<typeof useDanisa
   }
 }
 
-function sahteListe(): ReturnType<typeof useDanisanListesi> {
+function sahteListe(danisanlar: Danisan[] = []): ReturnType<typeof useDanisanListesi> {
   return {
-    danisanlar: [],
+    danisanlar,
     formAcik: false,
     setFormAcik: () => {},
     yeniAdSoyad: '',
@@ -124,9 +128,35 @@ function seansSayisi(): number {
   return screen.getByTestId('seans-listesi').querySelectorAll('li').length
 }
 
+/** Kancasız çağrılar için boş bir seans akışı (yalnızca ilk test). */
+function bosSeanslar(): ReturnType<typeof useDanisanSeanslari> {
+  return {
+    seanslar: [],
+    yuklendi: false,
+    hata: null,
+    yenidenDene: () => {},
+    seciliSeansId: null,
+    seansSec: () => {},
+    yamala: () => {},
+  }
+}
+
+function bosDosyaNotu(): ReturnType<typeof useDosyaNotu> {
+  return { not: null, hata: null, notYansit: () => {}, yenidenDene: () => {} }
+}
+
+/** Kancasız `DanisanlarSekmesi`nin zorunlu ama bu testlerde ilgisiz prop'ları. */
+const ILGISIZ = {
+  onDanisanSec: () => {},
+  veriRaporuIndir: async () => {},
+  onNotKaydet: async () => {},
+  onDurumDegis: async () => {},
+  onOdemeDegis: async () => {},
+}
+
 /**
- * Gerçek kullanım şeklinin (`AnaEkran`, Görev 8) KÜÇÜLTÜLMÜŞ hâli:
- * `useDanisanSeanslari`i BURADA çağırır ve sonucunu `DanisanlarSekmesi`ye
+ * Gerçek kullanım şeklinin (`AnaEkran`) KÜÇÜLTÜLMÜŞ hâli: `useDanisanSeanslari`
+ * ve `useDosyaNotu`yu BURADA çağırır ve sonuçlarını `DanisanlarSekmesi`ye
  * prop olarak geçirir — tıpkı `liste`/`dosya`nın da kendi kancalarından
  * geldiği gibi. `yuklendi` de aynı hattan (bkz. `SeansListesi.test.tsx`
  * "veri henüz yüklenmedi" testi — buradaki asıl kanıt ORADA).
@@ -139,15 +169,22 @@ function Kapsayici({
   /** Varsayılan no-op: yalnızca 401 testi gerçek bir `vi.fn()` geçirir. */
   onYetkisiz?: () => void
 }) {
-  const { seanslar, yuklendi } = useDanisanSeanslari({ clientId: seciliDanisanId, onYetkisiz })
+  const seanslar = useDanisanSeanslari({
+    clientId: seciliDanisanId,
+    onYetkisiz,
+    simdi: () => '2026-09-20T12:00',
+  })
+  const dosyaNotu = useDosyaNotu({ appointmentId: seanslar.seciliSeansId, gorunur: true })
+  const [altSekme, setAltSekme] = useState<DosyaAltSekme>('seanslar')
   return (
     <DanisanlarSekmesi
       liste={sahteListe()}
       dosya={sahteDosya(seciliDanisanId)}
       seanslar={seanslar}
-      yuklendi={yuklendi}
-      onDanisanSec={() => {}}
-      veriRaporuIndir={async () => {}}
+      dosyaNotu={dosyaNotu}
+      altSekme={altSekme}
+      onAltSekme={setAltSekme}
+      {...ILGISIZ}
     />
   )
 }
@@ -182,9 +219,11 @@ describe('DanisanlarSekmesi', () => {
       <DanisanlarSekmesi
         liste={sahteListe()}
         dosya={sahteDosya(null)}
-        seanslar={[]}
-        onDanisanSec={() => {}}
-        veriRaporuIndir={async () => {}}
+        seanslar={bosSeanslar()}
+        dosyaNotu={bosDosyaNotu()}
+        altSekme="seanslar"
+        onAltSekme={() => {}}
+        {...ILGISIZ}
       />,
     )
     // `jest-dom` bu pakette kurulu değil (`test-kurulum.ts`'te yok,
@@ -268,71 +307,93 @@ describe('DanisanlarSekmesi', () => {
     expect(seansSayisi()).toBe(0)
   })
 
-  it('bilinmeyen/silinmiş danışan (404) boş dosya olarak ele alınır, hata banner BASILMAZ', async () => {
-    // `danisanApi.seanslar` gerçek istemcide sunucunun 404'ünü 401 ve
-    // "veritabanı bozuk" DIŞINDA sıradan bir `Error` olarak fırlatır (bkz.
-    // `api.ts::basarisizYanitiFirlat` — ayrı bir `Bulunamadi` sınıfı yok).
-    // Bu test tam o dalı sınar: arşivlenmiş/silinmiş bir danışana tıklayan
-    // terapist çökmüş bir ekran DEĞİL, boş bir dosya görmeli.
-    //
-    // `seansSayisi() === 0` TEK BAŞINA zayıf bir iddiadır: başlangıç
-    // state'i zaten boş olduğu için "reject hiç yakalanmasa" bile bu sayı
-    // hâlâ '0' görünür (inceleme bulgusu — 10. biçim tam olarak bu tuzak).
-    // Asıl kanıt: `.then`in reddedilme kolu GERÇEKTEN çalıştı mı? Bunu
-    // `unhandledRejection`ı DOĞRUDAN dinleyerek ölçüyoruz -- catch dalı
-    // kaldırılır ya da `throw e` ile yeniden fırlatılırsa üretim kodunun
-    // KENDİ `.then()` zincirinden (test'in kendi `kapiReddet.promise`
-    // referansından BAĞIMSIZ, çünkü `.then()` YENİ bir promise döndürür)
-    // yakalanmamış bir ret çıkar ve bu dinleyici onu yakalar.
-    const yakalanmamislar: unknown[] = []
-    const dinle = (e: unknown) => yakalanmamislar.push(e)
-    process.on('unhandledRejection', dinle)
+  // Son inceleme I4 — DAVRANIŞ DEĞİŞTİ. Bu testin Görev 5'teki hâli "404 boş
+  // dosya olarak ele alınır, hata banner BASILMAZ" idi. 404 gerekçesi bu yolda
+  // fiilen işlemiyordu (bilinmeyen danışanda kartın `dosyaGetir`'i de 404
+  // alıyor ve dosya hiç çizilmiyor); geriye kalan tek etki geçici bir 500/ağ
+  // hatasında Seanslar'ın "Bu danışanın kayıtlı bir seansı yok." demesiydi —
+  // seansı olan bir danışan için sessiz bir yalan. Artık hata GÖSTERİLİYOR.
+  //
+  // Görev 5'in asıl korumasının yarısı AYNEN korunuyor: reddin GERÇEKTEN
+  // yakalandığı `unhandledRejection` dinlenerek ölçülüyor. `.then`in ret kolu
+  // kaldırılır ya da `throw e` ile yeniden fırlatılırsa üretim kodunun KENDİ
+  // zincirinden yakalanmamış bir ret çıkar ve bu dinleyici onu yakalar (ekran
+  // iddiası tek başına zayıftı: başlangıç durumu zaten "boş"tu — 10. biçim).
+  it.each([
+    ['404', 'Danışan bulunamadı.'],
+    ['500', 'Veritabanı okunamadı.'],
+  ])(
+    'seans listesi hatası (%s) "Seanslar yüklenemedi" gösterir, "seansı yok" DEMEZ; ret yakalanır; Yeniden dene listeyi getirir',
+    async (_kod, mesaj) => {
+      const yakalanmamislar: unknown[] = []
+      const dinle = (e: unknown) => yakalanmamislar.push(e)
+      process.on('unhandledRejection', dinle)
 
-    try {
-      const kapiReddet = kapi<DanisanSeansi[]>()
-      taklit.seanslar = () => kapiReddet.promise
-      const reddetSessizce = kapiReddet.promise.catch(() => {})
+      try {
+        const kapiReddet = kapi<DanisanSeansi[]>()
+        const reddetSessizce = kapiReddet.promise.catch(() => {})
+        let deneme = 0
+        taklit.seanslar = () => {
+          deneme += 1
+          return deneme === 1
+            ? kapiReddet.promise
+            : Promise.resolve([seans({ appointment_id: 1, not_ilk_satiri: 'geri geldi' })])
+        }
 
-      render(<Kapsayici seciliDanisanId={1} />)
+        render(<Kapsayici seciliDanisanId={1} />)
+        await act(async () => {
+          kapiReddet.reddet(new Error(mesaj))
+        })
+        await reddetSessizce
+        // `unhandledRejection` Node'da HANGİ event loop turunda yayılacağını
+        // garanti etmez; birkaç makro görev turu boyunca bekleniyor (Görev 5
+        // inceleme notu — tek bir `setTimeout(0)` yük altında turu kaçırabilir).
+        for (let tur = 0; tur < 10; tur++) {
+          await new Promise((r) => setTimeout(r, 0))
+        }
 
-      // Reddetme, `useDanisanSeanslari`nin `.then` ikinci koluna (`e:
-      // unknown`) düşüyor; `act` içinde çözülüyor ki React state
-      // güncellemesi testin gördüğü render ile aynı turda olsun.
-      await act(async () => {
-        kapiReddet.reddet(new Error('Danışan bulunamadı.'))
-      })
-      await reddetSessizce
-      // `unhandledRejection` Node'da HANGİ event loop turunda yayılacağını
-      // GARANTİ ETMEZ (V8'in reddetme izleyicisi kendi iç mikro görev
-      // kuyruğuna bağlı) -- eski hâli TEK bir `setTimeout(0)`e güveniyordu
-      // ve bu, yüklü bir makinede (paralel koşan başka test dosyaları, aynı
-      // worker'daki başka zamanlayıcılar) o turu KAÇIRABİLİRDİ: kararsız
-      // testin şüphesi tam olarak buydu (inceleme turu notu). Sabit TEK
-      // turun yerine birkaç makro görev turu boyunca bekleniyor: iyi
-      // durumda (asla yakalanmayacak) hepsi çalışır ve maliyeti önemsizdir
-      // (<1 ms), gerçek bir regresyonda ise sinyal ilk birkaç turda zaten
-      // yakalanmış olur -- `test-kurulum.ts`teki `waitFor` payının aynı
-      // gerekçesi ("biraz daha geç ama GERÇEK bir asılı kalmayı hâlâ
-      // yakalar").
-      for (let tur = 0; tur < 10; tur++) {
-        await new Promise((r) => setTimeout(r, 0))
+        const alarm = await screen.findByRole('alert')
+        expect(alarm.textContent).toContain('Seanslar yüklenemedi')
+        expect(alarm.textContent).toContain(mesaj)
+        expect(screen.queryByText('Bu danışanın kayıtlı bir seansı yok.')).toBeNull()
+        expect(yakalanmamislar).toEqual([])
+
+        // "Yeniden dene" gerçekten yeniden ister ve liste gelir.
+        await userEvent.click(within(alarm).getByRole('button', { name: 'Yeniden dene' }))
+        await waitFor(() => expect(seansSayisi()).toBe(1))
+        expect(deneme).toBe(2)
+        expect(screen.queryByRole('alert')).toBeNull()
+      } finally {
+        process.off('unhandledRejection', dinle)
       }
+    },
+  )
 
-      await waitFor(() => expect(seansSayisi()).toBe(0))
-      // Bugün hiçbir yerde bir "seans listesi hatası" banner'ı yok (bu görev
-      // seans verisini henüz ekrana basmıyor, bkz. `DanisanlarSekmesi.tsx`
-      // modül başlığı) -- ama gerçek gereksinim tam olarak bu: birileri
-      // catch dalını "404'te hata göster" diye değiştirirse burada bir
-      // `role="alert"` belirmemeli. `dosya.kart.hata` `null` kaldığı için
-      // BUGÜNKÜ tek alarm kaynağı (kart yüklemesi) da devre dışı; ekranda
-      // hiç `alert` OLMAMALI.
-      expect(screen.queryByRole('alert')).toBeNull()
-      // Asıl koruma: reddedilme gerçekten yakalandı, üretim kodunun kendi
-      // zincirinden sızan yakalanmamış bir ret YOK.
-      expect(yakalanmamislar).toEqual([])
-    } finally {
-      process.off('unhandledRejection', dinle)
-    }
+  // Son inceleme I2: listedeki açık danışan yalnızca `aria-current`
+  // taşıyordu, GÖRSEL bir vurgu yoktu. İki yön: seçili çip vurgulu, diğeri
+  // DEĞİL (her çipi vurgulayan bir uygulama da tek yönlü testi geçerdi).
+  it('açık dosyanın danışan çipi görsel olarak vurgulanır, diğeri vurgulanmaz', () => {
+    const iki: Danisan[] = [
+      { id: 1, ad_soyad: 'Ayşe Yılmaz', telefon: null, durum: 'aktif' },
+      { id: 2, ad_soyad: 'Mehmet Demir', telefon: null, durum: 'aktif' },
+    ]
+    render(
+      <DanisanlarSekmesi
+        liste={sahteListe(iki)}
+        dosya={sahteDosya(1)}
+        seanslar={bosSeanslar()}
+        dosyaNotu={bosDosyaNotu()}
+        altSekme="seanslar"
+        onAltSekme={() => {}}
+        {...ILGISIZ}
+      />,
+    )
+    const satir = (ad: string) =>
+      screen.getByRole('button', { name: `${ad} dosyasını aç` }).closest('li') as HTMLElement
+    expect(satir('Ayşe Yılmaz').getAttribute('data-secili')).toBe('evet')
+    expect(satir('Ayşe Yılmaz').className).toContain('font-semibold')
+    expect(satir('Mehmet Demir').getAttribute('data-secili')).toBeNull()
+    expect(satir('Mehmet Demir').className).not.toContain('font-semibold')
   })
 
   it('401 alınca onYetkisiz çağrılır ve seans listesi temizlenir', async () => {

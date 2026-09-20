@@ -51,7 +51,7 @@
 //! tutuluyor. Arayüz, not kaydedildikten sonra listeyi YENİDEN ÇEKMEDEN
 //! (silinemez `goruntuleme` satırı) aynı önizlemeyi yerelde hesaplıyor
 //! (`web/src/seans/onizleme.ts`); iki uygulamanın ayrışmaması ORTAK bir
-//! örnek dosyasıyla korunuyor (`web/src/seans/onizlemeOrnekleri.json`) —
+//! örnek dosyasıyla korunuyor (`core/src/store/onizleme_ornekleri.json`) —
 //! bu modülün testi o dosyayı `include_str!` ile okur, TS testi de aynısını.
 //!
 //! `""` YALNIZCA içerik `trim()` sonrası tamamen boşsa döner. Yalnızca
@@ -395,7 +395,7 @@ mod testler {
     #[test]
     fn onizleme_ortak_ornekleri_saglar() {
         let ornekler: Vec<serde_json::Value> = serde_json::from_str(include_str!(
-            "../../../web/src/seans/onizlemeOrnekleri.json"
+            "onizleme_ornekleri.json"
         ))
         .unwrap();
         // Bos bir ornek dosyasi bu testi TOTOLOJIK yapardi (birinci bicim).

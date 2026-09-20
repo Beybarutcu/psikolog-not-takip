@@ -83,11 +83,15 @@ type Props = {
     disTazeleme: number
   }
   danisanlar: Danisan[]
-  onDanisanAc: (clientId: number) => void
+  /**
+   * Danışan dosyasına giden yol (`AnaEkran.danisanaGit`). İkinci argüman
+   * yalnızca seans panelinden gelirken verilir: dosya O seans seçili açılır
+   * (son inceleme I3). Hızlı arama ve ay özeti yalnızca danışanı bilir.
+   */
+  onDanisanAc: (clientId: number, appointmentId?: number) => void
   onSeansSec: (appointmentId: number, tarih: string) => void
   onDurumDegis: (id: number, durum: string) => Promise<void>
   onOdemeDegis: (id: number, odendi: boolean) => Promise<void>
-  kilitle: () => void
 }
 
 export function TakvimSekmesi({
@@ -99,7 +103,6 @@ export function TakvimSekmesi({
   onSeansSec,
   onDurumDegis,
   onOdemeDegis,
-  kilitle,
 }: Props) {
   // Bkz. modül başlığı: kapalı başlama kuralı burada yaşıyor.
   const [ozetAcik, setOzetAcik] = useState(false)
@@ -113,7 +116,11 @@ export function TakvimSekmesi({
         {/* Hızlı arama her zaman monte: Ctrl+K dinleyicisi bileşenin kendi
             içinde. Kapalıyken yalnızca kısayolu duyuran bir düğme basar;
             hiçbir istek atmaz. */}
-        <HizliArama ara={aramaApi.ara} onDanisanSec={onDanisanAc} onSeansSec={onSeansSec} />
+        <HizliArama
+          ara={aramaApi.ara}
+          onDanisanSec={(id) => onDanisanAc(id)}
+          onSeansSec={onSeansSec}
+        />
         <button
           type="button"
           className="rounded-lg border px-4 py-2"
@@ -122,9 +129,10 @@ export function TakvimSekmesi({
         >
           Ay sonu özeti
         </button>
-        <button className="rounded-lg border px-4 py-2" onClick={kilitle}>
-          Kilitle
-        </button>
+        {/* `Kilitle` burada DEĞİL (son inceleme I1): tasarım §4 onu kabuğun
+            üst satırına koyuyor ve risk notu ya da açık bir dosya
+            ekrandayken kilitlemek için Takvim'e geçmek gerekmemeli — bkz.
+            `AnaEkran.tsx`. */}
       </div>
 
       {takvim.hata && <p className="mb-4 text-sm text-red-600">{takvim.hata}</p>}
@@ -169,7 +177,11 @@ export function TakvimSekmesi({
           (Görev 3 ürün kararı); "altında" DOM sırasında takvimden SONRA
           anlamına geliyor, takvimi aşağı itip önüne geçmiyor. */}
       {ozetAcik && (
-        <AyOzeti bugun={ozet.bugun} disTazeleme={ozet.disTazeleme} onDanisanAc={onDanisanAc} />
+        <AyOzeti
+          bugun={ozet.bugun}
+          disTazeleme={ozet.disTazeleme}
+          onDanisanAc={(id) => onDanisanAc(id)}
+        />
       )}
 
       {/* Seans paneli YALNIZCA mevcut bir randevu seçiliyken açılır: boş bir
@@ -193,8 +205,10 @@ export function TakvimSekmesi({
             onDurumDegis={(durum) => onDurumDegis(seciliRandevu.id, durum)}
             onOdemeDegis={(odendi) => onOdemeDegis(seciliRandevu.id, odendi)}
             // CRITICAL-1: aynı `onDanisanAc` — danışan çipi, hızlı arama, ay
-            // özeti ile AYNI yol (bkz. `AnaEkran.tsx::danisanaGit`).
-            onDanisanAc={onDanisanAc}
+            // özeti ile AYNI yol (bkz. `AnaEkran.tsx::danisanaGit`). Seans
+            // kimliği de gidiyor: dosya BU seans seçili açılır (son inceleme
+            // I3 — terapist panelde baktığı seansın dosyadaki hâlini arıyor).
+            onDanisanAc={(clientId) => onDanisanAc(clientId, seciliRandevu.id)}
           />
         ) : (
           // Yükleme başarısızsa panel AÇILMAZ: "yükleniyor…" yazan bir panel

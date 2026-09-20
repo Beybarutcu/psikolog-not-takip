@@ -1,8 +1,9 @@
-import type { DanisanSeansi } from '../api'
 import { yerelGun } from '../screens/anaEkranKancalari/yerelGun'
 import type { useDanisanDosyasi } from '../screens/anaEkranKancalari/useDanisanDosyasi'
 import type { useDanisanListesi } from '../screens/anaEkranKancalari/useDanisanListesi'
-import { DanisanDosyasi } from './DanisanDosyasi'
+import type { useDanisanSeanslari } from '../screens/anaEkranKancalari/useDanisanSeanslari'
+import type { useDosyaNotu } from '../screens/anaEkranKancalari/useDosyaNotu'
+import { DanisanDosyasi, type DosyaAltSekme } from './DanisanDosyasi'
 
 /**
  * Danışanlar sekmesi: solda danışan listesi, sağda açık danışanın dosyası
@@ -26,9 +27,11 @@ import { DanisanDosyasi } from './DanisanDosyasi'
  *
  * # Sağ kolon: `DanisanDosyasi` (Seanslar/Bilgiler alt sekmeleri, Görev 6)
  *
- * `seanslar` prop'u (`useDanisanSeanslari`, çağıranın sorumluluğu) artık
- * gerçekten EKRANA BASILIYOR: `DanisanDosyasi`nin Seanslar alt sekmesi
- * solda `SeansListesi`yi, sağda seçili seansın notunu gösterir. "Bilgiler"
+ * `seanslar` (`useDanisanSeanslari`) ve `dosyaNotu` (`useDosyaNotu`)
+ * `AnaEkran`'da çağrılan kancaların dönüşleri; bu bileşen onları ve
+ * `AnaEkran`'ın TEK yazma yollarını (`onNotKaydet`, `onDurumDegis`,
+ * `onOdemeDegis`) `DanisanDosyasi`ye bağlıyor. `DanisanDosyasi`nin Seanslar
+ * alt sekmesi solda `SeansListesi`yi, sağda seçili seansın notunu gösterir. "Bilgiler"
  * alt sekmesi `DosyaBilgileri`yi barındırıyor (eskiden `DanisanKarti`;
  * Görev 7 aynı içeriği taşıyıp KVKK uyarı dilini bilgi diline çevirdi).
  *
@@ -41,19 +44,33 @@ export function DanisanlarSekmesi({
   liste,
   dosya,
   seanslar,
-  yuklendi,
+  dosyaNotu,
+  altSekme,
+  onAltSekme,
   onDanisanSec,
   veriRaporuIndir,
+  onNotKaydet,
+  onDurumDegis,
+  onOdemeDegis,
 }: {
   liste: ReturnType<typeof useDanisanListesi>
   dosya: ReturnType<typeof useDanisanDosyasi>
-  /** Açık danışanın seans listesi (`useDanisanSeanslari`, çağıran taraf
-   * sağlıyor). Bkz. modül başlığı — Görev 6'ya kadar ekrana BASILMAZ. */
-  seanslar: DanisanSeansi[]
-  /** Bkz. `SeansListesi.tsx` — burada yalnızca DEVRALINIP iletiliyor. */
-  yuklendi?: boolean
+  /**
+   * Açık danışanın seans listesi, seçimi ve yükleme hatası
+   * (`useDanisanSeanslari`, `AnaEkran`'da çağrılıyor). Sağ kolondaki
+   * `DanisanDosyasi`nin Seanslar alt sekmesinde ekrana basılıyor.
+   */
+  seanslar: ReturnType<typeof useDanisanSeanslari>
+  /** Seçili seansın notu (`useDosyaNotu`, `AnaEkran`'da çağrılıyor). */
+  dosyaNotu: ReturnType<typeof useDosyaNotu>
+  altSekme: DosyaAltSekme
+  onAltSekme: (sekme: DosyaAltSekme) => void
   onDanisanSec: (clientId: number) => void
   veriRaporuIndir: (danisanId: number, parola: string) => Promise<void>
+  /** `AnaEkran`'ın TEK yazma yolları (son inceleme C1/C2). */
+  onNotKaydet: (appointmentId: number, kayit: { sablon: string; icerik: string }) => Promise<void>
+  onDurumDegis: (appointmentId: number, durum: string) => Promise<void>
+  onOdemeDegis: (appointmentId: number, odendi: boolean) => Promise<void>
 }) {
   const { seciliDanisanId, kart } = dosya
   // Yerel değişkene alınıyor: `liste.arsivOnayi` üzerinden daralan tür bir
@@ -124,7 +141,17 @@ export function DanisanlarSekmesi({
             {liste.danisanlar.map((d) => (
               <li
                 key={d.id}
-                className="flex items-center justify-between gap-2 rounded bg-slate-100 px-3 py-1"
+                // Son inceleme I2: açık dosyanın danışanı GÖRSEL olarak da
+                // vurgulanır — eskiden yalnızca `aria-current` taşıyordu ve
+                // gören bir kullanıcı hangi dosyanın açık olduğunu listeden
+                // okuyamıyordu.
+                data-secili={d.id === seciliDanisanId ? 'evet' : undefined}
+                className={
+                  'flex items-center justify-between gap-2 rounded border-l-4 px-3 py-1 ' +
+                  (d.id === seciliDanisanId
+                    ? 'border-slate-900 bg-slate-200 font-semibold'
+                    : 'border-transparent bg-slate-100')
+                }
               >
                 {/* Erişilebilir ad "Ayşe Yılmaz dosyasını aç": takvimdeki
                     randevu bloğunun adı düz "Ayşe Yılmaz" ve iki özdeş adlı
@@ -222,13 +249,25 @@ export function DanisanlarSekmesi({
                 // (`kart` türetmesi + bu koşullu render) danışan değişince
                 // `kart.dosya`'yı `null` yapıp bileşeni unmount ediyor; bu
                 // `key` bugün ulaşılamaz ama gevşeyen bir türetmede yük
-                // taşımaya hazır duruyor. Aynı zamanda `DanisanDosyasi`nin
-                // KENDİ iç state'ini (seçili seans, not, sekme) her danışan
-                // değişiminde sıfırlar.
+                // taşımaya hazır duruyor. (`DanisanDosyasi` artık kendi
+                // state'i olmayan bir bileşen: seçili seans, not ve alt
+                // sekme kancalarda/`AnaEkran`'da — son inceleme M1.)
                 key={`danisan-${kart.dosya.id}`}
                 kart={kart}
-                seanslar={seanslar}
-                yuklendi={yuklendi}
+                seanslar={seanslar.seanslar}
+                yuklendi={seanslar.yuklendi}
+                seansHata={seanslar.hata}
+                onSeansYenidenDene={seanslar.yenidenDene}
+                seciliSeansId={seanslar.seciliSeansId}
+                onSeansSec={(id) => seanslar.seansSec(seciliDanisanId, id)}
+                not={dosyaNotu.not}
+                notHata={dosyaNotu.hata}
+                onNotYenidenDene={dosyaNotu.yenidenDene}
+                onNotKaydet={onNotKaydet}
+                onDurumDegis={onDurumDegis}
+                onOdemeDegis={onOdemeDegis}
+                altSekme={altSekme}
+                onAltSekme={onAltSekme}
                 bugun={yerelGun(new Date())}
                 veriRaporuIndir={veriRaporuIndir}
                 ekYukle={dosya.ekYukle}

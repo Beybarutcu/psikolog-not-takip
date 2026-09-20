@@ -346,6 +346,15 @@ export function SeansPaneli({
                   // başına başlık eklemek yazılmış metni bozardı.
                   baslangicIcerik={not.icerik === '' ? sablonMetni(not.sablon) : not.icerik}
                   baslangicSablon={not.sablon}
+                  // Başka bir ekrandan (danışan dosyası) gelen kayıt editör
+                  // monte olduktan SONRA biterse temiz editör onu benimser
+                  // (son inceleme C1 — bkz. `NotEditoru::sunucuHali`). Açılış
+                  // içeriğiyle AYNI dönüşüm: yoksa boş not için başlıklar ile
+                  // `''` farklı sayılır ve editör başlıkları silerdi.
+                  sunucuHali={{
+                    sablon: not.sablon,
+                    icerik: not.icerik === '' ? sablonMetni(not.sablon) : not.icerik,
+                  }}
                   taslakAnahtari={`not-${randevu.id}`}
                   onKaydet={onNotKaydet}
                 />

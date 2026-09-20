@@ -95,7 +95,9 @@ function kur(ozel: Partial<React.ComponentProps<typeof DosyaBilgileri>> = {}) {
 describe('DosyaBilgileri — kimlik ve bağlam', () => {
   it('iletisim, basvuru nedeni ve bakiye gorunur', () => {
     kur()
-    expect(screen.getByText('Ayşe Yılmaz')).toBeDefined()
+    // Ad artık `DanisanDosyasi` başlığında (son inceleme I2); bu bölüm adı İKİNCİ kez basmaz.
+    expect(screen.queryByText('Ayşe Yılmaz')).toBeNull()
+    expect(screen.getByRole('region', { name: 'Danışan bilgileri' })).toBeDefined()
     expect(screen.getByText(/0555 111 22 33/)).toBeDefined()
     expect(screen.getByText(/Yoğun kaygı ve uyku sorunu/)).toBeDefined()
     // 45000 kuruş = 450,00 TL.
@@ -396,7 +398,7 @@ describe('DosyaBilgileri — ekli dosyalar', () => {
         expect(screen.getByText('Oturum kilitli. Lütfen parolanızı girin.')).toBeDefined(),
       )
       // Kart hâlâ ekranda — "sayfa gezinmedi"nin birim testi karşılığı.
-      expect(screen.getByText('Ayşe Yılmaz')).toBeDefined()
+      expect(screen.getByRole('region', { name: 'Danışan bilgileri' })).toBeDefined()
       expect(screen.getByRole('region', { name: 'Ekli dosyalar' })).toBeDefined()
       // 401 gövdesi dosya olarak DA yazılmadı.
       expect(uretilenBloblar).toHaveLength(0)

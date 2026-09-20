@@ -37,17 +37,39 @@
 //! açtı ama içeriği silmiş/boş bıraktı" ekranda ayırt edilemez -- oysa
 //! ilki "unutulmuş" bir eylemdir, ikincisi kasıtlı olabilir.
 //!
+//! # Önizleme: ilk ANLAMLI satır (son inceleme M3)
+//!
+//! `onizleme` notun ilk BOŞ OLMAYAN ve şablon başlığı OLMAYAN satırını
+//! alır. Eskiden yalnızca ilk satırı alıyordu ve iki yalan üretiyordu: boş
+//! satırla başlayan dolu bir not `""` dönüyor, arayüz "Not açıldı, henüz
+//! boş" yazıyordu; DAP şablonlu HER notun önizlemesi "Veri:" oluyordu —
+//! listede on seansın hepsi aynı görünüyordu.
+//!
+//! Şablon başlıkları elle İKİNCİ kez yazılmıyor: `templates` tablosundan
+//! (şemanın tohumu, `schema.rs` V3) okunuyor. Arayüzün kopyası
+//! (`web/src/seans/sablon.ts`) tohumla `sablon.test.ts` üzerinden eşit
+//! tutuluyor. Arayüz, not kaydedildikten sonra listeyi YENİDEN ÇEKMEDEN
+//! (silinemez `goruntuleme` satırı) aynı önizlemeyi yerelde hesaplıyor
+//! (`web/src/seans/onizleme.ts`); iki uygulamanın ayrışmaması ORTAK bir
+//! örnek dosyasıyla korunuyor (`web/src/seans/onizlemeOrnekleri.json`) —
+//! bu modülün testi o dosyayı `include_str!` ile okur, TS testi de aynısını.
+//!
+//! `""` YALNIZCA içerik `trim()` sonrası tamamen boşsa döner. Yalnızca
+//! şablon başlıklarından oluşan bir not (şablon eklenmiş, hiçbir şey
+//! yazılmamış) boş SAYILMAZ: ilk başlık ("Veri:") döner — ekranda gerçekten
+//! duran şey odur ve "henüz boş" demek içerik varken boş demek olurdu.
+//!
 //! # Önizleme kırpması KARAKTER üzerinden
 //!
-//! `ilk_satir` yalnızca notun ilk satırını (`\n`'e kadar) alır ve
-//! `AZAMI_ONIZLEME` **karakterinde** kırpar (`chars().take`, bayt değil).
+//! `onizleme` seçtiği satırı `AZAMI_ONIZLEME` **karakterinde** kırpar
+//! (`chars().take`, bayt değil).
 //! Türkçe harfler (ı, ğ, ş, ö, ü, ç) UTF-8'de çok baytlıdır; bayt üzerinden
 //! kırpma bir karakterin ortasından kesip geçersiz UTF-8 üretebilirdi.
 //! İkinci satır (ve varsa devamı) SQL sorgusuyla diskten okunur --
 //! `p.icerik` sütunu bütünüyle bir `String`'e girer, satır bazında
 //! sınırlanmaz. Garanti daha dar: bu fonksiyonun DÖNÜŞ değerine (dolayısıyla
-//! `DanisanSeansi`'ye ve JSON yanıtına) yalnızca kırpılmış ilk satır girer;
-//! `ilk_satir` çağrısından sonra geri kalanı hiçbir yere taşınmadan düşer.
+//! `DanisanSeansi`'ye ve JSON yanıtına) yalnızca kırpılmış TEK satır girer;
+//! `onizleme` çağrısından sonra geri kalanı hiçbir yere taşınmadan düşer.
 //!
 //! # Denetim kaydı: `OturumBasi`, `HerCagri` DEĞİL
 //!
@@ -163,6 +185,9 @@ pub fn danisan_seanslari(
     // varlik sebebi tam olarak bu (bkz. modul basligindaki urun bosluğu).
     // Filtre VE JOIN `a.` (randevu) uzerinden: `p.client_id` denormalize
     // bir kopyadir ve randevu tasindiginda bayatlar.
+    // Sablon basliklari TOHUMDAN (templates tablosu) -- bkz. modul basligi.
+    let basliklar = sablon_baslik_satirlari(conn)?;
+
     let mut ifade = conn.prepare(
         "SELECT a.id, a.baslangic, a.durum, a.ucret, a.odendi, p.icerik
            FROM appointments a
@@ -181,7 +206,7 @@ pub fn danisan_seanslari(
                 // 0'a sadelestirilmez (bkz. modul basligi).
                 ucret_kurus: s.get(3)?,
                 odendi: s.get::<_, i64>(4)? != 0,
-                not_ilk_satiri: icerik.map(|m| ilk_satir(&m)),
+                not_ilk_satiri: icerik.map(|m| onizleme(&m, &basliklar)),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -202,12 +227,48 @@ pub fn danisan_seanslari(
     Ok(liste)
 }
 
-/// İlk satırı verir ve `AZAMI_ONIZLEME` karakterinde kırpar.
+/// Şablon başlıklarının notta göründüğü SATIR biçimleri (`"Veri:"`, …).
+///
+/// Kaynak `templates.basliklar` (JSON dizi) -- şemanın tohumu; liste burada
+/// ikinci kez elle yazılmıyor. Arayüz başlığı `"{baslik}:"` satırı olarak
+/// ekler (`web/src/seans/sablon.ts::sablonMetni`), bu yüzden karşılaştırma o
+/// biçimle yapılır. Çözülemeyen bir satır (bozuk JSON) atlanır: önizleme bir
+/// kolaylıktır ve bozuk bir şablon satırı danışanın TÜM seans listesini
+/// açılamaz hâle getirmemeli -- en kötü sonuç başlığın önizlemede görünmesi.
+fn sablon_baslik_satirlari(conn: &Connection) -> Result<Vec<String>, DepoHatasi> {
+    let mut ifade = conn.prepare("SELECT basliklar FROM templates")?;
+    let ham = ifade
+        .query_map([], |s| s.get::<_, String>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ham
+        .iter()
+        .filter_map(|j| serde_json::from_str::<Vec<String>>(j).ok())
+        .flatten()
+        .map(|b| format!("{b}:"))
+        .collect())
+}
+
+/// Notun önizlemesi: ilk boş olmayan, şablon başlığı olmayan satır;
+/// `AZAMI_ONIZLEME` KARAKTERDE kırpılır (bkz. modül başlığı).
 ///
 /// Kırpma KARAKTER üzerinden: Türkçe harfler çok baytlı, bayt kırpması
-/// UTF-8'i ortasından bölerdi (bkz. modül başlığı).
-fn ilk_satir(metin: &str) -> String {
-    metin.lines().next().unwrap_or("").chars().take(AZAMI_ONIZLEME).collect()
+/// UTF-8'i ortasından bölerdi.
+fn onizleme(metin: &str, baslik_satirlari: &[String]) -> String {
+    // Yalnizca basliklardan olusan notun yedegi: ilk baslik (bkz. modul
+    // basligi -- `""` yalnizca TAMAMEN bos icerik icin).
+    let mut ilk_baslik: Option<&str> = None;
+    for satir in metin.lines() {
+        let s = satir.trim();
+        if s.is_empty() {
+            continue;
+        }
+        if baslik_satirlari.iter().any(|b| b == s) {
+            ilk_baslik.get_or_insert(s);
+            continue;
+        }
+        return s.chars().take(AZAMI_ONIZLEME).collect();
+    }
+    ilk_baslik.unwrap_or("").chars().take(AZAMI_ONIZLEME).collect()
 }
 
 #[cfg(test)]
@@ -323,6 +384,57 @@ mod testler {
 
         let liste = danisan_seanslari(&c, cid, Cihaz::Masaustu).unwrap();
         assert_eq!(liste[0].not_ilk_satiri, Some(String::new()));
+    }
+
+    /// Son inceleme M3: onizleme ilk ANLAMLI satirdir. Ornekler arayuzle
+    /// ORTAK dosyadan okunur (`web/src/seans/onizleme.test.ts` ayni dosyayi
+    /// okur): arayuz kayittan sonra onizlemeyi yerelde hesapliyor ve iki
+    /// uygulama ayrisirsa liste, yeniden cekilene kadar sunucununkinden
+    /// farkli bir satir gosterirdi. Her ornek GERCEK yoldan gecer (not
+    /// kaydet -> liste), yalnizca yardimci fonksiyondan degil.
+    #[test]
+    fn onizleme_ortak_ornekleri_saglar() {
+        let ornekler: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+            "../../../web/src/seans/onizlemeOrnekleri.json"
+        ))
+        .unwrap();
+        // Bos bir ornek dosyasi bu testi TOTOLOJIK yapardi (birinci bicim).
+        assert!(ornekler.len() >= 10, "ornek dosyasi beklenenden kucuk");
+        let (_d, c) = kurulum();
+        for (i, o) in ornekler.iter().enumerate() {
+            let ad = o["ad"].as_str().unwrap();
+            let icerik = o["icerik"].as_str().unwrap();
+            let beklenen = o["beklenen"].as_str().unwrap();
+            let cid = danisan(&c, &format!("Danisan {i}"));
+            let rid = randevu(&c, cid, "2026-09-14T10:00");
+            not_kaydet(&c, rid, "dap", icerik, Cihaz::Masaustu).unwrap();
+            let liste = danisan_seanslari(&c, cid, Cihaz::Masaustu).unwrap();
+            assert_eq!(liste[0].not_ilk_satiri.as_deref(), Some(beklenen), "ornek: {ad}");
+        }
+    }
+
+    /// Baslik listesi TOHUMDAN (templates tablosu) okunur, elle yazilmis bir
+    /// kopyadan DEGIL: tabloya yeni bir baslik eklenince o satir da
+    /// atlanir. Elle yazilmis bir liste bu testi kirar. Iki yon: tabloda
+    /// OLMAYAN "Gozlem:" satiri atlanmaz (her seyi atlayan bir uygulama da
+    /// ilk iddiayi gecerdi -- yedinci bicim).
+    #[test]
+    fn baslik_listesi_sablon_tablosundan_turetilir() {
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let rid = randevu(&c, cid, "2026-09-14T10:00");
+        not_kaydet(&c, rid, "dap", "Gözlem:\nsakin görünüyordu", Cihaz::Masaustu).unwrap();
+
+        let once = danisan_seanslari(&c, cid, Cihaz::Masaustu).unwrap();
+        assert_eq!(once[0].not_ilk_satiri.as_deref(), Some("Gözlem:"));
+
+        c.execute(
+            "UPDATE templates SET basliklar = '[\"Gözlem\",\"Plan\"]' WHERE kod = 'serbest'",
+            [],
+        )
+        .unwrap();
+        let sonra = danisan_seanslari(&c, cid, Cihaz::Masaustu).unwrap();
+        assert_eq!(sonra[0].not_ilk_satiri.as_deref(), Some("sakin görünüyordu"));
     }
 
     #[test]

@@ -13,6 +13,9 @@ const danisanSonucu: AramaSonucu = {
   appointment_id: null,
   tarih: null,
   parca: 'Ayşe Yılmaz',
+  tag_id: null,
+  etiket_adi: null,
+  kullanim: null,
 }
 
 const notSonucu: AramaSonucu = {
@@ -22,6 +25,21 @@ const notSonucu: AramaSonucu = {
   appointment_id: 101,
   tarih: '2026-09-07T10:00',
   parca: '…uyku düzeni ve kaygı üzerine konuşuldu…',
+  tag_id: null,
+  etiket_adi: null,
+  kullanim: null,
+}
+
+const etiketSonucu: AramaSonucu = {
+  tur: 'etiket',
+  client_id: 0,
+  danisan_adi: '',
+  appointment_id: null,
+  tarih: null,
+  parca: '',
+  tag_id: 7,
+  etiket_adi: 'Kaygı',
+  kullanim: 3,
 }
 
 /** `AramaYaniti` kısayolu: testlerin çoğu kırpılmayla ilgilenmiyor. */
@@ -33,7 +51,7 @@ function kur(ozel: Partial<React.ComponentProps<typeof HizliArama>> = {}) {
   const props = {
     ara: vi.fn().mockResolvedValue(yanit([danisanSonucu, notSonucu])),
     onDanisanSec: vi.fn(),
-    onSeansSec: vi.fn(),
+    onEtiketSec: vi.fn(),
     // Gecikme testlerde kısaltılıyor (NotEditoru'nun `gecikmeMs` deseni).
     // Varsayılanın 250 ms olduğu ayrıca sabitleniyor.
     gecikmeMs: 5,
@@ -430,8 +448,12 @@ describe('HizliArama — sorgu eşiği ve geciktirme', () => {
 })
 
 describe('HizliArama — sonuçlar', () => {
-  it('sonuc secilince ilgili seansa gider', async () => {
-    const { onSeansSec, onDanisanSec } = kur()
+  // GÖREV 7: not sonucuna tıklamak eskiden `onSeansSec(appointmentId, tarih)`
+  // çağırıp takvim haftasına gidiyordu; tasarım §8 kararıyla artık
+  // `onDanisanSec(clientId, appointmentId)` çağırıyor -- danışanın dosyasını
+  // o seans SEÇİLİ açan AYNI fonksiyon, ikinci argümanla.
+  it('not sonucu secilince danisan dosyasina O SEANS ile gider', async () => {
+    const { onDanisanSec } = kur()
     await ac()
     await userEvent.type(kutu(), 'kaygi')
 
@@ -440,23 +462,40 @@ describe('HizliArama — sonuçlar', () => {
     const dugme = await screen.findByRole('button', { name: /7 Eylül 2026, 10:00 seansına git/ })
     await userEvent.click(dugme)
 
-    expect(onSeansSec).toHaveBeenCalledWith(101, '2026-09-07T10:00')
-    expect(onDanisanSec).not.toHaveBeenCalled()
+    expect(onDanisanSec).toHaveBeenCalledWith(12, 101)
     // Seansa gidince arama kapanır ve sonuçlar ekranda kalmaz.
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(document.body.textContent).not.toContain('uyku düzeni ve kaygı')
   })
 
-  it('danisan sonucu secilince dosyaya gider', async () => {
-    const { onSeansSec, onDanisanSec } = kur()
+  it('danisan sonucu secilince dosyaya İKİNCİ ARGÜMAN OLMADAN gider', async () => {
+    const { onDanisanSec } = kur()
     await ac()
     await userEvent.type(kutu(), 'ayse')
 
     const dugme = await screen.findByRole('button', { name: /danışan dosyasını aç/ })
     await userEvent.click(dugme)
 
+    // Danışan sonucu appointmentId TAŞIMAZ: yalnızca TEK argümanla çağrılır.
     expect(onDanisanSec).toHaveBeenCalledWith(12)
-    expect(onSeansSec).not.toHaveBeenCalled()
+    expect(onDanisanSec).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(onDanisanSec).mock.calls[0]).toHaveLength(1)
+  })
+
+  it('etiket sonucu secilince onEtiketSec cagirir, dosyaya GITMEZ', async () => {
+    const { onEtiketSec, onDanisanSec } = kur({
+      ara: vi.fn().mockResolvedValue(yanit([etiketSonucu])),
+    })
+    await ac()
+    await userEvent.type(kutu(), 'kaygi')
+
+    const dugme = await screen.findByRole('button', { name: 'Kaygı etiketli seansları göster' })
+    await userEvent.click(dugme)
+
+    expect(onEtiketSec).toHaveBeenCalledWith({ id: 7, ad: 'Kaygı', kullanim: 3 })
+    expect(onDanisanSec).not.toHaveBeenCalled()
+    // Etiket sonucuna gidince de arama kapanır.
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('sonuc yoksa bunu soyler', async () => {

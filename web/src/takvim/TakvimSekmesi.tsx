@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { aramaApi, takvimApi, type Danisan } from '../api'
+import { aramaApi, takvimApi, type Danisan, type Etiket } from '../api'
 import type { EtiketBaglami } from '../etiket/EtiketSatiri'
 import { HizliArama } from '../arama/HizliArama'
 import { AyOzeti } from '../ozet/AyOzeti'
@@ -86,11 +86,12 @@ type Props = {
   danisanlar: Danisan[]
   /**
    * Danışan dosyasına giden yol (`AnaEkran.danisanaGit`). İkinci argüman
-   * yalnızca seans panelinden gelirken verilir: dosya O seans seçili açılır
-   * (son inceleme I3). Hızlı arama ve ay özeti yalnızca danışanı bilir.
+   * seans panelinden VE hızlı aramanın not sonucundan gelirken verilir:
+   * dosya O seans seçili açılır (son inceleme I3, Görev 7'de hızlı aramaya
+   * da yayıldı — bkz. `HizliArama`'ya aşağıdaki geçiş). Ay özeti yalnızca
+   * danışanı bilir.
    */
   onDanisanAc: (clientId: number, appointmentId?: number) => void
-  onSeansSec: (appointmentId: number, tarih: string) => void
   onDurumDegis: (id: number, durum: string) => Promise<void>
   onOdemeDegis: (id: number, odendi: boolean) => Promise<void>
   /**
@@ -99,6 +100,13 @@ type Props = {
    * `useEtiketler` modül başlığı). Bu bileşen yalnızca kimliği bağlıyor.
    */
   etiketBaglami: (appointmentId: number) => EtiketBaglami
+  /**
+   * Hızlı aramanın etiket sonucuna tıklanınca "etiketli seanslar" panelini
+   * açar (`AnaEkran`'daki `useEtiketler.etiketAc`, Görev 7). Etiket verisi ve
+   * paneli AnaEkran'da yaşıyor (bkz. `etiketBaglami` gerekçesi) — bu bileşen
+   * yalnızca çağırıyor.
+   */
+  onEtiketAc: (etiket: Etiket) => void
 }
 
 export function TakvimSekmesi({
@@ -107,10 +115,10 @@ export function TakvimSekmesi({
   ozet,
   danisanlar,
   onDanisanAc,
-  onSeansSec,
   onDurumDegis,
   onOdemeDegis,
   etiketBaglami,
+  onEtiketAc,
 }: Props) {
   // Bkz. modül başlığı: kapalı başlama kuralı burada yaşıyor.
   const [ozetAcik, setOzetAcik] = useState(false)
@@ -126,8 +134,8 @@ export function TakvimSekmesi({
             hiçbir istek atmaz. */}
         <HizliArama
           ara={aramaApi.ara}
-          onDanisanSec={(id) => onDanisanAc(id)}
-          onSeansSec={onSeansSec}
+          onDanisanSec={(id, appointmentId) => onDanisanAc(id, appointmentId)}
+          onEtiketSec={onEtiketAc}
         />
         <button
           type="button"

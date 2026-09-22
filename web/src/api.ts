@@ -214,14 +214,22 @@ export const AZAMI_EK_BOYUTU = 20 * 1024 * 1024
 
 /** Tek bir arama sonucu (`GET /api/ara` yanıtı; sunucudaki `AramaSonucu`). */
 export type AramaSonucu = {
-  /** `"danisan"` veya `"not"`. */
+  /** `"danisan"`, `"not"` veya `"etiket"` (Görev 7). */
   tur: string
+  /** `tur === 'etiket'` iken anlamsız: `0`. */
   client_id: number
+  /** `tur === 'etiket'` iken boş dizgi. */
   danisan_adi: string
   appointment_id: number | null
   tarih: string | null
-  /** Eşleşmenin çevresinden alınan bağlam parçası. */
+  /** Eşleşmenin çevresinden alınan bağlam parçası; `tur === 'etiket'` iken boş dizgi. */
   parca: string
+  /** Yalnızca `tur === 'etiket'` iken dolu: etiketin kimliği. */
+  tag_id: number | null
+  /** Yalnızca `tur === 'etiket'` iken dolu: etiketin görünen adı. */
+  etiket_adi: string | null
+  /** Yalnızca `tur === 'etiket'` iken dolu: etiketin kaç seansa bağlı olduğu. */
+  kullanim: number | null
 }
 
 /**

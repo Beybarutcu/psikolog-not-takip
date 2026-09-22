@@ -73,11 +73,11 @@ function varsayilanProplar(ozelleştirme?: { ozetIstegi?: (ay: string) => Promis
     ozet: { bugun: '2026-09-16', disTazeleme: 0 },
     danisanlar: [],
     onDanisanAc: vi.fn(),
-    onSeansSec: vi.fn(),
     onDurumDegis: vi.fn(async () => {}),
     onOdemeDegis: vi.fn(async () => {}),
     // Bu testlerde seans paneli hiç açılmıyor; bağlam hiç çağrılmaz.
     etiketBaglami: vi.fn(),
+    onEtiketAc: vi.fn(),
   }
 }
 

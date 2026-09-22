@@ -42,6 +42,24 @@
 //! Plan 3'teki istemci raporu da içermiyordu; bu görev içeriği taşır, kararı
 //! değiştirmez. Sorgu sütunu hiç okumaz (`risk_notu_rapora_girmez_basvuru_nedeni_girer`).
 //!
+//! # Etiketler rapora GİRER (kullanıcı kararı, 2026-09-22)
+//!
+//! Görev 7: her resmî notun altına o seansın etiketleri `Etiketler: aile,
+//! kaygı` biçiminde yazılır — adına göre Türk alfabesiyle sıralı
+//! (`store::tags::etiket_sirasi`, `tags::etiketleri_listele` ile AYNI kural).
+//! Gerekçe: etiket resmî nota bağlı ve danışan hakkında işlenen bir veridir
+//! (KVKK md. 11 "elimdeki her şey"), danışanın görmesi istenmeyen bir
+//! sınıflandırma özel nota yazılır, etikete DEĞİL. Etiketsiz seansta bu satır
+//! hiç yoktur — boş bir "Etiketler:" satırı "hiç bakılmadı" ile "bakıldı, boş
+//! çıktı" ayrımını bulanıklaştırırdı.
+//!
+//! Etiket adları danışanın **kendi** seanslarından (`a.client_id` — yetkili
+//! kaynak, notun denormalize kopyasından değil) okunur; ek sorgu
+//! `danisan_seanslari.rs`'teki "Etiketler: TEK ek sorgu, N+1 DEĞİL" deseniyle
+//! aynıdır (bkz. o modülün başlığı). Başka danışanın etiketi rapora
+//! SIZAMAZ: `seans_etiketleri_baska_danisaninki_sizmaz_ve_ada_gore_siralanir`
+//! testi iki danışan, aynı etiket adıyla kurup bunu doğrular.
+//!
 //! # Ekler: ad ve üstveri — içerik ASLA
 //!
 //! Dosya adı, tür, eklenme tarihi, boyut. İçerik BLOB'u sorguya hiç girmez.
@@ -65,7 +83,9 @@
 use crate::pdf::{RaporBolumu, RaporIcerigi};
 use crate::store::audit::{kaydet, Cihaz, Eylem, LogHacmi};
 use crate::store::clients::DepoHatasi;
+use crate::store::tags::etiket_sirasi;
 use rusqlite::{Connection, OptionalExtension};
+use std::collections::HashMap;
 
 /// Raporun son satırı: dosyanın neyi İÇERMEDİĞİNİ açıkça söyler. Raporu
 /// okuyan danışan olabilir; bu bir gizleme değil, kapsam beyanıdır.
@@ -244,8 +264,10 @@ pub fn rapor_icerigi(conn: &Connection, client_id: i64) -> Result<RaporIcerigi, 
 
     // LIMIT YOK: KVKK md. 11 "elimdeki her sey" demektir. Danisan filtresi ve
     // siralama YETKILI KAYNAKTAN (`a.`), notun denormalize kopyasindan degil.
+    // `p.appointment_id` asagidaki etiket haritasiyla eslestirmek icin
+    // gerekli.
     let mut stmt = conn.prepare(
-        "SELECT a.baslangic, p.sablon, p.icerik
+        "SELECT a.baslangic, p.sablon, p.icerik, p.appointment_id
          FROM progress_notes p
          JOIN appointments a ON a.id = p.appointment_id
          WHERE a.client_id = ?1
@@ -253,22 +275,52 @@ pub fn rapor_icerigi(conn: &Connection, client_id: i64) -> Result<RaporIcerigi, 
     )?;
     let notlar = stmt
         .query_map([client_id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?))
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, i64>(3)?,
+            ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
+
+    // Etiketler (bkz. modul basligi "Etiketler rapora GIRER"): TEK ek sorgu,
+    // `danisan_seanslari.rs`'teki N+1-degil deseniyle ayni. `a.client_id`
+    // filtresi YETKILI kaynaktan: baska danisanin etiketi buraya giremez.
+    let mut etiket_ifadesi = conn.prepare(
+        "SELECT pt.appointment_id, t.ad
+           FROM progress_note_tags pt
+           JOIN tags t ON t.id = pt.tag_id
+           JOIN appointments a ON a.id = pt.appointment_id
+          WHERE a.client_id = ?1",
+    )?;
+    let mut etiket_haritasi: HashMap<i64, Vec<String>> = HashMap::new();
+    for satir in etiket_ifadesi
+        .query_map([client_id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+    {
+        let (appointment_id, ad) = satir?;
+        etiket_haritasi.entry(appointment_id).or_default().push(ad);
+    }
+    drop(etiket_ifadesi);
 
     let mut not_satirlari = Vec::with_capacity(notlar.len() * 3);
     if notlar.is_empty() {
         not_satirlari.push("Kayıtlı seans notu yok.".to_string());
     }
-    for (baslangic, sablon, icerik) in &notlar {
+    for (baslangic, sablon, icerik, appointment_id) in &notlar {
         not_satirlari.push(format!(
             "Seans: {} · {}",
             seans_zamani_tr(baslangic),
             sablon_adi(sablon)
         ));
         not_satirlari.push(icerik.clone());
+        // Etiketsiz seansta bu satir HIC yok (bkz. modul basligi).
+        if let Some(adlar) = etiket_haritasi.get(appointment_id) {
+            let mut adlar = adlar.clone();
+            adlar.sort_by(|a, b| etiket_sirasi(a, b));
+            not_satirlari.push(format!("Etiketler: {}", adlar.join(", ")));
+        }
         not_satirlari.push(String::new());
     }
     let seans_notlari = RaporBolumu {
@@ -392,6 +444,7 @@ mod tests {
         db::open_encrypted,
         notes::{not_kaydet, ozel_not_kaydet},
         schema::migrate,
+        tags::{etiket_ekle, etiket_kaldir},
     };
 
     fn baglanti() -> (tempfile::TempDir, Connection) {
@@ -455,6 +508,80 @@ mod tests {
         assert!(metin.contains("Seans notları (2)"), "{metin}");
         assert!(!metin.contains("OZEL-KANARYA"), "ozel not rapora sizdi: {metin}");
         assert!(metin.contains("Ad soyad: Ayse Yilmaz"));
+    }
+
+    // (a2) Görev 7: etiketler -- ada gore Turk alfabesiyle sirali, yalnizca
+    // etiketi olan seansta satir var, cok baytli etiket adiyla (Noto Sans'a
+    // giden metnin Turkce harf tasidigini dogrulamak icin).
+    #[test]
+    fn seans_etiketleri_rapora_ada_gore_sirali_girer_etiketsiz_seansta_satir_yok() {
+        let (_d, c) = baglanti();
+        let cid = danisan(&c, "Ayse Yilmaz");
+        let etiketli = randevu(&c, cid, "2026-09-01T10:00", "2026-09-01T11:00");
+        let etiketsiz = randevu(&c, cid, "2026-09-08T10:00", "2026-09-08T11:00");
+        not_kaydet(&c, etiketli, "dap", "ETIKETLI-SEANS-NOTU", Cihaz::Masaustu).unwrap();
+        not_kaydet(&c, etiketsiz, "dap", "ETIKETSIZ-SEANS-NOTU", Cihaz::Masaustu).unwrap();
+        // Kasten TERS sirada ekleniyor -- rapordaki sira EKLEME sirasindan
+        // degil, Turk alfabesinden (`etiket_sirasi`) gelmeli. "öfke" ve
+        // "ilaç değişimi" COK BAYTLI (bkz. test adi).
+        etiket_ekle(&c, etiketli, "öfke", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, etiketli, "aile", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, etiketli, "ilaç değişimi", Cihaz::Masaustu).unwrap();
+
+        let metin = duz(&rapor_icerigi(&c, cid).unwrap());
+        assert!(
+            metin.contains("Etiketler: aile, ilaç değişimi, öfke"),
+            "etiketler ada gore Turk alfabesiyle sirali tek satirda olmali: {metin}"
+        );
+        // EKSI YON: etiketsiz seansin notunun HEMEN ARDINDAN "Etiketler:"
+        // satiri gelmemeli -- notu izleyen bos satirdan sonra bir sonraki
+        // BOLUM baslar (`markorden_sonra` "\n" ile baslar: aradaki bos
+        // satirin karsiligi).
+        let parcalar: Vec<&str> = metin.split("ETIKETSIZ-SEANS-NOTU\n").collect();
+        assert_eq!(parcalar.len(), 2, "on kosul: isaret metinde tam bir kez gecmeli: {metin}");
+        assert!(
+            !parcalar[1].starts_with("Etiketler:"),
+            "etiketsiz seansta Etiketler satiri OLMAMALI: {metin}"
+        );
+    }
+
+    // (a3) Görev 7: kaldirilan etiket rapora girmez; baska danisanin AYNI
+    // ADLI etiketi bu danisanin raporuna sizmaz.
+    #[test]
+    fn seans_etiketleri_kaldirilinca_rapordan_cikar_baska_danisaninki_sizmaz() {
+        let (_d, c) = baglanti();
+        let cid = danisan(&c, "Ayse Yilmaz");
+        let baska = danisan(&c, "Mehmet Demir");
+        let rid = randevu(&c, cid, "2026-09-01T10:00", "2026-09-01T11:00");
+        let baska_rid = randevu(&c, baska, "2026-09-02T10:00", "2026-09-02T11:00");
+        not_kaydet(&c, rid, "dap", "AYSE-SEANS-NOTU", Cihaz::Masaustu).unwrap();
+        not_kaydet(&c, baska_rid, "dap", "MEHMET-SEANS-NOTU", Cihaz::Masaustu).unwrap();
+
+        let kaldirilacak = etiket_ekle(&c, rid, "kriz", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, rid, "aile", Cihaz::Masaustu).unwrap();
+        // AYNI ADLI etiket baska danisanin seansina baglaniyor -- iki
+        // danisan da ayni etiket kimligini paylasir (`tags.ad_anahtar`
+        // benzersiz).
+        etiket_ekle(&c, baska_rid, "aile", Cihaz::Masaustu).unwrap();
+        etiket_kaldir(&c, rid, kaldirilacak.id, Cihaz::Masaustu).unwrap();
+
+        let ayse_metin = duz(&rapor_icerigi(&c, cid).unwrap());
+        assert!(ayse_metin.contains("Etiketler: aile"), "{ayse_metin}");
+        assert!(!ayse_metin.contains("kriz"), "kaldirilan etiket rapora sizdi: {ayse_metin}");
+
+        let mehmet_metin = duz(&rapor_icerigi(&c, baska).unwrap());
+        assert!(mehmet_metin.contains("Etiketler: aile"), "{mehmet_metin}");
+        // Iki danisanin raporu da "Etiketler: aile" iceriyor olsa da (ayni
+        // ETIKET adi), her biri YALNIZCA KENDI seansinin etiketini
+        // tasimali -- capraz sizinti notun icerigi uzerinden olcelir.
+        assert!(
+            !mehmet_metin.contains("AYSE-SEANS-NOTU"),
+            "Ayse'nin notu Mehmet'in raporuna sizdi: {mehmet_metin}"
+        );
+        assert!(
+            !ayse_metin.contains("MEHMET-SEANS-NOTU"),
+            "Mehmet'in notu Ayse'nin raporuna sizdi: {ayse_metin}"
+        );
     }
 
     // (b) randevu tasininca not yeni danisana gider

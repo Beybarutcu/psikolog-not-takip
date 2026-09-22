@@ -277,20 +277,12 @@ export function AnaEkran({
     setSekme('danisanlar')
   }
 
-  /**
-   * Aramadan seçilen seansa gider: hafta değişir, seçim `useTakvimAkisi`
-   * içinde SUNUCUDAN GELEN listeden kurulur (bkz. `bekleyenSeans`).
-   *
-   * Açık danışan kartı burada kapatılıyor: kartın state'i başka bir kancada
-   * ve gidilen seans başka bir danışana ait olabilir. Sekme DEĞİŞTİRİLMİYOR:
-   * hızlı arama yalnızca `TakvimSekmesi`nin İÇİNDE render ediliyor (bkz. o
-   * dosyadaki `HizliArama` çağrısı), yani bu fonksiyon zaten yalnızca Takvim
-   * sekmesi açıkken tetiklenebilir.
-   */
-  function seansaGit(appointmentId: number, tarih: string) {
-    takvim.seansaGit(appointmentId, tarih)
-    dosya.kapat()
-  }
+  // Görev 7: hızlı aramanın not sonucuna tıklamak artık takvim haftasına
+  // GİTMEZ (eski `seansaGit`/`takvim.seansaGit` çağrısı kaldırıldı) —
+  // `danisanaGit(clientId, appointmentId)` çağrılır, tıpkı seans panelindeki
+  // danışan çipi gibi (bkz. `HizliArama.tsx` ve `TakvimSekmesi.tsx` modül
+  // başlıkları). `useTakvimAkisi.seansaGit`in kendisi kancanın herkese açık
+  // yüzeyinde kalıyor; bu ekranda artık çağrılmıyor.
 
   // Veri raporu SUNUCUDA üretilir (Plan 4 Görev 6–7): bu ekran not çekmez,
   // metin kurmaz; yalnızca parolayı ve YEREL günü sunucuya iletir. Gün
@@ -501,10 +493,10 @@ export function AnaEkran({
             ozet={{ bugun: yerelGun(new Date()), disTazeleme: ozetTazeleme }}
             danisanlar={liste.danisanlar}
             onDanisanAc={danisanaGit}
-            onSeansSec={seansaGit}
             onDurumDegis={durumDegis}
             onOdemeDegis={odemeDegis}
             etiketBaglami={etiketBaglami}
+            onEtiketAc={etiketler.etiketAc}
           />
         </div>
       )}

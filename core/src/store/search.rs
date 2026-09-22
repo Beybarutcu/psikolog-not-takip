@@ -115,6 +115,20 @@
 //! **yapısal olarak** sınırlanır (sondan `truncate` değil): iki sorgu da
 //! `LIMIT` dolusu satır döndürdüğünde bile üst sınır aşılamaz.
 //!
+//! ## Üçüncü kip (Görev 7): etiket, bütçenin ARTANINI alır — payı bozmaz
+//!
+//! Danışan/not paylaşımı yukarıdaki iki testle (`danisan_adlarinda_yaygin_
+//! terim_...`, `iki_kip_de_bolsa_...`) TAM sayılarla sabitlenmiş; etiketi
+//! üçüncü bir eşit ortak yapmak (ör. `limit / 3` tabanı) bu iki testi kırardı
+//! çünkü etiket eşleşmesi yokken bile danışan/not payı küçülürdü. Bunun
+//! yerine etiket **son sıradadır**: önce danışan/not payı yukarıdaki kuralla
+//! hesaplanır (değişmeden), etiket yalnızca `kalan = toplam - danisan_payi -
+//! not_payi` bütçesini alır. Danışan/not eşleşmesi azsa (aramaların büyük
+//! çoğunluğu) etiket bütçenin neredeyse tamamını kullanır; ikisi de bol
+//! eşleşiyorsa (`toplam`ı doldurmuşlarsa) etiket o aramada hiç görünmez.
+//! Bu sessiz bir kayıp DEĞİLDİR: `kirpildi` etiketin kendi payını aşıp
+//! aşmadığına da bakar (bkz. aşağıdaki "Kırpılma" bölümü).
+//!
 //! ## Kırpılma SESSİZ değil: `AramaYaniti::kirpildi`
 //!
 //! Bütçe paylaştırması sessiz kaybı **hafifletti, kaldırmadı**: 61 danışan
@@ -247,6 +261,30 @@ const SORGU_NOT: &str = "SELECT p.appointment_id, a.client_id, c.ad_soyad, a.bas
  ORDER BY a.baslangic DESC, p.appointment_id DESC
  LIMIT ?2";
 
+/// Etiket adı araması (Görev 7).
+///
+/// # KRİTİK: burada `katla` (YUMUŞAK eşleşme) kullanılır, `tags::ad_anahtar_uret` (KİMLİK) DEĞİL
+///
+/// `store::tags` modül başlığı bu ikisini bilerek ayırıyor: `ad_anahtar_uret`
+/// yalnızca büyük/küçük harfi yok sayar, harf işaretlerini KORUR ("yas" ≠
+/// "yaş") — bu KİMLİK için doğrudur, aksi hâlde anlamı farklı iki etiket tek
+/// satıra birleşirdi. Arama başka bir sorunu çözüyor: danışan odada
+/// olabildiği için terapist hızlıca, aksansız yazabilir ("kaygi" yazıp
+/// "Kaygı" etiketini bulmalı) — tıpkı danışan adı ve not içeriği aramasında
+/// olduğu gibi. Bu yüzden burada `katla` (ve aynı `lower()` + 12 `replace()`
+/// SQL zinciri) kullanılır; `ad_anahtar_uret` bu dosyaya HİÇ girmez.
+///
+/// `kullanim`: kaç seansa bağlı olduğu (`tags::etiketleri_listele` ile aynı
+/// `LEFT JOIN ... COUNT` deseni) — sonuç listesinde gösterilir, sıralamayı da
+/// besler (bkz. `ara` içindeki Rust-tarafı sıralama).
+const SORGU_ETIKET: &str = "SELECT t.id, t.ad, COUNT(pt.appointment_id) AS kullanim
+ FROM tags t
+ LEFT JOIN progress_note_tags pt ON pt.tag_id = t.id
+ WHERE replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(lower(t.ad),'ı','i'),'İ','i'),'ş','s'),'Ş','s'),'ğ','g'),'Ğ','g'),'ü','u'),'Ü','u'),'ö','o'),'Ö','o'),'ç','c'),'Ç','c') LIKE ?1 ESCAPE '\\'
+ GROUP BY t.id, t.ad
+ ORDER BY kullanim DESC, t.ad COLLATE NOCASE
+ LIMIT ?2";
+
 /// Tek bir arama sonucu.
 ///
 /// `Debug` **türetilmiyor**. Bu kod tabanında türetilmiş `Debug` dört kez
@@ -264,14 +302,25 @@ const SORGU_NOT: &str = "SELECT p.appointment_id, a.client_id, c.ad_soyad, a.bas
 /// ihtiyacı var, panik mesajının yok.
 #[derive(Clone, Serialize)]
 pub struct AramaSonucu {
-    /// `"danisan"` veya `"not"`.
+    /// `"danisan"`, `"not"` veya `"etiket"`.
     pub tur: String,
+    /// `tur == "etiket"` iken anlamsız: `0` (hiçbir danışanın kimliği
+    /// olamaz — `clients.id` `AUTOINCREMENT`, 1'den başlar).
     pub client_id: i64,
+    /// `tur == "etiket"` iken boş dizgi.
     pub danisan_adi: String,
     pub appointment_id: Option<i64>,
     pub tarih: Option<String>,
-    /// Eşleşmenin çevresinden alınan bağlam parçası.
+    /// Eşleşmenin çevresinden alınan bağlam parçası. `tur == "etiket"` iken
+    /// boş dizgi — etiket adının kendisi zaten kısa, ayrıca bir bağlama
+    /// gerek yok (bkz. `etiket_adi`).
     pub parca: String,
+    /// Yalnızca `tur == "etiket"` iken dolu: etiketin kimliği.
+    pub tag_id: Option<i64>,
+    /// Yalnızca `tur == "etiket"` iken dolu: etiketin görünen adı.
+    pub etiket_adi: Option<String>,
+    /// Yalnızca `tur == "etiket"` iken dolu: etiketin kaç seansa bağlı olduğu.
+    pub kullanim: Option<i64>,
 }
 
 impl std::fmt::Debug for AramaSonucu {
@@ -283,6 +332,9 @@ impl std::fmt::Debug for AramaSonucu {
             .field("appointment_id", &self.appointment_id)
             .field("tarih", &"<gizli>")
             .field("parca", &"<gizli>")
+            .field("tag_id", &self.tag_id)
+            .field("etiket_adi", &"<gizli>")
+            .field("kullanim", &self.kullanim)
             .finish()
     }
 }
@@ -450,6 +502,17 @@ pub fn ara(
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
 
+    // Etiket adi araması (Görev 7) -- YUMUŞAK eşleşme (`katla`, aynı `desen`),
+    // `tags::ad_anahtar_uret` (KİMLİK) buraya HİÇ karışmaz (bkz. `SORGU_ETIKET`
+    // dokümantasyonu).
+    let mut stmt = conn.prepare(SORGU_ETIKET)?;
+    let mut etiketler = stmt
+        .query_map(rusqlite::params![desen, yoklama_siniri], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
+
     // BUTCE PAYLASTIRMASI (bkz. modul basligi: "Iki kip tek butceyi paylasir").
     //
     // Iki listeyi arka arkaya ekleyip sondan `truncate` etmek, danisan
@@ -476,9 +539,32 @@ pub fn ara(
     // Kirpilma, KIPLERIN HERHANGI BIRINDE dusen bir eslesme olmasidir --
     // "toplam == sinir" degil. Iki kip de kendi payini asmissa da, tek kip
     // bolluk yapip digerini bastirmissa da dogru cevabi verir.
-    let kirpildi = danisan_bulunan > danisan_payi || not_bulunan > not_payi;
+    let kirpildi_iki_kip = danisan_bulunan > danisan_payi || not_bulunan > not_payi;
 
-    let mut sonuclar: Vec<AramaSonucu> = Vec::with_capacity(danisan_payi + not_payi);
+    // ETIKET (Görev 7): ÜÇÜNCÜ kip, ama danışan/not ikilisinin PAYINDAN
+    // KIRPILMAZ -- yukarıdaki iki satır (`danisan_payi`/`not_payi`) bu
+    // dosyanın üç davranışsal testle (`danisan_adlarinda_yaygin_terim_...`,
+    // `iki_kip_de_bolsa_...`, `kirpilma_isareti_kip_bazinda_...`) sabitlediği
+    // TAM sayılarla değişmeden kalır. Etiket yalnızca bu ikisinin
+    // KULLANMADIĞI artan bütçeyi (`kalan`) alır -- danışan/not eşleşmesi
+    // yoksa (aramanın büyük çoğunluğu) etiket bütçenin tamamını kullanır;
+    // ikisi doluysa etiket o aramada hiç görünmez ama bu SESSİZ bir kayıp
+    // değildir: `kirpildi` aşağıda etiketin de payına bakar.
+    let kalan = toplam.saturating_sub(danisan_payi + not_payi);
+    let etiket_bulunan = etiketler.len();
+    let etiket_sigan = etiket_bulunan.min(toplam);
+    let etiket_payi = etiket_sigan.min(kalan);
+    let kirpildi = kirpildi_iki_kip || etiket_bulunan > etiket_payi;
+
+    // SQL sırası yalnızca "yoklama sınırına kadar hangi satırlar getirilsin"
+    // sorusuna cevap verir (kullanım -- ad); GERÇEK gösterim sırası burada,
+    // Rust'ta kurulur: `tags::etiketleri_listele` ile AYNI kural (kullanım
+    // azalan, eşitlikte Türk alfabesi -- `etiket_sirasi`). `Intl`/SQLite
+    // harmanlaması kullanılmaz (bkz. `store::tags` modül başlığı).
+    etiketler.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| crate::store::tags::etiket_sirasi(&a.1, &b.1)));
+
+    let mut sonuclar: Vec<AramaSonucu> =
+        Vec::with_capacity(danisan_payi + not_payi + etiket_payi);
 
     for (id, ad) in danisanlar.into_iter().take(danisan_payi) {
         let parca = parca_cikar(&ad, &katli_sorgu);
@@ -489,6 +575,9 @@ pub fn ara(
             appointment_id: None,
             tarih: None,
             parca,
+            tag_id: None,
+            etiket_adi: None,
+            kullanim: None,
         });
     }
 
@@ -502,6 +591,23 @@ pub fn ara(
             appointment_id: Some(appointment_id),
             tarih: Some(tarih),
             parca: parca_cikar(&icerik, &katli_sorgu),
+            tag_id: None,
+            etiket_adi: None,
+            kullanim: None,
+        });
+    }
+
+    for (tag_id, ad, kullanim) in etiketler.into_iter().take(etiket_payi) {
+        sonuclar.push(AramaSonucu {
+            tur: "etiket".to_string(),
+            client_id: 0,
+            danisan_adi: String::new(),
+            appointment_id: None,
+            tarih: None,
+            parca: String::new(),
+            tag_id: Some(tag_id),
+            etiket_adi: Some(ad),
+            kullanim: Some(kullanim),
         });
     }
 
@@ -535,6 +641,7 @@ mod tests {
         db::open_encrypted,
         notes::{not_kaydet, ozel_not_kaydet},
         schema::migrate,
+        tags::etiket_ekle,
     };
     use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
@@ -688,6 +795,17 @@ mod tests {
         let sonuclar = sonuclar_of(&c, "COK_GIZLI_TERIM", 20, Cihaz::Masaustu).unwrap();
         assert_eq!(sonuclar.len(), 1, "on kosul: arama gercekten bir sey bulmali");
 
+        // GOREV 7 GENISLETMESI: etiket adi araması da AYNI korumayı
+        // paylaşmalı -- ayrı bir gizli terimle ikinci bir arama yapılır ve
+        // aşağıdaki tarama HER İKİ aramadan kalan satırları birden kapsar.
+        etiket_ekle(&c, rid, "COK_GIZLI_ETIKET_TERIMI", Cihaz::Masaustu).unwrap();
+        let etiket_sonuclari = sonuclar_of(&c, "COK_GIZLI_ETIKET_TERIMI", 20, Cihaz::Masaustu).unwrap();
+        assert_eq!(
+            etiket_sonuclari.iter().filter(|s| s.tur == "etiket").count(),
+            1,
+            "on kosul: etiket arama gercekten bulmali"
+        );
+
         let kayitlar = crate::store::audit::son_kayitlar(&c, 50).unwrap();
         assert!(
             kayitlar.iter().any(|k| k.varlik == VARLIK_ARAMA),
@@ -701,6 +819,7 @@ mod tests {
             .to_lowercase();
             assert!(!hepsi.contains("cok_gizli"), "arama terimi loga sizmis: {hepsi}");
             assert!(!hepsi.contains("terim"), "arama terimi loga sizmis: {hepsi}");
+            assert!(!hepsi.contains("etiket_termi"), "etiket arama terimi loga sizmis: {hepsi}");
             if kayit.varlik == VARLIK_ARAMA {
                 assert_eq!(
                     kayit.varlik_id, VARLIK_ID_ARAMA,
@@ -709,6 +828,64 @@ mod tests {
                 assert!(kayit.ayrinti.is_none(), "arama satiri ayrinti tasimamali");
             }
         }
+    }
+
+    // --- Etiket araması (Görev 7) ------------------------------------------
+
+    #[test]
+    fn etiket_katla_ile_yumusak_eslesir_ve_kullanim_sayisi_doner() {
+        // "kaygi" (aksansiz) sorgusu "Kaygı" etiketini bulmali -- `katla`,
+        // kimlik uretiminde kullanilan `tags::ad_anahtar_uret`'ten FARKLI
+        // (bkz. `SORGU_ETIKET` dokumantasyonu).
+        let (_d, c, cid, rid) = kurulum();
+        let r2 = randevu_ekle(&c, cid, "2026-09-08");
+        etiket_ekle(&c, rid, "Kaygı", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, r2, "Kaygı", Cihaz::Masaustu).unwrap();
+
+        let sonuclar = sonuclar_of(&c, "kaygi", 20, Cihaz::Masaustu).unwrap();
+        let etiket = sonuclar.iter().find(|s| s.tur == "etiket").expect("etiket bulunmali");
+        assert_eq!(etiket.etiket_adi.as_deref(), Some("Kaygı"));
+        assert_eq!(etiket.kullanim, Some(2), "iki seansa bagli etiketin kullanimi 2 olmali");
+        assert!(etiket.tag_id.is_some());
+        // Etiket sonucunun danisana/seansa ozgu alanlari anlamsiz -- bos.
+        assert_eq!(etiket.client_id, 0);
+        assert_eq!(etiket.appointment_id, None);
+    }
+
+    #[test]
+    fn etiket_aramasinda_joker_karakterler_kacirilir() {
+        let (_d, c, _cid, rid) = kurulum();
+        etiket_ekle(&c, rid, "normal", Cihaz::Masaustu).unwrap();
+        // "%" LIKE'ta her seyi eslestirir; kacirilmazsa "normal" etiketi de
+        // (herhangi biri gibi) donerdi.
+        let sonuclar = sonuclar_of(&c, "%%", 20, Cihaz::Masaustu).unwrap();
+        assert!(
+            sonuclar.iter().all(|s| s.tur != "etiket"),
+            "kacirilmayan joker tum etiketleri eslestirirdi: {sonuclar:?}"
+        );
+    }
+
+    #[test]
+    fn etiket_ozel_not_gibi_ayri_bir_kip_danisan_ve_not_butcesini_bozmaz() {
+        // Danisan/not butce paylasimi bu dosyanin IKI davranissal testiyle
+        // (asagida) sabit sayilarla kilitli; etiketin bu ikisini KULLANMAYAN
+        // artan bütçeyi aldigini (bkz. modul basligi "Ucuncu kip") tek basina
+        // dogrular: hicbir danisan/not eslesmesi yokken etiket butcenin
+        // TAMAMINI kullanabilmeli.
+        let (_d, c, cid, _rid) = kurulum();
+        for i in 0..60 {
+            let r = randevu_ekle(&c, cid, &gun(i));
+            etiket_ekle(&c, r, &format!("COKETIKET{i:02}"), Cihaz::Masaustu).unwrap();
+        }
+
+        let yanit = ara(&c, "COKETIKET", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        assert_eq!(
+            yanit.sonuclar.iter().filter(|s| s.tur == "etiket").count(),
+            50,
+            "danisan/not eslesmesi yokken etiket TUM butceyi almali"
+        );
+        assert!(yanit.sonuclar.iter().all(|s| s.tur == "etiket"));
+        assert!(yanit.kirpildi, "60 etiketten 10'u dusuyor: kirpilma isaretlenmeli");
     }
 
     // --- Ozel not sizintisi: iki yonlu ------------------------------------
@@ -2121,15 +2298,27 @@ mod tests {
             appointment_id: Some(481_516),
             tarih: Some("2026-09-07T14:00".into()),
             parca: "COK_GIZLI_NOT_PARCASI".into(),
+            tag_id: Some(123_123),
+            etiket_adi: Some("COK_GIZLI_ETIKET_ADI".into()),
+            kullanim: Some(7),
         };
         let metin = format!("{sonuc:?}");
         assert!(!metin.contains("COK_GIZLI_NOT_PARCASI"), "Debug parcayi basmamali: {metin}");
         assert!(!metin.contains("COK_GIZLI_ISIM"), "Debug ismi basmamali: {metin}");
         assert!(!metin.contains("424242"), "Debug client_id'yi basmamali: {metin}");
         assert!(!metin.contains("2026-09-07"), "Debug tarihi basmamali: {metin}");
+        assert!(!metin.contains("COK_GIZLI_ETIKET_ADI"), "Debug etiket adini basmamali: {metin}");
         assert!(
             metin.contains("appointment_id: Some(481516)"),
             "hata ayiklama icin appointment_id gorunur kalmali: {metin}"
+        );
+        assert!(
+            metin.contains("tag_id: Some(123123)"),
+            "hata ayiklama icin tag_id gorunur kalmali: {metin}"
+        );
+        assert!(
+            metin.contains("kullanim: Some(7)"),
+            "hata ayiklama icin kullanim gorunur kalmali: {metin}"
         );
         assert!(metin.contains("<gizli>"));
 

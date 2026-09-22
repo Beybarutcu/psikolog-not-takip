@@ -111,18 +111,115 @@ describe('markdownOgeleri', () => {
     expect(kok.querySelector('em')).toBeNull()
     expect(kok.textContent).toBe('*metin*')
   })
+
+  // =====================================================================
+  // İnceleme bulgusu (CRITICAL): proje Windows'ta geliştirilip macOS'ta
+  // kullanılıyor, CRLF (`\r\n`) ya da tek başına `\r` (eski Mac) içeren bir
+  // not gerçekçi bir girdi. JavaScript'te `.` `\r`'yi eşlemez; bir satır
+  // `\r` ile bittiğinde `siniflandirSatir`'daki `(.*)$` gibi desenler bunu
+  // KAÇIRIR ve satır sessizce paragrafa düşer (başlık/madde/alıntı/onay
+  // kutusu kaybolur). `markdownOgeleri` girişte `\r\n`/`\r`'yi `\n`'ye
+  // normalleştirir; aşağıdaki tablo HER blok türü için bunu sabitler.
+  // =====================================================================
+
+  const CRLF_DURUMLARI: { ad: string; kaynak: string; dogrula: () => void }[] = [
+    {
+      ad: 'başlık (CRLF)',
+      kaynak: '# Başlık\r\nGövde\r\n',
+      dogrula: () => {
+        expect(screen.getByText('Başlık').tagName).toBe('H3')
+        expect(screen.getByText('Gövde').tagName).toBe('P')
+      },
+    },
+    {
+      ad: 'madde listesi (CRLF)',
+      kaynak: '- elma\r\n- armut\r\n',
+      dogrula: () => {
+        expect(screen.getByText('elma').closest('ul')).not.toBeNull()
+        expect(screen.getByText('elma').closest('ul')).toBe(screen.getByText('armut').closest('ul'))
+      },
+    },
+    {
+      ad: 'numaralı liste (CRLF)',
+      kaynak: '1. bir\r\n2. iki\r\n',
+      dogrula: () => {
+        expect(screen.getByText('bir').closest('ol')).not.toBeNull()
+        expect(screen.getByText('bir').closest('ol')).toBe(screen.getByText('iki').closest('ol'))
+      },
+    },
+    {
+      ad: 'alıntı (CRLF)',
+      kaynak: '> Danışanın kendi cümlesi\r\n',
+      dogrula: () => {
+        expect(screen.getByText('Danışanın kendi cümlesi').closest('blockquote')).not.toBeNull()
+      },
+    },
+    {
+      ad: 'onay kutusu (CRLF)',
+      kaynak: '- [ ] gorev\r\n- [x] tamam\r\n',
+      dogrula: () => {
+        const kutular = screen.getAllByRole('checkbox')
+        expect(kutular).toHaveLength(2)
+        expect((kutular[0] as HTMLInputElement).checked).toBe(false)
+        expect((kutular[1] as HTMLInputElement).checked).toBe(true)
+      },
+    },
+    {
+      ad: 'paragraf bölme — boş satır CRLF',
+      kaynak: 'a\r\n\r\nb\r\n',
+      dogrula: () => {
+        const aP = screen.getByText('a')
+        const bP = screen.getByText('b')
+        expect(aP.tagName).toBe('P')
+        expect(bP.tagName).toBe('P')
+        expect(aP).not.toBe(bP)
+      },
+    },
+    {
+      ad: 'tek başına \\r (eski Mac) — başlık ve paragraf',
+      kaynak: '# Başlık\rGövde\r',
+      dogrula: () => {
+        expect(screen.getByText('Başlık').tagName).toBe('H3')
+        expect(screen.getByText('Gövde').tagName).toBe('P')
+      },
+    },
+    {
+      ad: 'tek başına \\r (eski Mac) — madde listesi',
+      kaynak: '- elma\r- armut\r',
+      dogrula: () => {
+        expect(screen.getByText('elma').closest('ul')).not.toBeNull()
+        expect(screen.getByText('elma').closest('ul')).toBe(screen.getByText('armut').closest('ul'))
+      },
+    },
+  ]
+
+  describe('satır sonu normalleştirmesi (CRLF / tek başına \\r)', () => {
+    it.each(CRLF_DURUMLARI)('$ad', ({ kaynak, dogrula }) => {
+      const { getByTestId } = ciz(kaynak)
+      dogrula()
+      // Normalleştirme yalnızca blok/başlık desenlerini değil, ekrana
+      // sızabilecek her `\r`'yi de temizler.
+      expect(getByTestId('kok').textContent).not.toContain('\r')
+    })
+  })
 })
 
 // =========================================================================
-// YAPISAL TEST — `dangerouslySetInnerHTML` / `innerHTML` web/src üretim
-// kodunda YOK. Markdown çevirici bu görevin HTML-üretmeme kısıtını (bkz.
-// görev brief'i, genel kısıtlar) yapısal olarak da zorlar; test dosyaları
-// hariç tutulur çünkü meşru olarak bu dizgileri (ör. `DosyaBilgileri.test.tsx`
-// içindeki `document.body.innerHTML` iddiaları) içerirler. Dosya kümesi
-// `import.meta.glob` ile `web/src`'den özyinelemeli türetilir
-// (`istemciRaporUretimi.test.ts` emsali); asgari dosya sayısı koruması
-// `AyarlarSekmesi.test.tsx` emsalinin aynısı — glob boşa düşerse sıfır dosya
-// taranıp yeşil kalmasın diye.
+// YAPISAL TEST — `dangerouslySetInnerHTML` / `innerHTML` / `outerHTML` /
+// `insertAdjacentHTML` web/src üretim kodunda YOK. Markdown çevirici bu
+// görevin HTML-üretmeme kısıtını (bkz. görev brief'i, genel kısıtlar) yapısal
+// olarak da zorlar; test dosyaları hariç tutulur çünkü meşru olarak bu
+// dizgileri (ör. `DosyaBilgileri.test.tsx` içindeki `document.body.innerHTML`
+// iddiaları) içerirler. Dosya kümesi `import.meta.glob` ile `web/src`'den
+// özyinelemeli türetilir (`istemciRaporUretimi.test.ts` emsali); asgari
+// dosya sayısı koruması `AyarlarSekmesi.test.tsx` emsalinin aynısı — glob
+// boşa düşerse sıfır dosya taranıp yeşil kalmasın diye.
+//
+// `outerHTML`/`insertAdjacentHTML` bugün `web/src`'de HİÇ geçmiyor (tarama
+// bu ikisi eklenince de yeşil kalır) — bunları eklemek olağan bir sonraki
+// adımı (`el.outerHTML = ...`, `el.insertAdjacentHTML(...)`) da kapsar.
+// `document.write` zaten `istemciRaporUretimi.test.ts`'te yasak; burada
+// tekrarlanmıyor.
 // =========================================================================
 
 const tumKaynaklar = import.meta.glob(['../**/*.ts', '../**/*.tsx'], {
@@ -164,10 +261,12 @@ describe('yapısal: dangerouslySetInnerHTML / innerHTML web/src üretim kodunda 
   })
 
   for (const yol of yollar) {
-    it(`${yol} dangerouslySetInnerHTML/innerHTML içermiyor`, () => {
+    it(`${yol} dangerouslySetInnerHTML/innerHTML/outerHTML/insertAdjacentHTML içermiyor`, () => {
       const kaynak = uretimKaynaklari[yol]
       expect(kaynak.includes('dangerouslySetInnerHTML')).toBe(false)
       expect(kaynak.includes('innerHTML')).toBe(false)
+      expect(kaynak.includes('outerHTML')).toBe(false)
+      expect(kaynak.includes('insertAdjacentHTML')).toBe(false)
     })
   }
 })

@@ -45,9 +45,27 @@ import type { ReactNode } from 'react'
  * DETERMİNİSTİKTİR ve `markdown.test.tsx` bu tam çıktıyı sabitler — üç
  * yıldızı desteklemek iç içe biçim ayrıştırması gerektirir ve kapalı küme
  * bunu içermiyor.
+ *
+ * # Satır sonu normalleştirmesi (yalnızca GÖRÜNTÜLEME)
+ *
+ * Proje Windows'ta geliştirilip macOS'ta kullanılıyor; CRLF (`\r\n`) ya da
+ * tek başına `\r` (eski Mac) içeren bir not gerçekçi bir girdi. JavaScript'te
+ * `.` `\r`'yi eşlemiyor ve `$` çoklu-satır kipinde olmadığı sürece satır
+ * sonunu değil dizginin sonunu bekliyor — bu yüzden `(.*)$` gibi bloğu
+ * sınıflandıran regex'ler bir satır `\r` ile bittiğinde İÇERİĞE `\r`'yi dahil
+ * edip başlık/madde/alıntı desenini KAÇIRIR, satır sessizce paragrafa düşer.
+ * Regex'leri tek tek yamamak yerine GİRİŞTE normalleştiriyoruz (`\r\n` ve
+ * yalnız `\r` → `\n`): yeni bir blok türü eklendiğinde de bu koruma otomatik
+ * geçerli kalır. Bu fonksiyon SAF kalır — normalleştirme yalnızca yerel bir
+ * değişkende olur, saklanan not (`progress_notes.icerik`) DEĞİŞMEZ, bu
+ * yalnızca görüntüleme anında uygulanan bir dönüşümdür.
  */
 export function markdownOgeleri(kaynak: string): ReactNode {
-  const satirlar = kaynak.split('\n').map(siniflandirSatir)
+  const satirlar = kaynak
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map(siniflandirSatir)
   const bloklar: ReactNode[] = []
   let i = 0
   let blokSayaci = 0

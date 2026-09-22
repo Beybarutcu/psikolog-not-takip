@@ -137,10 +137,17 @@
 //! içindeki sırayı garanti etmez -- ayırıcıya ve sıraya güvenen bir çözüm
 //! "a, b" adlı tek etiketi iki etikete bölebilirdi.
 //!
-//! Ek sorgunun danışan filtresi de `a.client_id` üzerinden (`JOIN
-//! appointments`): etiket bağı `progress_note_tags.appointment_id`'ye
-//! bağlıdır, randevu başka danışana taşınınca etiketleri de onunla gider ve
-//! eski danışanın dosyasında görünmez (bkz. yukarıdaki KRİTİK bölüm).
+//! Başka danışanın etiketi listeye GİREMEZ ve bunu sağlayan şey ek sorgunun
+//! filtresi DEĞİL: adlar yalnızca ana sorgunun (`WHERE a.client_id = ?1`)
+//! döndürdüğü seans satırlarına, randevu kimliğiyle eklenir; haritada kalan
+//! başka her kimlik düşer. Etiket bağı `progress_note_tags.appointment_id`'ye
+//! bağlı olduğu için randevu başka danışana taşınınca etiketleri de onunla
+//! gider (bkz. yukarıdaki KRİTİK bölüm). Ek sorgudaki `a.client_id` filtresi
+//! yalnızca okunan satırları bu danışanla SINIRLAR (bütün etiket bağlarını
+//! belleğe çekmemek için); kaldırılması ekranda hiçbir şeyi değiştirmez ve
+//! bu yüzden hiçbir test onu kırmızıya döndüremez — mutasyonla ölçüldü, bkz.
+//! Görev 6 raporu. Koruma ana sorgunun filtresidir ve o
+//! `baska_danisanin_etiketi_listeye_sizmaz` ile ölçülüyor.
 //!
 //! Sıra `t.ad_anahtar` (Türkçe küçük harfli kimlik): `store::tags::
 //! seans_etiketleri` ile AYNI anahtar, yani seans panelindeki çipler ile
@@ -257,7 +264,9 @@ pub fn danisan_seanslari(
     drop(ifade);
 
     // Etiketler: TEK ek sorgu (bkz. modul basligi "Etiketler" -- N+1 degil,
-    // GROUP_CONCAT degil). Filtre yine `a.client_id` uzerinden.
+    // GROUP_CONCAT degil). `a.client_id` filtresi okumayi bu danisanla
+    // sinirlar; sizintiyi onleyen sey asagidaki eslemenin yalnizca `liste`
+    // satirlarina (ana sorgunun filtresi) yapilmasi.
     let mut etiket_ifadesi = conn.prepare(
         "SELECT pt.appointment_id, t.ad
            FROM progress_note_tags pt

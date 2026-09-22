@@ -14,3 +14,8 @@ pub mod veri_raporu;
 /// seansları döndürür (bkz. modül başlığı -- `notes::danisan_notlari`
 /// yalnızca notu yazılmış seansları döndürüyordu).
 pub mod danisan_seanslari;
+/// Etiket deposu (Plan 6 Görev 4): seansın resmî notuna atanan serbest metin
+/// etiketler ("kaygı", "aile", "ilaç değişimi"). Bkz. modül başlığı --
+/// etiket adı erişim loguna asla girmez, katlama `store::search::katla`'dan
+/// yeniden kullanılır.
+pub mod tags;

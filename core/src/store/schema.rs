@@ -1,7 +1,7 @@
 use crate::store::appointments::ASGARI_UCRET;
 use rusqlite::{Connection, OptionalExtension};
 
-pub const CURRENT_VERSION: i64 = 4;
+pub const CURRENT_VERSION: i64 = 5;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -250,6 +250,61 @@ fn v4_uygula(tx: &Connection) -> Result<(), MigrateHatasi> {
     Ok(())
 }
 
+/// Surum 5: etiket sozlugu (`tags`) ve seans-etiket baglari
+/// (`progress_note_tags`).
+///
+/// # Yalnizca YENI tablo -- var olan hicbir tabloya/veriye dokunulmaz
+///
+/// V4'un aksine burada bir `DROP TABLE` / veri tasima manevrasi YOK: bu adim
+/// V1-V3 gibi salt-ekleyici. Riskli olan kisim (yabanci anahtarlarin gecici
+/// kapatilmasi, cascade ile klinik kaydin silinmesi tehlikesi -- bkz. `V4`
+/// basligi) burada YOKTUR, cunku hicbir mevcut tablo yeniden olusturulmuyor.
+///
+/// # `IF NOT EXISTS` KULLANILMIYOR -- guvenlik agi surum kapisidir
+///
+/// V1-V3'un `CREATE TABLE IF NOT EXISTS`'inden farkli olarak bu betik cikti
+/// SQL'i (Gorev 4 brief'i) birebir, `IF NOT EXISTS` OLMADAN yazilidir.
+/// Idempotentligi saglayan `IF NOT EXISTS` degil, `adimlari_uygula`'daki
+/// `if mevcut < 5` surum kapisidir: adim omur boyu TAM BIR KEZ calisir. V4
+/// zaten ayni ilkeyi (kapili, idempotent OLMAYAN adim) izliyor; kapinin
+/// dustugu durumu `basarisiz_v5_migrate_semayi_geri_alir` testi yakalar.
+///
+/// # `tags.ad_katli`: Turkce katlanmis bicim
+///
+/// "Kaygi", "kaygi" ve "KAYGI" AYNI etiket olmali. `ad_katli` UNIQUE'tir ve
+/// deposu (`store::tags`) buraya `store::search::katla`'nin (arama
+/// modulunun Turkce katlama kurali, `pub(crate)` yapilip YENIDEN
+/// KULLANILDI) ciktisini yazar -- ikinci bir katlama kurali YOKTUR. Kullanici
+/// gorunumu (`ad`) HAM biciminde ayri sutunda kalir.
+///
+/// # `ON DELETE CASCADE` burada BILEREK var -- V4'teki uyariyla KARISTIRILMASIN
+///
+/// `V4` basligindaki uyari "yabanci anahtar acikken tablo yeniden olusturma,
+/// klinik kaydi (notlari) sessizce siler" idi. Buradaki `ON DELETE CASCADE`
+/// tamamen farkli bir seyi hedefliyor: `progress_note_tags` klinik icerik
+/// TASIMAZ, yalnizca bir randevu-etiket BAGIDIR. Randevu silinince o bagin da
+/// gitmesi -- tipki `progress_notes`/`private_notes` gibi -- DOGRU ve
+/// ISTENEN davranistir; sarkan bir `progress_note_tags` satiri, var olmayan
+/// bir randevuya isaret eden anlamsiz bir kayit birakirdi. Bu yuzden burada
+/// yabanci anahtarlari GECICI KAPATMAYA gerek yok: hicbir mevcut tablo
+/// yeniden olusturulmuyor, `ON DELETE CASCADE` yalnizca YENI bir tabloda
+/// tanimlaniyor.
+const V5: &str = r#"
+CREATE TABLE tags (
+  id       INTEGER PRIMARY KEY,
+  ad       TEXT NOT NULL CHECK (length(ad) BETWEEN 1 AND 40),
+  -- Turkce katlanmis bicim: "Kaygi" ile "kaygi" ve "KAYGI" ayni etikettir.
+  ad_katli TEXT NOT NULL UNIQUE
+);
+
+CREATE TABLE progress_note_tags (
+  appointment_id INTEGER NOT NULL REFERENCES appointments(id) ON DELETE CASCADE,
+  tag_id         INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  PRIMARY KEY (appointment_id, tag_id)
+);
+CREATE INDEX progress_note_tags_tag ON progress_note_tags(tag_id);
+"#;
+
 /// Surum 3'te `clients` tablosuna eklenen sutunlar.
 ///
 /// `ALTER TABLE ... ADD COLUMN`'un `IF NOT EXISTS` bicimi yok, bu yuzden
@@ -437,6 +492,9 @@ fn adimlari_uygula(conn: &Connection, mevcut: i64) -> Result<(), MigrateHatasi> 
     if mevcut < 4 {
         v4_uygula(&tx)?;
     }
+    if mevcut < 5 {
+        tx.execute_batch(V5)?;
+    }
 
     tx.execute(
         "INSERT INTO app_meta (anahtar, deger) VALUES ('schema_version', ?1)
@@ -547,7 +605,7 @@ mod tests {
 
         let hata = migrate(&c).unwrap_err();
         assert!(
-            matches!(hata, MigrateHatasi::SurumDusuk { veritabani: 99, uygulama: 4 }),
+            matches!(hata, MigrateHatasi::SurumDusuk { veritabani: 99, uygulama: 5 }),
             "ileri surumlu veritabani acilmamali: {hata:?}"
         );
 
@@ -578,13 +636,18 @@ mod tests {
     }
 
     #[test]
-    fn surum_dort_olarak_kaydedilir() {
+    fn surum_bes_olarak_kaydedilir() {
+        // Gorev 4: CURRENT_VERSION 4 -> 5 (etiket semasi). Bu test onceden
+        // sabit "4" bekliyordu; surum degisince guncellendi -- ayni iddiayi
+        // (baglanti() sonrasi damga CURRENT_VERSION'dir) sembolik olarak
+        // zaten `migration_surumu_kaydeder` de kontrol ediyor, burasi sadece
+        // duz sayiyla PINLEME'dir.
         let (_d, c) = baglanti();
         // deger sutunu TEXT'tir; metin okuyup ayristir. Gerekce Plan 1 Gorev 6'da.
         let ham: String = c
             .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(ham.parse::<i64>().unwrap(), 4);
+        assert_eq!(ham.parse::<i64>().unwrap(), 5);
     }
 
     #[test]
@@ -1321,7 +1384,12 @@ mod tests {
         let ham: String = c
             .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(ham.parse::<i64>().unwrap(), 4);
+        // Gorev 4: CURRENT_VERSION 4 -> 5. `migrate` tam surume kadar
+        // yukseltir (yalnizca V4'e degil); bu testin asil konusu V4'un
+        // ucret kisitidir, damganin son degeri CURRENT_VERSION'a gore
+        // sembolik kontrol edilir ki bir sonraki surum atlamasinda bu satir
+        // tekrar sabit sayiyla kirilmasin.
+        assert_eq!(ham.parse::<i64>().unwrap(), CURRENT_VERSION);
 
         // Randevunun HER alani tasindi -- yalnizca satir sayisi degil.
         #[allow(clippy::type_complexity)]
@@ -1645,5 +1713,167 @@ mod tests {
             c.execute("UPDATE appointments SET durum = 'uydurma' WHERE id = 1", []).is_err(),
             "kume disindaki durum CHECK tarafindan kabul edildi"
         );
+    }
+
+    // ---- Surum 5: etiket semasi -------------------------------------------
+    //
+    // V5, V1-V3'un aksine `IF NOT EXISTS` KULLANMAZ (bkz. `V5` basligi).
+    // Guvenlik agi surum kapisidir (`if mevcut < 5`): V4'un aksine bu adim
+    // hicbir mevcut tabloya DOKUNMAZ, yalnizca iki YENI tablo ekler -- riskli
+    // "DROP TABLE" / yabanci anahtar kapatma manevrasi burada YOK.
+
+    /// V4 semali, icinde danisan + randevu + resmi/ozel not olan bir
+    /// veritabani hazirlar (henuz V5 yok). Kimlikler: danisan 1, randevu 1.
+    fn v4_veritabani(yol: &std::path::Path, key: &crate::crypto::keyring::DataKey) {
+        v3_veritabani(yol, key);
+        let c = crate::store::db::open_encrypted(yol, key).unwrap();
+        c.pragma_update(None, "foreign_keys", "OFF").unwrap();
+        c.execute_batch(V4).unwrap();
+        c.pragma_update(None, "foreign_keys", "ON").unwrap();
+        c.execute(
+            "INSERT INTO app_meta (anahtar, deger) VALUES ('schema_version','4')
+             ON CONFLICT(anahtar) DO UPDATE SET deger=excluded.deger",
+            [],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn etiket_tablolari_olusur() {
+        let (_d, c) = baglanti();
+        for tablo in ["tags", "progress_note_tags"] {
+            let sayi: i64 = c
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [tablo],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(sayi, 1, "{tablo} tablosu yok");
+        }
+    }
+
+    #[test]
+    fn v4_veritabani_veri_kaybetmeden_v5e_yukselir() {
+        let dir = tempfile::tempdir().unwrap();
+        let yol = dir.path().join("veri.db");
+        let key = crate::crypto::keyring::generate_data_key();
+        v4_veritabani(&yol, &key);
+
+        let c = crate::store::db::open_encrypted(&yol, &key).unwrap();
+        // ON KOSUL: V5'ten ONCE tag tablolari YOK. Bu satir olmadan asagidaki
+        // "tablolar olustu" iddiasi bir onceki yukseltmeden de gelmis olabilirdi.
+        let once: i64 = c
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='tags'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(once, 0, "on kosul: V5 henuz uygulanmamis olmali");
+
+        migrate(&c).unwrap();
+
+        let ham: String = c
+            .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ham.parse::<i64>().unwrap(), 5);
+
+        for tablo in ["tags", "progress_note_tags"] {
+            let sayi: i64 = c
+                .query_row(
+                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [tablo],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(sayi, 1, "v4 -> v5 yukseltmesi {tablo} tablosunu olusturmali");
+        }
+
+        // V4'ten kalan VERI aynen duruyor -- V5 mevcut tabloya DOKUNMAMALI.
+        let ad: String =
+            c.query_row("SELECT ad_soyad FROM clients WHERE id=1", [], |r| r.get(0)).unwrap();
+        assert_eq!(ad, "Eski Danisan", "yukseltme mevcut danisani kaybetmemeli");
+        let resmi: String =
+            c.query_row("SELECT icerik FROM progress_notes WHERE id=1", [], |r| r.get(0)).unwrap();
+        assert_eq!(resmi, "V3TEN KALAN RESMI NOT");
+        let ozel: String =
+            c.query_row("SELECT icerik FROM private_notes WHERE id=1", [], |r| r.get(0)).unwrap();
+        assert_eq!(ozel, "V3TEN KALAN OZEL NOT");
+        assert_eq!(randevu_ve_not_sayilari(&c), (1, 1, 1));
+    }
+
+    #[test]
+    fn migrate_v5_ikinci_kez_calisinca_etiket_verisini_bozmaz() {
+        // "Goc ikinci kez calistirilinca bir sey yapmaz": surum kapisi
+        // (`if mevcut < 5`) dusseydi `CREATE TABLE tags` (IF NOT EXISTS
+        // YOK) ikinci cagrida hata verirdi; kapi tutuyorsa ikinci `migrate`
+        // hicbir seye dokunmadan basarili doner.
+        let (_d, c) = baglanti();
+        c.execute("INSERT INTO tags (ad, ad_katli) VALUES ('kaygi','kaygi')", []).unwrap();
+
+        migrate(&c).unwrap();
+        migrate(&c).unwrap();
+
+        let sayi: i64 = c.query_row("SELECT count(*) FROM tags", [], |r| r.get(0)).unwrap();
+        assert_eq!(sayi, 1, "ikinci/ucuncu migrate cagrisi etiket verisini cogaltmamali/silmemeli");
+        let ham: String = c
+            .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ham.parse::<i64>().unwrap(), 5);
+    }
+
+    #[test]
+    fn basarisiz_v5_migrate_semayi_geri_alir() {
+        // V5'in ORTASINDA gercek bir hata tetikler: `tags` V5'in ILK
+        // ifadesiyle basariyla olusur, `progress_note_tags` ise cakisan bir
+        // nesne yuzunden BASARISIZ olur -- yarim uygulanmis bir V5'in
+        // TAMAMEN geri alindigini kanitlayan senaryo (desen V2/V3 geri alma
+        // testleriyle ayni ilke: ayni isimde bir nesne onceden yerlestirilir;
+        // V5 `IF NOT EXISTS` kullanmadigi icin tur farki bile gerekmez).
+        let dir = tempfile::tempdir().unwrap();
+        let yol = dir.path().join("veri.db");
+        let key = crate::crypto::keyring::generate_data_key();
+        v4_veritabani(&yol, &key);
+        {
+            let c = crate::store::db::open_encrypted(&yol, &key).unwrap();
+            c.execute("CREATE TABLE progress_note_tags (x)", []).unwrap();
+        }
+
+        let c = crate::store::db::open_encrypted(&yol, &key).unwrap();
+        let hata = migrate(&c).unwrap_err();
+        assert!(
+            matches!(hata, MigrateHatasi::Sqlite(_)),
+            "ismi catisan nesne sqlite hatasi uretmeli: {hata:?}"
+        );
+
+        // V5'in ILK ifadesinin (CREATE TABLE tags) olusturdugu tablo GERI
+        // ALINMIS olmali -- transaction'in tamami geri donuyor.
+        let tags_var: i64 = c
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='tags'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            tags_var, 0,
+            "basarisiz migrate tags tablosunu geride birakmamali (rollback calismali)"
+        );
+
+        // schema_version hala 4 olmali, 5'e yukseltilmemis.
+        let ham: String = c
+            .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ham, "4", "basarisiz migrate surum damgasini yukseltmemeli");
+
+        // Catisan nesne bizim yerlestirdigimiz TABLO olarak kalmali.
+        let tur: String = c
+            .query_row("SELECT type FROM sqlite_master WHERE name='progress_note_tags'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tur, "table", "catisan nesne degismeden kalmali");
+
+        // V4'ten kalan VERI de bozulmamis olmali.
+        assert_eq!(randevu_ve_not_sayilari(&c), (1, 1, 1));
     }
 }

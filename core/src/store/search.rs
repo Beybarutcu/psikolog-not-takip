@@ -335,7 +335,12 @@ fn katla_karakter(k: char) -> char {
     }
 }
 
-fn katla(metin: &str) -> String {
+/// `pub(crate)`: Gorev 4'ten itibaren `store::tags` da bu fonksiyonu
+/// kullanir (`tags.ad_katli`). Etiket eslesmesi ile arama AYNI katlama
+/// kuralina uymali -- ikinci bir katlama fonksiyonu YAZILMAZ, ayrisirsa
+/// "kaygi" etiketi tasiyan bir seans aramada bulunamayabilir (bkz.
+/// `store::tags` modul basligi).
+pub(crate) fn katla(metin: &str) -> String {
     metin.chars().map(katla_karakter).collect()
 }
 

@@ -915,3 +915,52 @@ describe('NotEditoru — bicim cubugu, kisayollar ve onizleme (Görev 2)', () =>
     expect(alan().value).toContain('## Veri')
   })
 })
+
+// İnceleme bulgusu IMPORTANT-3: uygulama macOS'ta Tauri (WebKit) içinde
+// çalışıyor ve `setIcerik` ile textarea `value`'sunun TAMAMINI programatik
+// değiştirmek tarayıcının yerli geri alma (Ctrl+Z) yığınını sıklıkla
+// BOZAR. Düzeltme, mümkünse yalnızca DEĞİŞEN aralığı
+// `document.execCommand('insertText', …)` ile değiştiriyor — bu yerli geri
+// alma yığınına TEK bir adım olarak girer. `document.execCommand` jsdom'da
+// TANIMLI DEĞİL (üstteki bütün testler bu yüzden zaten DÜŞÜŞ yoluyla,
+// `setIcerik` ile geçiyor); gerçek geri alma davranışı bu yüzden yalnızca
+// gerçek bir tarayıcıda ELLE doğrulanabilir — bkz. görev raporu.
+describe('NotEditoru — execCommand ile yerli geri alma yığınının korunması (IMPORTANT-3)', () => {
+  afterEach(() => {
+    // jsdom'da hiç yoktu; testin taklidi sızmasın diye kaldırılıyor.
+    delete (document as unknown as { execCommand?: unknown }).execCommand
+  })
+
+  it('execCommand kullanılabiliyorsa, yalnızca DEĞİŞEN aralık `insertText` ile (doğru seçim + parça) değiştirilir', () => {
+    const cagrilar: { bas: number; son: number; parca: string }[] = []
+    document.execCommand = vi.fn((_komut: string, _ui?: boolean, deger?: string) => {
+      const alanEl = alan()
+      cagrilar.push({ bas: alanEl.selectionStart, son: alanEl.selectionEnd, parca: deger ?? '' })
+      return true
+    })
+
+    kur({ baslangicIcerik: 'cok kaygili' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 3)
+    fireEvent.click(screen.getByRole('button', { name: 'Kalın (Ctrl+B)' }))
+
+    // Yalnızca DEĞİŞEN aralık seçilip değiştirildi: "cok" -> "**cok**",
+    // geri kalan (" kaygili") hiç dokunulmadı — tek bir `insertText` çağrısı.
+    expect(cagrilar).toEqual([{ bas: 0, son: 3, parca: '**cok**' }])
+  })
+
+  it('execCommand `false` dönerse (ya da yoksa) düşüş yoluna geçilir: metin yine doğru üretilir ve otomatik kayıt çalışır', async () => {
+    document.execCommand = vi.fn().mockReturnValue(false)
+
+    const props = kur({ gecikmeMs: 20, baslangicIcerik: 'cok kaygili' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 3)
+    fireEvent.click(screen.getByRole('button', { name: 'Kalın (Ctrl+B)' }))
+
+    expect(document.execCommand).toHaveBeenCalled()
+    // Düşüş yolu (`setIcerik`) devreye girdi: metin yine doğru.
+    expect(alanEl.value).toBe('**cok** kaygili')
+    await ilerle(20)
+    expect(props.onKaydet).toHaveBeenCalledWith({ sablon: 'dap', icerik: '**cok** kaygili' })
+  })
+})

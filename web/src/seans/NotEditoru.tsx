@@ -137,6 +137,88 @@ function saatBicimle(tarih: Date): string {
   return `${iki(tarih.getHours())}:${iki(tarih.getMinutes())}`
 }
 
+/**
+ * Eski ve yeni metin arasındaki DEĞİŞEN aralığı hesaplar: ortak önek ve
+ * ortak sonek dışarıda bırakılır, geriye yalnızca farkın kapsadığı aralık
+ * (eski metindeki `bas`/`son`) ve yerine geçecek parça kalır.
+ *
+ * `bicimUygula` her zaman metnin TAMAMINI döndürür (bkz. `not/bicim.ts`),
+ * ama satır başı biçimlerde bile fiilen değişen kısım genelde küçük bir
+ * aralıktır (ör. bir satırın başındaki önek). Bu fonksiyon o aralığı
+ * bulur ki `execCommand('insertText', …)` yalnızca DEĞİŞEN kısmı, TEK bir
+ * geri alma adımı olarak değiştirsin — bkz. `yerelDuzenlemeDene`.
+ */
+function degisenAralikHesapla(eski: string, yeni: string): { bas: number; son: number; parca: string } {
+  const kisaUzunluk = Math.min(eski.length, yeni.length)
+  let ortakOnek = 0
+  while (ortakOnek < kisaUzunluk && eski[ortakOnek] === yeni[ortakOnek]) ortakOnek++
+
+  const kalanUzunluk = kisaUzunluk - ortakOnek
+  let ortakSonek = 0
+  while (
+    ortakSonek < kalanUzunluk &&
+    eski[eski.length - 1 - ortakSonek] === yeni[yeni.length - 1 - ortakSonek]
+  ) {
+    ortakSonek++
+  }
+
+  return {
+    bas: ortakOnek,
+    son: eski.length - ortakSonek,
+    parca: yeni.slice(ortakOnek, yeni.length - ortakSonek),
+  }
+}
+
+/**
+ * Biçimi tarayıcının KENDİ düzenleme komutuyla uygulamayı DENER —
+ * mümkünse `setIcerik` ile TÜM metni programatik olarak DEĞİŞTİRMEZ.
+ *
+ * # Neden: yerli geri alma (Ctrl+Z) yığını (inceleme bulgusu IMPORTANT-3)
+ *
+ * Uygulama macOS'ta Tauri (WebKit) içinde çalışıyor. `bicimUygulaVeYaz`
+ * önceki hâlinde `sonuc.metin`'i doğrudan React state'ine yazıyordu — bu,
+ * textarea'nın `value`'sunu PROGRAMATİK olarak değiştirir ve
+ * WebKit/Chromium'da tarayıcının YERLİ geri alma yığınını sıklıkla BOZAR:
+ * terapist bir paragrafı kalın yaptıktan sonra Ctrl+Z'ye basınca kalın
+ * geri alınmayabilir ya da yığın beklenmedik bir noktaya atlayabilir.
+ *
+ * `document.execCommand('insertText', false, parça)` bunun yerine SEÇİLİ
+ * ARALIĞI tarayıcının kendi düzenleme komutuyla değiştirir: bu, yerli geri
+ * alma yığınına TEK bir adım olarak girer VE gerçek bir `input` olayı
+ * üretir. React bu olayı dinliyor (textarea'nın `onChange`'i), dolayısıyla
+ * metin yine TEK giriş noktasından (`icerikDegistir` → `setIcerik`) geçer
+ * — otomatik kayıt, taslak saklama ve 401 koruması hiçbir şey bilmeden
+ * çalışmaya devam eder. Bu fonksiyon `icerikDegistir`'i KENDİSİ ÇAĞIRMAZ:
+ * başarılıysa `input` olayı bunu zaten tetikleyecektir; burada tekrar
+ * çağırmak state'i iki kez (ve muhtemelen çelişen değerlerle) güncellerdi.
+ *
+ * Yalnızca DEĞİŞEN aralık (`degisenAralikHesapla`) seçilip değiştirilir —
+ * satır başı biçimlerde değişen aralık birden fazla satırı kapsayabilir,
+ * `insertText` o aralığın TAMAMINA TEK ÇAĞRIDA uygulanmalı ki geri alma
+ * yığınında tek adım olsun.
+ *
+ * # jsdom'da yok
+ *
+ * `document.execCommand` jsdom'da TANIMLI DEĞİL — `typeof` kontrolü bunu
+ * yakalar ve çağıran taraf (`bicimUygulaVeYaz`) DÜŞÜŞ yoluna
+ * (`icerikDegistir(sonuc.metin)`) geçer. Testler bu fonksiyonu bir
+ * `vi.fn()` ile taklit ederek çağrı argümanlarını, ya da `false` döndürerek
+ * düşüş yolunu doğrular. Gerçek geri alma davranışı yalnızca gerçek bir
+ * tarayıcıda ELLE doğrulanabilir — bkz. görev raporu.
+ */
+function yerelDuzenlemeDene(alanEl: HTMLTextAreaElement, eskiMetin: string, yeniMetin: string): boolean {
+  if (typeof document.execCommand !== 'function') return false
+
+  const { bas, son, parca } = degisenAralikHesapla(eskiMetin, yeniMetin)
+  alanEl.focus()
+  alanEl.setSelectionRange(bas, son)
+  try {
+    return document.execCommand('insertText', false, parca) === true
+  } catch {
+    return false
+  }
+}
+
 type Durum =
   | { tur: 'temiz' }
   | { tur: 'bekliyor' }
@@ -367,6 +449,15 @@ export function NotEditoru({
     const son = alanEl?.selectionEnd ?? icerik.length
     const sonuc = bicimUygula({ metin: icerik, bas, son }, tur)
     bekleyenSecimRef.current = { bas: sonuc.bas, son: sonuc.son }
+
+    if (alanEl !== null && yerelDuzenlemeDene(alanEl, icerik, sonuc.metin)) {
+      // Başarılı: `execCommand` gerçek bir `input` olayı üretti, textarea'nın
+      // kendi `onChange`'i bunu yakalayıp `icerikDegistir`'i ZATEN çağıracak
+      // — burada TEKRAR çağrılmaz (bkz. `yerelDuzenlemeDene` yorumu).
+      return
+    }
+
+    // Düşüş yolu: `execCommand` yok (jsdom, eski tarayıcı) ya da başarısız.
     icerikDegistir(sonuc.metin)
   }
 

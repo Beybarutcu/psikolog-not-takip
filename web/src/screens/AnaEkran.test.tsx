@@ -2591,24 +2591,45 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
     await screen.findByLabelText('Seans notu')
     // Ön bariyer: panelin gecikmeli çakışma sorgusu ölçüm penceresine düşmesin.
-    await waitFor(() =>
-      expect(istekYollari.filter((y) => y.startsWith('GET /api/cakisma?'))).toHaveLength(1),
-    )
+    const CAKISMA_202 =
+      'GET /api/cakisma?baslangic=2026-09-14T10%3A00&bitis=2026-09-14T11%3A00&haric_id=202'
+    const cakismaSayisi = () => istekYollari.filter((y) => y.startsWith('GET /api/cakisma?')).length
+    await waitFor(() => expect(cakismaSayisi()).toBe(1))
     const once = istekYollari.length
     const kutu = () => screen.getByRole('checkbox', { name: 'Ödendi' }) as HTMLInputElement
+
+    // Takvim'e HER dönüş seans panelini YENİDEN MONTE ediyor (`bakiye()`
+    // Danışanlar'a geçerken Takvim sekmesi unmount oluyor) ve panel çakışma
+    // sorgusunu `CAKISMA_GECIKME_MS` (300 ms, GERÇEK saat) sonra yeniden
+    // atıyor. Eskiden test beklemeden yazıp hemen Danışanlar'a dönüyordu:
+    // 300 ms dolmadan dönülürse zamanlayıcı iptal ediliyor, dolarsa sorgu
+    // ölçüm penceresine düşüyordu — makine yük altındayken test kırmızıydı
+    // (2026-09-22, iki kez; sakin makinede de ~9 koşuda 2). Gecikme 1 ms'ye
+    // indirilince HER seferinde kırılıyordu.
+    //
+    // Süzgeçle ayıklamak yerine BEKLENİYOR (bkz. `cakismaSorgusunuBekle`
+    // gerekçesi): dönüşte TAM BİR sorgu gelmesi şart ve pencerede de açıkça
+    // yer alıyor. Böylece pencere tam eşitlikle kalıyor — kartın ya da
+    // takvim listesinin yeniden çekilmesi hâlâ kırmızı. Sorgu denetim
+    // kaydına YAZMAZ (`cakisanlari_bul`, `cakisma_kontrolu_log_yazmaz`).
+    async function takvimeDon() {
+      const onceki = cakismaSayisi()
+      await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
+      await waitFor(() => expect(cakismaSayisi()).toBe(onceki + 1))
+    }
 
     await userEvent.click(kutu())
     await waitFor(() => expect(kutu().disabled).toBe(false))
     expect(await bakiye()).toBe(BAKIYE_0)
 
     // İki yön: işareti kaldırınca borç GERİ gelir.
-    await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
+    await takvimeDon()
     await userEvent.click(kutu())
     await waitFor(() => expect(kutu().disabled).toBe(false))
     expect(await bakiye()).toBe(BAKIYE_450)
 
     // Durum da bakiyeyi etkiler: "gelmedi" sayılmaz.
-    await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
+    await takvimeDon()
     await userEvent.click(screen.getByRole('button', { name: 'Gelmedi' }))
     expect(await bakiye()).toBe(BAKIYE_0)
 
@@ -2623,11 +2644,14 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     // `AnaEkran`'da yaşayan `useDosyaNotu`'da; sekme dönüşü onu yeniden
     // istemez (ve bu testte dosya Bilgiler alt sekmesinde kaldığı için hiç
     // istenmez — alt sekme de artık dönüşte korunuyor). Pencerede YALNIZCA
-    // üç yazma kalmalı.
+    // üç yazma kalmalı — araya yalnızca iki Takvim dönüşünün BEKLENEN
+    // çakışma sorguları giriyor (bkz. `takvimeDon`).
     const pencere = istekYollari.slice(once)
     expect(pencere).toEqual([
       'PATCH /api/randevular/202/odeme',
+      CAKISMA_202,
       'PATCH /api/randevular/202/odeme',
+      CAKISMA_202,
       'PATCH /api/randevular/202',
     ])
   })

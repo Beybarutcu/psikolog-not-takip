@@ -1,17 +1,14 @@
 /**
  * Etiket adının istemci tarafı kuralları — sunucudaki `store::tags` ile
- * BİREBİR aynı tutulan üç küçük saf fonksiyon (Plan 6 Görev 6).
+ * BİREBİR aynı tutulan küçük saf fonksiyonlar (Plan 6 Görev 6).
  *
  * # Neden istemcide de var
  *
- * Etiket yazması listeyi yeniden ÇEKMEZ (her okuma sunucuda silinemez bir
- * `goruntuleme` satırı): ekleme/kaldırmanın sonucu seansın etiket listesine,
- * danışan dosyasının seans listesindeki satıra ve sözlüğe YEREL olarak
- * işleniyor (bkz. `AnaEkran.tsx` "TEK yazma yolu"). Yerel sonucun sunucunun
- * sonraki okumasıyla AYNI görünmesi için sıralama kuralı da aynı olmalı:
- * sunucu `ORDER BY t.ad_anahtar` diyor, yani Türkçe küçük harfli kimliğin
- * BAYT sırası (SQLite `BINARY` harmanlaması = UTF-8 bayt sırası = kod noktası
- * sırası).
+ * Etiket yazması seansın etiketlerini ve dosyanın seans listesini yeniden
+ * ÇEKMEZ (her okuma sunucuda silinemez bir `goruntuleme` satırı): sonuç
+ * YEREL olarak işleniyor (bkz. `AnaEkran.tsx` "TEK yazma yolu"). Yerel
+ * sonucun sunucunun sonraki okumasıyla AYNI görünmesi için sıralama kuralı
+ * da aynı olmalı (`etiketSirasi`, Türk alfabesi).
  */
 
 /** Sunucudaki `AD_AZAMI` (karakter, bayt değil). */
@@ -57,17 +54,55 @@ export function ayniEtiket(a: { id: number; ad: string }, b: { id: number; ad: s
 }
 
 /**
- * İki adı sunucunun `ORDER BY ad_anahtar ASC` sırasıyla karşılaştırır: kod
- * noktası sırası (UTF-8 bayt sırasıyla aynı). `localeCompare` KULLANILMAZ —
- * Türkçe alfabetik sıra ("ç" "c"den hemen sonra) sunucunun sırası değil ve
- * yerel yama ile sonraki okuma farklı sıralanırdı.
+ * Sıralama alfabesi — sunucudaki `store::tags::TURKCE_ALFABE` ile AYNI: Türk
+ * alfabesi + Latin yerlerinde `q`, `w`, `x`.
  */
-export function etiketSirasi(a: string, b: string): number {
-  const ka = [...etiketAnahtari(a)]
-  const kb = [...etiketAnahtari(b)]
+const TURKCE_ALFABE = [...'abcçdefgğhıijklmnoöpqrsştuüvwxyz']
+const SAPKALI: Record<string, string> = { â: 'a', î: 'i', û: 'u' }
+
+/** Sunucudaki `sira_anahtari`: her karakter için [sınıf, sıra]. */
+function siraAnahtari(ad: string): [number, number][] {
+  return [...etiketAnahtari(ad)].map((k) => {
+    const temel = SAPKALI[k] ?? k
+    const i = TURKCE_ALFABE.indexOf(temel)
+    const kod = temel.codePointAt(0)!
+    if (i >= 0) return [1, i]
+    return kod < 0x80 ? [0, kod] : [2, kod]
+  })
+}
+
+/** Kod noktası sırasıyla karşılaştırma (Rust `str::cmp` = UTF-8 bayt sırası). */
+function kodNoktasiSirasi(a: string, b: string): number {
+  const ka = [...a]
+  const kb = [...b]
   for (let i = 0; i < Math.min(ka.length, kb.length); i++) {
     const fark = ka[i].codePointAt(0)! - kb[i].codePointAt(0)!
     if (fark !== 0) return fark
   }
   return ka.length - kb.length
+}
+
+/**
+ * Etiket adlarının TEK sıralama kuralı — sunucudaki `store::tags::
+ * etiket_sirasi`nin birebir eşi (Görev 6 inceleme MINOR-3): Türk alfabesi,
+ * büyük/küçük harf duyarsız (Türkçe kural); alfabe dışı ASCII (boşluk,
+ * rakam, noktalama) harflerden önce, diğer karakterler sonra; şapkalı harf
+ * temel harfin yerinde. Eşitlikte önce anahtarın, sonra ham adın kod noktası
+ * sırası. `Intl`/`localeCompare` KULLANILMAZ: ICU davranışı platforma göre
+ * değişebilir ve yerel yama sunucunun sonraki okumasıyla AYNI sırayı
+ * üretmeli. İki uygulama ORTAK örnek dosyasıyla eşit tutuluyor
+ * (`core/src/store/etiket_siralama_ornekleri.json`).
+ */
+export function etiketSirasi(a: string, b: string): number {
+  const sa = siraAnahtari(a)
+  const sb = siraAnahtari(b)
+  for (let i = 0; i < Math.min(sa.length, sb.length); i++) {
+    const fark = sa[i][0] - sb[i][0] || sa[i][1] - sb[i][1]
+    if (fark !== 0) return fark
+  }
+  return (
+    sa.length - sb.length ||
+    kodNoktasiSirasi(etiketAnahtari(a), etiketAnahtari(b)) ||
+    kodNoktasiSirasi(a, b)
+  )
 }

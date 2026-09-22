@@ -149,9 +149,9 @@
 //! Görev 6 raporu. Koruma ana sorgunun filtresidir ve o
 //! `baska_danisanin_etiketi_listeye_sizmaz` ile ölçülüyor.
 //!
-//! Sıra `t.ad_anahtar` (Türkçe küçük harfli kimlik): `store::tags::
-//! seans_etiketleri` ile AYNI anahtar, yani seans panelindeki çipler ile
-//! dosya listesindeki satır aynı sırayı gösterir.
+//! Sıra `store::tags::etiket_sirasi` (Türk alfabesi): `seans_etiketleri`
+//! ile AYNI fonksiyon, yani seans panelindeki çipler ile dosya listesindeki
+//! satır aynı sırayı gösterir (Görev 6 inceleme MINOR-3).
 //!
 //! # `Debug` elle yazılır
 //!
@@ -164,6 +164,7 @@
 
 use crate::store::audit::{kaydet, Cihaz, Eylem, LogHacmi, BIRLESTIRME_PENCERESI_DK};
 use crate::store::clients::DepoHatasi;
+use crate::store::tags::etiket_sirasi;
 use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 
@@ -273,7 +274,7 @@ pub fn danisan_seanslari(
            JOIN tags t ON t.id = pt.tag_id
            JOIN appointments a ON a.id = pt.appointment_id
           WHERE a.client_id = ?1
-          ORDER BY pt.appointment_id, t.ad_anahtar ASC",
+          ORDER BY pt.appointment_id",
     )?;
     let mut etiket_haritasi: std::collections::HashMap<i64, Vec<String>> =
         std::collections::HashMap::new();
@@ -285,7 +286,8 @@ pub fn danisan_seanslari(
     }
     drop(etiket_ifadesi);
     for seans in &mut liste {
-        if let Some(adlar) = etiket_haritasi.remove(&seans.appointment_id) {
+        if let Some(mut adlar) = etiket_haritasi.remove(&seans.appointment_id) {
+            adlar.sort_by(|a, b| etiket_sirasi(a, b));
             seans.etiketler = adlar;
         }
     }
@@ -922,18 +924,19 @@ mod testler {
         let cid = danisan(&c, "Ayse");
         let eski = randevu(&c, cid, "2026-09-07T10:00");
         let yeni = randevu(&c, cid, "2026-09-14T10:00");
-        // Sira `ad_anahtar` (kucuk harfli kimlik), ne ekleme sirasi (rowid)
-        // ne de ham `ad`'in bayt sirasi: "Zor" bayt sirasiyla ('Z' < 'k')
-        // en basa gelirdi, anahtarla ("zor") en sona gider. Ekleme sirasi da
-        // beklenen siranin tersi -- uc ayri siralama uc ayri sonuc verir.
+        // Sira `tags::etiket_sirasi` (Turk alfabesi, harf duyarsiz): ne
+        // ekleme sirasi (rowid) ne ham `ad`'in bayt sirasi ("Zor" 'Z' < 'k'
+        // ile basa gelirdi) ne de `ad_anahtar`'in bayt sirasi ("çocukluk"
+        // 'z'den sonra gelirdi). Ekleme sirasi beklenenin tersi.
         etiket_ekle(&c, yeni, "Zor", Cihaz::Masaustu).unwrap();
         etiket_ekle(&c, yeni, "uyku", Cihaz::Masaustu).unwrap();
         etiket_ekle(&c, yeni, "kaygi", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, yeni, "çocukluk", Cihaz::Masaustu).unwrap();
         etiket_ekle(&c, eski, "kaygi", Cihaz::Masaustu).unwrap();
 
         let liste = danisan_seanslari(&c, cid, Cihaz::Masaustu).unwrap();
         assert_eq!(liste[0].appointment_id, yeni);
-        assert_eq!(liste[0].etiketler, vec!["kaygi", "uyku", "Zor"]);
+        assert_eq!(liste[0].etiketler, vec!["çocukluk", "kaygi", "uyku", "Zor"]);
         assert_eq!(liste[1].appointment_id, eski);
         assert_eq!(liste[1].etiketler, vec!["kaygi"]);
     }

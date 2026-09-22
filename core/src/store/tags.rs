@@ -205,6 +205,52 @@ fn ad_anahtar_uret(normal_ad: &str) -> String {
         .to_lowercase()
 }
 
+/// Etiket sıralamasının alfabesi (Görev 6 inceleme MINOR-3). Türk alfabesi
+/// (a b c ç d e f g ğ h ı i j k l m n o ö p r s ş t u ü v y z) + Türkçede
+/// olmayan ama etiket adında geçebilecek `q`, `w`, `x` Latin alfabesindeki
+/// yerlerinde.
+const TURKCE_ALFABE: &str = "abcçdefgğhıijklmnoöpqrsştuüvwxyz";
+
+/// Bir adın sıralama anahtarı: `ad_anahtar_uret` (Türkçe küçük harf) sonrası
+/// her karakter için (sınıf, sıra). Sınıf 0: alfabe dışı ASCII (boşluk,
+/// rakam, noktalama — harflerden ÖNCE, kod noktasıyla); sınıf 1: alfabe
+/// harfi (alfabedeki sırasıyla); sınıf 2: diğer her şey (kod noktasıyla).
+/// Şapkalı `â`/`î`/`û` temel harfle aynı yere düşer (eşitlik aşağıda
+/// çözülür).
+fn sira_anahtari(ad: &str) -> Vec<(u8, u32)> {
+    ad_anahtar_uret(ad)
+        .chars()
+        .map(|k| {
+            let temel = match k {
+                'â' => 'a',
+                'î' => 'i',
+                'û' => 'u',
+                d => d,
+            };
+            match TURKCE_ALFABE.chars().position(|h| h == temel) {
+                Some(i) => (1, i as u32),
+                None if (temel as u32) < 0x80 => (0, temel as u32),
+                None => (2, temel as u32),
+            }
+        })
+        .collect()
+}
+
+/// Etiket adlarının TEK sıralama kuralı: Türk alfabesi, büyük/küçük harf
+/// duyarsız (Türkçe kural). `ORDER BY ad_anahtar` (UTF-8 bayt sırası)
+/// "çocukluk", "öfke", "şiddet", "ılık"ı "z"den SONRA koyuyordu (inceleme
+/// MINOR-3). Eşitlikte önce anahtarın, sonra ham adın kod noktası sırası
+/// (sıra her zaman TAM ve belirlenebilir). `Intl`/yerel ayar verisi
+/// kullanılmıyor: sıra platforma göre değişmemeli. İstemcinin eşi
+/// `web/src/etiket/etiketAdi.ts::etiketSirasi`; ikisi ORTAK örnek dosyasıyla
+/// (`etiket_siralama_ornekleri.json`) eşit tutuluyor.
+pub(crate) fn etiket_sirasi(a: &str, b: &str) -> std::cmp::Ordering {
+    sira_anahtari(a)
+        .cmp(&sira_anahtari(b))
+        .then_with(|| ad_anahtar_uret(a).cmp(&ad_anahtar_uret(b)))
+        .then_with(|| a.cmp(b))
+}
+
 /// Normalleşmiş adın 1-40 KARAKTER (`chars().count()`, bayt değil)
 /// aralığında olduğunu doğrular; aksi hâlde `DepoHatasi::GecersizVeri`.
 /// Sınır veritabanı `CHECK (length(ad) BETWEEN 1 AND 40)` ile de tutulur
@@ -244,18 +290,19 @@ pub fn etiketleri_listele(conn: &Connection, _cihaz: Cihaz) -> Result<Vec<Etiket
         "SELECT t.id, t.ad, COUNT(pt.appointment_id) AS kullanim
            FROM tags t
            LEFT JOIN progress_note_tags pt ON pt.tag_id = t.id
-          GROUP BY t.id, t.ad
-          ORDER BY kullanim DESC, t.ad_anahtar ASC",
+          GROUP BY t.id, t.ad",
     )?;
-    let etiketler = stmt
+    let mut etiketler = stmt
         .query_map([], |r| Ok(Etiket { id: r.get(0)?, ad: r.get(1)?, kullanim: r.get(2)? }))?
         .collect::<Result<Vec<_>, _>>()?;
+    // Sira SQL'de degil: `etiket_sirasi` (Turk alfabesi) bir SQLite
+    // harmanlamasi degil.
+    etiketler.sort_by(|a, b| b.kullanim.cmp(&a.kullanim).then_with(|| etiket_sirasi(&a.ad, &b.ad)));
     Ok(etiketler)
 }
 
-/// Bir seansın etiketleri, ada göre (anahtar sütuna göre sıralanır —
-/// kullanıcı görünümü aynı kalır, sıralama büyük/küçük harften bağımsız
-/// kararlı olur).
+/// Bir seansın etiketleri, Türk alfabesi sırasıyla (`etiket_sirasi`).
+/// Büyük/küçük harften bağımsız ve kararlı.
 ///
 /// Log: `goruntuleme` / `progress_note` / randevu kimliği, birleştirilerek
 /// (bkz. modül başlığı — bu panel her açılışta çalışan kendi kendini
@@ -274,15 +321,15 @@ pub fn seans_etiketleri(
                 (SELECT COUNT(*) FROM progress_note_tags pt2 WHERE pt2.tag_id = t.id) AS kullanim
            FROM tags t
            JOIN progress_note_tags pt ON pt.tag_id = t.id
-          WHERE pt.appointment_id = ?1
-          ORDER BY t.ad_anahtar ASC",
+          WHERE pt.appointment_id = ?1",
     )?;
-    let etiketler = stmt
+    let mut etiketler = stmt
         .query_map([appointment_id], |r| {
             Ok(Etiket { id: r.get(0)?, ad: r.get(1)?, kullanim: r.get(2)? })
         })?
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
+    etiketler.sort_by(|a, b| etiket_sirasi(&a.ad, &b.ad));
 
     // Log ONCEDEN OKUNAN varliktan SONRA: olmayan bir randevu kimligi
     // (dogrudan kullanici girdisi) silinemez bir satir birakmasin (bkz.
@@ -1163,6 +1210,42 @@ mod testler {
             2,
             "pencere disindaki eski goruntuleme satiri yenisini susturmamali"
         );
+    }
+
+    // --- siralama (Gorev 6 inceleme MINOR-3) -----------------------------------
+
+    /// Arayuzle ORTAK ornekler (`web/src/etiket/etiketAdi.test.ts` ayni
+    /// dosyayi okur): istemci ekleme/kaldirmadan sonra listeyi yerelde
+    /// siraliyor; iki uygulama ayrisirsa cipler, yeniden cekilene kadar
+    /// sunucununkinden farkli sirada gorunurdu.
+    #[test]
+    fn siralama_ortak_ornekleri_saglar() {
+        let ornekler: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("etiket_siralama_ornekleri.json")).unwrap();
+        // Bos bir ornek dosyasi bu testi TOTOLOJIK yapardi (birinci bicim).
+        assert!(ornekler.len() >= 6, "ornek dosyasi beklenenden kucuk");
+        for o in &ornekler {
+            let mut girdi: Vec<String> = serde_json::from_value(o["girdi"].clone()).unwrap();
+            let beklenen: Vec<String> = serde_json::from_value(o["beklenen"].clone()).unwrap();
+            assert_ne!(girdi, beklenen, "ornek zaten sirali -- hicbir sey olcmez: {}", o["ad"]);
+            girdi.sort_by(|a, b| etiket_sirasi(a, b));
+            assert_eq!(girdi, beklenen, "ornek: {}", o["ad"]);
+        }
+    }
+
+    #[test]
+    fn seans_etiketleri_ve_sozluk_turk_alfabesiyle_siralanir() {
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let rid = randevu(&c, cid, "2026-09-07T10:00");
+        for ad in ["zaman", "şiddet", "çocukluk", "ılık"] {
+            etiket_ekle(&c, rid, ad, Cihaz::Masaustu).unwrap();
+        }
+        let adlar = |l: Vec<Etiket>| l.into_iter().map(|e| e.ad).collect::<Vec<_>>();
+        let beklenen = vec!["çocukluk", "ılık", "şiddet", "zaman"];
+        assert_eq!(adlar(seans_etiketleri(&c, rid, Cihaz::Masaustu).unwrap()), beklenen);
+        // Hepsi esit kullanimli: sozluk de ayni sirayi verir.
+        assert_eq!(adlar(etiketleri_listele(&c, Cihaz::Masaustu).unwrap()), beklenen);
     }
 
     // --- etiketleri_listele --------------------------------------------------

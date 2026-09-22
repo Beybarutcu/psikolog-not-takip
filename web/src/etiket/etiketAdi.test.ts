@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import ornekler from '../../../core/src/store/etiket_siralama_ornekleri.json'
 import {
   etiketAdiNormallestir,
   etiketAdiUzunlugu,
@@ -27,10 +28,14 @@ describe('etiketAdi', () => {
     expect(etiketAnahtari('yas')).not.toBe(etiketAnahtari('yaş'))
   })
 
-  it('sıra sunucunun ORDER BY ad_anahtar ile aynı: anahtarın kod noktası sırası', () => {
-    // "Zor" ham bayt sırasıyla ('Z' < 'k') başa gelirdi; anahtarla sona.
-    expect(['uyku', 'Zor', 'kaygı'].sort(etiketSirasi)).toEqual(['kaygı', 'uyku', 'Zor'])
-    // Türkçe alfabetik sıra DEĞİL: 'ç' (U+00E7) 'z'den sonra gelir.
-    expect(['çocukluk', 'zaman'].sort(etiketSirasi)).toEqual(['zaman', 'çocukluk'])
+  // Sunucuyla ORTAK örnekler (`core/src/store/tags.rs::
+  // siralama_ortak_ornekleri_saglar` aynı dosyayı okur).
+  it('sıralama ortak örnekleri sağlar (Türk alfabesi, sunucuyla aynı)', () => {
+    // Boş bir örnek dosyası bu testi TOTOLOJİK yapardı (birinci biçim).
+    expect(ornekler.length).toBeGreaterThanOrEqual(6)
+    for (const o of ornekler) {
+      expect(o.girdi, `örnek zaten sıralı: ${o.ad}`).not.toEqual(o.beklenen)
+      expect([...o.girdi].sort(etiketSirasi), o.ad).toEqual(o.beklenen)
+    }
   })
 })

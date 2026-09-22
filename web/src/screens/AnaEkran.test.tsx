@@ -2624,7 +2624,15 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     // istemez (ve bu testte dosya Bilgiler alt sekmesinde kaldığı için hiç
     // istenmez — alt sekme de artık dönüşte korunuyor). Pencerede YALNIZCA
     // üç yazma kalmalı.
-    const pencere = istekYollari.slice(once)
+    //
+    // Çakışma sorgusu pencereden SÜZÜLÜYOR: Takvim'e her dönüşte seans
+    // paneli yeniden monte ediliyor ve `CAKISMA_GECIKME_MS` (300 ms) sonra
+    // bir `GET /api/cakisma?...` atıyor. Sakin koşuda sonraki sekme geçişi
+    // zamanlayıcıyı iptal ediyor; yük altında 300 ms dolup istek pencereye
+    // düşüyordu (test ara sıra kırılıyordu). Bu sorgu yalnızca bir uyarı,
+    // korunan iddiayla (kart/liste yeniden ÇEKİLMEDİ) ilgisi yok; süzgeç
+    // YALNIZCA onu çıkarıyor, geri kalanı tam eşitlikle ölçülüyor.
+    const pencere = istekYollari.slice(once).filter((y) => !y.startsWith('GET /api/cakisma?'))
     expect(pencere).toEqual([
       'PATCH /api/randevular/202/odeme',
       'PATCH /api/randevular/202/odeme',

@@ -33,25 +33,6 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
   const yetkisizRef = useRef(onYetkisiz)
   yetkisizRef.current = onYetkisiz
 
-  // Aramadan gelen "şu seansa git" isteği. Hedef randevu başka bir haftada
-  // olabilir; hafta değiştirilir, randevu listesi yeniden yüklenir ve seçim
-  // ANCAK O LİSTEDEN yapılır — ekranda görünmeyen bir randevuya bağlı bir
-  // not editörü açmak, kaydı belirsiz bir kimliğe göndermek olurdu.
-  // `ref`: `yukle`'nin bağımlılıklarını (dolayısıyla kimliğini) değiştirmesin.
-  //
-  // Kimlikle birlikte HEDEF HAFTA da tutuluyor. Önceden yalnızca kimlik
-  // vardı ve `yukle` onu KOŞULSUZ tüketiyordu: "seansa git" sırasında
-  // uçuşta bir yükleme varsa (ilk mount, hafta oku, kayıt sonrası tazeleme)
-  // o ESKİ yükleme bekleyen kimliği tüketir, kendi haftasının listesinde
-  // hedefi bulamaz ve `null` seçerdi; ardından gelen doğru haftanın
-  // yüklemesi için tüketilecek bir şey kalmaz, gezinme SESSİZCE düşerdi.
-  // Kullanıcı arama sonucuna tıklar, hafta değişir, panel açılmaz.
-  //
-  // Hafta damgası bunu kapatıyor: bekleyen istek yalnızca HEDEF HAFTANIN
-  // yüklemesinde tüketilir. Damgayı `haftaBasi.getTime()` taşıyor —
-  // `haftaninBasi` saati sıfırladığı için hafta başına tek bir değer.
-  const bekleyenSeans = useRef<{ id: number; hafta: number } | null>(null)
-
   // # Uçuştaki yazma × liste yüklemesi (Görev 2 inceleme M7)
   //
   // `durumDegis`/`odemeDegis` listeye YEREL yazıyor; yazmadan önce başlayıp
@@ -105,22 +86,9 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
       // iptali bu randevuyu da kapsadı) ya da başka bir haftaya bakılıyordur.
       // Her iki durumda da ekranda görünmeyen bir randevuya bağlı bir not
       // editörü açık tutmak, kaydı belirsiz bir kimliğe göndermek olurdu.
-      //
-      // Aramadan bir seans istendiyse hedef O'dur: `bekleyenSeans`
-      // tüketilir ve seçim yeni listeden kurulur.
-      //
-      // AMA yalnızca HEDEF HAFTANIN yüklemesi tüketebilir. Bu closure
-      // uçuşta kalmış eski bir haftaya ait olabilir; koşulsuz tüketmek
-      // gezinmeyi sessizce düşürürdü (bkz. `bekleyenSeans`).
-      const bekleyen =
-        bekleyenSeans.current !== null && bekleyenSeans.current.hafta === haftaBasi.getTime()
-          ? bekleyenSeans.current.id
-          : null
-      if (bekleyen !== null) bekleyenSeans.current = null
       setSeciliRandevu((secili) => {
-        const hedefId = bekleyen ?? secili?.id ?? null
-        if (hedefId === null) return null
-        return gelen.find((r) => r.id === hedefId) ?? null
+        if (secili === null) return null
+        return gelen.find((r) => r.id === secili.id) ?? null
       })
       setHata(null)
     } catch (e) {
@@ -165,30 +133,6 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
   function panelKapat() {
     setSeciliRandevu(null)
     setSeciliBosSaat(null)
-  }
-
-  /**
-   * Aramadan seçilen seansa gider.
-   *
-   * Randevu başka bir haftada olabilir; hafta değiştirilir ve seçim
-   * `yukle` içinde, SUNUCUDAN GELEN listeden yapılır (bkz.
-   * `bekleyenSeans`). `haftaninBasi` her çağrıda yeni bir `Date`
-   * döndürdüğü için hedef hafta zaten görünen haftaysa bile efekt yeniden
-   * çalışır ve bekleyen seçim tüketilir.
-   *
-   * Bekleyen istek HEDEF HAFTAYLA damgalanıyor: o sırada uçuşta olan
-   * (başka bir haftaya ait) bir yükleme onu tüketip gezinmeyi sessizce
-   * düşüremesin.
-   *
-   * Açık danışan kartının kapatılması ÇAĞIRANDA: kart state'i başka bir
-   * kancada ve bu kanca onu görmüyor.
-   */
-  function seansaGit(appointmentId: number, tarih: string) {
-    const [yil, ay, gun] = tarih.slice(0, 10).split('-').map(Number)
-    const hedefHafta = haftaninBasi(new Date(yil, (ay ?? 1) - 1, gun ?? 1))
-    bekleyenSeans.current = { id: appointmentId, hafta: hedefHafta.getTime() }
-    setSeciliBosSaat(null)
-    setHaftaBasi(hedefHafta)
   }
 
   async function kaydet(kayit: {
@@ -352,7 +296,6 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
     randevuSec,
     bosSaatSec,
     panelKapat,
-    seansaGit,
     kaydet,
     durumDegis,
     odemeDegis,

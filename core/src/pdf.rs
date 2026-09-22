@@ -855,6 +855,43 @@ mod tests {
         }
     }
 
+    /// Görev 7 inceleme notu: "Randevular ve ödemeler" bölümündeki bir
+    /// randevu satırı artık etiket listesiyle bitebiliyor
+    /// (`· Etiketler: aile, ilaç değişimi, öfke, ...`) ve bu liste uzun,
+    /// çok baytlı olabilir. `pdf.rs` içeriğe kör olduğu için (`RaporBolumu.
+    /// satirlar` düz `String`'dir), sarma yolunu bu GERÇEK biçimi taklit
+    /// eden tek bir uzun satırla doğrulamak yeterli — ayrı bir
+    /// `veri_raporu.rs` entegrasyon testine gerek yok.
+    #[test]
+    fn uzun_cok_baytli_etiket_listesi_tasiyan_randevu_satiri_dogru_sarilir() {
+        let etiketler: Vec<String> = (0..60)
+            .map(|i| format!("çok-baytlı-etiket-öğe-{i:02}"))
+            .collect();
+        let satir = format!(
+            "- 01.09.2026 10:00 · Planlandı · Ücret: 450,00 TL · Ödendi: Evet · Etiketler: {}",
+            etiketler.join(", ")
+        );
+        let ic = RaporIcerigi {
+            baslik: "RAPOR".into(),
+            bolumler: vec![RaporBolumu { baslik: "Randevular ve ödemeler (1)".into(), satirlar: vec![satir.clone()] }],
+        };
+        let pdf = sifreli_pdf(&ic, "dogru-parola-123").unwrap();
+
+        let islemler = metin_islemleri(&cozulmus(&ic));
+        assert!(islemler.len() > 5, "uzun etiket listesi gercekten sarilmali");
+        hepsi_sayfa_icinde(&islemler);
+        let sag = Pt::from(Mm(SAYFA_GENISLIK_MM - KENAR_MM)).0;
+        for m in &islemler {
+            assert!(m.x1 <= sag + 0.01, "sag kenar boslugunu asan satir: {m:?}");
+        }
+
+        // Hicbir etiket adi/karakter sarma sirasinda KAYBOLMAMALI.
+        let metin = metin_cikar(&pdf, "dogru-parola-123").unwrap();
+        let sade: String = metin.chars().filter(|c| !c.is_whitespace()).collect();
+        let beklenen: String = satir.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(sade.contains(&beklenen), "etiket listesi eksiksiz cikmadi:\n{metin}");
+    }
+
     #[test]
     fn debug_icerigi_basmaz() {
         let s = format!("{:?}", icerik());

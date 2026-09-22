@@ -2905,13 +2905,17 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     const seciliSatir = await screen.findByRole('button', { name: /14 Eylül 2026, 10:00/ })
     expect(seciliSatir.getAttribute('aria-current')).toBe('true')
 
-    // Takvim sekmesindeki seans paneli hiç AÇILMADI: hafta değişmedi,
-    // dolayısıyla GELECEK haftanın (14 Eylül'ün içinde olduğu hafta)
-    // randevu listesi de hiç istenmedi. (Danışan kartının kendi -- takvimden
-    // BAĞIMSIZ -- "tüm randevular" isteği burada bilerek kapsam dışı: o,
-    // `useDanisanDosyasi`nin `TUM_ZAMAN_BASI/SONU` ile attığı ayrı bir
-    // istek, haftanın değişip değişmediğini söylemez.)
-    expect(screen.queryByRole('region', { name: 'Seans' })).toBeNull()
+    // Hafta GERÇEKTEN değişmedi: `useTakvimAkisi` yalnızca `haftaBasi`
+    // değişince yeniden istek atar (bkz. o kancanın `yukle` bağımlılığı),
+    // yani GELECEK haftanın (14 Eylül'ün içinde olduğu hafta) randevu
+    // isteğinin hiç atılmamış olması doğrudan kanıt. (Danışan kartının
+    // kendi -- takvimden BAĞIMSIZ -- "tüm randevular" isteği burada
+    // bilerek kapsam dışı: o, `useDanisanDosyasi`nin `TUM_ZAMAN_BASI/SONU`
+    // ile attığı ayrı bir istek, haftanın değişip değişmediğini söylemez.
+    // İnceleme düzeltmesi: burada ayrıca duran `queryByRole('region', {
+    // name: 'Seans' })` iddiası kaldırıldı -- Danışanlar sekmesindeyken
+    // Takvim paneli zaten hiç monte değil, o iddia HER durumda doğru
+    // olurdu, hiçbir şeyi ölçmüyordu.)
     expect(
       istekYollari.some((y) => y.startsWith('GET /api/randevular?baslangic=2026-09-14')),
     ).toBe(false)
@@ -3094,8 +3098,14 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     // Kart ARTIK Ayşe'ye ait: onun 14 Eylül seansı listede SEÇİLİ görünür.
     const seciliSatir = await screen.findByRole('button', { name: /14 Eylül 2026, 10:00/ })
     expect(seciliSatir.getAttribute('aria-current')).toBe('true')
-    // Takvim sekmesindeki seans paneli açılmadı (hafta değişmedi).
-    expect(screen.queryByRole('region', { name: 'Seans' })).toBeNull()
+    // Hafta gerçekten değişmedi: GELECEK haftanın randevu isteği hiç
+    // atılmadı (bkz. yukarıdaki "... takvim haftasi DEGISMEZ" testindeki
+    // aynı gerekçe -- `queryByRole('region', { name: 'Seans' })` burada da
+    // Danışanlar sekmesindeyken her durumda `null` döner, hiçbir şey
+    // ölçmezdi).
+    expect(
+      istekYollari.some((y) => y.startsWith('GET /api/randevular?baslangic=2026-09-14')),
+    ).toBe(false)
   })
 
   it('arama sorgusu HICBIR istek yolunda not iceriğiyle birlikte tasinmaz; yalniz /api/ara', async () => {

@@ -408,7 +408,16 @@ export function HizliArama({ ara, onDanisanSec, onEtiketSec, gecikmeMs = GECIKME
                 </li>
               )
             }
-            if (s.tur === 'etiket' && s.tag_id !== null && s.etiket_adi !== null) {
+            if (s.tur === 'etiket') {
+              // Sunucu `tur === 'etiket'` iken `tag_id`/`etiket_adi`'yi HER
+              // ZAMAN doldurur (bkz. `AramaSonucu` -- sunucudaki `search::ara`
+              // etiket sonucunu tam bu ikisiyle kurar); tip yine de `number |
+              // null` çünkü aynı alanlar `danisan`/`not` sonuçlarında `null`.
+              // İyi biçimlenmemiş bir kayıt gelirse (sunucu hatası, eski bir
+              // önbellek) SESSİZCE ATLANIR -- eskiden bu dal "danışan
+              // dosyası" düğmesine düşüyordu ve `client_id: 0` ile
+              // `onDanisanSec(0)` çağırılabiliyordu (inceleme düzeltmesi).
+              if (s.tag_id === null || s.etiket_adi === null) return null
               const tagId = s.tag_id
               const etiketAdi = s.etiket_adi
               const kullanim = s.kullanim ?? 0
@@ -429,6 +438,7 @@ export function HizliArama({ ara, onDanisanSec, onEtiketSec, gecikmeMs = GECIKME
                 </li>
               )
             }
+            if (s.tur !== 'danisan') return null
             return (
               <li key={`danisan-${s.client_id}`}>
                 <button

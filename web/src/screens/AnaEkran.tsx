@@ -278,11 +278,12 @@ export function AnaEkran({
   }
 
   // Görev 7: hızlı aramanın not sonucuna tıklamak artık takvim haftasına
-  // GİTMEZ (eski `seansaGit`/`takvim.seansaGit` çağrısı kaldırıldı) —
-  // `danisanaGit(clientId, appointmentId)` çağrılır, tıpkı seans panelindeki
-  // danışan çipi gibi (bkz. `HizliArama.tsx` ve `TakvimSekmesi.tsx` modül
-  // başlıkları). `useTakvimAkisi.seansaGit`in kendisi kancanın herkese açık
-  // yüzeyinde kalıyor; bu ekranda artık çağrılmıyor.
+  // GİTMEZ — `danisanaGit(clientId, appointmentId)` çağrılır, tıpkı seans
+  // panelindeki danışan çipi gibi (bkz. `HizliArama.tsx` ve
+  // `TakvimSekmesi.tsx` modül başlıkları). Eski `seansaGit` sarmalayıcısı ve
+  // onu besleyen `useTakvimAkisi.seansaGit`/`bekleyenSeans` (hafta-yarışı
+  // koruması) kaldırıldı: başka hiçbir çağıranı yoktu (inceleme düzeltmesi,
+  // dead-code temizliği).
 
   // Veri raporu SUNUCUDA üretilir (Plan 4 Görev 6–7): bu ekran not çekmez,
   // metin kurmaz; yalnızca parolayı ve YEREL günü sunucuya iletir. Gün

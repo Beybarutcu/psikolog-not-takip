@@ -819,7 +819,7 @@ mod tests {
             .to_lowercase();
             assert!(!hepsi.contains("cok_gizli"), "arama terimi loga sizmis: {hepsi}");
             assert!(!hepsi.contains("terim"), "arama terimi loga sizmis: {hepsi}");
-            assert!(!hepsi.contains("etiket_termi"), "etiket arama terimi loga sizmis: {hepsi}");
+            assert!(!hepsi.contains("etiket_terimi"), "etiket arama terimi loga sizmis: {hepsi}");
             if kayit.varlik == VARLIK_ARAMA {
                 assert_eq!(
                     kayit.varlik_id, VARLIK_ID_ARAMA,

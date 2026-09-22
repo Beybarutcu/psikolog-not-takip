@@ -498,6 +498,30 @@ describe('HizliArama — sonuçlar', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
+  // İnceleme düzeltmesi (MINOR-5): `tur === 'etiket'` iken `tag_id`/
+  // `etiket_adi` yine de `null` gelirse (sunucu hatası, tutarsız bir
+  // önbellek) eskiden bu dal sessizce "danışan dosyası" düğmesine
+  // düşüyordu ve `client_id: 0` ile `onDanisanSec(0)` çağrılabiliyordu --
+  // var olmayan bir "0" kimlikli danışan açılırdı. Artık böyle bir kayıt
+  // hiçbir düğme üretmeden ATLANIR.
+  it('etiket sonucunda tag_id/etiket_adi null gelirse ATLANIR, onDanisanSec(0) CAGRILMAZ', async () => {
+    const bozukEtiketSonucu: AramaSonucu = { ...etiketSonucu, tag_id: null, etiket_adi: null }
+    const ara = vi.fn().mockResolvedValue(yanit([bozukEtiketSonucu]))
+    const { onDanisanSec, onEtiketSec } = kur({ ara })
+    await ac()
+    await userEvent.type(kutu(), 'kaygi')
+
+    await waitFor(() => expect(ara).toHaveBeenCalledWith('kaygi'))
+    // Bozuk kayıt icin HICBIR dugme uretilmemeli -- ne "etiket" ne "danisan
+    // dosyasi" dugmesi -- ve "Sonuç bulunamadı." da YAZILMAZ (`sonuclar`
+    // ARRAY'i hala 1 uzunlugunda; yalnizca RENDER atlanir).
+    expect(screen.queryByRole('button', { name: /etiketli seansları göster/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /danışan dosyasını aç/ })).toBeNull()
+    expect(screen.queryAllByRole('listitem')).toHaveLength(0)
+    expect(onDanisanSec).not.toHaveBeenCalled()
+    expect(onEtiketSec).not.toHaveBeenCalled()
+  })
+
   it('sonuc yoksa bunu soyler', async () => {
     const { ara } = kur({ ara: vi.fn().mockResolvedValue(yanit([])) })
     await ac()

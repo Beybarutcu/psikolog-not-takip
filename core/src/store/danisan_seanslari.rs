@@ -328,7 +328,7 @@ fn sablon_baslik_satirlari(conn: &Connection) -> Result<Vec<String>, DepoHatasi>
 /// Bir satırın başındaki Markdown başlık önekini (`#`, `##` ya da `###` +
 /// TAM OLARAK BİR boşluk) ayıklar; varsa önek atılmış GÖVDEYİ döner.
 ///
-/// Arayüzdeki kapalı kümenin (`web/src/not/markdown.tsx::BASLIK_DUZENLI`,
+/// Arayüzdeki kapalı kümenin (`web/src/not/desenler.ts::BASLIK_DUZENLI`,
 /// `/^(#{1,3}) (.*)$/`) BİREBİR karşılığı: dört ve üzeri `#` başlık SAYILMAZ
 /// (`#### x` arayüzde de düz metin kalır) ve boşluksuz `#etiket` başlık
 /// SAYILMAZ (öneki atılmadan olduğu gibi kalması gereken bir biçim -- görev

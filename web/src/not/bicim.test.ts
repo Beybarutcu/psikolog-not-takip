@@ -124,3 +124,27 @@ describe('bicimUygula', () => {
     })
   })
 })
+
+// Son inceleme M2: satır başı desenleri TEK modülde (`desenler.ts`). Eskiden
+// `bicim.ts` ve `markdown.tsx` birer kopya taşıyordu ve "birebir aynı"
+// iddiasını hiçbir test sınamıyordu. Bu yapısal test iki tüketicinin de
+// desenleri `./desenler`'den aldığını ve kendi kopyasını TANIMLAMADIĞINI ölçer.
+const kaynaklar = import.meta.glob(['./bicim.ts', './markdown.tsx'], {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+}) as Record<string, string>
+
+describe('satır başı desenleri tek kaynaktan (desenler.ts)', () => {
+  it('bicim.ts ve markdown.tsx desenleri ./desenler modülünden alır, yerel kopya tanımlamaz', () => {
+    expect(Object.keys(kaynaklar).sort()).toEqual(['./bicim.ts', './markdown.tsx'])
+    for (const [yol, metin] of Object.entries(kaynaklar)) {
+      expect(metin, yol).toMatch(/from '\.\/desenler'/)
+      // Beş satır başı deseninden birinin yerel tanımı (satır İÇİ desenler —
+      // `KALIN_DUZENLI`, `ITALIK_DUZENLI` — yalnızca `markdown.tsx`'te, kopyası yok).
+      expect(metin, yol).not.toMatch(
+        /(BASLIK|ONAY_KUTUSU|MADDE|NUMARALI|ALINTI)_DUZENLI\s*=/,
+      )
+    }
+  })
+})

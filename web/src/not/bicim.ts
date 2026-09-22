@@ -1,3 +1,11 @@
+import {
+  ALINTI_DUZENLI,
+  BASLIK_DUZENLI,
+  MADDE_DUZENLI,
+  NUMARALI_DUZENLI,
+  ONAY_KUTUSU_DUZENLI,
+} from './desenler'
+
 /**
  * Not editörünün biçim uygulama mantığı — **saf fonksiyon**.
  *
@@ -29,16 +37,11 @@ export type BicimTuru =
 
 export type Secim = { metin: string; bas: number; son: number }
 
-// `markdown.tsx::siniflandirSatir`daki desenlerle birebir aynı — çevirici
-// hangi satırı hangi blok sayıyorsa, biçimleyici de "bu satırda zaten bu
-// biçim var mı" sorusunu aynı desenle yanıtlar. İki dosya ayrı yaşıyor
-// (`markdown.tsx` bu sabitleri dışa aktarmıyor) çünkü sorumlulukları farklı:
-// biri saklanan metni GÖRÜNTÜYE çevirir, öbürü textarea SEÇİMİNİ metne.
-const BASLIK_DUZENLI = /^(#{1,3}) (.*)$/
-const ONAY_KUTUSU_DUZENLI = /^- \[([ xX])\] ?(.*)$/
-const MADDE_DUZENLI = /^- (.*)$/
-const NUMARALI_DUZENLI = /^\d+\. (.*)$/
-const ALINTI_DUZENLI = /^> ?(.*)$/
+// Satır başı desenleri `markdown.tsx::siniflandirSatir` ile AYNI nesneler
+// (`desenler.ts`, son inceleme M2): çevirici hangi satırı hangi blok
+// sayıyorsa, biçimleyici de "bu satırda zaten bu biçim var mı" sorusunu aynı
+// desenle yanıtlar. Dosyalar ayrı kalıyor çünkü sorumlulukları farklı: biri
+// saklanan metni GÖRÜNTÜYE çevirir, öbürü textarea SEÇİMİNİ metne.
 
 const SATIR_ICI_ISARETLER: Record<'kalin' | 'italik', string> = {
   kalin: '**',

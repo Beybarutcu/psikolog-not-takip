@@ -84,7 +84,7 @@ function kirp(metin: string): string {
 /**
  * Bir satırın başındaki Markdown başlık önekini (`#`, `##` ya da `###` + TAM
  * OLARAK BİR boşluk) ayıklar; varsa önek atılmış GÖVDEYİ döner. Arayüzdeki
- * kapalı kümenin (`markdown.tsx::BASLIK_DUZENLI`, `/^(#{1,3}) (.*)$/`)
+ * kapalı kümenin (`not/desenler.ts::BASLIK_DUZENLI`, `/^(#{1,3}) (.*)$/`)
  * BİREBİR karşılığı: dört ve üzeri `#` başlık SAYILMAZ, boşluksuz `#etiket`
  * başlık SAYILMAZ.
  */
@@ -117,7 +117,7 @@ function sablonBasligiEslesmesi(satir: string): string | null {
 
 /**
  * `"- [ ] "` / `"- [x] "` / `"- [X] "` önekini ayıklar; kapanıştan sonraki
- * boşluk OPSİYONELDİR (`markdown.tsx::ONAY_KUTUSU_DUZENLI`,
+ * boşluk OPSİYONELDİR (`not/desenler.ts::ONAY_KUTUSU_DUZENLI`,
  * `/^- \[([ xX])\] ?(.*)$/` ile aynı) -- önce boşluklu biçim denenir.
  */
 function onayKutusuAyikla(satir: string): string | null {
@@ -129,7 +129,7 @@ function onayKutusuAyikla(satir: string): string | null {
 
 /**
  * `"1. "`, `"12. "` gibi numaralı liste önekini ayıklar
- * (`markdown.tsx::NUMARALI_DUZENLI`, `/^\d+\. (.*)$/`): en az bir rakam,
+ * (`not/desenler.ts::NUMARALI_DUZENLI`, `/^\d+\. (.*)$/`): en az bir rakam,
  * ardından TAM OLARAK `". "`. Parantezli biçim (`"1) "`) kapalı kümede
  * DEĞİL, değişmeden kalır.
  */

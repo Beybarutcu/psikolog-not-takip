@@ -1,4 +1,11 @@
 import type { ReactNode } from 'react'
+import {
+  ALINTI_DUZENLI,
+  BASLIK_DUZENLI,
+  MADDE_DUZENLI,
+  NUMARALI_DUZENLI,
+  ONAY_KUTUSU_DUZENLI,
+} from './desenler'
 
 /**
  * Notun Markdown kaynağını React elemanlarına çevirir — KAPALI bir küme.
@@ -173,11 +180,8 @@ type SatirTuru =
   | { tur: 'alinti'; icerik: string }
   | { tur: 'paragraf'; icerik: string }
 
-const BASLIK_DUZENLI = /^(#{1,3}) (.*)$/
-const ONAY_KUTUSU_DUZENLI = /^- \[([ xX])\] ?(.*)$/
-const MADDE_DUZENLI = /^- (.*)$/
-const NUMARALI_DUZENLI = /^\d+\. (.*)$/
-const ALINTI_DUZENLI = /^> ?(.*)$/
+// Satır başı desenleri `desenler.ts`'te: biçim çubuğu (`bicim.ts`) AYNI
+// nesneleri kullanıyor (son inceleme M2).
 
 function siniflandirSatir(satir: string): SatirTuru {
   const baslikEslesme = BASLIK_DUZENLI.exec(satir)

@@ -124,6 +124,28 @@
 //! bulgusuyla düzeltildi -- brief zaten olmayan bir sütun adı (`ucret_kurus`)
 //! varsayıyordu, tipini de birebir izlemek için bir gerekçe yoktu.)
 //!
+//! # Etiketler (Plan 6 Görev 6): TEK ek sorgu, N+1 DEĞİL
+//!
+//! Her seans ada göre sıralı etiket adlarını taşır (`etiketler`). Danışan
+//! dosyası listenin üstünde "Etikete göre süz" seçimini ve her satırda
+//! seansın etiketlerini bu alandan kurar; seans başına ayrı bir istek atmak
+//! hem N+1 sorgu hem de seans başına bir görüntüleme demek olurdu.
+//!
+//! Adlar ana sorgudan AYRI, TEK bir sorguyla okunur ve randevu kimliğine göre
+//! gruplanır. `GROUP_CONCAT` bilerek kullanılmadı: etiket adı serbest metin
+//! (virgül, noktalı virgül içerebilir) ve SQLite'ın `GROUP_CONCAT`'i grup
+//! içindeki sırayı garanti etmez -- ayırıcıya ve sıraya güvenen bir çözüm
+//! "a, b" adlı tek etiketi iki etikete bölebilirdi.
+//!
+//! Ek sorgunun danışan filtresi de `a.client_id` üzerinden (`JOIN
+//! appointments`): etiket bağı `progress_note_tags.appointment_id`'ye
+//! bağlıdır, randevu başka danışana taşınınca etiketleri de onunla gider ve
+//! eski danışanın dosyasında görünmez (bkz. yukarıdaki KRİTİK bölüm).
+//!
+//! Sıra `t.ad_anahtar` (Türkçe küçük harfli kimlik): `store::tags::
+//! seans_etiketleri` ile AYNI anahtar, yani seans panelindeki çipler ile
+//! dosya listesindeki satır aynı sırayı gösterir.
+//!
 //! # `Debug` elle yazılır
 //!
 //! `not_ilk_satiri` gerçek not içeriği taşır (kırpılmış olsa da); `baslangic`
@@ -163,6 +185,10 @@ pub struct DanisanSeansi {
     /// ile "not açılmış ama boş bırakılmış" farklı şeylerdir ve arayüz
     /// ikisini farklı gösterir.
     pub not_ilk_satiri: Option<String>,
+    /// Seansın etiket ADLARI, `ad_anahtar` sırasıyla (bkz. modül başlığı
+    /// "Etiketler"). Etiketsiz seansta boş dizi -- `None` değil: "etiket yok"
+    /// tek bir anlama sahip.
+    pub etiketler: Vec<String>,
 }
 
 impl std::fmt::Debug for DanisanSeansi {
@@ -174,6 +200,9 @@ impl std::fmt::Debug for DanisanSeansi {
             .field("ucret_kurus", &self.ucret_kurus)
             .field("odendi", &self.odendi)
             .field("not_ilk_satiri", &self.not_ilk_satiri.as_ref().map(|_| "<gizli>"))
+            // Etiket adı not içeriği kadar hassas (bkz. `store::tags` modül
+            // başlığı): yalnızca SAYI basılır.
+            .field("etiketler", &format_args!("<{} gizli>", self.etiketler.len()))
             .finish()
     }
 }
@@ -209,7 +238,7 @@ pub fn danisan_seanslari(
           WHERE a.client_id = ?1
           ORDER BY a.baslangic DESC, a.id DESC",
     )?;
-    let liste = ifade
+    let mut liste = ifade
         .query_map([client_id], |s| {
             let icerik: Option<String> = s.get(5)?;
             Ok(DanisanSeansi {
@@ -221,10 +250,36 @@ pub fn danisan_seanslari(
                 ucret_kurus: s.get(3)?,
                 odendi: s.get::<_, i64>(4)? != 0,
                 not_ilk_satiri: icerik.map(|m| onizleme(&m, &basliklar)),
+                etiketler: Vec::new(),
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
     drop(ifade);
+
+    // Etiketler: TEK ek sorgu (bkz. modul basligi "Etiketler" -- N+1 degil,
+    // GROUP_CONCAT degil). Filtre yine `a.client_id` uzerinden.
+    let mut etiket_ifadesi = conn.prepare(
+        "SELECT pt.appointment_id, t.ad
+           FROM progress_note_tags pt
+           JOIN tags t ON t.id = pt.tag_id
+           JOIN appointments a ON a.id = pt.appointment_id
+          WHERE a.client_id = ?1
+          ORDER BY pt.appointment_id, t.ad_anahtar ASC",
+    )?;
+    let mut etiket_haritasi: std::collections::HashMap<i64, Vec<String>> =
+        std::collections::HashMap::new();
+    for satir in etiket_ifadesi
+        .query_map([client_id], |s| Ok((s.get::<_, i64>(0)?, s.get::<_, String>(1)?)))?
+    {
+        let (randevu_id, ad) = satir?;
+        etiket_haritasi.entry(randevu_id).or_default().push(ad);
+    }
+    drop(etiket_ifadesi);
+    for seans in &mut liste {
+        if let Some(adlar) = etiket_haritasi.remove(&seans.appointment_id) {
+            seans.etiketler = adlar;
+        }
+    }
 
     // Hacim: OturumBasi. Danisan dosyasi kendi kendini yenileyen bir ekran;
     // HerCagri secilseydi bir dosyayi acik tutmak onlarca silinemez satir
@@ -495,6 +550,7 @@ mod testler {
         db::open_encrypted,
         notes::not_kaydet,
         schema::migrate,
+        tags::{etiket_ekle, etiket_kaldir},
     };
 
     fn kurulum() -> (tempfile::TempDir, rusqlite::Connection) {
@@ -840,5 +896,107 @@ mod testler {
         let hata_ayikla = format!("{:?}", liste[0]);
         assert!(!hata_ayikla.contains("COK GIZLI ICERIK"));
         assert!(!hata_ayikla.contains("2026-09-14"));
+    }
+
+    #[test]
+    fn etiketsiz_seans_bos_etiket_listesi_doner() {
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        randevu(&c, cid, "2026-09-14T10:00");
+        let liste = danisan_seanslari(&c, cid, Cihaz::Masaustu).unwrap();
+        assert!(liste[0].etiketler.is_empty());
+    }
+
+    #[test]
+    fn her_seans_kendi_etiketlerini_ada_gore_sirali_tasir() {
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let eski = randevu(&c, cid, "2026-09-07T10:00");
+        let yeni = randevu(&c, cid, "2026-09-14T10:00");
+        // Sira `ad_anahtar` (kucuk harfli kimlik), ne ekleme sirasi (rowid)
+        // ne de ham `ad`'in bayt sirasi: "Zor" bayt sirasiyla ('Z' < 'k')
+        // en basa gelirdi, anahtarla ("zor") en sona gider. Ekleme sirasi da
+        // beklenen siranin tersi -- uc ayri siralama uc ayri sonuc verir.
+        etiket_ekle(&c, yeni, "Zor", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, yeni, "uyku", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, yeni, "kaygi", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, eski, "kaygi", Cihaz::Masaustu).unwrap();
+
+        let liste = danisan_seanslari(&c, cid, Cihaz::Masaustu).unwrap();
+        assert_eq!(liste[0].appointment_id, yeni);
+        assert_eq!(liste[0].etiketler, vec!["kaygi", "uyku", "Zor"]);
+        assert_eq!(liste[1].appointment_id, eski);
+        assert_eq!(liste[1].etiketler, vec!["kaygi"]);
+    }
+
+    #[test]
+    fn kaldirilan_etiket_listede_gorunmez() {
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let rid = randevu(&c, cid, "2026-09-14T10:00");
+        let e = etiket_ekle(&c, rid, "kaygi", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, rid, "uyku", Cihaz::Masaustu).unwrap();
+        etiket_kaldir(&c, rid, e.id, Cihaz::Masaustu).unwrap();
+
+        let liste = danisan_seanslari(&c, cid, Cihaz::Masaustu).unwrap();
+        assert_eq!(liste[0].etiketler, vec!["uyku"]);
+    }
+
+    #[test]
+    fn baska_danisanin_etiketi_listeye_sizmaz() {
+        let (_d, c) = kurulum();
+        let ayse = danisan(&c, "Ayse");
+        let mehmet = danisan(&c, "Mehmet");
+        let r_ayse = randevu(&c, ayse, "2026-09-14T10:00");
+        let r_mehmet = randevu(&c, mehmet, "2026-09-14T12:00");
+        etiket_ekle(&c, r_ayse, "aile", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, r_mehmet, "MEHMETIN_ETIKETI", Cihaz::Masaustu).unwrap();
+
+        let liste = danisan_seanslari(&c, ayse, Cihaz::Masaustu).unwrap();
+        assert_eq!(liste.len(), 1);
+        // Iki yon: Ayse'nin etiketi GELIR (hic etiket dondurmeyen bir sorgu
+        // da "sizmiyor" testini gecerdi), Mehmet'inki gelmez.
+        assert_eq!(liste[0].etiketler, vec!["aile"]);
+        let metin = format!("{:?}", liste.iter().map(|s| s.etiketler.clone()).collect::<Vec<_>>());
+        assert!(!metin.contains("MEHMETIN_ETIKETI"));
+    }
+
+    #[test]
+    fn randevu_baska_danisana_tasinirsa_etiketleri_de_onunla_gider() {
+        let (_d, c) = kurulum();
+        let ayse = danisan(&c, "Ayse");
+        let mehmet = danisan(&c, "Mehmet");
+        let rid = randevu(&c, ayse, "2026-09-14T10:00");
+        etiket_ekle(&c, rid, "tasinan", Cihaz::Masaustu).unwrap();
+
+        randevu_danisani_degistir(&c, rid, mehmet);
+
+        assert!(danisan_seanslari(&c, ayse, Cihaz::Masaustu).unwrap().is_empty());
+        let liste = danisan_seanslari(&c, mehmet, Cihaz::Masaustu).unwrap();
+        assert_eq!(liste[0].etiketler, vec!["tasinan"]);
+    }
+
+    #[test]
+    fn debug_ciktisi_etiket_adini_basmaz() {
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let rid = randevu(&c, cid, "2026-09-14T10:00");
+        etiket_ekle(&c, rid, "GIZLI_ETIKET", Cihaz::Masaustu).unwrap();
+
+        let liste = danisan_seanslari(&c, cid, Cihaz::Masaustu).unwrap();
+        let hata_ayikla = format!("{:?}", liste[0]);
+        assert!(!hata_ayikla.contains("GIZLI_ETIKET"));
+        assert!(hata_ayikla.contains("<1 gizli>"));
+    }
+
+    #[test]
+    fn json_ciktisi_etiketler_alanini_dizi_olarak_tasir() {
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let rid = randevu(&c, cid, "2026-09-14T10:00");
+        etiket_ekle(&c, rid, "kaygi", Cihaz::Masaustu).unwrap();
+        let liste = danisan_seanslari(&c, cid, Cihaz::Masaustu).unwrap();
+        let json = serde_json::to_value(&liste[0]).unwrap();
+        assert_eq!(json["etiketler"], serde_json::json!(["kaygi"]));
     }
 }

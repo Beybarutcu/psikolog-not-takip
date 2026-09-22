@@ -1255,7 +1255,7 @@ mod testler {
         let ayni = ornekler["ayni_anahtar"].as_array().unwrap();
         let farkli = ornekler["farkli_anahtar"].as_array().unwrap();
         // Bos bir ornek dosyasi bu testi TOTOLOJIK yapardi (birinci bicim).
-        assert!(ayni.len() >= 4 && farkli.len() >= 1, "ornek dosyasi beklenenden kucuk");
+        assert!(ayni.len() >= 4 && farkli.len() >= 2, "ornek dosyasi beklenenden kucuk");
         let (_d, c) = kurulum();
         let cid = danisan(&c, "Ayse");
         for o in ayni {

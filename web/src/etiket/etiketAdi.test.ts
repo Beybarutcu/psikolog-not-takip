@@ -36,7 +36,7 @@ describe('etiketAdi', () => {
     const anahtar = (ad: string) => etiketAnahtari(etiketAdiNormallestir(ad))
     // Boş bir örnek dosyası bu testi TOTOLOJİK yapardı (birinci biçim).
     expect(kimlikOrnekleri.ayni_anahtar.length).toBeGreaterThanOrEqual(4)
-    expect(kimlikOrnekleri.farkli_anahtar.length).toBeGreaterThanOrEqual(1)
+    expect(kimlikOrnekleri.farkli_anahtar.length).toBeGreaterThanOrEqual(2)
     for (const o of kimlikOrnekleri.ayni_anahtar) {
       for (const g of o.girdiler) expect(anahtar(g), `${o.ad} / ${JSON.stringify(g)}`).toBe(o.anahtar)
     }

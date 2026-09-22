@@ -59,6 +59,20 @@
 //! yazılmamış) boş SAYILMAZ: ilk başlık ("Veri:") döner — ekranda gerçekten
 //! duran şey odur ve "henüz boş" demek içerik varken boş demek olurdu.
 //!
+//! ## Görev 3: Markdown biçimine uyum (eski VE yeni not, ikisi de)
+//!
+//! Not editörü Markdown'a geçtikten sonra (Görev 1-2) yeni şablon başlıkları
+//! `"Veri:"` değil `"## Veri"` biçiminde eklenir; var olan notlar göç ETMEZ
+//! (bkz. `store` modül başlığındaki "not içeriği düz metin kalır" kuralı) —
+//! yani danışan dosyasında eski VE yeni biçimli notlar YAN YANA durur.
+//! `sablon_baslik_eslesmesi` başlık satırını iki biçimde de tanır;
+//! `bicimden_arindir` önizlemeye giren satırdaki Markdown blok önekini
+//! (`#`, `-`, `1.`, `>`, `- [ ]`) ve satır içi `**`/`*` işaretlerini atar --
+//! yoksa liste satırı "- **Danışan** kaygılı" önizlemede ham işaretleriyle
+//! görünürdü. Önek OLMAYAN karakterler (kapanmamış `**`, boşluksuz `#etiket`)
+//! olduğu gibi kalır; kural arayüzün kapalı kümesiyle (`web/src/not/markdown.tsx`)
+//! birebir aynı tutulur.
+//!
 //! # Önizleme kırpması KARAKTER üzerinden
 //!
 //! `onizleme` seçtiği satırı `AZAMI_ONIZLEME` **karakterinde** kırpar
@@ -227,48 +241,244 @@ pub fn danisan_seanslari(
     Ok(liste)
 }
 
-/// Şablon başlıklarının notta göründüğü SATIR biçimleri (`"Veri:"`, …).
+/// Şablon başlıklarının notta göründüğü satırların KÖK adları (`"Veri"`,
+/// `"Değerlendirme"`, …) -- ne kolon eklenmiş (`"Veri:"`, eski biçim) ne `#`
+/// önekli (`"## Veri"`, yeni biçim, bkz. `sablon_baslik_eslesmesi`). Hangi
+/// biçimin nasıl tanınacağı burada DEĞİL, orada kurulur; TEK kaynak bu liste.
 ///
 /// Kaynak `templates.basliklar` (JSON dizi) -- şemanın tohumu; liste burada
-/// ikinci kez elle yazılmıyor. Arayüz başlığı `"{baslik}:"` satırı olarak
-/// ekler (`web/src/seans/sablon.ts::sablonMetni`), bu yüzden karşılaştırma o
-/// biçimle yapılır. Çözülemeyen bir satır (bozuk JSON) atlanır: önizleme bir
-/// kolaylıktır ve bozuk bir şablon satırı danışanın TÜM seans listesini
-/// açılamaz hâle getirmemeli -- en kötü sonuç başlığın önizlemede görünmesi.
+/// ikinci kez elle yazılmıyor. Çözülemeyen bir satır (bozuk JSON) atlanır:
+/// önizleme bir kolaylıktır ve bozuk bir şablon satırı danışanın TÜM seans
+/// listesini açılamaz hâle getirmemeli -- en kötü sonuç başlığın önizlemede
+/// görünmesi.
 fn sablon_baslik_satirlari(conn: &Connection) -> Result<Vec<String>, DepoHatasi> {
     let mut ifade = conn.prepare("SELECT basliklar FROM templates")?;
     let ham = ifade
         .query_map([], |s| s.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(ham
-        .iter()
-        .filter_map(|j| serde_json::from_str::<Vec<String>>(j).ok())
-        .flatten()
-        .map(|b| format!("{b}:"))
-        .collect())
+    Ok(ham.iter().filter_map(|j| serde_json::from_str::<Vec<String>>(j).ok()).flatten().collect())
 }
 
-/// Notun önizlemesi: ilk boş olmayan, şablon başlığı olmayan satır;
-/// `AZAMI_ONIZLEME` KARAKTERDE kırpılır (bkz. modül başlığı).
+/// Bir satırın başındaki Markdown başlık önekini (`#`, `##` ya da `###` +
+/// TAM OLARAK BİR boşluk) ayıklar; varsa önek atılmış GÖVDEYİ döner.
 ///
-/// Kırpma KARAKTER üzerinden: Türkçe harfler çok baytlı, bayt kırpması
-/// UTF-8'i ortasından bölerdi.
+/// Arayüzdeki kapalı kümenin (`web/src/not/markdown.tsx::BASLIK_DUZENLI`,
+/// `/^(#{1,3}) (.*)$/`) BİREBİR karşılığı: dört ve üzeri `#` başlık SAYILMAZ
+/// (`#### x` arayüzde de düz metin kalır) ve boşluksuz `#etiket` başlık
+/// SAYILMAZ (öneki atılmadan olduğu gibi kalması gereken bir biçim -- görev
+/// talimatı). `#` ASCII (1 bayt/karakter) olduğu için bayt dilimlemesi
+/// karakter sınırını asla bölmez.
+fn baslik_onekini_ayikla(satir: &str) -> Option<&str> {
+    let hash_sayisi = satir.chars().take_while(|c| *c == '#').count();
+    if hash_sayisi == 0 || hash_sayisi > 3 {
+        return None;
+    }
+    satir[hash_sayisi..].strip_prefix(' ')
+}
+
+/// Şablon başlığı satırını HER İKİ biçimde tanır; tanırsa (önizlemenin
+/// yalnızca başlıklardan oluşan bir notta YEDEK olarak döneceği) görüntü
+/// metnini döner:
+///
+/// - **Eski biçim** (`"{baslik}:"`): iki nokta olduğu gibi kalır -- Markdown
+///   öneki değil, notun kendi metnidir, atılmaz.
+/// - **Yeni biçim** (`"#{1,3} {baslik}"`, Görev 2'den beri editörün ürettiği
+///   biçim, bkz. `web/src/seans/sablon.ts::sablonMetni`): `#` öneki atılmış
+///   hâliyle, yalnızca başlık adı.
+///
+/// Her iki biçimde de TAM eşleşme aranır: `"Veri: ek metin"` ya da
+/// `"## Veri ek metin"` başlık SAYILMAZ -- başlıkla aynı satıra yazılmış asıl
+/// not metnidir (bkz. `baslikla_ayni_satirda_metin_baslik_sayilmaz` testi).
+/// Şablonda OLMAYAN bir başlık (örn. `"### Serbest başlık"`) da burada
+/// eşleşmez: çağıran onu normal içerik satırı gibi işler, yalnızca `#`
+/// önekini atar (bkz. `sablonda_olmayan_baslik_onek_atilir_atlanmaz` testi).
+fn sablon_baslik_eslesmesi(satir: &str, basliklar: &[String]) -> Option<String> {
+    if let Some(govde) = baslik_onekini_ayikla(satir) {
+        return basliklar.iter().find(|b| b.as_str() == govde).cloned();
+    }
+    basliklar.iter().map(|b| format!("{b}:")).find(|eski| eski == satir)
+}
+
+/// `**icerik**` (bitişik, en KISA kapanışla, iç boş OLAMAZ) eşleşmelerinin
+/// bayt aralıklarını soldan sağa bulur: `(tam_baslangic, tam_bitis,
+/// ic_baslangic, ic_bitis)`. Arayüzdeki `markdown.tsx::KALIN_DUZENLI`
+/// (`/\*\*(.+?)\*\*/g`) ile AYNI lazy/global tarama kuralı: bir açılıştan
+/// sonra iç boş kalırsa (`****`) o açılış eşleşmez, tarama açılıştan BİR
+/// SONRAKİ karakterden devam eder (regex motorunun başarısız denemeden sonra
+/// başlangıç konumunu bir ilerletmesiyle birebir).
+fn kalin_araliklari(metin: &str) -> Vec<(usize, usize, usize, usize)> {
+    let mut sonuclar = Vec::new();
+    let mut ara = 0usize;
+    while let Some(rel) = metin[ara..].find("**") {
+        let acilis = ara + rel;
+        let ic_baslangic = acilis + 2;
+        if let Some(rel2) = metin.get(ic_baslangic..).and_then(|s| s.find("**")) {
+            let kapanis = ic_baslangic + rel2;
+            if kapanis > ic_baslangic {
+                sonuclar.push((acilis, kapanis + 2, ic_baslangic, kapanis));
+                ara = kapanis + 2;
+                continue;
+            }
+        }
+        ara = acilis + 1;
+    }
+    sonuclar
+}
+
+/// `*icerik*` için `kalin_araliklari` ile AYNI kural, tek yıldızla (bkz.
+/// `markdown.tsx::ITALIK_DUZENLI`, `/\*(.+?)\*/g`). Yalnızca kalın
+/// geçişinden ARTA KALAN metin parçaları üzerinde çağrılır -- kalın içeriği
+/// tekrar ayrıştırılmaz (bkz. `markdown.tsx` modül başlığındaki kural).
+fn italik_araliklari(metin: &str) -> Vec<(usize, usize, usize, usize)> {
+    let mut sonuclar = Vec::new();
+    let mut ara = 0usize;
+    while ara < metin.len() {
+        let Some(rel) = metin[ara..].find('*') else { break };
+        let acilis = ara + rel;
+        let ic_baslangic = acilis + 1;
+        if let Some(rel2) = metin.get(ic_baslangic..).and_then(|s| s.find('*')) {
+            let kapanis = ic_baslangic + rel2;
+            if kapanis > ic_baslangic {
+                sonuclar.push((acilis, kapanis + 1, ic_baslangic, kapanis));
+                ara = kapanis + 1;
+                continue;
+            }
+        }
+        ara = acilis + 1;
+    }
+    sonuclar
+}
+
+/// Satır içi `**kalın**`/`*italik*` işaretlerini kaldırır, İÇERİĞİ olduğu
+/// gibi bırakır (`"**Danışan** kaygılı"` -> `"Danışan kaygılı"`). Kapanışı
+/// bulunamayan tek bir `*`/`**` METİN olarak kalır -- arayüzdeki
+/// `markdown.tsx::satirIci` ile aynı, yalnızca React düğümleri yerine düz
+/// metin üretir.
+fn bicim_isaretlerini_kaldir(metin: &str) -> String {
+    let mut sonuc = String::with_capacity(metin.len());
+    let mut konum = 0usize;
+    for (acilis, kapanis, ic_b, ic_s) in kalin_araliklari(metin) {
+        if acilis > konum {
+            sonuc.push_str(&italik_isaretlerini_kaldir(&metin[konum..acilis]));
+        }
+        sonuc.push_str(&metin[ic_b..ic_s]);
+        konum = kapanis;
+    }
+    if konum < metin.len() {
+        sonuc.push_str(&italik_isaretlerini_kaldir(&metin[konum..]));
+    }
+    sonuc
+}
+
+fn italik_isaretlerini_kaldir(metin: &str) -> String {
+    let mut sonuc = String::with_capacity(metin.len());
+    let mut konum = 0usize;
+    for (acilis, kapanis, ic_b, ic_s) in italik_araliklari(metin) {
+        if acilis > konum {
+            sonuc.push_str(&metin[konum..acilis]);
+        }
+        sonuc.push_str(&metin[ic_b..ic_s]);
+        konum = kapanis;
+    }
+    if konum < metin.len() {
+        sonuc.push_str(&metin[konum..]);
+    }
+    sonuc
+}
+
+/// Önizlemeye giren TEK satırdaki Markdown blok önekini (başlık, madde,
+/// numaralı liste, alıntı, onay kutusu) atar, ardından satır içi
+/// kalın/italik işaretlerini kaldırır. Önekli OLMAYAN her karakter --
+/// örneğin kapanmamış `**`, boşluksuz `#etiket`, tek başına `*` -- Markdown
+/// sayılmaz ve olduğu gibi kalır (arayüzdeki `markdown.tsx` çeviricisiyle
+/// aynı davranış, bkz. o dosyanın modül başlığı).
+fn bicimden_arindir(satir: &str) -> String {
+    let govde = if let Some(g) = baslik_onekini_ayikla(satir) {
+        g
+    } else if let Some(g) = onay_kutusu_ayikla(satir) {
+        g
+    } else if let Some(g) = satir.strip_prefix("- ") {
+        g
+    } else if let Some(g) = numarali_onekini_ayikla(satir) {
+        g
+    } else if let Some(g) = satir.strip_prefix('>') {
+        g.strip_prefix(' ').unwrap_or(g)
+    } else {
+        satir
+    };
+    bicim_isaretlerini_kaldir(govde)
+}
+
+/// `"- [ ] "` / `"- [x] "` / `"- [X] "` önekini ayıklar; arayüzdeki
+/// `ONAY_KUTUSU_DUZENLI` (`/^- \[([ xX])\] ?(.*)$/`) gibi kapanıştan sonraki
+/// boşluk OPSİYONELDİR -- önce boşluklu biçim denenir, yoksa boşluksuz.
+/// (Düz `"- "` maddeyle karışmaması için `bicimden_arindir`'de bu kontrol
+/// `- ` kontrolünden ÖNCE gelir.)
+fn onay_kutusu_ayikla(satir: &str) -> Option<&str> {
+    for onek in ["- [ ] ", "- [x] ", "- [X] ", "- [ ]", "- [x]", "- [X]"] {
+        if let Some(govde) = satir.strip_prefix(onek) {
+            return Some(govde);
+        }
+    }
+    None
+}
+
+/// `"1. "`, `"12. "` gibi numaralı liste önekini ayıklar (bkz.
+/// `NUMARALI_DUZENLI`, `/^\d+\. (.*)$/`): en az bir rakam, ardından TAM
+/// OLARAK `". "`.
+fn numarali_onekini_ayikla(satir: &str) -> Option<&str> {
+    let basamak_sonu = satir.find(|c: char| !c.is_ascii_digit())?;
+    if basamak_sonu == 0 {
+        return None;
+    }
+    satir[basamak_sonu..].strip_prefix(". ")
+}
+
+/// Notun önizlemesi: ilk boş olmayan, şablon başlığı olmayan satır; Markdown
+/// öneki ve satır içi işaretleri atılmış hâliyle, `AZAMI_ONIZLEME`
+/// KARAKTERDE kırpılır (bkz. modül başlığı).
+///
+/// # Eski VE yeni başlık biçimi
+///
+/// Görev 2'den önce şablon başlıkları `"Veri:"` satırı olarak eklenirdi;
+/// Görev 2'den sonra editör `"## Veri"` üretir (`sablon.ts::sablonMetni`).
+/// Var olan notlar göç ETMEZ (bkz. modül başlığı) -- bu yüzden önizleme
+/// ikisini de tanımalı, yoksa eski notların önizlemesi bozulur.
+/// `sablon_baslik_eslesmesi` her iki biçimi de sınar.
+///
+/// # `\r\n` VE tek başına `\r` normalleştirilir
+///
+/// `str::lines()` `"\r\n"`'yi doğru böler ama TEK BAŞINA `"\r"`'yi (eski
+/// Mac satır sonu) BÖLMEZ -- öyle bir not, satır ayracına hiç rastlamadan
+/// `\r`'yi bir "satırın" İÇİNDE taşır ve hem başlık karşılaştırmasını hem
+/// dönen metni bozar. Arayüz çeviricisi (`markdown.tsx`) aynı normalleşmeyi
+/// giriş anında yapıyor; burada da GİRİŞTE yapılır, `progress_notes.icerik`
+/// diskte DEĞİŞMEZ (yalnızca bu fonksiyonun yerel değişkeni).
+///
+/// # Kırpma KARAKTER üzerinden
+///
+/// Türkçe harfler çok baytlı, bayt kırpması UTF-8'i ortasından bölerdi.
+/// Kırpma Markdown ayıklamasından SONRA uygulanır: `AZAMI_ONIZLEME` "ekranda
+/// görünecek 120 karakter" sözleşmesidir, atılan `**`/`##` önekleri bu
+/// sayıma girmemeli.
 fn onizleme(metin: &str, baslik_satirlari: &[String]) -> String {
+    let normal = metin.replace("\r\n", "\n").replace('\r', "\n");
+
     // Yalnizca basliklardan olusan notun yedegi: ilk baslik (bkz. modul
     // basligi -- `""` yalnizca TAMAMEN bos icerik icin).
-    let mut ilk_baslik: Option<&str> = None;
-    for satir in metin.lines() {
+    let mut ilk_baslik: Option<String> = None;
+    for satir in normal.lines() {
         let s = satir.trim();
         if s.is_empty() {
             continue;
         }
-        if baslik_satirlari.iter().any(|b| b == s) {
-            ilk_baslik.get_or_insert(s);
+        if let Some(baslik_adi) = sablon_baslik_eslesmesi(s, baslik_satirlari) {
+            ilk_baslik.get_or_insert(baslik_adi);
             continue;
         }
-        return s.chars().take(AZAMI_ONIZLEME).collect();
+        return bicimden_arindir(s).chars().take(AZAMI_ONIZLEME).collect();
     }
-    ilk_baslik.unwrap_or("").chars().take(AZAMI_ONIZLEME).collect()
+    ilk_baslik.unwrap_or_default().chars().take(AZAMI_ONIZLEME).collect()
 }
 
 #[cfg(test)]
@@ -435,6 +645,86 @@ mod testler {
         .unwrap();
         let sonra = danisan_seanslari(&c, cid, Cihaz::Masaustu).unwrap();
         assert_eq!(sonra[0].not_ilk_satiri.as_deref(), Some("sakin görünüyordu"));
+    }
+
+    // --- Gorev 3: onizleme Markdown'a uyum. Her ornek GERCEK yoldan gecer
+    // (not kaydet -> liste), `onizleme_ortak_ornekleri_saglar` ile ayni
+    // gerekce.
+
+    /// Verilen not icerigini bir danisana kaydedip danisan dosyasi yolundan
+    /// gecirerek donen onizlemeyi getirir.
+    fn onizleme_al(c: &rusqlite::Connection, icerik: &str) -> Option<String> {
+        let cid = danisan(c, "Onizleme");
+        let rid = randevu(c, cid, "2026-09-14T10:00");
+        not_kaydet(c, rid, "dap", icerik, Cihaz::Masaustu).unwrap();
+        danisan_seanslari(c, cid, Cihaz::Masaustu).unwrap()[0].not_ilk_satiri.clone()
+    }
+
+    /// Yeni bicim sablon basligi (`"## Veri"`) atlanir VE liste satirinin
+    /// oneki (`"- "`) ile satir ici kalin isareti (`**...**`) onizlemede
+    /// temizlenir. Onek atilmasaydi ya da `#` biçimi tanınmasaydı bu test
+    /// kirilirdi (bkz. `onizleme` dogum yorumundaki mutasyon notu).
+    #[test]
+    fn yeni_bicim_baslik_atlanir_liste_satiri_onek_ve_isaretlerinden_arinir() {
+        let (_d, c) = kurulum();
+        let onizleme = onizleme_al(&c, "## Veri\n\n- **Danışan** kaygılı");
+        assert_eq!(onizleme.as_deref(), Some("Danışan kaygılı"));
+    }
+
+    /// Eski bicim (`"Veri:"`) hala tanınır -- göç YOK, var olan notlar bu
+    /// bicimde kalmaya devam eder (bkz. modül başlığı).
+    #[test]
+    fn eski_bicim_baslik_hala_taninir() {
+        let (_d, c) = kurulum();
+        let onizleme = onizleme_al(&c, "Veri:\nDanışan geldi");
+        assert_eq!(onizleme.as_deref(), Some("Danışan geldi"));
+    }
+
+    /// Yeni bicimde yalnizca basliklardan olusan not: M3'un mevcut yedek
+    /// davranisi (ilk basligin adi) korunur, yalnizca `#` oneki atilmis
+    /// haliyle -- "## Veri" degil "Veri" doner (kolon da yok: yeni bicimde
+    /// kolon hic olmuyor).
+    #[test]
+    fn yeni_bicimde_yalnizca_basliklardan_olusan_not_ilk_baslik_adini_doner() {
+        let (_d, c) = kurulum();
+        let onizleme = onizleme_al(&c, "## Veri\n\n## Değerlendirme\n\n## Plan\n\n");
+        assert_eq!(onizleme.as_deref(), Some("Veri"));
+    }
+
+    /// Sablonda OLMAYAN bir baslik ("Serbest başlık" `templates`
+    /// tohumunda yok) sablon basligi SAYILMAZ ve atlanmaz -- normal icerik
+    /// satiri gibi islenir, yalnizca `#` oneki atilir.
+    #[test]
+    fn sablonda_olmayan_baslik_onek_atilir_atlanmaz() {
+        let (_d, c) = kurulum();
+        let onizleme = onizleme_al(&c, "### Serbest başlık");
+        assert_eq!(onizleme.as_deref(), Some("Serbest başlık"));
+    }
+
+    /// Kirpma, Markdown ayiklamasindan SONRA ve KARAKTER uzerinden olur:
+    /// `**` isaretleri sayima girmez, cok baytli Turkce harfler tam 120
+    /// KARAKTERDE kesilir (bayt degil -- bkz. `AZAMI_ONIZLEME`).
+    #[test]
+    fn cok_baytli_bicimli_metin_120_karakterde_kirpilir() {
+        let (_d, c) = kurulum();
+        let icerik = format!("## Veri\n\n**{}**", "ş".repeat(200));
+        let onizleme = onizleme_al(&c, &icerik).unwrap();
+        assert_eq!(onizleme.chars().count(), AZAMI_ONIZLEME);
+        assert_eq!(onizleme, "ş".repeat(AZAMI_ONIZLEME));
+    }
+
+    /// Tek basina `\r` (eski Mac satir sonu) satir ayraci SAYILIR.
+    /// `str::lines()` yalniz `\r\n`'yi boler, tek basina `\r`'yi BOLMEZ --
+    /// bu ozel olarak `onizleme`nin KENDI normallestirme adimini sinar
+    /// (bkz. o fonksiyonun dogum yorumu): adim kaldirilirsa bu satir
+    /// "Veri:\rEvden çalışıyor" TEK satir sayilir, "Veri:" ile esit
+    /// olmadigi icin sablon basligi olarak atlanmaz ve `\r` iceren ham
+    /// metin doner.
+    #[test]
+    fn tek_basina_carriage_return_satir_ayraci_sayilir() {
+        let (_d, c) = kurulum();
+        let onizleme = onizleme_al(&c, "Veri:\rEvden çalışıyor");
+        assert_eq!(onizleme.as_deref(), Some("Evden çalışıyor"));
     }
 
     #[test]

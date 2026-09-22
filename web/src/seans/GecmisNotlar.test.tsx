@@ -6,6 +6,7 @@ import { GecmisNotlar } from './GecmisNotlar'
 function not(ozel: Partial<SeansNotu> = {}): SeansNotu {
   return {
     appointment_id: 1,
+    client_id: 1,
     sablon: 'dap',
     icerik: '## Veri\n\nDanışan geldi.',
     guncelleme_zamani: '2026-09-01T12:00:00Z',

@@ -647,85 +647,17 @@ mod testler {
         assert_eq!(sonra[0].not_ilk_satiri.as_deref(), Some("sakin görünüyordu"));
     }
 
-    // --- Gorev 3: onizleme Markdown'a uyum. Her ornek GERCEK yoldan gecer
-    // (not kaydet -> liste), `onizleme_ortak_ornekleri_saglar` ile ayni
-    // gerekce.
-
-    /// Verilen not icerigini bir danisana kaydedip danisan dosyasi yolundan
-    /// gecirerek donen onizlemeyi getirir.
-    fn onizleme_al(c: &rusqlite::Connection, icerik: &str) -> Option<String> {
-        let cid = danisan(c, "Onizleme");
-        let rid = randevu(c, cid, "2026-09-14T10:00");
-        not_kaydet(c, rid, "dap", icerik, Cihaz::Masaustu).unwrap();
-        danisan_seanslari(c, cid, Cihaz::Masaustu).unwrap()[0].not_ilk_satiri.clone()
-    }
-
-    /// Yeni bicim sablon basligi (`"## Veri"`) atlanir VE liste satirinin
-    /// oneki (`"- "`) ile satir ici kalin isareti (`**...**`) onizlemede
-    /// temizlenir. Onek atilmasaydi ya da `#` biçimi tanınmasaydı bu test
-    /// kirilirdi (bkz. `onizleme` dogum yorumundaki mutasyon notu).
-    #[test]
-    fn yeni_bicim_baslik_atlanir_liste_satiri_onek_ve_isaretlerinden_arinir() {
-        let (_d, c) = kurulum();
-        let onizleme = onizleme_al(&c, "## Veri\n\n- **Danışan** kaygılı");
-        assert_eq!(onizleme.as_deref(), Some("Danışan kaygılı"));
-    }
-
-    /// Eski bicim (`"Veri:"`) hala tanınır -- göç YOK, var olan notlar bu
-    /// bicimde kalmaya devam eder (bkz. modül başlığı).
-    #[test]
-    fn eski_bicim_baslik_hala_taninir() {
-        let (_d, c) = kurulum();
-        let onizleme = onizleme_al(&c, "Veri:\nDanışan geldi");
-        assert_eq!(onizleme.as_deref(), Some("Danışan geldi"));
-    }
-
-    /// Yeni bicimde yalnizca basliklardan olusan not: M3'un mevcut yedek
-    /// davranisi (ilk basligin adi) korunur, yalnizca `#` oneki atilmis
-    /// haliyle -- "## Veri" degil "Veri" doner (kolon da yok: yeni bicimde
-    /// kolon hic olmuyor).
-    #[test]
-    fn yeni_bicimde_yalnizca_basliklardan_olusan_not_ilk_baslik_adini_doner() {
-        let (_d, c) = kurulum();
-        let onizleme = onizleme_al(&c, "## Veri\n\n## Değerlendirme\n\n## Plan\n\n");
-        assert_eq!(onizleme.as_deref(), Some("Veri"));
-    }
-
-    /// Sablonda OLMAYAN bir baslik ("Serbest başlık" `templates`
-    /// tohumunda yok) sablon basligi SAYILMAZ ve atlanmaz -- normal icerik
-    /// satiri gibi islenir, yalnizca `#` oneki atilir.
-    #[test]
-    fn sablonda_olmayan_baslik_onek_atilir_atlanmaz() {
-        let (_d, c) = kurulum();
-        let onizleme = onizleme_al(&c, "### Serbest başlık");
-        assert_eq!(onizleme.as_deref(), Some("Serbest başlık"));
-    }
-
-    /// Kirpma, Markdown ayiklamasindan SONRA ve KARAKTER uzerinden olur:
-    /// `**` isaretleri sayima girmez, cok baytli Turkce harfler tam 120
-    /// KARAKTERDE kesilir (bayt degil -- bkz. `AZAMI_ONIZLEME`).
-    #[test]
-    fn cok_baytli_bicimli_metin_120_karakterde_kirpilir() {
-        let (_d, c) = kurulum();
-        let icerik = format!("## Veri\n\n**{}**", "ş".repeat(200));
-        let onizleme = onizleme_al(&c, &icerik).unwrap();
-        assert_eq!(onizleme.chars().count(), AZAMI_ONIZLEME);
-        assert_eq!(onizleme, "ş".repeat(AZAMI_ONIZLEME));
-    }
-
-    /// Tek basina `\r` (eski Mac satir sonu) satir ayraci SAYILIR.
-    /// `str::lines()` yalniz `\r\n`'yi boler, tek basina `\r`'yi BOLMEZ --
-    /// bu ozel olarak `onizleme`nin KENDI normallestirme adimini sinar
-    /// (bkz. o fonksiyonun dogum yorumu): adim kaldirilirsa bu satir
-    /// "Veri:\rEvden çalışıyor" TEK satir sayilir, "Veri:" ile esit
-    /// olmadigi icin sablon basligi olarak atlanmaz ve `\r` iceren ham
-    /// metin doner.
-    #[test]
-    fn tek_basina_carriage_return_satir_ayraci_sayilir() {
-        let (_d, c) = kurulum();
-        let onizleme = onizleme_al(&c, "Veri:\rEvden çalışıyor");
-        assert_eq!(onizleme.as_deref(), Some("Evden çalışıyor"));
-    }
+    // --- Gorev 3 incelemesi (CRITICAL duzeltmesi): Markdown bicimi/onek
+    // arindirma senaryolarinin TAMAMI (yeni bicim baslik, liste/onay/numarali
+    // onekleri, kalin/italik arindirma, \r normallestirmesi, cok baytli
+    // kirpma) `onizleme_ornekleri.json`'a tasindi -- o dosyayi HEM bu
+    // modulun `onizleme_ortak_ornekleri_saglar` testi HEM
+    // `web/src/seans/onizleme.test.ts` okuyor, iki uygulamanin sessizce
+    // ayrismasinin bekcisi artik SADECE o dosya. Burada yalnizca bu module
+    // OZGU olan iki test kalir: sablon basligi tablosundan TURETILDIGI
+    // (asagida) ve `AZAMI_ONIZLEME` sabitinin duz sayiyla pinlendigi
+    // (yukarida) -- ikisi de TS tarafinin sinamadigi, yalnizca sunucu
+    // deposuna ait davranislar.
 
     #[test]
     fn liste_randevu_tarihine_gore_yeniden_eskiye_siralanir() {

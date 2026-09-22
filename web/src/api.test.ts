@@ -177,7 +177,7 @@ describe('not uç noktalarında 401', () => {
   })
 })
 
-// --- Plan 5 Görev 5: etiketler ---------------------------------------------
+// --- Plan 6 Görev 5: etiketler ---------------------------------------------
 //
 // Etiket adı URL'ye GİRMEZ (sunucudaki `routes::tags` kararıyla aynı):
 // ekleme gövdede, kaldırma ve arama yalnızca sayısal kimlikle. Aşağıdaki

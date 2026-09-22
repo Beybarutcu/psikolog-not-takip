@@ -580,9 +580,13 @@ export function NotEditoru({
       )}
 
       {/* Yaz/Önizle anahtarı: iki durumlu, `aria-pressed` seçili olanı
-          söyler. Önizlemedeyken otomatik kayıt zaten çalışmaz — `icerik`
-          değişmiyor, çünkü textarea o kipte DOM'da yok — ayrı bir "kayıt
-          durdurma" mekanizması gerekmiyor. */}
+          söyler. Önizlemede YENİ bir kayıt tetiklenmez (`icerik` değişmiyor,
+          textarea o kipte DOM'da yok), ama Yaz'da son tuştan sonra kurulmuş
+          otomatik kayıt zamanlayıcısı İPTAL EDİLMEZ: Önizle'ye geçmek
+          `icerik`'i değiştirmediği için efekt yeniden koşmaz, bekleyen kayıt
+          süresi dolunca Önizle'deyken de gider. Bu istenen davranış — son
+          yazılanlar önizlemeye bakarken de sunucuya ulaşır; ayrı bir "kayıt
+          durdurma" mekanizması yok ve olmamalı. */}
       <div className="mb-1 flex gap-1" role="group" aria-label="Görünüm">
         <button
           type="button"

@@ -35,9 +35,11 @@ export type RandevuYamasi = Partial<Pick<Randevu, 'durum' | 'odendi'>>
  *
  * Seansın etiketleri bu listede YOK ve bilerek: iki ekran onları TEK bir
  * önbellekten okuyor (`useEtiketler`), yazma-okuma yarışı kutu yalnızca
- * liste yüklüyken çizildiği için kurulamıyor. Etiket SÖZLÜĞÜ ise aynı
- * mantıksal saatin işlem kaydı hâlini kullanıyor (ekleme satır doğurur,
- * satır yaması yetmez) — bkz. `useEtiketler` modül başlığı.
+ * liste yüklüyken çizildiği için kurulamıyor. Etiket SÖZLÜĞÜ de bu saati
+ * KULLANMIYOR: yerelde yamanmıyor, istendiyse her başarılı yazmadan SONRA
+ * sunucudan yeniden okunuyor ve yalnızca en son okumanın yanıtı yazılıyor
+ * (Görev 6 inceleme M1 — ilk sürümdeki işlem kaydı, kaldırmayı iki kez
+ * uyguluyordu) — bkz. `useEtiketler` modül başlığı.
  *
  * Her kanca kendi örneğini tutar — okumalar kancanın içinde, yazmalar ise
  * kancanın dışa açtığı yama fonksiyonunda (`randevuYamala`, `yamala`,

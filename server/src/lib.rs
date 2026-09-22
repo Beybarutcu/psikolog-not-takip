@@ -160,7 +160,7 @@ fn api_router() -> Router<AppState> {
         )
         .route("/ara", get(routes::search::ara_uc))
         .route("/saklama-suresi-dolanlar", get(routes::clients::saklama_listesi))
-        // --- Etiketler (Plan 5 Gorev 5): kapinin icinde, bes veri handler'i --
+        // --- Etiketler (Plan 6 Gorev 5): kapinin icinde, bes veri handler'i --
         //
         // Etiket ADI URL'ye girmez: ekleme govdede (`POST`), kaldirma ve
         // arama yalnizca sayisal kimlikle (bkz. `routes::tags` modul

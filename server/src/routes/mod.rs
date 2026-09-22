@@ -26,7 +26,7 @@ pub mod restore;
 pub mod search;
 pub mod session;
 pub mod setup;
-/// Etiket uç noktaları (Plan 5 Görev 5) — kilit kapısının içinde; tüm
+/// Etiket uç noktaları (Plan 6 Görev 5) — kilit kapısının içinde; tüm
 /// hacim/denetim kararları çekirdekte (`store::tags`), gerekçe o modülün
 /// ve `routes::tags`'in başlığında.
 pub mod tags;

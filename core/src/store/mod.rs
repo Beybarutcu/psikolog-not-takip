@@ -16,8 +16,9 @@ pub mod veri_raporu;
 pub mod danisan_seanslari;
 /// Etiket deposu (Plan 6 Görev 4): seansın resmî notuna atanan serbest metin
 /// etiketler ("kaygı", "aile", "ilaç değişimi"). Bkz. modül başlığı --
-/// etiket adı erişim loguna asla girmez, katlama `store::search::katla`'dan
-/// yeniden kullanılır.
+/// etiket adı erişim loguna asla girmez; kimlik `ad_anahtar_uret` (Türkçe
+/// küçük harf, harf işaretleri KORUNUR), `store::search::katla` DEĞİL
+/// (katla yalnızca aramanın yumuşak eşleşmesi).
 pub mod tags;
 
 /// "Boşluk" karakteri: Unicode `White_Space` (`char::is_whitespace`, Rust'ın

@@ -1,4 +1,4 @@
-//! Etiket uç noktaları (`store::tags`'in HTTP karşılığı, Plan 5 Görev 5).
+//! Etiket uç noktaları (`store::tags`'in HTTP karşılığı, Plan 6 Görev 5).
 //!
 //! Bütün hacim/normalleşme/denetim kararları çekirdekte zaten verildi (bkz.
 //! `store::tags` modül başlığı); burası yalnızca kapıdan geçer, gövdeyi/yol

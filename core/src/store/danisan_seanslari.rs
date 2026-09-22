@@ -193,8 +193,8 @@ pub struct DanisanSeansi {
     /// ile "not açılmış ama boş bırakılmış" farklı şeylerdir ve arayüz
     /// ikisini farklı gösterir.
     pub not_ilk_satiri: Option<String>,
-    /// Seansın etiket ADLARI, `ad_anahtar` sırasıyla (bkz. modül başlığı
-    /// "Etiketler"). Etiketsiz seansta boş dizi -- `None` değil: "etiket yok"
+    /// Seansın etiket ADLARI, `tags::etiket_sirasi` sırasıyla (Türk
+    /// alfabesi, büyük/küçük harf duyarsız; bkz. modül başlığı "Etiketler"). Etiketsiz seansta boş dizi -- `None` değil: "etiket yok"
     /// tek bir anlama sahip.
     pub etiketler: Vec<String>,
 }

@@ -181,8 +181,10 @@ export type DanisanSeansi = {
   odendi: boolean
   not_ilk_satiri: string | null
   /**
-   * Seansın etiket ADLARI, sunucunun kimlik anahtarı (`ad_anahtar`) sırasıyla
-   * (Plan 6 Görev 6, `store::danisan_seanslari` modül başlığı "Etiketler").
+   * Seansın etiket ADLARI, sunucunun `store::tags::etiket_sirasi` sırasıyla
+   * (Türk alfabesi, büyük/küçük harf duyarsız — istemcideki eşi
+   * `etiket/etiketAdi.ts::etiketSirasi`; Plan 6 Görev 6,
+   * `store::danisan_seanslari` modül başlığı "Etiketler").
    * Etiketsiz seansta `[]`. Dosyadaki "Etikete göre süz" seçimi ve satırdaki
    * çipler buradan; etiket yazması listeyi yeniden çekmez,
    * `useDanisanSeanslari.yamala` ile bu alanı yamanır (bkz. `AnaEkran.tsx`).
@@ -786,7 +788,7 @@ export type EtiketliSeans = {
 }
 
 /**
- * Etiket istemcisi (`store::tags`'in HTTP karşılığı, Plan 5 Görev 5).
+ * Etiket istemcisi (`store::tags`'in HTTP karşılığı, Plan 6 Görev 5).
  *
  * # Etiket adı URL'ye GİRMEZ
  *

@@ -42,7 +42,6 @@ function bosTakvim(): ReturnType<typeof useTakvimAkisi> {
     randevuSec: vi.fn(),
     bosSaatSec: vi.fn(),
     panelKapat: vi.fn(),
-    seansaGit: vi.fn(),
     kaydet: vi.fn(async () => {}),
     durumDegis: vi.fn(async () => {}),
     odemeDegis: vi.fn(async () => {}),
@@ -73,9 +72,14 @@ function varsayilanProplar(ozelleştirme?: { ozetIstegi?: (ay: string) => Promis
     ozet: { bugun: '2026-09-16', disTazeleme: 0 },
     danisanlar: [],
     onDanisanAc: vi.fn(),
-    onSeansSec: vi.fn(),
     onDurumDegis: vi.fn(async () => {}),
     onOdemeDegis: vi.fn(async () => {}),
+    onRandevuKaydet: vi.fn(async () => {}),
+    onRandevuSil: vi.fn(async () => {}),
+    onSeriSil: vi.fn(async () => {}),
+    // Bu testlerde seans paneli hiç açılmıyor; bağlam hiç çağrılmaz.
+    etiketBaglami: vi.fn(),
+    onEtiketAc: vi.fn(),
   }
 }
 

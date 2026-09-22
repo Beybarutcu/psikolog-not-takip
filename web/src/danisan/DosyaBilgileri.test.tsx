@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DanisanDosyasi, EkBilgisi } from '../api'
@@ -93,6 +93,13 @@ function kur(ozel: Partial<React.ComponentProps<typeof DosyaBilgileri>> = {}) {
 }
 
 describe('DosyaBilgileri — kimlik ve bağlam', () => {
+  it('son inceleme I2: veri raporu açıklaması etiketlerin rapora GİRDİĞİNİ ve özel notların girmediğini söyler (alert DEĞİL)', () => {
+    kur()
+    const aciklama = screen.getByText(/Seans etiketleri rapora dahil edilir/)
+    expect(aciklama.textContent).toContain('terapistin özel notları dahil edilmez')
+    expect(aciklama.closest('[role="alert"]')).toBeNull()
+  })
+
   it('iletisim, basvuru nedeni ve bakiye gorunur', () => {
     kur()
     // Ad artık `DanisanDosyasi` başlığında (son inceleme I2); bu bölüm adı İKİNCİ kez basmaz.
@@ -724,8 +731,14 @@ describe('DosyaBilgileri — veri raporu (KVKK md. 11, parolalı PDF)', () => {
     fireEvent.keyDown(diyalog(), { key: 'Escape' })
     expect(screen.queryByRole('group', FORM)).not.toBeNull()
 
-    coz()
-    await screen.findByRole('status')
+    // Formu kapatan güncelleme bir kullanıcı olayından değil, sözün
+    // çözülmesinden geliyor; odak ise pasif bir efektte veriliyor. `act`
+    // dışında efekt Scheduler'ın ayrı görevinde (Node'da `setImmediate`)
+    // koşar ve `findByRole`'un ardından gelen `setTimeout(0)` yük altında
+    // ondan önce çalışabilir: iddia odak verilmeden okunur, test ara sıra
+    // kırılır. `act` efektleri dönmeden boşaltır — sıra deterministik.
+    await act(async () => coz())
+    screen.getByRole('status')
     expect(screen.queryByRole('group', FORM)).toBeNull()
     expect(document.activeElement).toBe(disaAktarDugmesi())
   })

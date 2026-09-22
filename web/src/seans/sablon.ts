@@ -63,8 +63,19 @@ export function sablonKodMu(deger: string): deger is SablonKodu {
  * kullanıcının notunun yerine bir hata mesajı ya da `undefined` yazılması,
  * korunmaya çalışılan şeyin (yazılmış metin) kendisini bozardı. `serbest`
  * de zaten boş metin üretir — başlıksız şablon.
+ *
+ * # Başlıklar Markdown ikinci düzey başlığı (`## `)
+ *
+ * Görev 1'in kapalı Markdown kümesinde (`markdown.tsx`) `## ` ikinci düzey
+ * başlık (`<h4>`) üretir. Eski biçim (`Veri:`) düz metin olarak kalırdı —
+ * yeni notlarda başlıklar artık "Önizle" kipinde ve `GecmisNotlar`'da
+ * gerçekten başlık olarak görünsün diye biçim değişti. **Yalnızca biçim**:
+ * başlık ADLARI (`SABLONLAR`) ve şemadaki `templates` tohumu AYNI kalıyor —
+ * `sablon.test.ts` bunu `schema.rs`'i okuyarak doğruluyor. Var olan notlar
+ * (eski `Veri:` biçimli) BU FONKSİYONDAN geçmez, göç de yok: yalnızca YENİ
+ * seçilen bir şablonun ürettiği metin etkilenir.
  */
 export function sablonMetni(sablon: string): string {
   if (!sablonKodMu(sablon)) return ''
-  return SABLONLAR[sablon].map((baslik) => `${baslik}:\n\n`).join('')
+  return SABLONLAR[sablon].map((baslik) => `## ${baslik}\n\n`).join('')
 }

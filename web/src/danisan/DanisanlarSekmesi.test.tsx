@@ -153,6 +153,20 @@ const ILGISIZ = {
   onNotKaydet: async () => {},
   onDurumDegis: async () => {},
   onOdemeDegis: async () => {},
+  // Etiketler bu dosyanın konusu değil (bkz. `AnaEkran.etiket.test.tsx`):
+  // boş, yüklenmiş bir liste.
+  etiketBaglami: () => ({
+    etiketler: [],
+    hata: null,
+    onYenidenDene: () => {},
+    sozluk: null,
+    onSozlukIste: () => {},
+    onEkle: async () => {},
+    onKaldir: async () => {},
+    onEtiketAc: () => {},
+    yazmaHatasi: null,
+    onYazmaHatasiTemizle: () => {},
+  }),
 }
 
 /**
@@ -199,6 +213,7 @@ function seans(oz: Partial<DanisanSeansi> = {}): DanisanSeansi {
     ucret_kurus: 15000,
     odendi: false,
     not_ilk_satiri: null,
+    etiketler: [],
     ...oz,
   }
 }

@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { aramaApi, takvimApi, type Danisan } from '../api'
+import { aramaApi, takvimApi, type Danisan, type Etiket } from '../api'
+import type { EtiketBaglami } from '../etiket/EtiketSatiri'
 import { HizliArama } from '../arama/HizliArama'
 import { AyOzeti } from '../ozet/AyOzeti'
 import { SeansAltSatiri } from '../seans/SeansAltSatiri'
@@ -85,13 +86,36 @@ type Props = {
   danisanlar: Danisan[]
   /**
    * Danışan dosyasına giden yol (`AnaEkran.danisanaGit`). İkinci argüman
-   * yalnızca seans panelinden gelirken verilir: dosya O seans seçili açılır
-   * (son inceleme I3). Hızlı arama ve ay özeti yalnızca danışanı bilir.
+   * seans panelinden VE hızlı aramanın not sonucundan gelirken verilir:
+   * dosya O seans seçili açılır (son inceleme I3, Görev 7'de hızlı aramaya
+   * da yayıldı — bkz. `HizliArama`'ya aşağıdaki geçiş). Ay özeti yalnızca
+   * danışanı bilir.
    */
   onDanisanAc: (clientId: number, appointmentId?: number) => void
-  onSeansSec: (appointmentId: number, tarih: string) => void
   onDurumDegis: (id: number, durum: string) => Promise<void>
   onOdemeDegis: (id: number, odendi: boolean) => Promise<void>
+  /**
+   * Randevu paneli yazmaları (`AnaEkran.randevuKaydet/randevuSil/
+   * randevuSeriSil`). `onDurumDegis` ile aynı gerekçe: başarılı yazma takvim
+   * listesinin yanında açık etiketli seanslar panelini de tazelemeli (son
+   * inceleme I1) ve o panel bu bileşenin görmediği `useEtiketler`'de.
+   */
+  onRandevuKaydet: ReturnType<typeof useTakvimAkisi>['kaydet']
+  onRandevuSil: (id: number) => Promise<void>
+  onSeriSil: (seriId: string, buTarihtenItibaren: string) => Promise<void>
+  /**
+   * Açık seansın etiketleri (`AnaEkran.etiketBaglami`, Plan 6 Görev 6). Veri
+   * ve yazmalar `AnaEkran`'da — danışan dosyası AYNI önbellekten okuyor (bkz.
+   * `useEtiketler` modül başlığı). Bu bileşen yalnızca kimliği bağlıyor.
+   */
+  etiketBaglami: (appointmentId: number) => EtiketBaglami
+  /**
+   * Hızlı aramanın etiket sonucuna tıklanınca "etiketli seanslar" panelini
+   * açar (`AnaEkran`'daki `useEtiketler.etiketAc`, Görev 7). Etiket verisi ve
+   * paneli AnaEkran'da yaşıyor (bkz. `etiketBaglami` gerekçesi) — bu bileşen
+   * yalnızca çağırıyor.
+   */
+  onEtiketAc: (etiket: Etiket) => void
 }
 
 export function TakvimSekmesi({
@@ -100,9 +124,13 @@ export function TakvimSekmesi({
   ozet,
   danisanlar,
   onDanisanAc,
-  onSeansSec,
   onDurumDegis,
   onOdemeDegis,
+  onRandevuKaydet,
+  onRandevuSil,
+  onSeriSil,
+  etiketBaglami,
+  onEtiketAc,
 }: Props) {
   // Bkz. modül başlığı: kapalı başlama kuralı burada yaşıyor.
   const [ozetAcik, setOzetAcik] = useState(false)
@@ -118,8 +146,8 @@ export function TakvimSekmesi({
             hiçbir istek atmaz. */}
         <HizliArama
           ara={aramaApi.ara}
-          onDanisanSec={(id) => onDanisanAc(id)}
-          onSeansSec={onSeansSec}
+          onDanisanSec={(id, appointmentId) => onDanisanAc(id, appointmentId)}
+          onEtiketSec={onEtiketAc}
         />
         <button
           type="button"
@@ -158,9 +186,9 @@ export function TakvimSekmesi({
             zaman={seciliBosSaat ?? seciliRandevu?.baslangic ?? ''}
             randevu={seciliRandevu}
             danisanlar={danisanlar}
-            onKaydet={takvim.kaydet}
-            onSil={takvim.sil}
-            onSeriSil={takvim.seriSil}
+            onKaydet={onRandevuKaydet}
+            onSil={onRandevuSil}
+            onSeriSil={onSeriSil}
             seriSayisiAl={takvimApi.seriSayisi}
             silinecekNotSayisiAl={takvimApi.silinecekNotSayisi}
             onKapat={takvim.panelKapat}
@@ -209,6 +237,7 @@ export function TakvimSekmesi({
             // kimliği de gidiyor: dosya BU seans seçili açılır (son inceleme
             // I3 — terapist panelde baktığı seansın dosyadaki hâlini arıyor).
             onDanisanAc={(clientId) => onDanisanAc(clientId, seciliRandevu.id)}
+            etiket={etiketBaglami(seciliRandevu.id)}
           />
         ) : (
           // Yükleme başarısızsa panel AÇILMAZ: "yükleniyor…" yazan bir panel

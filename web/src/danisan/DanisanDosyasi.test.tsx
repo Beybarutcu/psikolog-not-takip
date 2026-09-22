@@ -46,6 +46,7 @@ function seans(oz: Partial<DanisanSeansi> = {}): DanisanSeansi {
     ucret_kurus: 15000,
     odendi: false,
     not_ilk_satiri: null,
+    etiketler: [],
     ...oz,
   }
 }
@@ -255,5 +256,113 @@ describe('DanisanDosyasi', () => {
     expect(screen.queryByLabelText('Seans notu')).toBeNull()
     await userEvent.click(within(alarm).getByRole('button', { name: 'Yeniden dene' }))
     expect(onNotYenidenDene).toHaveBeenCalledTimes(1)
+  })
+})
+
+// Plan 6 Görev 6 — etikete göre süzme ve seçili seansın etiket satırı.
+describe('DanisanDosyasi — etiketler', () => {
+  function baglam(etiketler: { id: number; ad: string }[] = []) {
+    return {
+      etiketler: etiketler.map((e) => ({ ...e, kullanim: 1 })),
+      hata: null,
+      onYenidenDene: vi.fn(),
+      sozluk: null,
+      onSozlukIste: vi.fn(),
+      onEkle: vi.fn(async () => {}),
+      onKaldir: vi.fn(async () => {}),
+      onEtiketAc: vi.fn(),
+      yazmaHatasi: null,
+      onYazmaHatasiTemizle: vi.fn(),
+    }
+  }
+
+  const ETIKETLI = [
+    seans({ appointment_id: 1, baslangic: '2026-09-14T10:00', etiketler: ['kaygı', 'uyku'] }),
+    seans({ appointment_id: 2, baslangic: '2026-09-07T10:00', etiketler: ['aile'] }),
+    seans({ appointment_id: 3, baslangic: '2026-08-31T10:00', etiketler: [] }),
+  ]
+  const satirlar = () =>
+    within(screen.getByTestId('seans-listesi'))
+      .getAllByRole('button')
+      .map((b) => b.textContent ?? '')
+
+  it('"Etikete göre süz" yalnızca bu danışanın seanslarında kullanılan etiketleri sunar ve listeyi süzer', async () => {
+    render(<DanisanDosyasi {...proplar({ seanslar: ETIKETLI, seciliSeansId: 1 })} />)
+    const secim = screen.getByLabelText('Etikete göre süz') as HTMLSelectElement
+    expect([...secim.options].map((o) => o.textContent)).toEqual([
+      'Tüm seanslar',
+      'aile',
+      'kaygı',
+      'uyku',
+    ])
+    expect(satirlar()).toHaveLength(3)
+
+    await userEvent.selectOptions(secim, 'kaygı')
+    expect(satirlar()).toHaveLength(1)
+    expect(satirlar()[0]).toContain('14 Eylül 2026, 10:00')
+    // Satır etiketlerini gösterir.
+    expect(satirlar()[0]).toContain('kaygı')
+    expect(satirlar()[0]).toContain('uyku')
+
+    await userEvent.selectOptions(secim, '')
+    expect(satirlar()).toHaveLength(3)
+  })
+
+  it('hiç etiket yoksa süzme seçimi çizilmez', () => {
+    render(<DanisanDosyasi {...proplar({ seanslar: IKI_SEANS, seciliSeansId: 1 })} />)
+    expect(screen.queryByLabelText('Etikete göre süz')).toBeNull()
+  })
+
+  it('seçili etiket son seanstan da kaldırılınca süzgeç "Tüm seanslar"a döner', async () => {
+    const { rerender } = render(
+      <DanisanDosyasi {...proplar({ seanslar: ETIKETLI, seciliSeansId: 1 })} />,
+    )
+    await userEvent.selectOptions(screen.getByLabelText('Etikete göre süz'), 'aile')
+    expect(satirlar()).toHaveLength(1)
+
+    rerender(
+      <DanisanDosyasi
+        {...proplar({
+          seanslar: ETIKETLI.map((s) => (s.appointment_id === 2 ? { ...s, etiketler: [] } : s)),
+          seciliSeansId: 1,
+        })}
+      />,
+    )
+    expect((screen.getByLabelText('Etikete göre süz') as HTMLSelectElement).value).toBe('')
+    expect(satirlar()).toHaveLength(3)
+  })
+
+  it('etiket satırı SEÇİLİ seansın bağlamıyla çizilir', () => {
+    const etiketBaglami = vi.fn((id: number) =>
+      baglam(id === 2 ? [{ id: 9, ad: 'aile' }] : [{ id: 7, ad: 'kaygı' }]),
+    )
+    render(
+      <DanisanDosyasi {...proplar({ seanslar: ETIKETLI, seciliSeansId: 2, etiketBaglami })} />,
+    )
+    expect(etiketBaglami).toHaveBeenCalledWith(2)
+    expect(screen.getByRole('button', { name: 'aile etiketini kaldır' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'kaygı etiketini kaldır' })).toBeNull()
+  })
+
+  // `DanisanDosyasi` seçim değişince yeniden monte OLMUYOR (üretimde de:
+  // listeden başka bir seansa tıklamak yalnızca `seciliSeansId`'yi
+  // değiştirir). `EtiketSatiri`'nin kutudaki yazısı ve hatası yerel state —
+  // `key` olmadan önceki seansa yazılan ad yeni seansın kutusunda kalır ve
+  // Enter onu yanlış seansa ekler.
+  it('seans değişince etiket kutusundaki yazı ve hata kalmaz (EtiketSatiri key\'li)', async () => {
+    const etiketBaglami = () => baglam()
+    const { rerender } = render(
+      <DanisanDosyasi {...proplar({ seanslar: ETIKETLI, seciliSeansId: 1, etiketBaglami })} />,
+    )
+    const kutu = screen.getByLabelText('Etiket ekle') as HTMLInputElement
+    await userEvent.type(kutu, 'a'.repeat(41) + '{Enter}')
+    expect(screen.getByRole('alert').textContent).toContain('en fazla 40 karakter')
+    expect(kutu.value).toHaveLength(41)
+
+    rerender(
+      <DanisanDosyasi {...proplar({ seanslar: ETIKETLI, seciliSeansId: 2, etiketBaglami })} />,
+    )
+    expect((screen.getByLabelText('Etiket ekle') as HTMLInputElement).value).toBe('')
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 })

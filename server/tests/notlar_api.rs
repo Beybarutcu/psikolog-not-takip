@@ -142,7 +142,8 @@ async fn ek_yukle(s: &AppState, cid: i64, ad_kodlu: &str, icerik: &[u8]) -> i64 
 /// Görev 7'nin eklediği on dört uç nokta (+ dal incelemesi C1'in eklediği
 /// `rapor-kaydi`, toplam **on beş**; Plan 4 Görev 6'da o uç kalktı, yerine
 /// `veri-raporu` geldi; Plan 5 Görev 4'te `danisanlar/{id}/seanslar` eklendi,
-/// toplam **on altı**) kilitliyken `401` döner ve gövdesinde hiçbir veri
+/// toplam **on altı**; Plan 5 Görev 5'te beş etiket ucu eklendi, toplam
+/// **yirmi bir**) kilitliyken `401` döner ve gövdesinde hiçbir veri
 /// taşımaz.
 ///
 /// Tablo halinde yazılmıştır ki yeni bir uç nokta eklendiğinde satır
@@ -169,6 +170,15 @@ async fn kilitliyken_gorev7_uclarinin_hepsi_401_doner_ve_veri_sizdirmaz() {
     )
     .await;
     let ek_id = ek_yukle(&s, cid, "GIZLI_DOSYA_ADI.pdf", b"GIZLI_DOSYA_ICERIGI").await;
+    let (kod, etiket) = cagir(
+        &s,
+        "POST",
+        &format!("/api/randevular/{rid}/etiketler"),
+        Some(json!({"ad":"GIZLI_ETIKET_ADI"})),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::CREATED, "kurulum: etiket eklenmeli");
+    let tag_id = etiket["id"].as_i64().unwrap();
 
     kilitle(&s).await;
 
@@ -192,6 +202,17 @@ async fn kilitliyken_gorev7_uclarinin_hepsi_401_doner_ve_veri_sizdirmaz() {
         // POST /ekler ham govdeli oldugu icin ayri cagrilir (asagida).
         ("GET", format!("/api/ekler/{ek_id}"), None),
         ("DELETE", format!("/api/ekler/{ek_id}"), None),
+        // Plan 5 Gorev 5: bes etiket ucu. Ad URL'ye girmez -- ekleme
+        // govdede, kaldirma ve arama yalnizca sayisal kimlikle.
+        ("GET", "/api/etiketler".to_string(), None),
+        ("GET", format!("/api/randevular/{rid}/etiketler"), None),
+        (
+            "POST",
+            format!("/api/randevular/{rid}/etiketler"),
+            Some(json!({"ad":"x"})),
+        ),
+        ("DELETE", format!("/api/randevular/{rid}/etiketler/{tag_id}"), None),
+        ("GET", format!("/api/etiketler/{tag_id}/seanslar"), None),
         ("GET", "/api/ara?q=GIZLI".to_string(), None),
         ("GET", "/api/saklama-suresi-dolanlar?bugun=2030-01-01".to_string(), None),
         ("GET", "/api/depolama-durumu".to_string(), None),
@@ -204,15 +225,19 @@ async fn kilitliyken_gorev7_uclarinin_hepsi_401_doner_ve_veri_sizdirmaz() {
             Some(json!({"parola":"danisan-parolasi-1","bugun":"2026-09-16"})),
         ),
     ];
-    assert_eq!(uclar.len(), 15, "POST /ekler ile birlikte on alti uc kapsanmali");
+    assert_eq!(uclar.len(), 20, "POST /ekler ile birlikte yirmi bir uc kapsanmali");
 
     for (metot, yol, govde) in &uclar {
         let (kod, json) = cagir(&s, metot, yol, govde.clone()).await;
         assert_eq!(kod, StatusCode::UNAUTHORIZED, "{metot} {yol} kilitliyken 401 donmeli");
         let metin = json.to_string();
-        for gizli in
-            ["RESMI_GIZLI_ICERIK", "OZEL_GIZLI_ICERIK", "GIZLI_DOSYA_ADI", "GIZLI_DOSYA_ICERIGI"]
-        {
+        for gizli in [
+            "RESMI_GIZLI_ICERIK",
+            "OZEL_GIZLI_ICERIK",
+            "GIZLI_DOSYA_ADI",
+            "GIZLI_DOSYA_ICERIGI",
+            "GIZLI_ETIKET_ADI",
+        ] {
             assert!(!metin.contains(gizli), "{metot} {yol} kilitliyken veri sizdirdi: {metin}");
         }
         assert!(!json.is_array(), "{metot} {yol}: basarili liste yaniti dizidir");
@@ -308,6 +333,13 @@ async fn kilitliyken_govde_ve_sorgu_alan_her_uc_once_401_doner() {
             bozuk_govde.clone(),
         ),
         ("search.rs", "ara_uc", "GET", format!("/api/ara?x={KANARYA}"), None),
+        (
+            "tags.rs",
+            "ekle",
+            "POST",
+            format!("/api/randevular/{rid}/etiketler"),
+            bozuk_govde.clone(),
+        ),
         (
             "veri_raporu.rs",
             "veri_raporu",
@@ -649,6 +681,139 @@ async fn danisan_veri_raporu_ozel_not_icermez() {
     // On kosul: bu gezinti gercekten VERI okuyor. Olmadan, her seye bos yanit
     // veren bir API testi gecerdi.
     assert!(resmi_gorundu, "resmi not en az bir yoldan gorunmeli, yoksa test totoloji");
+}
+
+// =====================================================================
+// 2b. ETIKET UCLARI (Plan 5 Gorev 5)
+// =====================================================================
+
+#[tokio::test]
+async fn etiket_eklenir_seansa_baglanir_ve_sozlukte_listelenir() {
+    let (_d, s, _cid, rid) = dolu_state().await;
+
+    let (kod, etiket) = cagir(
+        &s,
+        "POST",
+        &format!("/api/randevular/{rid}/etiketler"),
+        Some(json!({"ad":"Kaygı"})),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::CREATED);
+    assert_eq!(etiket["ad"], "Kaygı");
+    assert_eq!(etiket["kullanim"], 1);
+
+    let (kod, seans_etiketleri) =
+        cagir(&s, "GET", &format!("/api/randevular/{rid}/etiketler"), None).await;
+    assert_eq!(kod, StatusCode::OK);
+    let liste = seans_etiketleri.as_array().unwrap();
+    assert_eq!(liste.len(), 1, "seans bu etiketi tasimali");
+    assert_eq!(liste[0]["ad"], "Kaygı");
+
+    let (kod, sozluk) = cagir(&s, "GET", "/api/etiketler", None).await;
+    assert_eq!(kod, StatusCode::OK);
+    let sozluk = sozluk.as_array().unwrap();
+    assert_eq!(sozluk.len(), 1, "sozlukte de gorunmeli");
+    assert_eq!(sozluk[0]["ad"], "Kaygı");
+
+    // Ayni ad, farkli yazim -- ayni etiket kimligine baglanir, sozlukte ikinci
+    // bir satir birakmaz (bkz. `store::tags::ad_anahtar_uret`).
+    let (kod, ayni) = cagir(
+        &s,
+        "POST",
+        &format!("/api/randevular/{rid}/etiketler"),
+        Some(json!({"ad":"kaygı"})),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::CREATED);
+    assert_eq!(ayni["id"], etiket["id"]);
+}
+
+#[tokio::test]
+async fn etiket_kaldirilir_bilinmeyen_baglanti_kaldirmasi_404_doner() {
+    let (_d, s, _cid, rid) = dolu_state().await;
+    let (_, etiket) = cagir(
+        &s,
+        "POST",
+        &format!("/api/randevular/{rid}/etiketler"),
+        Some(json!({"ad":"aile"})),
+    )
+    .await;
+    let tag_id = etiket["id"].as_i64().unwrap();
+
+    let (kod, _) =
+        cagir(&s, "DELETE", &format!("/api/randevular/{rid}/etiketler/{tag_id}"), None).await;
+    assert_eq!(kod, StatusCode::NO_CONTENT);
+
+    let (kod, liste) = cagir(&s, "GET", &format!("/api/randevular/{rid}/etiketler"), None).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(liste.as_array().unwrap().len(), 0, "kaldirilan etiket seansta gorunmemeli");
+
+    // Ayni bagi ikinci kez kaldirmak -- artik bagli degil -- bulunamadi doner.
+    let (kod, _) =
+        cagir(&s, "DELETE", &format!("/api/randevular/{rid}/etiketler/{tag_id}"), None).await;
+    assert_eq!(kod, StatusCode::NOT_FOUND);
+
+    // Hic var olmayan bir tag_id ile kaldirma da bulunamadi doner.
+    let (kod, _) = cagir(&s, "DELETE", &format!("/api/randevular/{rid}/etiketler/999999"), None)
+        .await;
+    assert_eq!(kod, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn etiketli_seanslar_ucu_danisan_adini_ve_baslangici_dondurur() {
+    let (_d, s, cid, rid) = dolu_state().await;
+    let (_, etiket) = cagir(
+        &s,
+        "POST",
+        &format!("/api/randevular/{rid}/etiketler"),
+        Some(json!({"ad":"kriz"})),
+    )
+    .await;
+    let tag_id = etiket["id"].as_i64().unwrap();
+
+    let (kod, seanslar) = cagir(&s, "GET", &format!("/api/etiketler/{tag_id}/seanslar"), None).await;
+    assert_eq!(kod, StatusCode::OK);
+    let liste = seanslar.as_array().unwrap();
+    assert_eq!(liste.len(), 1);
+    assert_eq!(liste[0]["appointment_id"], rid);
+    assert_eq!(liste[0]["client_id"], cid);
+    assert_eq!(liste[0]["danisan_adi"], "Ayse Yilmaz");
+
+    // Bilinmeyen tag_id -- bulunamadi.
+    let (kod, _) = cagir(&s, "GET", "/api/etiketler/999999/seanslar", None).await;
+    assert_eq!(kod, StatusCode::NOT_FOUND);
+}
+
+/// Brief Adım 2: 41 karakterlik ad `400` döner, gövdesinde adın KENDİSİ
+/// yankılanmaz (yalnızca uzunluk mesajı) -- `store::tags::ad_dogrula` ile
+/// `guard::depo_hatasi`nin ikisi de bu sözleşmeyi taşır.
+#[tokio::test]
+async fn kirk_bir_karakterlik_etiket_adi_400_doner_ad_yankilanmaz() {
+    let (_d, s, _cid, rid) = dolu_state().await;
+    let kirk_bir = "Ç".repeat(41);
+
+    let (kod, govde) = cagir(
+        &s,
+        "POST",
+        &format!("/api/randevular/{rid}/etiketler"),
+        Some(json!({"ad": kirk_bir})),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::BAD_REQUEST);
+    let metin = govde.to_string();
+    assert!(!metin.contains(&kirk_bir), "reddedilen ad govdeye yankilanmamali: {metin}");
+    assert!(metin.contains("40"), "hata mesaji uzunluk sinirini soylemeli: {metin}");
+
+    // Bos ad da ayni sozlesmeyle 400 doner.
+    let (kod, govde) = cagir(
+        &s,
+        "POST",
+        &format!("/api/randevular/{rid}/etiketler"),
+        Some(json!({"ad": ""})),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::BAD_REQUEST);
+    assert!(!govde.to_string().is_empty());
 }
 
 #[tokio::test]
@@ -2029,7 +2194,9 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
     // getirmez.
     // Plan 5 Gorev 4: `/danisanlar/{id}/seanslar` (routes::danisan_seanslari)
     // 32. veri handler'i olarak eklendi; kapiyi kullanan tek handler'i var.
-    assert_eq!(toplam, 32, "toplam veri handler'i sayisi 32 olmali");
+    // Plan 5 Gorev 5: `routes::tags` bes yeni veri handler'i ekledi (listele,
+    // seans_listesi, ekle, kaldir, seanslar) -- toplam 32 -> 37.
+    assert_eq!(toplam, 37, "toplam veri handler'i sayisi 37 olmali");
 }
 
 /// Kapıyı ilk satırda VE uzun bir üretimden sonra ikinci kez çağırmasına izin

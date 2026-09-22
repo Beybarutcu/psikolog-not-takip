@@ -42,6 +42,43 @@
 //! Plan 3'teki istemci raporu da içermiyordu; bu görev içeriği taşır, kararı
 //! değiştirmez. Sorgu sütunu hiç okumaz (`risk_notu_rapora_girmez_basvuru_nedeni_girer`).
 //!
+//! # Etiketler rapora GİRER — "Randevular ve ödemeler" satırında (kullanıcı
+//! kararı 2026-09-22, inceleme düzeltmesi)
+//!
+//! Görev 7'nin ilk sürümü etiketleri yalnızca resmî notun ALTINA yazıyordu;
+//! bu YANLIŞTI. Etiket eklemenin tek koşulu randevunun var olmasıdır
+//! (`tags::etiket_ekle` yalnızca `appointments` varlığını denetler, resmî not
+//! yazılmış olmasını DEĞİL) ve etiket kutusu resmî not yazılmadan da
+//! gösteriliyor — bu yüzden notu olmayan bir seansa konan bir etiket
+//! (örn. "kriz") rapora hiç girmiyordu: `progress_notes`'ta satırı olmayan
+//! bir randevu için hiçbir yer yazılmıyordu. İnceleme bunu geçici bir testle
+//! kanıtladı: yalnızca özel notu olan bir seansa etiket eklendi, "Seans
+//! notları (0)" gösterildi ve etiket hiçbir yerde görünmedi.
+//!
+//! Düzeltme: etiketler her randevunun **kendi satırına** yazılır —
+//! "Randevular ve ödemeler" bölümü zaten notlu/notsuz TÜM randevuları
+//! kapsıyor (bkz. aşağıdaki bölüm), yani etiketin hangi randevuya ait olduğu
+//! sorusunun cevabı zaten orada duruyor. Biçim: mevcut randevu satırının
+//! sonuna `· Etiketler: aile, kaygı` eklenir — adına göre Türk alfabesiyle
+//! sıralı (`store::tags::etiket_sirasi`, `tags::etiketleri_listele` ile AYNI
+//! kural). Resmî notun ALTINDAKİ eski satır KALDIRILDI: aynı etiket iki
+//! yerde tekrarlanmaz. Etiketsiz randevuda bu ek hiç yoktur.
+//!
+//! Gerekçe hâlâ aynı: etiket resmî sınıflandırmadır, danışan hakkında
+//! işlenen bir veridir (KVKK md. 11 "elimdeki her şey"); danışanın görmesi
+//! istenmeyen bir sınıflandırma özel nota yazılır, etikete DEĞİL — **özel
+//! notun kendisi** (içeriği) rapora hâlâ hiçbir biçimde girmez, yalnızca
+//! seansa iliştirilmiş etiket (varsa) girer.
+//!
+//! Etiket adları danışanın **kendi** randevularından (`a.client_id` —
+//! yetkili kaynak) okunur; ek sorgu `danisan_seanslari.rs`'teki "Etiketler:
+//! TEK ek sorgu, N+1 DEĞİL" deseniyle aynıdır (bkz. o modülün başlığı) ve
+//! `appointments.id` (randevu kimliği) ile anahtarlanır — notu olsun olmasın
+//! her randevu için çalışır. Başka danışanın etiketi rapora SIZAMAZ:
+//! `iki_danisanin_farkli_etiketleri_birbirinin_raporuna_sizmaz`
+//! testi FARKLI adlı etiketlerle iki danışan kurup A'nın raporunda B'nin
+//! etiketinin hiç geçmediğini doğrular.
+//!
 //! # Ekler: ad ve üstveri — içerik ASLA
 //!
 //! Dosya adı, tür, eklenme tarihi, boyut. İçerik BLOB'u sorguya hiç girmez.
@@ -65,7 +102,9 @@
 use crate::pdf::{RaporBolumu, RaporIcerigi};
 use crate::store::audit::{kaydet, Cihaz, Eylem, LogHacmi};
 use crate::store::clients::DepoHatasi;
+use crate::store::tags::etiket_sirasi;
 use rusqlite::{Connection, OptionalExtension};
+use std::collections::HashMap;
 
 /// Raporun son satırı: dosyanın neyi İÇERMEDİĞİNİ açıkça söyler. Raporu
 /// okuyan danışan olabilir; bu bir gizleme değil, kapsam beyanıdır.
@@ -197,12 +236,35 @@ pub fn rapor_icerigi(conn: &Connection, client_id: i64) -> Result<RaporIcerigi, 
         ],
     };
 
+    // Etiketler (bkz. modul basligi "Etiketler rapora GIRER"): TEK ek sorgu,
+    // `danisan_seanslari.rs`'teki N+1-degil deseniyle ayni. `a.client_id`
+    // filtresi YETKILI kaynaktan: baska danisanin etiketi buraya giremez.
+    // RANDEVU kimligiyle anahtarlanir (`pt.appointment_id` == `appointments.id`)
+    // -- inceleme duzeltmesi: asagida hem notu OLAN hem OLMAYAN randevu
+    // satirinda kullanilir, artik yalnizca notu olan seansta degil.
+    let mut etiket_ifadesi = conn.prepare(
+        "SELECT pt.appointment_id, t.ad
+           FROM progress_note_tags pt
+           JOIN tags t ON t.id = pt.tag_id
+           JOIN appointments a ON a.id = pt.appointment_id
+          WHERE a.client_id = ?1",
+    )?;
+    let mut etiket_haritasi: HashMap<i64, Vec<String>> = HashMap::new();
+    for satir in etiket_ifadesi
+        .query_map([client_id], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+    {
+        let (appointment_id, ad) = satir?;
+        etiket_haritasi.entry(appointment_id).or_default().push(ad);
+    }
+    drop(etiket_ifadesi);
+
     // Randevular ve odemeler (dal incelemesi karari D1): notlu ya da notsuz
     // TUM randevular, LIMIT YOK. Danisan ekseni yetkili kaynak `a.client_id`
     // (tasinan randevu yeni danisanda). Iptal edilmis randevu da danisanin
-    // verisidir, durum etiketiyle girer.
+    // verisidir, durum etiketiyle girer. `a.id` etiket haritasiyla eslestirmek
+    // icin gerekli (inceleme duzeltmesi: etiketler artik BURADA yaziliyor).
     let mut stmt = conn.prepare(
-        "SELECT a.baslangic, a.durum, a.ucret, a.odendi
+        "SELECT a.id, a.baslangic, a.durum, a.ucret, a.odendi
          FROM appointments a
          WHERE a.client_id = ?1
          ORDER BY a.baslangic ASC, a.id ASC",
@@ -210,10 +272,11 @@ pub fn rapor_icerigi(conn: &Connection, client_id: i64) -> Result<RaporIcerigi, 
     let randevular = stmt
         .query_map([client_id], |r| {
             Ok((
-                r.get::<_, String>(0)?,
+                r.get::<_, i64>(0)?,
                 r.get::<_, String>(1)?,
-                r.get::<_, Option<i64>>(2)?,
-                r.get::<_, i64>(3)? != 0,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<i64>>(3)?,
+                r.get::<_, i64>(4)? != 0,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -221,17 +284,26 @@ pub fn rapor_icerigi(conn: &Connection, client_id: i64) -> Result<RaporIcerigi, 
 
     let mut randevu_satirlari: Vec<String> = randevular
         .iter()
-        .map(|(baslangic, durum, ucret, odendi)| {
+        .map(|(appointment_id, baslangic, durum, ucret, odendi)| {
             let ucret = match ucret {
                 Some(k) => format!("Ücret: {}", tl_metni(*k)),
                 None => "Ücret girilmemiş".to_string(),
             };
-            format!(
+            let mut satir = format!(
                 "- {} · {} · {ucret} · Ödendi: {}",
                 seans_zamani_tr(baslangic),
                 durum_adi(durum),
                 if *odendi { "Evet" } else { "Hayır" }
-            )
+            );
+            // Etiketsiz randevuda bu ek YOK (bkz. modul basligi): bos bir
+            // "· Etiketler:" eki "hic bakilmadi" ile "bakildi, bos cikti"
+            // ayrimini bulaniklastirirdi.
+            if let Some(adlar) = etiket_haritasi.get(appointment_id) {
+                let mut adlar = adlar.clone();
+                adlar.sort_by(|a, b| etiket_sirasi(a, b));
+                satir.push_str(&format!(" · Etiketler: {}", adlar.join(", ")));
+            }
+            satir
         })
         .collect();
     if randevu_satirlari.is_empty() {
@@ -244,6 +316,9 @@ pub fn rapor_icerigi(conn: &Connection, client_id: i64) -> Result<RaporIcerigi, 
 
     // LIMIT YOK: KVKK md. 11 "elimdeki her sey" demektir. Danisan filtresi ve
     // siralama YETKILI KAYNAKTAN (`a.`), notun denormalize kopyasindan degil.
+    // Etiketler burada YAZILMAZ (inceleme duzeltmesi): yukaridaki randevu
+    // satirinda zaten var, ikinci kez tekrarlamak "tek yerde gorunur" kuralini
+    // bozardi.
     let mut stmt = conn.prepare(
         "SELECT a.baslangic, p.sablon, p.icerik
          FROM progress_notes p
@@ -392,6 +467,7 @@ mod tests {
         db::open_encrypted,
         notes::{not_kaydet, ozel_not_kaydet},
         schema::migrate,
+        tags::{etiket_ekle, etiket_kaldir},
     };
 
     fn baglanti() -> (tempfile::TempDir, Connection) {
@@ -455,6 +531,155 @@ mod tests {
         assert!(metin.contains("Seans notları (2)"), "{metin}");
         assert!(!metin.contains("OZEL-KANARYA"), "ozel not rapora sizdi: {metin}");
         assert!(metin.contains("Ad soyad: Ayse Yilmaz"));
+    }
+
+    // (a1) Görev 7: etiketler ada gore Turk alfabesiyle sirali, randevu
+    // satirinda, cok baytli etiket adiyla (Noto Sans'a giden metnin Turkce
+    // harf tasidigini dogrulamak icin).
+    #[test]
+    fn etiket_randevu_satirinda_ada_gore_turk_alfabesiyle_sirali_gorunur() {
+        let (_d, c) = baglanti();
+        let cid = danisan(&c, "Ayse Yilmaz");
+        let rid = randevu(&c, cid, "2026-09-01T10:00", "2026-09-01T11:00");
+        // Kasten TERS sirada ekleniyor -- rapordaki sira EKLEME sirasindan
+        // degil, Turk alfabesinden (`etiket_sirasi`) gelmeli. "öfke" ve
+        // "ilaç değişimi" COK BAYTLI (bkz. test adi).
+        etiket_ekle(&c, rid, "öfke", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, rid, "aile", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, rid, "ilaç değişimi", Cihaz::Masaustu).unwrap();
+
+        let metin = duz(&rapor_icerigi(&c, cid).unwrap());
+        assert!(
+            metin.contains(
+                "01.09.2026 10:00 · Planlandı · Ücret girilmemiş · Ödendi: Hayır · \
+                 Etiketler: aile, ilaç değişimi, öfke"
+            ),
+            "etiketler ada gore Turk alfabesiyle sirali, randevu satirinin sonunda olmali: {metin}"
+        );
+    }
+
+    /// İnceleme düzeltmesi (IMPORTANT): Görev 7'nin ilk sürümü etiketleri
+    /// yalnızca resmî notun ALTINA yazıyordu. `tags::etiket_ekle` yalnızca
+    /// randevunun var olmasını denetler, resmî not yazılmış olmasını DEĞİL
+    /// -- bu yüzden notu olmayan ya da yalnızca ÖZEL notu olan bir seansa
+    /// konan etiket rapora hiç girmiyordu (inceleme bunu geçici bir testle
+    /// kanıtladı: "GECICIKRIZ" etiketi yalnızca özel notu olan bir seansa
+    /// eklendi, rapor "Seans notları (0)" gösterdi ve etiket hiçbir yerde
+    /// görünmedi). Düzeltme: etiketler artık her randevunun KENDİ satırına
+    /// yazılıyor -- "Randevular ve ödemeler" zaten notlu/notsuz TÜM
+    /// randevuları kapsıyor. Bu test üç durumu birden kurar.
+    #[test]
+    fn etiket_notu_olmayan_ve_yalnizca_ozel_notlu_seansta_da_randevu_satirinda_gorunur() {
+        let (_d, c) = baglanti();
+        let cid = danisan(&c, "Ayse Yilmaz");
+        let notsuz = randevu(&c, cid, "2026-09-01T10:00", "2026-09-01T11:00");
+        let ozel_notlu = randevu(&c, cid, "2026-09-08T10:00", "2026-09-08T11:00");
+        let resmi_notlu = randevu(&c, cid, "2026-09-15T10:00", "2026-09-15T11:00");
+
+        // notsuz: HIC not yok, yalnizca etiket.
+        etiket_ekle(&c, notsuz, "kriz", Cihaz::Masaustu).unwrap();
+        // ozel_notlu: YALNIZCA ozel not var (resmi not YOK) -- inceleme
+        // bulgusunun tam kosulu.
+        ozel_not_kaydet(&c, ozel_notlu, "OZEL-NOT-ICERIGI-KANARYA", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, ozel_notlu, "GECICIKRIZ", Cihaz::Masaustu).unwrap();
+        // resmi_notlu: hem resmi not hem etiket -- (4) tekrarsizlik icin.
+        not_kaydet(&c, resmi_notlu, "dap", "RESMI-NOT-ICERIGI", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, resmi_notlu, "aile", Cihaz::Masaustu).unwrap();
+
+        let metin = duz(&rapor_icerigi(&c, cid).unwrap());
+        // ON KOSUL: yalnizca BIR resmi not var (notsuz ve ozel_notlu icin
+        // resmi not YOK) -- yoksa asagidaki iddialar totoloji olurdu.
+        assert!(metin.contains("Seans notları (1)"), "{metin}");
+
+        // (1) yalnizca ozel notu olan seansin etiketi randevular bolumunde
+        // VAR.
+        assert!(
+            metin.contains(
+                "08.09.2026 10:00 · Planlandı · Ücret girilmemiş · Ödendi: Hayır · \
+                 Etiketler: GECICIKRIZ"
+            ),
+            "yalnizca ozel notu olan seansin etiketi randevu satirinda olmali: {metin}"
+        );
+        // (1) EKSI YON: ozel notun ICERIGI raporun HICBIR yerinde yok.
+        assert!(
+            !metin.contains("OZEL-NOT-ICERIGI-KANARYA"),
+            "ozel not icerigi rapora sizdi: {metin}"
+        );
+
+        // (2) hic notu olmayan seansin etiketi de randevu satirinda VAR.
+        assert!(
+            metin.contains(
+                "01.09.2026 10:00 · Planlandı · Ücret girilmemiş · Ödendi: Hayır · \
+                 Etiketler: kriz"
+            ),
+            "notu olmayan seansin etiketi randevu satirinda olmali: {metin}"
+        );
+
+        // (4) etiket TEK yerde gorunur: resmi notu olan seansta da satirin
+        // sonunda, ALTINDA DEGIL -- toplam "Etiketler:" gecisi TAM ÜÇ (her
+        // etiketli randevu icin bir).
+        assert!(
+            metin.contains(
+                "15.09.2026 10:00 · Planlandı · Ücret girilmemiş · Ödendi: Hayır · \
+                 Etiketler: aile"
+            ),
+            "resmi notu da olan seansin etiketi randevu satirinda olmali: {metin}"
+        );
+        assert_eq!(
+            metin.matches("Etiketler:").count(),
+            3,
+            "her etiketli randevu icin TEK 'Etiketler:' gecmeli, not altinda tekrar OLMAMALI: {metin}"
+        );
+        let not_bolgesi = metin.split("RESMI-NOT-ICERIGI\n").nth(1).unwrap_or_default();
+        assert!(
+            !not_bolgesi.trim_start().starts_with("Etiketler:")
+                && !not_bolgesi.trim_start().starts_with("aile"),
+            "etiket resmi notun ALTINA da yazilmis -- tekrar: {metin}"
+        );
+    }
+
+    /// İki danışanlı sızıntı testi FARKLI etiket adlarıyla (inceleme
+    /// düzeltmesi): eski test her ikisine de "aile" koyuyordu (aynı etiket
+    /// kimliği paylaşılır) ve bu yüzden gerçek bir çapraz etiket sızıntısını
+    /// hiç ölçemiyordu -- iki rapor da tesadüfen aynı metni içeriyordu.
+    #[test]
+    fn iki_danisanin_farkli_etiketleri_birbirinin_raporuna_sizmaz() {
+        let (_d, c) = baglanti();
+        let ayse = danisan(&c, "Ayse Yilmaz");
+        let mehmet = danisan(&c, "Mehmet Demir");
+        let ayse_rid = randevu(&c, ayse, "2026-09-01T10:00", "2026-09-01T11:00");
+        let mehmet_rid = randevu(&c, mehmet, "2026-09-02T10:00", "2026-09-02T11:00");
+
+        etiket_ekle(&c, ayse_rid, "AYSENIN-ETIKETI", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, mehmet_rid, "MEHMEDIN-ETIKETI", Cihaz::Masaustu).unwrap();
+
+        let ayse_metin = duz(&rapor_icerigi(&c, ayse).unwrap());
+        let mehmet_metin = duz(&rapor_icerigi(&c, mehmet).unwrap());
+
+        assert!(ayse_metin.contains("Etiketler: AYSENIN-ETIKETI"), "{ayse_metin}");
+        assert!(
+            !ayse_metin.contains("MEHMEDIN-ETIKETI"),
+            "Mehmet'in etiketi Ayse'nin raporuna sizdi: {ayse_metin}"
+        );
+        assert!(mehmet_metin.contains("Etiketler: MEHMEDIN-ETIKETI"), "{mehmet_metin}");
+        assert!(
+            !mehmet_metin.contains("AYSENIN-ETIKETI"),
+            "Ayse'nin etiketi Mehmet'in raporuna sizdi: {mehmet_metin}"
+        );
+    }
+
+    #[test]
+    fn kaldirilan_etiket_randevu_satirindan_cikar() {
+        let (_d, c) = baglanti();
+        let cid = danisan(&c, "Ayse Yilmaz");
+        let rid = randevu(&c, cid, "2026-09-01T10:00", "2026-09-01T11:00");
+        let kaldirilacak = etiket_ekle(&c, rid, "kriz", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, rid, "aile", Cihaz::Masaustu).unwrap();
+        etiket_kaldir(&c, rid, kaldirilacak.id, Cihaz::Masaustu).unwrap();
+
+        let metin = duz(&rapor_icerigi(&c, cid).unwrap());
+        assert!(metin.contains("Etiketler: aile"), "{metin}");
+        assert!(!metin.contains("kriz"), "kaldirilan etiket rapora sizdi: {metin}");
     }
 
     // (b) randevu tasininca not yeni danisana gider

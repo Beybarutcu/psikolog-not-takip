@@ -5,12 +5,17 @@ import { yerelZaman } from '../../takvim/hafta'
 import { yazmaSaatiOlustur } from './yazmaSaati'
 
 /**
- * Seans listesine yerelde yamanabilen alanlar: durum ve ödeme (alt satırdan)
- * ve not önizlemesi (not kaydından sonra). Hepsinin sonucu yazma başarılı
- * olunca KESİN biliniyor — listeyi yeniden çekmek silinemez bir
- * `goruntuleme` satırı daha demek olurdu.
+ * Seans listesine yerelde yamanabilen alanlar: durum ve ödeme (alt satırdan),
+ * not önizlemesi (not kaydından sonra) ve etiket adları (etiket
+ * ekleme/kaldırmadan sonra — Plan 6 Görev 6; değer seansın TAM, sıralı yeni
+ * listesi, fark değil: uçuştaki okumanın bayat listesinin üstüne aynen
+ * uygulanabilsin diye). Hepsinin sonucu yazma başarılı olunca KESİN
+ * biliniyor — listeyi yeniden çekmek silinemez bir `goruntuleme` satırı daha
+ * demek olurdu.
  */
-export type SeansYamasi = Partial<Pick<DanisanSeansi, 'durum' | 'odendi' | 'not_ilk_satiri'>>
+export type SeansYamasi = Partial<
+  Pick<DanisanSeansi, 'durum' | 'odendi' | 'not_ilk_satiri' | 'etiketler'>
+>
 
 /**
  * Bir isteğin yanıtı, HANGİ danışana ait olduğuyla birlikte. `varsayilan`

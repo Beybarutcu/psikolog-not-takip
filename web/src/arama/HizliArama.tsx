@@ -1,11 +1,23 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { AramaSonucu, AramaYaniti } from '../api'
+import type { AramaSonucu, AramaYaniti, Etiket } from '../api'
 import { tarihBicimle } from '../danisan/bicim'
 import { zamanMetni } from '../tarih'
 
 /**
- * Hızlı arama (Ctrl+K / Cmd+K): danışan adı ve **resmî** seans notu içeriği.
+ * Hızlı arama (Ctrl+K / Cmd+K): danışan adı, **resmî** seans notu içeriği ve
+ * etiket adı (Görev 7).
+ *
+ * # Üç sonuç türü, üç ayrı geçiş
+ *
+ * - `tur === 'danisan'`: `onDanisanSec(client_id)` — danışan dosyasını açar.
+ * - `tur === 'not'`: **ARTIK** `onDanisanSec(client_id, appointment_id)` —
+ *   danışanın dosyasını o seans SEÇİLİ açar (tasarım §8). Eskiden takvim
+ *   haftasına gidiyordu (`onSeansSec`); bu yol kaldırıldı — not içeriğinden
+ *   bir eşleşmeye tıklamak artık danışanın dosyasındaki o seansa gider,
+ *   takvimin hangi haftayı gösterdiğini DEĞİŞTİRMEZ.
+ * - `tur === 'etiket'`: `onEtiketSec(etiket)` — "etiketli seanslar" panelini
+ *   açar (bkz. `AnaEkran.tsx::etiketler.etiketAc`).
  *
  * # Ekranda not içeriği var — bu yüzden kapanınca hiçbir şey kalmaz
  *
@@ -44,10 +56,14 @@ import { zamanMetni } from '../tarih'
  */
 type Props = {
   ara: (sorgu: string) => Promise<AramaYaniti>
-  onDanisanSec: (clientId: number) => void
-  /** `tarih` randevunun `baslangic`'i (`YYYY-AA-GGTSS:DD`) — çağıran taraf
-   * hangi haftaya gideceğini ondan bilir. */
-  onSeansSec: (appointmentId: number, tarih: string) => void
+  /**
+   * Danışan sonucu: `onDanisanSec(clientId)`. Not sonucu:
+   * `onDanisanSec(clientId, appointmentId)` — ikinci argüman `AnaEkran.
+   * danisanaGit`in aynı imzasıyla eşleşir (bkz. modül başlığı).
+   */
+  onDanisanSec: (clientId: number, appointmentId?: number) => void
+  /** Etiket sonucu: "etiketli seanslar" panelini açar. */
+  onEtiketSec: (etiket: Etiket) => void
   /** Testlerde kısaltılır (`NotEditoru`'nun `gecikmeMs` deseni). */
   gecikmeMs?: number
 }
@@ -93,7 +109,7 @@ function zamanBicimle(zaman: string): string {
   return tarihBicimle(zaman)
 }
 
-export function HizliArama({ ara, onDanisanSec, onSeansSec, gecikmeMs = GECIKME_MS }: Props) {
+export function HizliArama({ ara, onDanisanSec, onEtiketSec, gecikmeMs = GECIKME_MS }: Props) {
   const [acik, setAcik] = useState(false)
   const [sorgu, setSorgu] = useState('')
   // Yanıt HANGİ SORGUYA ait olduğuyla birlikte tutuluyor ve ekrana giden
@@ -366,27 +382,64 @@ export function HizliArama({ ara, onDanisanSec, onSeansSec, gecikmeMs = GECIKME_
 
       {sonuclar.length > 0 && (
         <ul className="mt-2 max-h-80 space-y-1 overflow-y-auto">
-          {sonuclar.map((s) =>
-            s.tur === 'not' && s.appointment_id !== null && s.tarih !== null ? (
-              <li key={`not-${s.appointment_id}`}>
-                <button
-                  type="button"
-                  className="w-full rounded border border-slate-200 p-2 text-left text-sm hover:bg-slate-50"
-                  aria-label={`${s.danisan_adi} — ${zamanBicimle(s.tarih)} seansına git`}
-                  onClick={() => {
-                    // Önce kapat: sonuçlar (not parçaları) ekranda kalmasın.
-                    const id = s.appointment_id as number
-                    const tarih = s.tarih as string
-                    kapat()
-                    onSeansSec(id, tarih)
-                  }}
-                >
-                  <span className="font-medium">{s.danisan_adi}</span>{' '}
-                  <span className="text-slate-500">· {zamanBicimle(s.tarih)}</span>
-                  <span className="block text-slate-600">{s.parca}</span>
-                </button>
-              </li>
-            ) : (
+          {sonuclar.map((s) => {
+            if (s.tur === 'not' && s.appointment_id !== null && s.tarih !== null) {
+              return (
+                <li key={`not-${s.appointment_id}`}>
+                  <button
+                    type="button"
+                    className="w-full rounded border border-slate-200 p-2 text-left text-sm hover:bg-slate-50"
+                    aria-label={`${s.danisan_adi} — ${zamanBicimle(s.tarih)} seansına git`}
+                    onClick={() => {
+                      // Önce kapat: sonuçlar (not parçaları) ekranda kalmasın.
+                      const clientId = s.client_id
+                      const appointmentId = s.appointment_id as number
+                      kapat()
+                      // Not sonucuna tıklamak ARTIK danışanın dosyasını o
+                      // seans seçili açar, takvim haftasına GİTMEZ (tasarım
+                      // §8, bkz. modül başlığı).
+                      onDanisanSec(clientId, appointmentId)
+                    }}
+                  >
+                    <span className="font-medium">{s.danisan_adi}</span>{' '}
+                    <span className="text-slate-500">· {zamanBicimle(s.tarih)}</span>
+                    <span className="block text-slate-600">{s.parca}</span>
+                  </button>
+                </li>
+              )
+            }
+            if (s.tur === 'etiket') {
+              // Sunucu `tur === 'etiket'` iken `tag_id`/`etiket_adi`'yi HER
+              // ZAMAN doldurur (bkz. `AramaSonucu` -- sunucudaki `search::ara`
+              // etiket sonucunu tam bu ikisiyle kurar); tip yine de `number |
+              // null` çünkü aynı alanlar `danisan`/`not` sonuçlarında `null`.
+              // İyi biçimlenmemiş bir kayıt gelirse (sunucu hatası, eski bir
+              // önbellek) SESSİZCE ATLANIR -- eskiden bu dal "danışan
+              // dosyası" düğmesine düşüyordu ve `client_id: 0` ile
+              // `onDanisanSec(0)` çağırılabiliyordu (inceleme düzeltmesi).
+              if (s.tag_id === null || s.etiket_adi === null) return null
+              const tagId = s.tag_id
+              const etiketAdi = s.etiket_adi
+              const kullanim = s.kullanim ?? 0
+              return (
+                <li key={`etiket-${tagId}`}>
+                  <button
+                    type="button"
+                    className="w-full rounded border border-slate-200 p-2 text-left text-sm hover:bg-slate-50"
+                    aria-label={`${etiketAdi} etiketli seansları göster`}
+                    onClick={() => {
+                      kapat()
+                      onEtiketSec({ id: tagId, ad: etiketAdi, kullanim })
+                    }}
+                  >
+                    <span className="font-medium">{etiketAdi}</span>{' '}
+                    <span className="text-slate-500">· etiket · {kullanim} seans</span>
+                  </button>
+                </li>
+              )
+            }
+            if (s.tur !== 'danisan') return null
+            return (
               <li key={`danisan-${s.client_id}`}>
                 <button
                   type="button"
@@ -402,8 +455,8 @@ export function HizliArama({ ara, onDanisanSec, onSeansSec, gecikmeMs = GECIKME_
                   <span className="text-slate-500">· danışan dosyası</span>
                 </button>
               </li>
-            ),
-          )}
+            )
+          })}
         </ul>
       )}
       </div>

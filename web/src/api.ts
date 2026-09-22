@@ -28,6 +28,26 @@ export class VeritabaniBozukHata extends Error {
   }
 }
 
+/**
+ * 401 ve "veritabanı bozuk" DIŞINDAKİ başarısız yanıtlar. `Error`'ın alt
+ * sınıfı — mesajı okuyan bütün çağıranlar aynen çalışır; HTTP durumunu da
+ * taşır ki çağıran "kayıt yok" (404) ile gerçek bir hatayı ayırabilsin.
+ *
+ * Tek kullanıcısı bugün etiketli seanslar paneli (son inceleme I1): takvimde
+ * bir randevu silinince panel yeniden okunur ve o randevu etiketin SON
+ * seansıysa etiket sunucuda tetikleyiciyle silinmiştir — yanıt 404'tür.
+ * Bu bir hata değil, "bu etiketi taşıyan seans kalmadı"nın kendisidir;
+ * panel onu boş liste olarak gösterir (bkz. `useEtiketler.acikYukle`).
+ */
+export class IstekHatasi extends Error {
+  readonly durum: number
+  constructor(mesaj: string, durum: number) {
+    super(mesaj)
+    this.name = 'IstekHatasi'
+    this.durum = durum
+  }
+}
+
 type YetkisizDinleyici = () => void
 const yetkisizDinleyiciler = new Set<YetkisizDinleyici>()
 const bozukDinleyiciler = new Set<YetkisizDinleyici>()
@@ -90,7 +110,7 @@ async function basarisizYanitiFirlat(yanit: Response): Promise<never> {
     for (const dinleyici of bozukDinleyiciler) dinleyici()
     throw new VeritabaniBozukHata(mesaj)
   }
-  throw new Error(mesaj)
+  throw new IstekHatasi(mesaj, yanit.status)
 }
 
 async function istek<T>(yol: string, secenekler?: RequestInit): Promise<T> {
@@ -160,6 +180,16 @@ export type DanisanSeansi = {
   ucret_kurus: number | null
   odendi: boolean
   not_ilk_satiri: string | null
+  /**
+   * Seansın etiket ADLARI, sunucunun `store::tags::etiket_sirasi` sırasıyla
+   * (Türk alfabesi, büyük/küçük harf duyarsız — istemcideki eşi
+   * `etiket/etiketAdi.ts::etiketSirasi`; Plan 6 Görev 6,
+   * `store::danisan_seanslari` modül başlığı "Etiketler").
+   * Etiketsiz seansta `[]`. Dosyadaki "Etikete göre süz" seçimi ve satırdaki
+   * çipler buradan; etiket yazması listeyi yeniden çekmez,
+   * `useDanisanSeanslari.yamala` ile bu alanı yamanır (bkz. `AnaEkran.tsx`).
+   */
+  etiketler: string[]
 }
 
 /** `GET /api/danisanlar/{id}/ekler` yanıtı (sunucudaki `EkBilgisi`). */
@@ -206,14 +236,22 @@ export const AZAMI_EK_BOYUTU = 20 * 1024 * 1024
 
 /** Tek bir arama sonucu (`GET /api/ara` yanıtı; sunucudaki `AramaSonucu`). */
 export type AramaSonucu = {
-  /** `"danisan"` veya `"not"`. */
+  /** `"danisan"`, `"not"` veya `"etiket"` (Görev 7). */
   tur: string
+  /** `tur === 'etiket'` iken anlamsız: `0`. */
   client_id: number
+  /** `tur === 'etiket'` iken boş dizgi. */
   danisan_adi: string
   appointment_id: number | null
   tarih: string | null
-  /** Eşleşmenin çevresinden alınan bağlam parçası. */
+  /** Eşleşmenin çevresinden alınan bağlam parçası; `tur === 'etiket'` iken boş dizgi. */
   parca: string
+  /** Yalnızca `tur === 'etiket'` iken dolu: etiketin kimliği. */
+  tag_id: number | null
+  /** Yalnızca `tur === 'etiket'` iken dolu: etiketin görünen adı. */
+  etiket_adi: string | null
+  /** Yalnızca `tur === 'etiket'` iken dolu: etiketin kaç seansa bağlı olduğu. */
+  kullanim: number | null
 }
 
 /**
@@ -726,6 +764,70 @@ export const danisanApi = {
    * çağrılabilir. Engellemez: `uyari` doğruyken yükleme çalışmaya devam eder.
    */
   depolamaDurumu: () => istek<DepolamaDurumu>('/api/depolama-durumu'),
+}
+
+/**
+ * Sözlükteki tek bir etiket (`GET /api/etiketler` / `.../etiketler` yanıtındaki
+ * bir satır; sunucudaki `store::tags::Etiket`).
+ *
+ * `kullanim`, o etiketin kaç seansa bağlı olduğudur (otomatik tamamlama
+ * listesini kullanım sıklığına göre sıralamak için).
+ */
+export type Etiket = { id: number; ad: string; kullanim: number }
+
+/**
+ * Bir etiketi taşıyan tek bir seans (`GET /api/etiketler/{id}/seanslar`
+ * yanıtındaki bir satır; sunucudaki `store::tags::EtiketliSeans`).
+ */
+export type EtiketliSeans = {
+  appointment_id: number
+  client_id: number
+  danisan_adi: string
+  /** Randevunun duvar saati başlangıcı — `DanisanSeansi.baslangic` ile aynı biçim. */
+  baslangic: string
+}
+
+/**
+ * Etiket istemcisi (`store::tags`'in HTTP karşılığı, Plan 6 Görev 5).
+ *
+ * # Etiket adı URL'ye GİRMEZ
+ *
+ * Ekleme adı **gövdede** gönderir (`etiketEkle`); kaldırma ve arama yalnızca
+ * sayısal kimlikle çalışır (`etiketKaldir`, `etiketliSeanslar`). Sunucudaki
+ * `routes::tags` modül başlığıyla aynı gerekçe: etiket adı da not içeriği
+ * kadar hassas bir sınıflandırmadır, URL'ler sunucu günlüklerine ve
+ * tarayıcı geçmişine düşer.
+ */
+export const etiketApi = {
+  /** Sözlükteki tüm etiketler, en çok kullanılandan aza (`GET /api/etiketler`). */
+  etiketleriGetir: () => istek<Etiket[]>('/api/etiketler'),
+  /** Bir seansın etiketleri (`GET /api/randevular/{id}/etiketler`). */
+  seansEtiketleri: (randevuId: number) =>
+    istek<Etiket[]>(`/api/randevular/${randevuId}/etiketler`),
+  /**
+   * Seansa etiket koyar (`POST /api/randevular/{id}/etiketler {ad}`).
+   * Aynı ad başka bir yazımla (büyük/küçük harf, baş/son boşluk) zaten
+   * varsa sunucu var olan etikete bağlar -- idempotenttir.
+   */
+  etiketEkle: (randevuId: number, ad: string) =>
+    istek<Etiket>(`/api/randevular/${randevuId}/etiketler`, {
+      method: 'POST',
+      body: JSON.stringify({ ad }),
+    }),
+  /**
+   * Seanstan etiketi kaldırır (`DELETE /api/randevular/{id}/etiketler/{tag_id}`,
+   * yanıt 204 -- gövde yok, `takvimApi.odemeGuncelle` ile aynı desen).
+   */
+  etiketKaldir: (randevuId: number, tagId: number): Promise<void> =>
+    istek<unknown>(`/api/randevular/${randevuId}/etiketler/${tagId}`, {
+      method: 'DELETE',
+    }).then(() => undefined),
+  /**
+   * Bir etiketi taşıyan seanslar (`GET /api/etiketler/{id}/seanslar`,
+   * etiket dosyası ekranı için).
+   */
+  etiketliSeanslar: (tagId: number) =>
+    istek<EtiketliSeans[]>(`/api/etiketler/${tagId}/seanslar`),
 }
 
 /**

@@ -53,5 +53,85 @@
     "ad": "cok baytli uzun satir KARAKTERDE kirpilir (120)",
     "icerik": "Plan:\n\naşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşş\nikinci",
     "beklenen": "aşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşş"
+  },
+  {
+    "ad": "yeni bicim sablon basligi atlanir, liste satiri onek ve isaretlerinden arinir",
+    "icerik": "## Veri\n\n- **Danışan** kaygılı",
+    "beklenen": "Danışan kaygılı"
+  },
+  {
+    "ad": "eski bicim sablon basligi hala taninir",
+    "icerik": "Veri:\nDanışan geldi",
+    "beklenen": "Danışan geldi"
+  },
+  {
+    "ad": "yeni bicimde yalnizca basliklardan olusan not ilk baslik adini doner",
+    "icerik": "## Veri\n\n## Değerlendirme\n\n## Plan\n\n",
+    "beklenen": "Veri"
+  },
+  {
+    "ad": "sablonda olmayan baslik onek atilir ama atlanmaz",
+    "icerik": "### Serbest başlık",
+    "beklenen": "Serbest başlık"
+  },
+  {
+    "ad": "cok baytli bicimli metin 120 karakterde kirpilir (bicim ayiklamasindan sonra)",
+    "icerik": "## Veri\n\n**şşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşş**",
+    "beklenen": "şşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşş"
+  },
+  {
+    "ad": "tek basina carriage return (eski Mac) satir ayraci sayilir",
+    "icerik": "Veri:\rEvden çalışıyor",
+    "beklenen": "Evden çalışıyor"
+  },
+  {
+    "ad": "tek yildiz kapanmayan cift markdown sayilmaz (2*3=6)",
+    "icerik": "2*3=6",
+    "beklenen": "2*3=6"
+  },
+  {
+    "ad": "kapanmamis kalin isareti oldugu gibi kalir",
+    "icerik": "**kapanmamış",
+    "beklenen": "**kapanmamış"
+  },
+  {
+    "ad": "uc yildiz: kalin once esleşir, disarida kalan tek yildiz metin kalir",
+    "icerik": "***metin***",
+    "beklenen": "*metin*"
+  },
+  {
+    "ad": "bosluksuz # etiket baslik sayilmaz",
+    "icerik": "#etiket",
+    "beklenen": "#etiket"
+  },
+  {
+    "ad": "dort ve uzeri diyez baslik sayilmaz, oldugu gibi kalir",
+    "icerik": "####  dört diyez",
+    "beklenen": "####  dört diyez"
+  },
+  {
+    "ad": "onay kutusu oneki atilir",
+    "icerik": "- [x] tamam",
+    "beklenen": "tamam"
+  },
+  {
+    "ad": "parantezli numara kapali kumede degil, degismez",
+    "icerik": "1) parantezli",
+    "beklenen": "1) parantezli"
+  },
+  {
+    "ad": "BOM ile baslayan (yapistirilmis) not: BOM bosluk sayilir",
+    "icerik": "\ufeffUyku düzeni iyileşmiş",
+    "beklenen": "Uyku düzeni iyileşmiş"
+  },
+  {
+    "ad": "yalnizca BOM ve bosluk olan satir bos satirdir",
+    "icerik": "\ufeff\n \ufeff \nİkinci satır",
+    "beklenen": "İkinci satır"
+  },
+  {
+    "ad": "NEL (U+0085) iki tarafta da bosluk sayilir",
+    "icerik": "\u0085Plan: haftaya\u0085",
+    "beklenen": "Plan: haftaya"
   }
 ]

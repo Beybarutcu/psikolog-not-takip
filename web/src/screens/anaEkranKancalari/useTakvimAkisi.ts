@@ -21,25 +21,9 @@ import { randevuSaatiOlustur } from './yazmaSaati'
  * değişir, `useEffect(…, [yukle])` her renderda yeniden koşar ve HER RENDER
  * bir takvim isteği atılırdı — sunucuda silinemez `goruntuleme` satırları
  * (bkz. `store::audit` hacim politikası). Ref, bağımlılıkları ilkel
- * kimliklerle sınırlı tutmanın bedeli sıfır olan yoludur. `onYapiDegisti`
- * de aynı nedenle ref'te.
- *
- * # `onYapiDegisti`: yamanamayan yazmaların bildirimi
- *
- * `kaydet` (oluşturma ve düzenleme), `sil` ve `seriSil` başka önbelleklere
- * alan yaması olarak yayılamaz: satır ekler, çıkarır ya da başka danışana
- * taşır. Başarıdan sonra ETKİLENEN DANIŞANLAR bildirilir — düzenlemede hem
- * eski hem yeni danışan (taşıma iki dosyayı birden değiştirir); kimin
- * etkilendiği bilinmiyorsa `null`. Alıcı danışan dosyasının seans listesi
- * (`useDanisanSeanslari.yapiDegisti`, bkz. oradaki "Bayatlık").
+ * kimliklerle sınırlı tutmanın bedeli sıfır olan yoludur.
  */
-export function useTakvimAkisi({
-  onYetkisiz,
-  onYapiDegisti,
-}: {
-  onYetkisiz: () => void
-  onYapiDegisti: (etkilenenDanisanlar: readonly (number | null)[]) => void
-}) {
+export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
   const [haftaBasi, setHaftaBasi] = useState(() => haftaninBasi(new Date()))
   const [randevular, setRandevular] = useState<Randevu[]>([])
   const [hata, setHata] = useState<string | null>(null)
@@ -48,27 +32,6 @@ export function useTakvimAkisi({
 
   const yetkisizRef = useRef(onYetkisiz)
   yetkisizRef.current = onYetkisiz
-  const yapiRef = useRef(onYapiDegisti)
-  yapiRef.current = onYapiDegisti
-
-  // Aramadan gelen "şu seansa git" isteği. Hedef randevu başka bir haftada
-  // olabilir; hafta değiştirilir, randevu listesi yeniden yüklenir ve seçim
-  // ANCAK O LİSTEDEN yapılır — ekranda görünmeyen bir randevuya bağlı bir
-  // not editörü açmak, kaydı belirsiz bir kimliğe göndermek olurdu.
-  // `ref`: `yukle`'nin bağımlılıklarını (dolayısıyla kimliğini) değiştirmesin.
-  //
-  // Kimlikle birlikte HEDEF HAFTA da tutuluyor. Önceden yalnızca kimlik
-  // vardı ve `yukle` onu KOŞULSUZ tüketiyordu: "seansa git" sırasında
-  // uçuşta bir yükleme varsa (ilk mount, hafta oku, kayıt sonrası tazeleme)
-  // o ESKİ yükleme bekleyen kimliği tüketir, kendi haftasının listesinde
-  // hedefi bulamaz ve `null` seçerdi; ardından gelen doğru haftanın
-  // yüklemesi için tüketilecek bir şey kalmaz, gezinme SESSİZCE düşerdi.
-  // Kullanıcı arama sonucuna tıklar, hafta değişir, panel açılmaz.
-  //
-  // Hafta damgası bunu kapatıyor: bekleyen istek yalnızca HEDEF HAFTANIN
-  // yüklemesinde tüketilir. Damgayı `haftaBasi.getTime()` taşıyor —
-  // `haftaninBasi` saati sıfırladığı için hafta başına tek bir değer.
-  const bekleyenSeans = useRef<{ id: number; hafta: number } | null>(null)
 
   // # Uçuştaki yazma × liste yüklemesi (Görev 2 inceleme M7)
   //
@@ -123,22 +86,9 @@ export function useTakvimAkisi({
       // iptali bu randevuyu da kapsadı) ya da başka bir haftaya bakılıyordur.
       // Her iki durumda da ekranda görünmeyen bir randevuya bağlı bir not
       // editörü açık tutmak, kaydı belirsiz bir kimliğe göndermek olurdu.
-      //
-      // Aramadan bir seans istendiyse hedef O'dur: `bekleyenSeans`
-      // tüketilir ve seçim yeni listeden kurulur.
-      //
-      // AMA yalnızca HEDEF HAFTANIN yüklemesi tüketebilir. Bu closure
-      // uçuşta kalmış eski bir haftaya ait olabilir; koşulsuz tüketmek
-      // gezinmeyi sessizce düşürürdü (bkz. `bekleyenSeans`).
-      const bekleyen =
-        bekleyenSeans.current !== null && bekleyenSeans.current.hafta === haftaBasi.getTime()
-          ? bekleyenSeans.current.id
-          : null
-      if (bekleyen !== null) bekleyenSeans.current = null
       setSeciliRandevu((secili) => {
-        const hedefId = bekleyen ?? secili?.id ?? null
-        if (hedefId === null) return null
-        return gelen.find((r) => r.id === hedefId) ?? null
+        if (secili === null) return null
+        return gelen.find((r) => r.id === secili.id) ?? null
       })
       setHata(null)
     } catch (e) {
@@ -185,30 +135,6 @@ export function useTakvimAkisi({
     setSeciliBosSaat(null)
   }
 
-  /**
-   * Aramadan seçilen seansa gider.
-   *
-   * Randevu başka bir haftada olabilir; hafta değiştirilir ve seçim
-   * `yukle` içinde, SUNUCUDAN GELEN listeden yapılır (bkz.
-   * `bekleyenSeans`). `haftaninBasi` her çağrıda yeni bir `Date`
-   * döndürdüğü için hedef hafta zaten görünen haftaysa bile efekt yeniden
-   * çalışır ve bekleyen seçim tüketilir.
-   *
-   * Bekleyen istek HEDEF HAFTAYLA damgalanıyor: o sırada uçuşta olan
-   * (başka bir haftaya ait) bir yükleme onu tüketip gezinmeyi sessizce
-   * düşüremesin.
-   *
-   * Açık danışan kartının kapatılması ÇAĞIRANDA: kart state'i başka bir
-   * kancada ve bu kanca onu görmüyor.
-   */
-  function seansaGit(appointmentId: number, tarih: string) {
-    const [yil, ay, gun] = tarih.slice(0, 10).split('-').map(Number)
-    const hedefHafta = haftaninBasi(new Date(yil, (ay ?? 1) - 1, gun ?? 1))
-    bekleyenSeans.current = { id: appointmentId, hafta: hedefHafta.getTime() }
-    setSeciliBosSaat(null)
-    setHaftaBasi(hedefHafta)
-  }
-
   async function kaydet(kayit: {
     client_id: number
     baslangic: string
@@ -232,11 +158,8 @@ export function useTakvimAkisi({
           bitis: kayit.bitis,
           ucret: kayit.ucret,
         })
-        // Taşımada eski danışanın dosyası da değişti (randevu oradan kalkar).
-        yapiRef.current([seciliRandevu.client_id, kayit.client_id])
       } else {
         await takvimApi.randevuOlustur(kayit)
-        yapiRef.current([kayit.client_id])
       }
       setHata(null)
       panelKapat()
@@ -334,13 +257,8 @@ export function useTakvimAkisi({
   }
 
   async function sil(id: number) {
-    // Danışan İSTEKTEN ÖNCE okunuyor: başarıdan sonra kayıt listeden kalkıyor.
-    const danisan =
-      randevular.find((r) => r.id === id)?.client_id ??
-      (seciliRandevu?.id === id ? seciliRandevu.client_id : null)
     try {
       await takvimApi.randevuSil(id)
-      yapiRef.current([danisan])
       setHata(null)
       panelKapat()
       setRandevular((onceki) => onceki.filter((r) => r.id !== id))
@@ -357,8 +275,6 @@ export function useTakvimAkisi({
   async function seriSil(seriId: string, buTarihtenItibaren: string) {
     try {
       await takvimApi.seriSil(seriId, buTarihtenItibaren)
-      // Seri tek danışanın; panel serinin bir üyesiyle açık.
-      yapiRef.current([seciliRandevu?.seri_id === seriId ? seciliRandevu.client_id : null])
       setHata(null)
       panelKapat()
       await yukle()
@@ -380,7 +296,6 @@ export function useTakvimAkisi({
     randevuSec,
     bosSaatSec,
     panelKapat,
-    seansaGit,
     kaydet,
     durumDegis,
     odemeDegis,

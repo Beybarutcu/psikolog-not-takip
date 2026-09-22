@@ -595,10 +595,13 @@ export function DosyaBilgileri({
             ("Danışanın kendi verisine erişim talebi için (KVKK md. 11).")
             kaldırıldı; aynı bilgi düz, bilgilendirici bir cümleyle veriliyor.
             Özel notların rapora girmediği uyarısı KALDI — bu davranışsal bir
-            gerçek, ton meselesi değil. */}
+            gerçek, ton meselesi değil. Son inceleme I2: seans etiketlerinin
+            rapora GİRDİĞİ de aynı yerde söyleniyor (kullanıcının kararı:
+            etiketler rapora girer); terapist neyin danışana gittiğini tek
+            cümlede görür. */}
         <p className="mt-1 text-slate-600">
-          Danışan kendi kaydını isterse, parola korumalı bir PDF olarak verilir. Terapistin
-          özel notları rapora dahil edilmez.
+          Danışan kendi kaydını isterse, parola korumalı bir PDF olarak verilir. Seans
+          etiketleri rapora dahil edilir; terapistin özel notları dahil edilmez.
         </p>
         {!raporForm.acik && (
           <button

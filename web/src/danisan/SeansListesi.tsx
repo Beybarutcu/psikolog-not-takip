@@ -25,6 +25,15 @@ import { zamanMetni } from '../tarih'
  * çağrılabilir bir SÖZLEŞME taşıyor: sahibi olmayan bir çağıran "hiçbir
  * şey seçmedim" derse bileşen yine de sunucunun sıraladığı en yeniyi
  * (`seanslar[0]`) vurgular, boş bir listeye düşmez.
+ *
+ * # Satırda etiketler (Plan 6 Görev 6)
+ *
+ * Her satır seansın etiket adlarını (`DanisanSeansi.etiketler`) küçük,
+ * TIKLANAMAZ işaretler olarak gösterir: satırın tamamı zaten seansı seçen bir
+ * düğme ve düğme içinde düğme olamaz. Etiketi açmak/kaldırmak sağdaki
+ * `EtiketSatiri`'nda. Adlar React metni olarak basılır, HTML olarak değil.
+ * Süzme bu bileşende DEĞİL (`DanisanDosyasi` süzülmüş listeyi geçirir) —
+ * bileşen kendisine verilen listeyi olduğu gibi çizer.
  */
 type Props = {
   seanslar: DanisanSeansi[]
@@ -126,6 +135,18 @@ export function SeansListesi({ seanslar, secili, onSecim, yuklendi = true }: Pro
                   {s.odendi ? ' · Ödendi' : ''}
                 </span>
               </span>
+              {s.etiketler.length > 0 && (
+                <span className="flex flex-wrap gap-1" data-testid="satir-etiketleri">
+                  {s.etiketler.map((ad) => (
+                    <span
+                      key={ad}
+                      className="rounded-full bg-sky-50 px-1.5 text-[11px] text-sky-800"
+                    >
+                      {ad}
+                    </span>
+                  ))}
+                </span>
+              )}
             </button>
           </li>
         )

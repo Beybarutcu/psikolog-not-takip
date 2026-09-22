@@ -314,9 +314,24 @@ fn v4_uygula(tx: &Connection) -> Result<(), MigrateHatasi> {
 /// (`store::tags::etiket_kaldir`) AYRICA elle bir `DELETE FROM tags` YOKTUR
 /// -- tek temizlik yolu bu tetikleyicidir, hem tekil kaldırmayı hem cascade
 /// silmeyi TEK yerden kapsar.
+///
+/// # `tags.id` `AUTOINCREMENT` -- kimlik yeniden KULLANILMAZ (Görev 6
+/// inceleme IMPORTANT-1)
+///
+/// Tetikleyici kullanılmayan etiketi SİLDİĞİ için `tags` satırları olağan
+/// akışta silinir. `AUTOINCREMENT`'siz `INTEGER PRIMARY KEY`'de SQLite
+/// silinen EN BÜYÜK rowid'i bir sonraki eklemeye yeniden verir: "kriz"
+/// (id 2) son seanstan kaldırılıp silinince, ardından eklenen "öfke" de id
+/// 2'yi alırdı. İstemci o an "kriz etiketli seanslar" panelini açık
+/// tutuyorsa (panel kimlikle istek atar) aynı başlığın altında bütün
+/// danışanların "öfke" seanslarını gösterirdi. `AUTOINCREMENT` kimliği
+/// tablonun ömrü boyunca tekil kılar (`sqlite_sequence`). V5 henüz hiçbir
+/// üretim veritabanına ulaşmadığı için (dal birleşmedi) betik yerinde
+/// düzeltildi, ayrı bir göç adımı eklenmedi. Ölçen test:
+/// `tags.rs::silinen_etiketin_kimligi_yeni_etikete_verilmez`.
 const V5: &str = r#"
 CREATE TABLE tags (
-  id         INTEGER PRIMARY KEY,
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
   ad         TEXT NOT NULL CHECK (length(ad) BETWEEN 1 AND 40),
   -- Turkce kucuk harfe cevrilmis (harf isaretleri KORUNMUS) kimlik bicimi:
   -- "Kaygi"/"kaygi"/"KAYGI" ayni etikettir; "yas" (matem) ile "yaş" (harf

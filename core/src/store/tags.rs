@@ -730,6 +730,28 @@ mod testler {
         assert_eq!(kaldi, 0, "son kullanimda etiket sozlukten silinmeli (tetikleyici)");
     }
 
+    /// Görev 6 inceleme IMPORTANT-1: tetikleyici son kullanımı giden etiketi
+    /// siliyor; `AUTOINCREMENT` olmadan SQLite silinen en büyük kimliği bir
+    /// sonraki etikete yeniden verir ve istemcinin kimlikle tuttuğu şey
+    /// (açık etiketli seanslar paneli) başka bir etikete kayardı. Kurulum
+    /// tam o durumu üretir: silinen etiket tablonun EN BÜYÜK kimliği.
+    #[test]
+    fn silinen_etiketin_kimligi_yeni_etikete_verilmez() {
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let rid = randevu(&c, cid, "2026-09-07T10:00");
+        etiket_ekle(&c, rid, "aile", Cihaz::Masaustu).unwrap();
+        let kriz = etiket_ekle(&c, rid, "kriz", Cihaz::Masaustu).unwrap();
+        etiket_kaldir(&c, rid, kriz.id, Cihaz::Masaustu).unwrap();
+        let kalan: i64 = c
+            .query_row("SELECT COUNT(*) FROM tags WHERE id = ?1", [kriz.id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(kalan, 0, "on kosul: tetikleyici etiketi silmis olmali");
+
+        let ofke = etiket_ekle(&c, rid, "öfke", Cihaz::Masaustu).unwrap();
+        assert!(ofke.id > kriz.id, "yeni kimlik {} eski {}'den buyuk olmali", ofke.id, kriz.id);
+    }
+
     #[test]
     fn randevu_silinince_etiket_bagi_da_silinir() {
         let (_d, c) = kurulum();

@@ -50,7 +50,14 @@ const R203 = {
   baslangic: '2026-09-08T13:00', bitis: '2026-09-08T14:00',
   durum: 'planlandi', ucret: null as number | null, odendi: false, seri_id: null,
 }
-const TUMU = [R201, R202, R203]
+type SahteRandevu = Omit<typeof R201, 'client_id' | 'danisan_adi'> & {
+  client_id: number
+  danisan_adi: string
+}
+// Sunucunun randevu tablosu. Test başına SIFIRLANIR (`beforeEach`): takvimdeki
+// oluşturma/düzenleme/silme bunu GERÇEKTEN değiştirir ("Bayatlık" bloğu).
+let TUMU: SahteRandevu[]
+let sonrakiId: number
 
 const dosyalar: Record<number, unknown> = {
   1: {
@@ -88,7 +95,7 @@ function json(govde: unknown, status = 200): Response {
   return { ok: status < 400, status, json: async () => govde } as unknown as Response
 }
 
-function randevuAnlik(r: (typeof TUMU)[number]) {
+function randevuAnlik(r: SahteRandevu) {
   return { ...r, odendi: odemeler[r.id] ?? r.odendi, durum: durumlar[r.id] ?? r.durum }
 }
 
@@ -139,6 +146,30 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
     durumlar[Number(durum[1])] = (govde as { durum: string }).durum
     return json({})
   }
+  if (/^\/api\/randevular\/\d+\/silinecekler$/.test(yol)) return json({ not_adedi: 0 })
+  if (yol === '/api/randevular' && method === 'POST') {
+    const g = govde as { client_id: number; baslangic: string; bitis: string; ucret: number | null }
+    const yeni: SahteRandevu = {
+      id: sonrakiId++, client_id: g.client_id,
+      danisan_adi: danisanlar.find((d) => d.id === g.client_id)!.ad_soyad,
+      baslangic: g.baslangic, bitis: g.bitis, durum: 'planlandi', ucret: g.ucret,
+      odendi: false, seri_id: null,
+    }
+    TUMU.push(yeni)
+    return json([yeni])
+  }
+  if (durum && method === 'PUT') {
+    const g = govde as { client_id: number; baslangic: string; bitis: string; ucret: number | null }
+    const r = TUMU.find((x) => x.id === Number(durum[1]))!
+    Object.assign(r, {
+      ...g, danisan_adi: danisanlar.find((d) => d.id === g.client_id)!.ad_soyad,
+    })
+    return json(randevuAnlik(r))
+  }
+  if (durum && method === 'DELETE') {
+    TUMU = TUMU.filter((x) => x.id !== Number(durum[1]))
+    return json({})
+  }
   const aralik = /^\/api\/randevular\?baslangic=([^&]+)&bitis=([^&]+)/.exec(yol)
   if (aralik) {
     const bas = decodeURIComponent(aralik[1])
@@ -183,6 +214,8 @@ let kilitle: ReturnType<typeof vi.fn<() => void>>
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(BUGUN_SAATI)
+  TUMU = [R201, R202, R203].map((r) => ({ ...r }))
+  sonrakiId = 300
   notlar = {}
   odemeler = {}
   durumlar = {}
@@ -593,6 +626,90 @@ describe('C2 — durum/ödeme yazmaları iki ekranda TEK yoldan', () => {
       expect(screen.getByTestId('seans-listesi').getAttribute('data-yuklendi')).toBe('evet'),
     )
     expect(listeSatiri('14 Eylül 2026, 10:00').textContent).toContain('· Ödendi')
+  })
+})
+
+describe('Bayatlık — takvimin yamanamayan yazmaları dosyanın seans listesine yayılır', () => {
+  const listeGetleri = () =>
+    istekler.filter((i) => i.method === 'GET' && i.yol === '/api/danisanlar/1/seanslar').length
+  const listeMetni = () => screen.getByTestId('seans-listesi').textContent ?? ''
+  const listeYuklendi = () =>
+    waitFor(() =>
+      expect(screen.getByTestId('seans-listesi').getAttribute('data-yuklendi')).toBe('evet'),
+    )
+
+  // İncelemecinin testle ÜRETTİĞİ senaryo, birebir. Eskiden liste yalnızca
+  // 14 ve 7 Eylül'ü içeriyordu; gelinen seans listede olmadığı için seçim
+  // varsayılana (7 Eylül) düşüyor, terapist BAŞKA seansın editörünü görüyordu.
+  it('dosya açıkken takvimde yeni randevu -> panelden "dosyasını aç": O seans seçili, editör onun notunu gösterir', async () => {
+    notlar[201] = { sablon: 'serbest', icerik: 'GECMIS SEANS NOTU' }
+    ciz()
+    await danisanlarda()
+    // İşlem ÖNCESİ durum (6. biçim): varsayılan 7 Eylül seçili, 21 Eylül yok.
+    await waitFor(() => expect(editor().value).toBe('GECMIS SEANS NOTU'))
+    expect(listeMetni()).not.toContain('21 Eylül 2026')
+    const oncekiGetler = listeGetleri()
+
+    await takvimeDon()
+    await userEvent.click(await screen.findByRole('button', { name: 'Sonraki hafta' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
+    const bosSaat = (await screen.findAllByLabelText(/boş$/)).find(
+      (el) => el.getAttribute('aria-label') === '21 Eylül 10:00 boş',
+    )
+    await userEvent.click(bosSaat!)
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    await waitFor(() => expect(TUMU.some((r) => r.id === 300)).toBe(true))
+    notlar[300] = { sablon: 'serbest', icerik: 'BUGUNKU SEANS NOTU' }
+
+    // Görünmeyen sekmeden liste isteği YOK (silinemez görüntüleme kaydı).
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByLabelText('Seans notu')
+    expect(listeGetleri()).toBe(oncekiGetler)
+
+    await paneldenDosyayaGit()
+    await listeYuklendi()
+    const aktif = within(screen.getByTestId('seans-listesi')).getByRole('button', { current: true })
+    expect(aktif.textContent).toContain('21 Eylül 2026, 10:00')
+    await waitFor(() => expect(editor().value).toBe('BUGUNKU SEANS NOTU'))
+    // Görünür olunca TEK yeniden çekme.
+    expect(listeGetleri()).toBe(oncekiGetler + 1)
+  })
+
+  it('takvimde başka danışana taşınan randevu eski danışanın dosyasından kalkar', async () => {
+    ciz()
+    await danisanlarda()
+    // İşlem ÖNCESİ durum: 14 Eylül Ayşe'nin listesinde.
+    expect(listeMetni()).toContain('14 Eylül 2026, 10:00')
+
+    await takvimeDon()
+    await takvimde202Ac()
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '2')
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    await waitFor(() => expect(TUMU.find((r) => r.id === 202)!.client_id).toBe(2))
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await listeYuklendi()
+    // Pozitif bariyer: liste gerçekten geldi (boş "yükleniyor" hâli değil).
+    expect(listeMetni()).toContain('7 Eylül 2026, 10:00')
+    expect(listeMetni()).not.toContain('14 Eylül 2026')
+  })
+
+  it('takvimde silinen randevu açık dosyanın listesinden kalkar', async () => {
+    ciz()
+    await danisanlarda()
+    expect(listeMetni()).toContain('14 Eylül 2026, 10:00')
+
+    await takvimeDon()
+    await takvimde202Ac()
+    await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
+    await waitFor(() => expect(TUMU.some((r) => r.id === 202)).toBe(false))
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await listeYuklendi()
+    expect(listeMetni()).toContain('7 Eylül 2026, 10:00')
+    expect(listeMetni()).not.toContain('14 Eylül 2026')
   })
 })
 

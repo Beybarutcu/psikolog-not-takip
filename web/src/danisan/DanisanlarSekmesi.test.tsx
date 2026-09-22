@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, renderHook, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -138,6 +138,7 @@ function bosSeanslar(): ReturnType<typeof useDanisanSeanslari> {
     seciliSeansId: null,
     seansSec: () => {},
     yamala: () => {},
+    yapiDegisti: () => {},
   }
 }
 
@@ -171,6 +172,7 @@ function Kapsayici({
 }) {
   const seanslar = useDanisanSeanslari({
     clientId: seciliDanisanId,
+    gorunur: true,
     onYetkisiz,
     simdi: () => '2026-09-20T12:00',
   })
@@ -423,5 +425,111 @@ describe('DanisanlarSekmesi', () => {
 
     await waitFor(() => expect(onYetkisiz).toHaveBeenCalledTimes(1))
     expect(seansSayisi()).toBe(0)
+  })
+})
+
+/**
+ * Bayatlık (bkz. `useDanisanSeanslari` modül başlığı): yamanamayan yazmalar
+ * listeyi YENİDEN ÇEKTİRİR, ama yalnızca liste görünürken. Kanca doğrudan
+ * sürülüyor — `AnaEkran` düzeyindeki senaryolar `AnaEkran.yayilim.test.tsx`
+ * "Bayatlık" bloğunda; buradakiler o senaryolarda ayırt edilemeyen iki
+ * savunmayı AYRI AYRI ölçüyor.
+ */
+describe('useDanisanSeanslari — bayatlık', () => {
+  function kanca(gorunur: boolean) {
+    return renderHook(
+      (p: { gorunur: boolean }) =>
+        useDanisanSeanslari({
+          clientId: 1,
+          gorunur: p.gorunur,
+          onYetkisiz: () => {},
+          simdi: () => '2026-09-20T12:00',
+        }),
+      { initialProps: { gorunur } },
+    )
+  }
+
+  it('listede olmayan seans seçilince liste bir kez yeniden çekilir ve O seans seçili olur', async () => {
+    // İkinci savunma: bildirimi atlayan bir yazma yolu olsa bile takvimden
+    // gelinen seans yüklü listede yoksa varsayılana (BAŞKA seansa) düşülmez.
+    let sunucu = [seans({ appointment_id: 7, baslangic: '2026-09-07T10:00' })]
+    let cagri = 0
+    taklit.seanslar = () => {
+      cagri += 1
+      return Promise.resolve(sunucu)
+    }
+    const { result } = kanca(true)
+    await waitFor(() => expect(result.current.yuklendi).toBe(true))
+    expect(result.current.seciliSeansId).toBe(7)
+    expect(cagri).toBe(1)
+
+    sunucu = [seans({ appointment_id: 21, baslangic: '2026-09-21T10:00' }), ...sunucu]
+    act(() => result.current.seansSec(1, 21))
+    // Bayat liste ekrana gitmez: seçim varsayılana (7) DÜŞMEZ.
+    expect(result.current.seciliSeansId).toBeNull()
+    await waitFor(() => expect(result.current.seciliSeansId).toBe(21))
+    expect(cagri).toBe(2)
+
+    // Listede OLAN seans seçmek yeniden çekmez.
+    act(() => result.current.seansSec(1, 7))
+    expect(result.current.seciliSeansId).toBe(7)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(cagri).toBe(2)
+  })
+
+  it('görünmezken bayatlanan liste ÇEKİLMEZ; görünür olunca TEK istek, gidip gelince ikincisi yok', async () => {
+    let cagri = 0
+    taklit.seanslar = () => {
+      cagri += 1
+      return Promise.resolve([seans({ appointment_id: 7 })])
+    }
+    const { result, rerender } = kanca(true)
+    await waitFor(() => expect(result.current.yuklendi).toBe(true))
+    expect(cagri).toBe(1)
+
+    rerender({ gorunur: false })
+    act(() => result.current.yapiDegisti([1]))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(cagri).toBe(1)
+    expect(result.current.yuklendi).toBe(false)
+
+    rerender({ gorunur: true })
+    await waitFor(() => expect(result.current.yuklendi).toBe(true))
+    expect(cagri).toBe(2)
+    rerender({ gorunur: false })
+    rerender({ gorunur: true })
+    await new Promise((r) => setTimeout(r, 20))
+    expect(cagri).toBe(2)
+
+    // Başka danışanı etkileyen yazma açık listeye dokunmaz.
+    act(() => result.current.yapiDegisti([2]))
+    await new Promise((r) => setTimeout(r, 20))
+    expect(cagri).toBe(2)
+    expect(result.current.yuklendi).toBe(true)
+  })
+
+  it('yeniden çekmeler SIRA DIŞI dönerse eski yanıt yenisini ezmez', async () => {
+    const kapilar: ReturnType<typeof kapi<DanisanSeansi[]>>[] = []
+    taklit.seanslar = () => {
+      const k = kapi<DanisanSeansi[]>()
+      kapilar.push(k)
+      return k.promise
+    }
+    const { result } = kanca(true)
+    await act(async () => kapilar[0].coz([seans({ appointment_id: 7 })]))
+    await waitFor(() => expect(result.current.yuklendi).toBe(true))
+
+    // İkinci okuma (bayatlık) uçuşta; seçilen 21 bayat listede yok -> üçüncü.
+    act(() => result.current.yapiDegisti([1]))
+    await waitFor(() => expect(kapilar).toHaveLength(2))
+    act(() => result.current.seansSec(1, 21))
+    await waitFor(() => expect(kapilar).toHaveLength(3))
+
+    const yeni = [seans({ appointment_id: 21 }), seans({ appointment_id: 7 })]
+    await act(async () => kapilar[2].coz(yeni))
+    await act(async () => kapilar[1].coz([seans({ appointment_id: 7 })]))
+    await waitFor(() => expect(result.current.yuklendi).toBe(true))
+    expect(result.current.seanslar.map((s) => s.appointment_id)).toEqual([21, 7])
+    expect(result.current.seciliSeansId).toBe(21)
   })
 })

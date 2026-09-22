@@ -21,6 +21,8 @@ type SeansDurumu = {
   liste: DanisanSeansi[]
   hata: string | null
   varsayilan: number | null
+  /** Bu yanıtı getiren okumanın `saat` damgası (bkz. "Bayatlık"). */
+  damga: number
 }
 
 /** Elle (ya da takvimden gelirken) seçilen seans, HANGİ danışan için seçildiğiyle. */
@@ -81,6 +83,40 @@ type Secim = { clientId: number; seansId: number }
  * `simdi` enjekte edilebilir (varsayılanı yerel duvar saati, `yerelZaman`):
  * testler "şimdi"yi kendileri seçebilsin.
  *
+ * # Bayatlık: yamanamayan yazmalar listeyi YENİDEN ÇEKTİRİR
+ *
+ * Takvimdeki dört yazma listeye yamanamaz: randevu oluşturma (satır ekler),
+ * silme ve seri iptali (satır çıkarır), düzenleme (başka danışana taşır ya da
+ * tarihi değiştirir — sıralama ve varsayılan seçim değişir). Eskiden hiçbiri
+ * buraya ulaşmıyordu: takvimde oluşturulan randevunun panelinden "… dosyasını
+ * aç"a basılınca liste o seansı içermiyor, seçim varsayılana (BAŞKA bir
+ * seansa) düşüyor ve terapist başka seansın not editörünü görüyordu;
+ * taşınan/silinen randevu eski dosyada düzenlenebilir kalıyordu.
+ *
+ * Şimdi `useTakvimAkisi` bu yazmaların etkilediği danışanları bildiriyor
+ * (`yapiDegisti`); açık danışan aralarındaysa `saat.yapiDegisti()` bir damga
+ * verir ve damgası ondan KÜÇÜK olan liste bayattır. Damga aynı `yazmaSaati`
+ * sayacından: yazmadan önce başlayıp sonra dönen okuma da bayat sayılır ve
+ * bir kez daha çekilir (`uygula`nın kapattığı yarışla aynı sınıf).
+ *
+ * Bayat liste EKRANA GİTMEZ (yükleniyor gibi davranılır): gösterilseydi seçim
+ * varsayılana düşer, `useDosyaNotu` o YANLIŞ seansın notunu çekerdi — hem
+ * hatanın kendisi hem de silinemez bir görüntüleme kaydı.
+ *
+ * Yeniden çekme YALNIZCA `gorunur` iken: terapistin bakmadığı bir liste için
+ * silinemez görüntüleme kaydı düşmez (takvimde randevu oluşturmak dosya
+ * listesini çekmez; dosyaya dönüldüğünde tek istek gider). Sunucu seans
+ * listesini `LogHacmi::OturumBasi` ile birleştiriyor, yani pencere içindeki
+ * yeniden çekme yeni satır da üretmez — ama görünmeyen istek kuralı ondan
+ * bağımsız.
+ *
+ * İkinci savunma `seansSec`te: takvimden seçilerek gelinen seans yüklü
+ * listede YOKSA liste bayat sayılır — bildirimi atlayan gelecekteki bir yazma
+ * yolu da terapisti yanlış seansın editörüne düşürmesin.
+ *
+ * Ölçen testler: `AnaEkran.yayilim.test.tsx` > "Bayatlık" bloğu;
+ * `DanisanlarSekmesi.test.tsx` > "listede olmayan seans seçilince".
+ *
  * # 401: `onYetkisiz` — takvim seçimi de kapanır
  *
  * `useDanisanDosyasi` ile AYNI yön (bkz. `AnaEkran.tsx` modül başlığı "401
@@ -89,10 +125,13 @@ type Secim = { clientId: number; seansId: number }
  */
 export function useDanisanSeanslari({
   clientId,
+  gorunur,
   onYetkisiz,
   simdi = () => yerelZaman(new Date()),
 }: {
   clientId: number | null
+  /** Liste ekranda mı — bayat listenin yeniden çekilmesi buna bağlı. */
+  gorunur: boolean
   onYetkisiz: () => void
   simdi?: () => string
 }) {
@@ -102,6 +141,15 @@ export function useDanisanSeanslari({
   const [saat] = useState(() =>
     yazmaSaatiOlustur<DanisanSeansi, SeansYamasi>((s) => s.appointment_id),
   )
+  // Son yamanamayan yazmanın damgası; `durum.damga` bundan küçükse bayat.
+  const [yapiDamgasi, setYapiDamgasi] = useState(0)
+  // Hangi bayatlık için yeniden çekme İSTENDİ: sekme gidip gelince aynı
+  // bayatlık için ikinci bir istek atılmasın.
+  const istenenDamgaRef = useRef(0)
+  const clientIdRef = useRef(clientId)
+  clientIdRef.current = clientId
+  const durumRef = useRef(durum)
+  durumRef.current = durum
   const yetkisizRef = useRef(onYetkisiz)
   yetkisizRef.current = onYetkisiz
   const simdiRef = useRef(simdi)
@@ -117,7 +165,9 @@ export function useDanisanSeanslari({
     [],
   )
 
-  const bu = durum !== null && durum.id === clientId ? durum : null
+  const buDanisanin = durum !== null && durum.id === clientId ? durum : null
+  const bayat = buDanisanin !== null && buDanisanin.damga < yapiDamgasi
+  const bu = bayat ? null : buDanisanin
   const seanslar = bu?.liste ?? []
   // `yuklendi`: seçili danışan için yanıt (başarı YA DA hata) geldi mi. e2e
   // bunu bir SENKRONİZASYON BARİYERİ olarak okuyor (`data-yuklendi`, bkz.
@@ -133,6 +183,18 @@ export function useDanisanSeanslari({
   const varsayilanId = bu !== null && listede(bu.varsayilan) ? bu.varsayilan : null
   const seciliSeansId = manuelId ?? varsayilanId
 
+  /**
+   * Yanıtı yazar — AYNI danışan için daha yeni bir okumanın yanıtı zaten
+   * yazıldıysa yazmaz. Bayatlık yeniden çekmesi uçuştaki eski okumayla
+   * yarışabilir; eski yanıt sonra gelip yeniyi ezseydi liste yeniden bayat
+   * olur ve (o bayatlık için istek zaten atıldığından) öyle kalırdı.
+   */
+  function yanitiYaz(yeni: SeansDurumu) {
+    setDurum((onceki) =>
+      onceki !== null && onceki.id === yeni.id && onceki.damga > yeni.damga ? onceki : yeni,
+    )
+  }
+
   useEffect(() => {
     if (clientId === null) return
     const buId = clientId
@@ -142,11 +204,12 @@ export function useDanisanSeanslari({
       (gelen) => {
         if (unmountedRef.current) return
         const liste = saat.uygula(gelen, okumaDamgasi)
-        setDurum({
+        yanitiYaz({
           id: buId,
           liste,
           hata: null,
           varsayilan: varsayilanSeans(liste, simdiRef.current()),
+          damga: okumaDamgasi,
         })
       },
       (e: unknown) => {
@@ -158,15 +221,38 @@ export function useDanisanSeanslari({
         }
         // 404 dahil TÜM diğer hatalar: hata DURUMU, boş liste DEĞİL (bkz.
         // modül başlığı "Hata seans yok DEĞİLDİR").
-        setDurum({
+        yanitiYaz({
           id: buId,
           liste: [],
           hata: e instanceof Error ? e.message : 'Seanslar yüklenemedi.',
           varsayilan: null,
+          damga: okumaDamgasi,
         })
       },
     )
   }, [clientId, tazeleme, saat])
+
+  // Bayat ve görünür: TEK yeniden çekme (bkz. modül başlığı "Bayatlık").
+  useEffect(() => {
+    if (!bayat || !gorunur || istenenDamgaRef.current >= yapiDamgasi) return
+    istenenDamgaRef.current = yapiDamgasi
+    setTazeleme((n) => n + 1)
+  }, [bayat, gorunur, yapiDamgasi])
+
+  /**
+   * Açık danışanın listesini etkileyen yamanamayan bir yazma bitti (bkz.
+   * modül başlığı "Bayatlık"). `null`: etkilenen danışan bilinmiyor — liste
+   * yine bayat sayılır (yanlış seansın editörü, fazladan bir okumadan pahalı).
+   * Açık danışan etkilenmediyse hiçbir şey olmaz: onun listesi doğru.
+   */
+  const yapiDegisti = useCallback(
+    (etkilenenler: readonly (number | null)[]) => {
+      const acik = clientIdRef.current
+      if (acik === null || !etkilenenler.some((id) => id === null || id === acik)) return
+      setYapiDamgasi(saat.yapiDegisti())
+    },
+    [saat],
+  )
 
   /**
    * Listeyi YERELDE yamar ve yazmayı saate işler (bkz. modül başlığı).
@@ -193,15 +279,43 @@ export function useDanisanSeanslari({
     [saat],
   )
 
-  /** Seansı seçer. `seansId === null`: seçimi bırak, varsayılana dön. */
-  const seansSec = useCallback((hangiDanisan: number, seansId: number | null) => {
-    setSecim(seansId === null ? null : { clientId: hangiDanisan, seansId })
-  }, [])
+  /**
+   * Seansı seçer. `seansId === null`: seçimi bırak, varsayılana dön.
+   *
+   * O danışanın yüklü listesi bu seansı İÇERMİYORSA liste bayattır (bkz.
+   * modül başlığı "Bayatlık", ikinci savunma). Yükleme sürüyorsa, liste hata
+   * taşıyorsa ya da başka danışanınsa dokunulmaz: gelecek yanıt zaten taze.
+   */
+  const seansSec = useCallback(
+    (hangiDanisan: number, seansId: number | null) => {
+      setSecim(seansId === null ? null : { clientId: hangiDanisan, seansId })
+      const d = durumRef.current
+      if (
+        seansId !== null &&
+        d !== null &&
+        d.id === hangiDanisan &&
+        d.hata === null &&
+        !d.liste.some((s) => s.appointment_id === seansId)
+      ) {
+        setYapiDamgasi(saat.yapiDegisti())
+      }
+    },
+    [saat],
+  )
 
   function yenidenDene() {
     setDurum(null)
     setTazeleme((n) => n + 1)
   }
 
-  return { seanslar, yuklendi, hata, yenidenDene, seciliSeansId, seansSec, yamala }
+  return {
+    seanslar,
+    yuklendi,
+    hata,
+    yenidenDene,
+    seciliSeansId,
+    seansSec,
+    yamala,
+    yapiDegisti,
+  }
 }

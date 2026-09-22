@@ -29,7 +29,8 @@ export type RandevuYamasi = Partial<Pick<Randevu, 'durum' | 'odendi'>>
  *   1. takvim listesi (`useTakvimAkisi`)             — durum/ödeme
  *   2. açık danışan kartının randevuları (`useDanisanDosyasi`) — durum/ödeme
  *   3. danışan dosyasının seans listesi (`useDanisanSeanslari`) — durum/
- *      ödeme/not önizlemesi
+ *      ödeme/not önizlemesi; ayrıca `yapiDegisti` ile BAYATLIK (takvimde
+ *      oluşturulan/silinen/taşınan randevu listeye yamanamaz, yeniden çekilir)
  *   4. takvimdeki açık seansın resmî notu (`useSeansNotlari`) — not
  *   5. danışan dosyasındaki seçili seansın notu (`useDosyaNotu`) — not
  *
@@ -65,6 +66,17 @@ export function yazmaSaatiOlustur<T, Y extends Partial<T>>(kimlik: (kayit: T) =>
     yazmaBitti(id: number, yama: Y) {
       const onceki = bitenYazmalar.get(id)
       bitenYazmalar.set(id, { yama: { ...onceki?.yama, ...yama }, damga: ++saat })
+    },
+    /**
+     * YAMANAMAYAN bir yazma bitti: listeye satır ekleyen, satır çıkaran ya da
+     * satırı başka bir listeye taşıyan (randevu oluşturma, silme, seri iptali,
+     * başka danışana/saate taşıma). Sonucu yerelde kesin bilinmiyor, yanıtın
+     * üstüne alan olarak uygulanamaz; dönen damgadan KÜÇÜK damgalı her okuma
+     * bu yazmayı görmemiş olabilir ve BAYATTIR — çağıran onu yeniden çeker.
+     * `yazmaBitti` ile AYNI sayaç: iki tür yazma aynı okumaya göre sıralanır.
+     */
+    yapiDegisti(): number {
+      return ++saat
     },
     /** Okuma başladığında henüz bitmemiş yazmaları yanıtın üstüne uygular. */
     uygula<U extends T>(liste: U[], okumaDamgasi: number): U[] {

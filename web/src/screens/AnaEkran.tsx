@@ -100,6 +100,11 @@ import { yerelGun } from './anaEkranKancalari/yerelGun'
  * ilgili BÜTÜN önbelleklere aynı çağrıdan yayılıyor. İki ekranı ayrı ayrı
  * yamalamak değil: tek yol, çok alıcı. Her alıcı yamayı kendi `yazmaSaati`ne
  * de işliyor, ki o an uçuşta olan bir okuma yazmayı ezmesin.
+ *
+ * Takvimin YAMANAMAYAN dört yazması (oluşturma, düzenleme/taşıma, silme,
+ * seri iptali) dosyanın seans listesine yama olarak değil BAYATLIK olarak
+ * yayılıyor (`onYapiDegisti` → `seanslar.yapiDegisti`): liste görünür
+ * olduğunda bir kez yeniden çekilir.
  */
 export function AnaEkran({
   kilitle,
@@ -123,7 +128,13 @@ export function AnaEkran({
 
   // `dosya` aşağıda tanımlanıyor; closure çağrıldığı anda okunuyor, bu
   // yüzden kancaların bildirim sırası bir kısıt değil (bkz. modül başlığı).
-  const takvim = useTakvimAkisi({ onYetkisiz: () => dosya.kapat() })
+  const takvim = useTakvimAkisi({
+    onYetkisiz: () => dosya.kapat(),
+    // Oluşturma/düzenleme/silme/seri iptali dosyanın seans listesine
+    // yamanamaz; liste bayatlanır ve GÖRÜNÜNCE yeniden çekilir (bkz.
+    // `useDanisanSeanslari` "Bayatlık").
+    onYapiDegisti: (etkilenenler) => seanslar.yapiDegisti(etkilenenler),
+  })
   // IMPORTANT-3 düzeltmesi: saklama süresi dolanlar isteği yalnızca Ayarlar
   // sekmesi GÖRÜNÜRKEN atılır. `clients::saklama_suresi_dolanlar` her
   // çağrıda `LogHacmi::HerCagri` ile SİLİNEMEZ bir `goruntuleme` satırı
@@ -132,15 +143,18 @@ export function AnaEkran({
   // mount'ta atılan bir istek kalıcı, hiç görülmeyecek bir kayıt bırakırdı.
   const liste = useDanisanListesi({ ayarlarGorunur: sekme === 'ayarlar' })
   const dosya = useDanisanDosyasi({ onYetkisiz: () => takvim.oturumKapandi() })
-  const seanslar = useDanisanSeanslari({
-    clientId: dosya.seciliDanisanId,
-    onYetkisiz: () => takvim.oturumKapandi(),
-  })
   // Danışan dosyasının alt sekmesi (Seanslar/Bilgiler). BURADA, bileşende
   // değil (son inceleme M1): `DanisanDosyasi` sekme gidip gelince yeniden
   // monte oluyor ve kendi state'inde tutulan alt sekme her girişte
   // sıfırlanıyordu.
   const [dosyaAltSekme, setDosyaAltSekme] = useState<DosyaAltSekme>('seanslar')
+  const seanslar = useDanisanSeanslari({
+    clientId: dosya.seciliDanisanId,
+    // Bayat listenin yeniden çekilmesi yalnızca liste EKRANDAYKEN: görünmeyen
+    // bir sekmeden silinemez görüntüleme kaydı düşmesin.
+    gorunur: sekme === 'danisanlar' && dosyaAltSekme === 'seanslar',
+    onYetkisiz: () => takvim.oturumKapandi(),
+  })
   // Dosyada seçili seansın notu. İstek YALNIZCA görünürken (bkz.
   // `useDosyaNotu` başlığı): Danışanlar sekmesi + Seanslar alt sekmesi + kart
   // yüklenmiş (dosya bileşeni kart yüklenmeden hiç çizilmiyor; çizilmeyen bir
@@ -196,7 +210,9 @@ export function AnaEkran({
     // AYNI danışana yeniden tıklamak (seans kimliği olmadan) hiçbir şeyi
     // sıfırlamaz ve YENİDEN ÇEKMEZ: dosyanın verisi tek yazma yolundan taze
     // tutuluyor (bkz. modül başlığı), yeniden çekmek yalnızca silinemez bir
-    // görüntüleme satırı daha bırakırdı.
+    // görüntüleme satırı daha bırakırdı. İstisna: takvimden gelinen seans
+    // yüklü listede YOKSA `seansSec` listeyi bayat sayar ve görünür olunca
+    // yeniden çekilir (bkz. `useDanisanSeanslari` "Bayatlık").
     if (appointmentId !== undefined) {
       seanslar.seansSec(clientId, appointmentId)
       setDosyaAltSekme('seanslar')

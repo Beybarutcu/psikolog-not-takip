@@ -1496,3 +1496,31 @@ describe('Son inceleme I1 — randevu yazmaları açık etiketli seanslar paneli
     expect(sozlukGetleri()).toHaveLength(0)
   })
 })
+
+describe('Son inceleme I1 yan durumu — yeniden doğma yalnızca AYNI ad anahtarıyla', () => {
+  it('panel açıkken BAŞKA adlı yeni bir etiket eklenince panel ona taşınmaz', async () => {
+    const kriz = etiketBagla(203, 'kriz')
+    ciz()
+    const bolge = await krizPaneliAc()
+    await userEvent.type(screen.getByLabelText('Etiket ekle'), 'öfke{Enter}')
+    await waitFor(() => expect(kaldirDugmesi('öfke')).not.toBeNull())
+    const ofke = [...etiketDeposu].find(([, ad]) => ad === 'öfke')![0]
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+    expect(screen.getByRole('region', { name: 'kriz etiketli seanslar' })).toBe(bolge)
+    expect(istekler.filter((i) => i.yol === `/api/etiketler/${ofke}/seanslar`)).toHaveLength(0)
+    expect(istekler.filter((i) => i.yol === `/api/etiketler/${kriz}/seanslar`)).toHaveLength(1)
+  })
+
+  it('büyük/küçük harf farkı aynı ad sayılır: "Kriz" yeniden doğunca "kriz" paneli taşınır', async () => {
+    etiketBagla(203, 'kriz')
+    ciz()
+    const bolge = await krizPaneliAc()
+    await userEvent.click(screen.getByRole('button', { name: 'kriz etiketini kaldır' }))
+    await within(bolge).findByText('Bu etiketi taşıyan seans kalmadı.')
+    await userEvent.type(screen.getByLabelText('Etiket ekle'), 'KRİZ{Enter}')
+    const yeniBolge = await screen.findByRole('region', { name: 'KRİZ etiketli seanslar' })
+    await within(yeniBolge).findByRole('button', { name: 'Mehmet Demir — 8 Eylül 2026, 13:00' })
+  })
+})

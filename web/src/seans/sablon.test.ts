@@ -7,8 +7,12 @@ import { describe, expect, it } from 'vitest'
 import { SABLONLAR, SABLON_ADLARI, SABLON_KODLARI, sablonKodMu, sablonMetni } from './sablon'
 
 describe('sablon', () => {
-  it('sablon metni basliklari sirasiyla ve arada bosluk birakarak uretir', () => {
-    expect(sablonMetni('dap')).toBe('Veri:\n\nDeğerlendirme:\n\nPlan:\n\n')
+  it('sablon metni basliklari Markdown ikinci duzey baslik olarak, sirasiyla ve arada bosluk birakarak uretir', () => {
+    // Görev 2: başlıklar artık `## ` öneki taşıyor (Markdown ikinci düzey
+    // başlık — `markdownOgeleri`'nde `<h4>`). Yalnızca BİÇİM değişti; adlar
+    // (`Veri`, `Değerlendirme`, `Plan`) aynı kaldı — bkz. aşağıdaki
+    // `templates tohumundaki ad ve basliklar sablon.ts ile ayni` testi.
+    expect(sablonMetni('dap')).toBe('## Veri\n\n## Değerlendirme\n\n## Plan\n\n')
   })
 
   it('serbest sablon bos metin uretir', () => {

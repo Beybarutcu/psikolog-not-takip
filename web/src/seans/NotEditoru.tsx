@@ -1,5 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { YetkisizHata } from '../api'
+import { BicimCubugu } from '../not/BicimCubugu'
+import { bicimUygula, type BicimTuru } from '../not/bicim'
+import { NotGorunumu } from '../not/NotGorunumu'
 import { SABLON_ADLARI, SABLON_KODLARI, sablonMetni } from './sablon'
 import {
   taslakCanliMi,
@@ -134,6 +137,88 @@ function saatBicimle(tarih: Date): string {
   return `${iki(tarih.getHours())}:${iki(tarih.getMinutes())}`
 }
 
+/**
+ * Eski ve yeni metin arasındaki DEĞİŞEN aralığı hesaplar: ortak önek ve
+ * ortak sonek dışarıda bırakılır, geriye yalnızca farkın kapsadığı aralık
+ * (eski metindeki `bas`/`son`) ve yerine geçecek parça kalır.
+ *
+ * `bicimUygula` her zaman metnin TAMAMINI döndürür (bkz. `not/bicim.ts`),
+ * ama satır başı biçimlerde bile fiilen değişen kısım genelde küçük bir
+ * aralıktır (ör. bir satırın başındaki önek). Bu fonksiyon o aralığı
+ * bulur ki `execCommand('insertText', …)` yalnızca DEĞİŞEN kısmı, TEK bir
+ * geri alma adımı olarak değiştirsin — bkz. `yerelDuzenlemeDene`.
+ */
+function degisenAralikHesapla(eski: string, yeni: string): { bas: number; son: number; parca: string } {
+  const kisaUzunluk = Math.min(eski.length, yeni.length)
+  let ortakOnek = 0
+  while (ortakOnek < kisaUzunluk && eski[ortakOnek] === yeni[ortakOnek]) ortakOnek++
+
+  const kalanUzunluk = kisaUzunluk - ortakOnek
+  let ortakSonek = 0
+  while (
+    ortakSonek < kalanUzunluk &&
+    eski[eski.length - 1 - ortakSonek] === yeni[yeni.length - 1 - ortakSonek]
+  ) {
+    ortakSonek++
+  }
+
+  return {
+    bas: ortakOnek,
+    son: eski.length - ortakSonek,
+    parca: yeni.slice(ortakOnek, yeni.length - ortakSonek),
+  }
+}
+
+/**
+ * Biçimi tarayıcının KENDİ düzenleme komutuyla uygulamayı DENER —
+ * mümkünse `setIcerik` ile TÜM metni programatik olarak DEĞİŞTİRMEZ.
+ *
+ * # Neden: yerli geri alma (Ctrl+Z) yığını (inceleme bulgusu IMPORTANT-3)
+ *
+ * Uygulama macOS'ta Tauri (WebKit) içinde çalışıyor. `bicimUygulaVeYaz`
+ * önceki hâlinde `sonuc.metin`'i doğrudan React state'ine yazıyordu — bu,
+ * textarea'nın `value`'sunu PROGRAMATİK olarak değiştirir ve
+ * WebKit/Chromium'da tarayıcının YERLİ geri alma yığınını sıklıkla BOZAR:
+ * terapist bir paragrafı kalın yaptıktan sonra Ctrl+Z'ye basınca kalın
+ * geri alınmayabilir ya da yığın beklenmedik bir noktaya atlayabilir.
+ *
+ * `document.execCommand('insertText', false, parça)` bunun yerine SEÇİLİ
+ * ARALIĞI tarayıcının kendi düzenleme komutuyla değiştirir: bu, yerli geri
+ * alma yığınına TEK bir adım olarak girer VE gerçek bir `input` olayı
+ * üretir. React bu olayı dinliyor (textarea'nın `onChange`'i), dolayısıyla
+ * metin yine TEK giriş noktasından (`icerikDegistir` → `setIcerik`) geçer
+ * — otomatik kayıt, taslak saklama ve 401 koruması hiçbir şey bilmeden
+ * çalışmaya devam eder. Bu fonksiyon `icerikDegistir`'i KENDİSİ ÇAĞIRMAZ:
+ * başarılıysa `input` olayı bunu zaten tetikleyecektir; burada tekrar
+ * çağırmak state'i iki kez (ve muhtemelen çelişen değerlerle) güncellerdi.
+ *
+ * Yalnızca DEĞİŞEN aralık (`degisenAralikHesapla`) seçilip değiştirilir —
+ * satır başı biçimlerde değişen aralık birden fazla satırı kapsayabilir,
+ * `insertText` o aralığın TAMAMINA TEK ÇAĞRIDA uygulanmalı ki geri alma
+ * yığınında tek adım olsun.
+ *
+ * # jsdom'da yok
+ *
+ * `document.execCommand` jsdom'da TANIMLI DEĞİL — `typeof` kontrolü bunu
+ * yakalar ve çağıran taraf (`bicimUygulaVeYaz`) DÜŞÜŞ yoluna
+ * (`icerikDegistir(sonuc.metin)`) geçer. Testler bu fonksiyonu bir
+ * `vi.fn()` ile taklit ederek çağrı argümanlarını, ya da `false` döndürerek
+ * düşüş yolunu doğrular. Gerçek geri alma davranışı yalnızca gerçek bir
+ * tarayıcıda ELLE doğrulanabilir — bkz. görev raporu.
+ */
+function yerelDuzenlemeDene(alanEl: HTMLTextAreaElement, eskiMetin: string, yeniMetin: string): boolean {
+  if (typeof document.execCommand !== 'function') return false
+
+  const { bas, son, parca } = degisenAralikHesapla(eskiMetin, yeniMetin)
+  alanEl.focus()
+  alanEl.setSelectionRange(bas, son)
+  try {
+    return document.execCommand('insertText', false, parca) === true
+  } catch {
+    return false
+  }
+}
+
 type Durum =
   | { tur: 'temiz' }
   | { tur: 'bekliyor' }
@@ -160,6 +245,20 @@ export function NotEditoru({
   const [geriYuklendi, setGeriYuklendi] = useState(ilk.geriYuklendi)
   const [durum, setDurum] = useState<Durum>({ tur: 'temiz' })
   const [anahtar, setAnahtar] = useState(taslakAnahtari)
+
+  // Yaz/Önizle anahtarı (bkz. modül altındaki "Biçim çubuğu ve önizleme"
+  // bölümü). Bileşen state'i: görünüm seans/özel not editörüne özgü, iki ayrı
+  // panel açıkken (resmî + özel) birbirini etkilememeli.
+  const [gorunum, setGorunum] = useState<'yaz' | 'onizle'>('yaz')
+  const alanRef = useRef<HTMLTextAreaElement>(null)
+  // Programatik bir metin değişiminden (biçim çubuğu/kısayol) ya da Yaz'a
+  // dönüşten sonra textarea'ya uygulanacak seçim. `useLayoutEffect` DOM
+  // güncellendikten SONRA, ekran boyanmadan ÖNCE çalışır — `requestAnimationFrame`
+  // yerine bu tercih edildi çünkü rAF bir boyama karesi kaybettirebilir
+  // (kullanıcı seçimin bir an için kaybolduğunu görebilir).
+  const bekleyenSecimRef = useRef<{ bas: number; son: number } | null>(null)
+  // Önizle'ye geçmeden HEMEN önceki seçim: Yaz'a dönünce imleç konumu korunur.
+  const sonSecimRef = useRef<{ bas: number; son: number } | null>(null)
 
   // Sunucuda olduğu BİLİNEN son hâl — ekrandaki hâl değil. Kayıt kararı buna
   // göre verilir. Taslak geri yüklendiyse ekrandaki içerik bundan farklıdır
@@ -189,6 +288,11 @@ export function NotEditoru({
     setDurum({ tur: 'temiz' })
     sonKaydedilen.current = imza({ sablon: baslangicSablon, icerik: baslangicIcerik })
     ucustaki.current = null
+    // Başka bir seansa geçildi: Önizle kipinde kalınsaydı yeni seansın
+    // taslağı yanlış hâlde (eski notun görünümünde) açılırdı.
+    setGorunum('yaz')
+    bekleyenSecimRef.current = null
+    sonSecimRef.current = null
   }
 
   const gecerli = useRef(true)
@@ -326,6 +430,96 @@ export function NotEditoru({
       .finally(() => taslakUcusta(a, false))
   }, [])
 
+  // Metnin TEK giriş noktası. Textarea'nın kendi `onChange`'i VE biçim
+  // çubuğu/kısayollar AYNI bu fonksiyondan geçer — otomatik kayıt, taslak
+  // saklama ve 401'de taslağın geri yüklenmesi hangi yoldan geldiğini
+  // bilmeden, `icerik` state'i değiştiği için kendiliğinden çalışmaya devam
+  // eder. Ayrı bir kayıt yolu ya da `setIcerik`'i atlayan bir yazma YOK.
+  function icerikDegistir(yeni: string) {
+    setIcerik(yeni)
+  }
+
+  // Biçim çubuğu düğmesi ya da klavye kısayolu: textarea'nın O ANKİ
+  // seçimini `bicimUygula`'ya (saf fonksiyon, `not/bicim.ts`) verir, sonucu
+  // `icerikDegistir` ile yazar ve yeni seçimi bir sonraki boyamada
+  // uygulanmak üzere kuyruğa alır (bkz. aşağıdaki `useLayoutEffect`).
+  function bicimUygulaVeYaz(tur: BicimTuru) {
+    const alanEl = alanRef.current
+    const bas = alanEl?.selectionStart ?? icerik.length
+    const son = alanEl?.selectionEnd ?? icerik.length
+    const sonuc = bicimUygula({ metin: icerik, bas, son }, tur)
+    bekleyenSecimRef.current = { bas: sonuc.bas, son: sonuc.son }
+
+    if (alanEl !== null && yerelDuzenlemeDene(alanEl, icerik, sonuc.metin)) {
+      // Başarılı: `execCommand` gerçek bir `input` olayı üretti, textarea'nın
+      // kendi `onChange`'i bunu yakalayıp `icerikDegistir`'i ZATEN çağıracak
+      // — burada TEKRAR çağrılmaz (bkz. `yerelDuzenlemeDene` yorumu).
+      return
+    }
+
+    // Düşüş yolu: `execCommand` yok (jsdom, eski tarayıcı) ya da başarısız.
+    icerikDegistir(sonuc.metin)
+  }
+
+  // FİZİKSEL tuş koduyla (`event.code`) eşler, KARAKTERLE (`event.key`)
+  // DEĞİL — inceleme bulgusu CRITICAL-1/IMPORTANT-2: kullanıcı Türkçe Q
+  // klavye kullanıyor ve hedef platform macOS. Türkçe Q'da fiziksel I tuşu
+  // Shift'siz `key === 'ı'` (U+0131, noktasız i) üretir, `key === 'i'`
+  // hiçbir kombinasyonda eşleşmez — Ctrl+I hiç çalışmazdı. Aynı klavyede
+  // Shift+8 `key === '('` üretir (ABD düzeninde `'*'`), asla `'8'` değil —
+  // Ctrl+Shift+8 de hiçbir düzende çalışmazdı. `event.code` klavye
+  // düzeninden bağımsızdır: fiziksel B/I/1/2/3/8 tuşu hangi dilde
+  // yazılıyor olursa olsun sırasıyla `'KeyB'`/`'KeyI'`/`'Digit1'`/
+  // `'Digit2'`/`'Digit3'`/`'Digit8'` üretir.
+  //
+  // # Alt basılıyken kısayol YOK (son inceleme M1)
+  //
+  // Windows Chromium AltGr'yi `ctrlKey + altKey` olarak bildirir. Türkçe Q'da
+  // Markdown'un kendi karakterleri AltGr ile yazılıyor: AltGr+3 `#`, AltGr+1
+  // `>`, AltGr+2 `£`... Alt denetlenmeseydi AltGr+3 "Başlık 3"e dönüşür ve
+  // `#` hiç yazılamazdı. Alt'lı hiçbir kombinasyon kısayol değil; olay
+  // olduğu gibi tarayıcıya bırakılır (varsayılan davranış engellenmez).
+  function kisayolTusu(olay: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (olay.altKey) return
+    const komutTusu = olay.ctrlKey || olay.metaKey // macOS'ta Cmd, hedef platform macOS
+    if (!komutTusu) return
+    let tur: BicimTuru | null = null
+    if (!olay.shiftKey && olay.code === 'KeyB') tur = 'kalin'
+    else if (!olay.shiftKey && olay.code === 'KeyI') tur = 'italik'
+    else if (!olay.shiftKey && olay.code === 'Digit1') tur = 'baslik1'
+    else if (!olay.shiftKey && olay.code === 'Digit2') tur = 'baslik2'
+    else if (!olay.shiftKey && olay.code === 'Digit3') tur = 'baslik3'
+    else if (olay.shiftKey && olay.code === 'Digit8') tur = 'madde' // Ctrl+Shift+8
+    if (tur === null) return
+    olay.preventDefault()
+    bicimUygulaVeYaz(tur)
+  }
+
+  // DOM güncellendikten SONRA (boyamadan önce) bekleyen seçimi uygular: hem
+  // biçim çubuğu/kısayol sonrası hem Yaz'a dönüşte kullanılır.
+  useLayoutEffect(() => {
+    if (bekleyenSecimRef.current === null) return
+    const alanEl = alanRef.current
+    if (alanEl) {
+      const { bas, son } = bekleyenSecimRef.current
+      alanEl.setSelectionRange(bas, son)
+      alanEl.focus()
+    }
+    bekleyenSecimRef.current = null
+  }, [icerik, gorunum])
+
+  function onizlemeyeGec() {
+    const alanEl = alanRef.current
+    if (alanEl) sonSecimRef.current = { bas: alanEl.selectionStart, son: alanEl.selectionEnd }
+    setGorunum('onizle')
+  }
+
+  function yazmayaGec() {
+    // İmleç konumu korunur: Önizle'ye geçmeden önceki seçim geri uygulanır.
+    bekleyenSecimRef.current = sonSecimRef.current
+    setGorunum('yaz')
+  }
+
   function sablonDegis(yeni: string) {
     setSablon(yeni)
     // Dolu editörde şablon değişimi yazılmış metni EZMEZ. Bu, not kaybının
@@ -385,15 +579,60 @@ export function NotEditoru({
         </p>
       )}
 
-      <label className="text-sm" htmlFor={alanId}>
-        {etiket}
-      </label>
-      <textarea
-        id={alanId}
-        className="mt-1 min-h-64 flex-1 rounded border p-2 font-mono text-sm"
-        value={icerik}
-        onChange={(e) => setIcerik(e.target.value)}
-      />
+      {/* Yaz/Önizle anahtarı: iki durumlu, `aria-pressed` seçili olanı
+          söyler. Önizlemede YENİ bir kayıt tetiklenmez (`icerik` değişmiyor,
+          textarea o kipte DOM'da yok), ama Yaz'da son tuştan sonra kurulmuş
+          otomatik kayıt zamanlayıcısı İPTAL EDİLMEZ: Önizle'ye geçmek
+          `icerik`'i değiştirmediği için efekt yeniden koşmaz, bekleyen kayıt
+          süresi dolunca Önizle'deyken de gider. Bu istenen davranış — son
+          yazılanlar önizlemeye bakarken de sunucuya ulaşır; ayrı bir "kayıt
+          durdurma" mekanizması yok ve olmamalı. */}
+      <div className="mb-1 flex gap-1" role="group" aria-label="Görünüm">
+        <button
+          type="button"
+          aria-pressed={gorunum === 'yaz'}
+          className={
+            'rounded border px-2 py-0.5 text-xs ' +
+            (gorunum === 'yaz' ? 'border-slate-400 bg-slate-100 font-medium' : 'border-slate-300')
+          }
+          onClick={yazmayaGec}
+        >
+          Yaz
+        </button>
+        <button
+          type="button"
+          aria-pressed={gorunum === 'onizle'}
+          className={
+            'rounded border px-2 py-0.5 text-xs ' +
+            (gorunum === 'onizle' ? 'border-slate-400 bg-slate-100 font-medium' : 'border-slate-300')
+          }
+          onClick={onizlemeyeGec}
+        >
+          Önizle
+        </button>
+      </div>
+
+      {gorunum === 'yaz' ? (
+        <>
+          <label className="text-sm" htmlFor={alanId}>
+            {etiket}
+          </label>
+          <BicimCubugu onUygula={bicimUygulaVeYaz} />
+          <textarea
+            id={alanId}
+            ref={alanRef}
+            // `font-mono` kaldırıldı: yazarken de okunaklı olmalı (Görev 2).
+            className="mt-1 min-h-64 flex-1 rounded border p-2 text-sm"
+            value={icerik}
+            onChange={(e) => icerikDegistir(e.target.value)}
+            onKeyDown={kisayolTusu}
+          />
+        </>
+      ) : (
+        <div className="mt-1 min-h-64 flex-1 overflow-auto rounded border p-2">
+          <NotGorunumu kaynak={icerik} />
+        </div>
+      )}
 
       {/* `role="alert"` (assertive): kayıt hatası ekran okuyucuya DUYURULMAK
           zorunda. Önceki hâlinde hata kipi `durumMetni`'ni boş dizgeye

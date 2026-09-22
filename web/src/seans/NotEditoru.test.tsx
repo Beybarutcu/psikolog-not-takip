@@ -769,3 +769,227 @@ describe('NotEditoru — sunucuHali: editör monte olduktan sonra başka yoldan 
     expect(screen.getByText(/geri yüklendi/i)).toBeDefined()
   })
 })
+
+// Görev 2: biçim çubuğu, kısayollar, Yaz/Önizle anahtarı, şablon başlıkları.
+// Tek kısıt: bunların HİÇBİRİ metni ayrı bir yoldan yazmaz — hepsi mevcut
+// `onChange` yolundan (`icerikDegistir` → `setIcerik`) geçer; bu yüzden
+// aşağıdaki testler biçim uyguladıktan SONRA otomatik kaydın ve 401
+// korumasının hâlâ çalıştığını da ölçüyor (yalnızca metni değil).
+describe('NotEditoru — bicim cubugu, kisayollar ve onizleme (Görev 2)', () => {
+  it('secim varken Kalın düğmesine basınca metin isaretlenir VE otomatik kayıt bu metni gönderir', async () => {
+    const props = kur({ gecikmeMs: 20, baslangicIcerik: 'cok kaygili' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 3)
+    fireEvent.click(screen.getByRole('button', { name: 'Kalın (Ctrl+B)' }))
+    expect(alanEl.value).toBe('**cok** kaygili')
+    await ilerle(20)
+    expect(props.onKaydet).toHaveBeenCalledTimes(1)
+    expect(props.onKaydet).toHaveBeenCalledWith({ sablon: 'dap', icerik: '**cok** kaygili' })
+  })
+
+  it('Ctrl+B kalın uygular', () => {
+    kur({ baslangicIcerik: 'yorgun' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 6)
+    // `code` FİZİKSEL tuşu taşır (kısayol eşlemesi buna bakıyor), `key` de
+    // ABD düzeninde gerçek bir tarayıcının üreteceği karakterle birlikte
+    // veriliyor — test hem düzeni hem kodu yansıtsın diye.
+    fireEvent.keyDown(alanEl, { key: 'b', code: 'KeyB', ctrlKey: true })
+    expect(alanEl.value).toBe('**yorgun**')
+  })
+
+  it('Cmd+B (metaKey) de aynı sonucu verir — hedef platform macOS', () => {
+    kur({ baslangicIcerik: 'yorgun' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 6)
+    fireEvent.keyDown(alanEl, { key: 'b', code: 'KeyB', metaKey: true })
+    expect(alanEl.value).toBe('**yorgun**')
+  })
+
+  // -------------------------------------------------------------------
+  // İnceleme bulgusu CRITICAL-1: kullanıcı Türkçe Q klavye kullanıyor.
+  // Türkçe Q'da fiziksel I tuşu Shift'siz `key === 'ı'` (U+0131, noktasız
+  // i) üretir — eski `event.key === 'i'` eşlemesiyle Ctrl+I HİÇBİR
+  // kombinasyonda çalışmıyordu. `code` klavye düzeninden bağımsız olduğu
+  // için hem Türkçe hem ABD düzeninde aynı sonucu vermeli.
+  // -------------------------------------------------------------------
+  it('Ctrl+I Türkçe Q klavyede (fiziksel I tuşu, key "ı") italik uygular', () => {
+    kur({ baslangicIcerik: 'yorgun' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 6)
+    fireEvent.keyDown(alanEl, { key: 'ı', code: 'KeyI', ctrlKey: true })
+    expect(alanEl.value).toBe('*yorgun*')
+  })
+
+  it('Cmd+I Türkçe Q klavyede de italik uygular', () => {
+    kur({ baslangicIcerik: 'yorgun' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 6)
+    fireEvent.keyDown(alanEl, { key: 'ı', code: 'KeyI', metaKey: true })
+    expect(alanEl.value).toBe('*yorgun*')
+  })
+
+  it('Ctrl+I ABD düzeninde (key "i") de italik uygular', () => {
+    kur({ baslangicIcerik: 'yorgun' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 6)
+    fireEvent.keyDown(alanEl, { key: 'i', code: 'KeyI', ctrlKey: true })
+    expect(alanEl.value).toBe('*yorgun*')
+  })
+
+  // -------------------------------------------------------------------
+  // İnceleme bulgusu IMPORTANT-2: Shift+8 Türkçe Q'da `key === '('`, ABD
+  // düzeninde `key === '*'` üretir — `event.key === '8'` hiçbir düzende
+  // eşleşmiyordu, Ctrl+Shift+8 hiç çalışmıyordu.
+  // -------------------------------------------------------------------
+  it('Ctrl+Shift+8 Türkçe Q klavyede (key "(") madde listesi uygular', () => {
+    kur({ baslangicIcerik: 'bir\niki' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 7)
+    fireEvent.keyDown(alanEl, { key: '(', code: 'Digit8', ctrlKey: true, shiftKey: true })
+    expect(alanEl.value).toBe('- bir\n- iki')
+  })
+
+  it('Ctrl+Shift+8 ABD düzeninde (key "*") de madde listesi uygular', () => {
+    kur({ baslangicIcerik: 'bir\niki' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 7)
+    fireEvent.keyDown(alanEl, { key: '*', code: 'Digit8', ctrlKey: true, shiftKey: true })
+    expect(alanEl.value).toBe('- bir\n- iki')
+  })
+
+  // -------------------------------------------------------------------
+  // Son inceleme M1: Windows Chromium AltGr'yi `ctrlKey + altKey` olarak
+  // bildirir; Türkçe Q'da AltGr+3 `#`, AltGr+1 `>`. Bunlar kısayola
+  // dönüşürse Markdown'un kendi karakterleri yazılamaz.
+  // -------------------------------------------------------------------
+  it.each([
+    ['Digit3', '#'],
+    ['Digit1', '>'],
+    ['Digit2', '£'],
+    ['KeyB', 'b'],
+  ])('AltGr (ctrl+alt) + %s biçim UYGULAMAZ ve varsayılan davranışı engellemez', (code, key) => {
+    kur({ baslangicIcerik: 'yorgun' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 6)
+    // `fireEvent` olay İPTAL edildiyse (`preventDefault`) `false` döner.
+    const devam = fireEvent.keyDown(alanEl, { code, key, ctrlKey: true, altKey: true })
+    expect(devam).toBe(true)
+    expect(alanEl.value).toBe('yorgun')
+  })
+
+  it('Alt OLMADAN Ctrl+3 başlık uygular ve varsayılanı engeller (AltGr testinin karşılığı)', () => {
+    kur({ baslangicIcerik: 'yorgun' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 6)
+    const devam = fireEvent.keyDown(alanEl, { code: 'Digit3', key: '3', ctrlKey: true })
+    expect(devam).toBe(false)
+    expect(alanEl.value).toBe('### yorgun')
+  })
+
+  it("Önizle'ye geçince <strong> görünür, textarea görünmez; Yaz'a dönünce textarea aynı metinle geri gelir", () => {
+    kur({ baslangicIcerik: '**kalin** metin' })
+    expect(screen.getByLabelText('Seans notu')).toBeDefined()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Önizle' }))
+    expect(screen.queryByLabelText('Seans notu')).toBeNull()
+    expect(screen.getByText('kalin').tagName).toBe('STRONG')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Yaz' }))
+    expect(alan().value).toBe('**kalin** metin')
+  })
+
+  it('biçim uygulandıktan sonra 401 gelirse taslak KAYBOLMAZ, kilit açılınca geri yüklenir', async () => {
+    const kilitli = vi.fn().mockRejectedValue(new YetkisizHata('Oturum kilitli.'))
+    const { unmount } = render(
+      <NotEditoru
+        baslangicIcerik="onemli"
+        baslangicSablon="dap"
+        onKaydet={kilitli}
+        gecikmeMs={20}
+        taslakAnahtari="not-60"
+      />,
+    )
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 6)
+    fireEvent.click(screen.getByRole('button', { name: 'Kalın (Ctrl+B)' }))
+    expect(alanEl.value).toBe('**onemli**')
+
+    await ilerle(20)
+    expect(kilitli).toHaveBeenCalled()
+    unmount()
+    // Kilit açılması zaman alır: unmount tahliyesinin 401 reddi bu arada
+    // yerleşir (bkz. üstteki "401 sirasinda yazilmamis icerik" bloğu).
+    await ilerle(0)
+
+    const acik = vi.fn().mockResolvedValue(undefined)
+    render(
+      <NotEditoru
+        baslangicIcerik="onemli"
+        baslangicSablon="dap"
+        onKaydet={acik}
+        gecikmeMs={20}
+        taslakAnahtari="not-60"
+      />,
+    )
+    expect(alan().value).toBe('**onemli**')
+    expect(screen.getByText(/geri yüklendi/i)).toBeDefined()
+    await ilerle(20)
+    expect(acik).toHaveBeenCalledWith({ sablon: 'dap', icerik: '**onemli**' })
+  })
+
+  it('DAP şablonu seçilince boş editöre "## Veri" eklenir', () => {
+    kur({ baslangicSablon: 'serbest' })
+    sablonSec('dap')
+    expect(alan().value).toContain('## Veri')
+  })
+})
+
+// İnceleme bulgusu IMPORTANT-3: uygulama macOS'ta Tauri (WebKit) içinde
+// çalışıyor ve `setIcerik` ile textarea `value`'sunun TAMAMINI programatik
+// değiştirmek tarayıcının yerli geri alma (Ctrl+Z) yığınını sıklıkla
+// BOZAR. Düzeltme, mümkünse yalnızca DEĞİŞEN aralığı
+// `document.execCommand('insertText', …)` ile değiştiriyor — bu yerli geri
+// alma yığınına TEK bir adım olarak girer. `document.execCommand` jsdom'da
+// TANIMLI DEĞİL (üstteki bütün testler bu yüzden zaten DÜŞÜŞ yoluyla,
+// `setIcerik` ile geçiyor); gerçek geri alma davranışı bu yüzden yalnızca
+// gerçek bir tarayıcıda ELLE doğrulanabilir — bkz. görev raporu.
+describe('NotEditoru — execCommand ile yerli geri alma yığınının korunması (IMPORTANT-3)', () => {
+  afterEach(() => {
+    // jsdom'da hiç yoktu; testin taklidi sızmasın diye kaldırılıyor.
+    delete (document as unknown as { execCommand?: unknown }).execCommand
+  })
+
+  it('execCommand kullanılabiliyorsa, yalnızca DEĞİŞEN aralık `insertText` ile (doğru seçim + parça) değiştirilir', () => {
+    const cagrilar: { bas: number; son: number; parca: string }[] = []
+    document.execCommand = vi.fn((_komut: string, _ui?: boolean, deger?: string) => {
+      const alanEl = alan()
+      cagrilar.push({ bas: alanEl.selectionStart, son: alanEl.selectionEnd, parca: deger ?? '' })
+      return true
+    })
+
+    kur({ baslangicIcerik: 'cok kaygili' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 3)
+    fireEvent.click(screen.getByRole('button', { name: 'Kalın (Ctrl+B)' }))
+
+    // Yalnızca DEĞİŞEN aralık seçilip değiştirildi: "cok" -> "**cok**",
+    // geri kalan (" kaygili") hiç dokunulmadı — tek bir `insertText` çağrısı.
+    expect(cagrilar).toEqual([{ bas: 0, son: 3, parca: '**cok**' }])
+  })
+
+  it('execCommand `false` dönerse (ya da yoksa) düşüş yoluna geçilir: metin yine doğru üretilir ve otomatik kayıt çalışır', async () => {
+    document.execCommand = vi.fn().mockReturnValue(false)
+
+    const props = kur({ gecikmeMs: 20, baslangicIcerik: 'cok kaygili' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 3)
+    fireEvent.click(screen.getByRole('button', { name: 'Kalın (Ctrl+B)' }))
+
+    expect(document.execCommand).toHaveBeenCalled()
+    // Düşüş yolu (`setIcerik`) devreye girdi: metin yine doğru.
+    expect(alanEl.value).toBe('**cok** kaygili')
+    await ilerle(20)
+    expect(props.onKaydet).toHaveBeenCalledWith({ sablon: 'dap', icerik: '**cok** kaygili' })
+  })
+})

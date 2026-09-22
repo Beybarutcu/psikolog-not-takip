@@ -1,0 +1,37 @@
+[
+  {
+    "ad": "Turkce harfler z'den once, alfabedeki yerinde",
+    "girdi": ["zaman", "çocukluk", "öfke", "şiddet", "ılık", "ilaç", "uyku"],
+    "beklenen": ["çocukluk", "ılık", "ilaç", "öfke", "şiddet", "uyku", "zaman"]
+  },
+  {
+    "ad": "buyuk/kucuk harf duyarsiz, Turkce kural (I -> ı, İ -> i)",
+    "girdi": ["Zor", "kaygı", "Aile", "İlaç", "Irmak"],
+    "beklenen": ["Aile", "Irmak", "İlaç", "kaygı", "Zor"]
+  },
+  {
+    "ad": "g/ğ, s/ş, u/ü ciftleri",
+    "girdi": ["ümit", "uzak", "şans", "sabır", "ğ", "gurur", "hayal"],
+    "beklenen": ["gurur", "ğ", "hayal", "sabır", "şans", "uzak", "ümit"]
+  },
+  {
+    "ad": "onek once gelir; bosluk harften once",
+    "girdi": ["ailece", "aile içi", "aile"],
+    "beklenen": ["aile", "aile içi", "ailece"]
+  },
+  {
+    "ad": "rakam ve noktalama harflerden once",
+    "girdi": ["b", "2. seans", "a"],
+    "beklenen": ["2. seans", "a", "b"]
+  },
+  {
+    "ad": "sapkali harf temel harfle siralanir, esitlikte sapkasiz once",
+    "girdi": ["hala", "hâl", "hal"],
+    "beklenen": ["hal", "hâl", "hala"]
+  },
+  {
+    "ad": "q w x Latin yerlerinde",
+    "girdi": ["web", "vize", "yol", "xanax", "quiz", "pas", "rol"],
+    "beklenen": ["pas", "quiz", "rol", "vize", "web", "xanax", "yol"]
+  }
+]

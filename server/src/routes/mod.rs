@@ -26,6 +26,10 @@ pub mod restore;
 pub mod search;
 pub mod session;
 pub mod setup;
+/// Etiket uç noktaları (Plan 6 Görev 5) — kilit kapısının içinde; tüm
+/// hacim/denetim kararları çekirdekte (`store::tags`), gerekçe o modülün
+/// ve `routes::tags`'in başlığında.
+pub mod tags;
 /// Danışan veri raporu (Plan 4 Görev 6) — sunucuda üretilen AES-256 parola
 /// korumalı PDF; kapının içinde. Özel not bu modüle giremez (yapısal:
 /// `notlar_api.rs::rota_katmani_ozel_nota_yapisal_olarak_ayri_erisir`).

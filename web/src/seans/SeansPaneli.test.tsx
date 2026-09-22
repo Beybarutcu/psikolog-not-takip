@@ -477,9 +477,11 @@ describe('SeansPaneli — yeni notun şablon başlıkları', () => {
     // açılır.
     kur({ not: { ...resmiNot, icerik: '' } })
     const alan = screen.getByLabelText('Seans notu') as HTMLTextAreaElement
-    expect(alan.value).toContain('Veri:')
-    expect(alan.value).toContain('Değerlendirme:')
-    expect(alan.value).toContain('Plan:')
+    // Görev 2: başlıklar artık Markdown ikinci düzey başlık biçiminde
+    // (`sablon.ts::sablonMetni`) — adlar aynı, yalnızca biçim değişti.
+    expect(alan.value).toContain('## Veri')
+    expect(alan.value).toContain('## Değerlendirme')
+    expect(alan.value).toContain('## Plan')
   })
 
   it('basliklar acilista HICBIR kayit uretmez', async () => {
@@ -824,5 +826,35 @@ describe('SeansPaneli — kapatma', () => {
     // çok öğeye bölünmüş" hatasıyla patlar. `textContent` düğüm sınırlarını
     // GÖRMEZDEN GELİR, birleşik metni ölçer.
     expect(baslik.textContent).toMatch(/Ayşe Yılmaz — 7 Eylül 2026, 10:00/)
+  })
+})
+
+// Plan 6 Görev 6: etiket satırı resmî notun yanında; özel notlar etiket ALMAZ.
+describe('SeansPaneli — etiketler', () => {
+  const etiket = {
+    etiketler: [{ id: 1, ad: 'kaygı', kullanim: 1 }],
+    hata: null,
+    onYenidenDene: vi.fn(),
+    sozluk: null,
+    onSozlukIste: vi.fn(),
+    onEkle: vi.fn(async () => {}),
+    onKaldir: vi.fn(async () => {}),
+    onEtiketAc: vi.fn(),
+    yazmaHatasi: null,
+    onYazmaHatasiTemizle: vi.fn(),
+  }
+
+  it('etiket satırı "Seans Notu" sekmesinde görünür, "Özel Notlarım" sekmesinde YOK', async () => {
+    kur({ etiket })
+    const resmi = screen.getByRole('tabpanel')
+    expect(within(resmi).getByRole('button', { name: 'kaygı etiketini kaldır' })).toBeDefined()
+    expect(within(resmi).getByLabelText('Etiket ekle')).toBeDefined()
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+    // BARİYER: özel sekmenin paneli gerçekten açık (kalıcı uyarı şeridi).
+    const ozel = screen.getByRole('tabpanel')
+    expect(ozel.textContent).toContain('dışa aktarımlara ve danışan raporuna dahil edilmez')
+    expect(screen.queryByRole('button', { name: 'kaygı etiketini kaldır' })).toBeNull()
+    expect(screen.queryByLabelText('Etiket ekle')).toBeNull()
   })
 })

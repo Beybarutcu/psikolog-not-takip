@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { SeansNotu } from '../api'
+import { NotGorunumu } from '../not/NotGorunumu'
 import { zamanMetni } from '../tarih'
 import { SABLON_ADLARI, sablonKodMu } from './sablon'
 
@@ -128,12 +129,12 @@ export function GecmisNotlar({ notlar }: Props) {
                   </span>
                 </button>
                 {acik && (
-                  <p
-                    id={govdeId}
-                    className="whitespace-pre-wrap border-t border-slate-200 px-2 py-1 text-sm"
-                  >
-                    {not.icerik}
-                  </p>
+                  // `NotGorunumu` blok elemanları (h3/h4/h5/p/ul/ol/blockquote)
+                  // üretir — eskiden burada bir `<p>` vardı ve içine blok
+                  // eleman koymak geçersiz HTML olurdu, `div`'e çevrildi.
+                  <div id={govdeId} className="border-t border-slate-200 px-2 py-1">
+                    <NotGorunumu kaynak={not.icerik} />
+                  </div>
                 )}
               </li>
             )

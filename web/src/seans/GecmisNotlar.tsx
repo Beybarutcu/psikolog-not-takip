@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { SeansNotu } from '../api'
+import { zamanMetni } from '../tarih'
 import { SABLON_ADLARI, sablonKodMu } from './sablon'
 
 /**
@@ -49,32 +50,21 @@ type Props = {
   notlar: SeansNotu[]
 }
 
-function tarihBicimle(iso: string): string {
+/**
+ * Son DÜZENLEME zamanı (`guncelleme_zamani`) -> `"05.09.2026"`.
+ *
+ * Bu bir SEANS zamanı DEĞİL: sunucunun yazdığı UTC damgası
+ * (`...T12:00:00Z`), bu yüzden burada `Date` ile YEREL güne çevrilmesi
+ * meşru. Adı bilerek `danisan/bicim.ts::tarihBicimle`'den farklı: o,
+ * dilimsiz bir takvim gününü (`YYYY-AA-GG`) `Date`'e HİÇ çevirmeden
+ * biçimliyor; aynı adı taşısalardı biri diğerinin yerine kullanılıp UTC
+ * kaymasını geri getirebilirdi.
+ */
+function duzenlemeGunuBicimle(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
   const iki = (n: number) => String(n).padStart(2, '0')
   return `${iki(d.getDate())}.${iki(d.getMonth() + 1)}.${d.getFullYear()}`
-}
-
-/**
- * `"2026-09-05T10:00"` -> `"05.09.2026 10:00"`.
- *
- * `seans_zamani` sunucuda yerel naive biçimde duruyor; `Date`'e
- * ÇEVİRMİYORUZ — dizgeyi parçalamak burada tek doğru yol (aynı gerekçe
- * `takvim/hafta.ts` ve `SeansPaneli::seansZamani`'nda). `Date` kullanmak,
- * saat farkına göre tarihi bir gün kaydırabilirdi ve kaydırılan şey
- * listenin SIRALAMA ANAHTARI olurdu.
- *
- * Biçimi tutmayan bir değer olduğu gibi basılır: uydurulmuş bir tarih
- * göstermek, ham dizgeyi göstermekten kötüdür.
- */
-function seansTarihiBicimle(zaman: string): string {
-  const [tarih, saat] = zaman.split('T')
-  const [yil, ay, gun] = (tarih ?? '').split('-')
-  if (yil === undefined || ay === undefined || gun === undefined || saat === undefined) {
-    return zaman
-  }
-  return `${gun}.${ay}.${yil} ${saat.slice(0, 5)}`
 }
 
 function sablonAdi(kod: string): string {
@@ -125,12 +115,16 @@ export function GecmisNotlar({ notlar }: Props) {
                   </span>
                   {/* Seans tarihi ÖNCE: listenin sıralandığı alan bu ve
                       kullanıcının sorduğu soru "hangisi son seanstı". */}
-                  <span className="font-medium">
-                    Seans: {seansTarihiBicimle(not.seans_zamani)}
-                  </span>
+                  {/* Seans ZAMANI uygulamanın her yerinde TEK biçimde
+                      (`tarih.ts::zamanMetni`, son inceleme M4): eskiden
+                      burada "05.09.2026 10:00", danışan dosyasında "5 Eylül
+                      2026, 10:00" yazıyordu — aynı seans iki ekranda iki
+                      farklı görünüyordu. `zamanMetni` dizgiyi `Date`'e
+                      çevirmiyor: sıralama anahtarı saat dilimiyle kaymaz. */}
+                  <span className="font-medium">Seans: {zamanMetni(not.seans_zamani)}</span>
                   <span className="text-slate-600">{sablonAdi(not.sablon)}</span>
                   <span className="text-slate-500">
-                    Son düzenleme: {tarihBicimle(not.guncelleme_zamani)}
+                    Son düzenleme: {duzenlemeGunuBicimle(not.guncelleme_zamani)}
                   </span>
                 </button>
                 {acik && (

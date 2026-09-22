@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { AramaSonucu, AramaYaniti } from '../api'
+import { tarihBicimle } from '../danisan/bicim'
+import { zamanMetni } from '../tarih'
 
 /**
  * Hızlı arama (Ctrl+K / Cmd+K): danışan adı ve **resmî** seans notu içeriği.
@@ -79,13 +81,16 @@ function odaklanabilirler(kok: HTMLElement): HTMLElement[] {
  */
 const ASGARI_SORGU = 2
 
-/** `2026-09-07T10:00` -> `07.09.2026 10:00`. Parçalar olduğu gibi doğru;
- * `Date`'e çevrilmiyor (bkz. `hafta.ts::zamandanDate`). */
+/**
+ * Seans zamanı: `2026-09-07T10:00` -> `7 Eylül 2026, 10:00` — uygulamanın her
+ * yerindeki TEK seans zamanı biçimi (`tarih.ts::zamanMetni`, son inceleme
+ * M4). Saatsiz bir değer (`YYYY-AA-GG`) `zamanMetni`nin kuralıyla olduğu gibi
+ * kalmasın diye gün biçimine düşer. `Date`'e çevrilmiyor (bkz.
+ * `hafta.ts::zamandanDate`).
+ */
 function zamanBicimle(zaman: string): string {
-  const [tarih, saat] = zaman.split('T')
-  const [yil, ay, gun] = (tarih ?? '').split('-')
-  if (!yil || !ay || !gun) return zaman
-  return saat ? `${gun}.${ay}.${yil} ${saat.slice(0, 5)}` : `${gun}.${ay}.${yil}`
+  if (zaman.includes('T')) return zamanMetni(zaman)
+  return tarihBicimle(zaman)
 }
 
 export function HizliArama({ ara, onDanisanSec, onSeansSec, gecikmeMs = GECIKME_MS }: Props) {

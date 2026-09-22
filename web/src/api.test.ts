@@ -310,6 +310,43 @@ describe('danisanApi — danışan dosyası ve ekler', () => {
     expect(JSON.stringify(cagrilar[0].govde)).toContain('null')
   })
 
+  it('seanslar danışanın seans listesine gider, ucret_kurus NULL/0 ayrımını korur', async () => {
+    // `istek()` JSON'u OLDUĞU GİBİ döndürür (dönüşüm yok); bu test o
+    // varsayımı ölçer. Sunucudaki `store::danisan_seanslari` NULL'ı 0'a
+    // sadeleştirmiyordu (bkz. o modülün başlığı) -- istemci tarafında da bir
+    // `?? 0` ya da benzeri bir sadeleştirme eklenirse bu test KIRILIR
+    // (mutasyon turunda ölçüldü, bkz. görev raporu).
+    sunucu(() => ({
+      ok: true,
+      govde: [
+        {
+          appointment_id: 1,
+          baslangic: '2026-09-14T10:00',
+          durum: 'geldi',
+          ucret_kurus: null,
+          odendi: false,
+          not_ilk_satiri: null,
+        },
+        {
+          appointment_id: 2,
+          baslangic: '2026-09-07T10:00',
+          durum: 'geldi',
+          ucret_kurus: 0,
+          odendi: true,
+          not_ilk_satiri: '',
+        },
+      ],
+    }))
+    const liste = await danisanApi.seanslar(12)
+    expect(cagrilar).toEqual([{ yol: '/api/danisanlar/12/seanslar', method: 'GET', govde: null }])
+    // NULL ("ücret girilmemiş") ile 0 ("ücretsiz seans") FARKLI değerler.
+    expect(liste[0].ucret_kurus).toBeNull()
+    expect(liste[1].ucret_kurus).toBe(0)
+    // `null` ("not yazılmamış") ile `''` ("not açılmış ama boş") de farklı.
+    expect(liste[0].not_ilk_satiri).toBeNull()
+    expect(liste[1].not_ilk_satiri).toBe('')
+  })
+
   it('ekleriGetir danışanın ek listesine gider', async () => {
     await danisanApi.ekleriGetir(12)
     expect(cagrilar).toEqual([{ yol: '/api/danisanlar/12/ekler', method: 'GET', govde: null }])
@@ -607,6 +644,11 @@ describe('danışan dosyası uç noktalarında 401', () => {
       'dosyaGetir',
       'rizaKaydet',
       'ekleriGetir',
+      // Plan 5 Gorev 5: danisanin TUM seanslari (notu olsun olmasin) --
+      // Seanslar alt sekmesinin (Gorev 6) veri kaynagi. Ozel nota giden bir
+      // yol acmiyor: sunucudaki `store::danisan_seanslari` yalnizca
+      // `progress_notes` (resmi not) tablosuna bakiyor.
+      'seanslar',
       // Plan 4 Gorev 6: sunucuda uretilen sifreli rapor. Donen sey bir
       // DOSYA indirmesidir (blob), JSON veri degil; ozel nota giden bir yol
       // acmaz -- sunucu raporu yalnizca resmi notlardan kurar.

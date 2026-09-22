@@ -3,23 +3,41 @@ import { ekIndir, ekIndirmeYolu, type EkBilgisi } from '../api'
 import { tarihBicimle } from './bicim'
 
 /**
- * Aydınlatma metni / açık rıza durumu ve imzalı onam belgesi.
+ * Onam: açık rıza durumu ve imzalı onam belgesi.
  *
- * # Neden sarı bir uyarı şeridi
+ * # Ton neden değişti (Plan 5 Görev 7)
  *
- * Rızasız işlenen bir danışan dosyası, bu uygulamanın üretebileceği en somut
- * KVKK uyumsuzluğudur — şifreleme, denetim kaydı ve saklama süresi hepsi
- * "veriyi hukuka uygun işliyorum" varsayımının üstüne kurulu. Rıza yoksa o
- * varsayım yok demektir. Bu yüzden durum bir alan değeri gibi sessizce
- * gösterilmez; kartın içinde ayrışan, `role="alert"` taşıyan bir şerittir.
+ * Rıza zaten terapiye başlarken kâğıt üzerinde imzalanıyor; bu bölümün işi
+ * o süreci DENETLEMEK değil, imzalı kâğıdı (tarih + dosya) SAKLAYABİLMEK.
+ * Eskiden rıza kaydı yoksa burada "Rıza alınmadan işlenen bir danışan
+ * dosyası, bu uygulamadaki en somut KVKK uyumsuzluğudur." diyen suçlayıcı
+ * bir cümle duruyordu — sanki uygulamanın amacı rızayı denetlemekmiş gibi.
+ * O cümle kaldırıldı, yerine ne yapılacağını söyleyen bilgilendirici bir
+ * cümle geldi ("İmzalı onam formunu buraya ekleyebilirsiniz.").
  *
- * # Uyarı düzeltilebilir olmalı
+ * # Alarm DEĞİL, bilgi (Görev 7 düzeltmesi)
  *
- * Yalnızca uyaran, ama rızayı kaydetmenin yolunu vermeyen bir şerit birkaç
- * gün sonra görülmez olur ("her dosyada var, geçerim"). Bu yüzden şeridin
- * hemen altında tarih ve imzalı belge seçimi duruyor: sunucudaki
- * `PATCH /api/danisanlar/{id}` (Görev 7'de yazıldı) buradan başka hiçbir
- * yerden çağrılmıyor.
+ * İlk sürümde metin değişmişti ama `role="alert"` ve amber renk kalmıştı —
+ * incelemede bu, ürün amacıyla çelişen bir yarı-adım olarak işaretlendi:
+ * terapist kendi danışan dosyasında, imzalanmış bir onam için sarı bir
+ * alarm kutusu ve ekran okuyucuda KESİNTİLİ (assertive) bir duyuru
+ * görmeye devam ediyordu — tam olarak kullanıcının şikâyet ettiği "laf
+ * gibi duran KVKK uyarısı" hissi. Bölüm zaten `DanisanDosyasi`nin
+ * "Bilgiler" alt sekmesinin ARKASINDA (Görev 6, kullanıcı bilerek oraya
+ * gidiyor) — bir de kesintili duyuru yapmasına gerek yok. Bu yüzden
+ * `role="alert"` ve amber KALDIRILDI: eksik onam artık düz bir bilgi
+ * cümlesi, `rizaVar` dalındaki "Açık rıza alındı: …" ile AYNI nötr
+ * biçimde basılıyor (bkz. `AyarlarSekmesi.tsx`'teki Yedekleme bölümünün
+ * "artık sarı kutu DEĞİL" kararıyla aynı emsal). Bilgi kaybolmuyor —
+ * yalnızca göze çarpma biçimi "alarm"dan "metin"e indi.
+ *
+ * # Bilgi düzeltilebilir olmalı
+ *
+ * Yalnızca durumu gösteren, ama rızayı kaydetmenin yolunu vermeyen bir
+ * bölüm birkaç gün sonra görülmez olur ("her dosyada var, geçerim"). Bu
+ * yüzden hemen altında tarih ve imzalı belge seçimi duruyor: sunucudaki
+ * `PATCH /api/danisanlar/{id}` (Plan 4 Görev 7'de yazıldı) buradan başka
+ * hiçbir yerden çağrılmıyor.
  *
  * # Yalnızca `onam` türündeki ekler bağlanabilir
  *
@@ -72,20 +90,19 @@ export function RizaBolumu({ rizaTarihi, rizaDosyaId, ekler, onKaydet }: Props) 
   }
 
   return (
-    <section aria-label="Aydınlatma ve açık rıza" className="rounded border border-slate-200 p-3">
-      <h3 className="text-sm font-semibold">Aydınlatma ve açık rıza</h3>
+    <section aria-label="Onam" className="rounded border border-slate-200 p-3">
+      <h3 className="text-sm font-semibold">Onam</h3>
 
       {rizaVar ? (
         <p className="mt-1 text-sm text-slate-700">
           Açık rıza alındı: {tarihBicimle((rizaTarihi ?? '').trim())}
         </p>
       ) : (
-        <p
-          role="alert"
-          className="mt-1 rounded border border-amber-400 bg-amber-50 p-2 text-sm text-amber-900"
-        >
-          Bu danışan için aydınlatma metni / açık rıza kaydı yok. Rıza alınmadan işlenen bir
-          danışan dosyası, bu uygulamadaki en somut KVKK uyumsuzluğudur.
+        // ALARM DEĞİL, BİLGİ (Görev 7 düzeltmesi): `role="alert"` yok, amber
+        // yok — `rizaVar` dalındaki "Açık rıza alındı: …" ile AYNI nötr
+        // biçim. Gerekçe modül başlığında.
+        <p className="mt-1 text-sm text-slate-700">
+          Bu danışan için onam kaydı yok. İmzalı onam formunu buraya ekleyebilirsiniz.
         </p>
       )}
 

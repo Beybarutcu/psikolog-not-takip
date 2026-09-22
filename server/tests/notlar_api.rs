@@ -141,7 +141,8 @@ async fn ek_yukle(s: &AppState, cid: i64, ad_kodlu: &str, icerik: &[u8]) -> i64 
 
 /// Görev 7'nin eklediği on dört uç nokta (+ dal incelemesi C1'in eklediği
 /// `rapor-kaydi`, toplam **on beş**; Plan 4 Görev 6'da o uç kalktı, yerine
-/// `veri-raporu` geldi) kilitliyken `401` döner ve gövdesinde hiçbir veri
+/// `veri-raporu` geldi; Plan 5 Görev 4'te `danisanlar/{id}/seanslar` eklendi,
+/// toplam **on altı**) kilitliyken `401` döner ve gövdesinde hiçbir veri
 /// taşımaz.
 ///
 /// Tablo halinde yazılmıştır ki yeni bir uç nokta eklendiğinde satır
@@ -183,6 +184,10 @@ async fn kilitliyken_gorev7_uclarinin_hepsi_401_doner_ve_veri_sizdirmaz() {
         ("GET", format!("/api/danisanlar/{cid}"), None),
         ("PATCH", format!("/api/danisanlar/{cid}"), Some(json!({"risk_notu":"x"}))),
         ("GET", format!("/api/danisanlar/{cid}/notlar"), None),
+        // Plan 5 Gorev 4: notu olsun olmasin TUM seanslar -- kilitliyken bu
+        // liste de gorunmemeli; `not_ilk_satiri` RESMI_GIZLI_ICERIK'i
+        // tasidigi icin asagidaki gizli-tarama dongusu bunu da kapsar.
+        ("GET", format!("/api/danisanlar/{cid}/seanslar"), None),
         ("GET", format!("/api/danisanlar/{cid}/ekler"), None),
         // POST /ekler ham govdeli oldugu icin ayri cagrilir (asagida).
         ("GET", format!("/api/ekler/{ek_id}"), None),
@@ -199,7 +204,7 @@ async fn kilitliyken_gorev7_uclarinin_hepsi_401_doner_ve_veri_sizdirmaz() {
             Some(json!({"parola":"danisan-parolasi-1","bugun":"2026-09-16"})),
         ),
     ];
-    assert_eq!(uclar.len(), 14, "POST /ekler ile birlikte on bes uc kapsanmali");
+    assert_eq!(uclar.len(), 15, "POST /ekler ile birlikte on alti uc kapsanmali");
 
     for (metot, yol, govde) in &uclar {
         let (kod, json) = cagir(&s, metot, yol, govde.clone()).await;
@@ -213,7 +218,7 @@ async fn kilitliyken_gorev7_uclarinin_hepsi_401_doner_ve_veri_sizdirmaz() {
         assert!(!json.is_array(), "{metot} {yol}: basarili liste yaniti dizidir");
     }
 
-    // On besinci uc: POST /api/danisanlar/{id}/ekler (ham govde).
+    // On altinci uc: POST /api/danisanlar/{id}/ekler (ham govde).
     let (kod, _b, govde) = cagir_ham(
         &s,
         "POST",
@@ -2022,7 +2027,9 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
     // degisiklik BILINCLI olarak onaylanir. Birincil koruma artik yukaridaki
     // bire bir esleme -- sayiyi guncellemek tek basina bir kapiyi geri
     // getirmez.
-    assert_eq!(toplam, 31, "toplam veri handler'i sayisi 31 olmali");
+    // Plan 5 Gorev 4: `/danisanlar/{id}/seanslar` (routes::danisan_seanslari)
+    // 32. veri handler'i olarak eklendi; kapiyi kullanan tek handler'i var.
+    assert_eq!(toplam, 32, "toplam veri handler'i sayisi 32 olmali");
 }
 
 /// Kapıyı ilk satırda VE uzun bir üretimden sonra ikinci kez çağırmasına izin
@@ -3174,10 +3181,17 @@ fn istemci_cagrilari() -> Vec<(String, String)> {
 
 /// Arayüzden bilinçli olarak çağrılmayan uç noktalar.
 ///
-/// **Bugün boş.** Boş kalması bir hedef değil, bir ölçüm: bir uç nokta
-/// buraya yazılacaksa gerekçesi de buraya yazılır ve o gerekçe kod
-/// incelemesine düşer. Sessizce bağlanmamış bir uç nokta ile bilinçli
-/// olarak bağlanmamış bir uç nokta arasındaki fark tam olarak budur.
+/// Boş kalması bir hedef değil, bir ölçüm: bir uç nokta buraya yazılacaksa
+/// gerekçesi de buraya yazılır ve o gerekçe kod incelemesine düşer.
+/// Sessizce bağlanmamış bir uç nokta ile bilinçli olarak bağlanmamış bir uç
+/// nokta arasındaki fark tam olarak budur.
+///
+/// `GET /danisanlar/{id}/seanslar` (Plan 5 Görev 4) burada geçici bir
+/// istisnaydı -- Görev 4 yalnızca çekirdek + sunucuyu kapsıyordu, `web/src`a
+/// dokunmuyordu. Plan 5 Görev 5 `web/src/api.ts`e (`danisanApi.seanslar`) ve
+/// `useDanisanSeanslari`e gerçek çağrı yerini ekledi; istisna KALDIRILDI --
+/// aksi hâlde bu test artık gerçek bir bağlantı eksikliğini sessizce
+/// gizlerdi.
 const ISTEMCISIZ_UCLAR: [(&str, &str); 0] = [];
 
 #[test]
@@ -3185,12 +3199,23 @@ fn her_http_ucunun_bir_istemci_cagri_yeri_var() {
     let rotalar = sunucu_rotalari();
     let cagrilar = istemci_cagrilari();
 
-    // ON KOSUL: istisna listesi bayat olmasin -- listedeki her uc GERCEKTEN
-    // sunucuda tanimli olmali.
+    // ON KOSUL, IKI YONLU (VERI_DISI_ROTALAR/istisnalar_gercek_mi ve
+    // URETIM_SONRASI_YENIDEN_DOGRULAYANLAR/kullanilan_istisnalar ile ayni
+    // kalip): istisna listesi bayat olmasin.
     for (metot, yol) in ISTEMCISIZ_UCLAR {
+        // (a) Listedeki her uc GERCEKTEN sunucuda tanimli olmali.
         assert!(
             rotalar.contains(&(metot.to_string(), yol.to_string())),
             "istisna listesi bayat: {metot} {yol} artik bir rota degil"
+        );
+        // (b) Istisna hala GEREKLI olmali: `api.ts` bu ucu artik
+        // cagiriyorsa istisna gereksizdir. Bu kontrol olmadan Gorev 5-6
+        // cagriyi eklese de, alti ay sonra biri cagriyi silse de bu test
+        // sessizce yesil kalirdi.
+        assert!(
+            !cagrilar.contains(&(metot.to_string(), yol.to_string())),
+            "istisna gereksiz: {metot} {yol} artik api.ts'ten cagriliyor -- \
+             ISTEMCISIZ_UCLAR'dan cikarilmali"
         );
     }
 

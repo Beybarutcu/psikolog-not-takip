@@ -127,6 +127,41 @@ export type DanisanDosyasi = Danisan & {
   saklama_bitis: string | null
 }
 
+/**
+ * Danışanın tek bir seansı (`GET /api/danisanlar/{id}/seanslar` yanıtındaki
+ * bir satır; sunucudaki `DanisanSeansi`, Plan 5 Görev 4).
+ *
+ * # `ucret_kurus: number | null` — `null` ile `0` KARIŞTIRILMAZ
+ *
+ * Sunucuda `appointments.ucret` sütunu `NULL` olabilir ve `NULL`'ün anlamı
+ * iki şeyden biridir: "ücretsiz seans" ya da "ücret hiç girilmemiş" — şema
+ * düzeyinde ayırt edilmez. Sunucu (`store::danisan_seanslari`) bu ayrımı
+ * BİLEREK korur: `NULL` JSON'da `null` kalır, `0`'a sadeleşmez. Bu tip o
+ * ayrımı aynen TAŞIR; `null` iken `tlMetni(0)` BASILMAZ — çağıran taraf ayrı
+ * bir işaret ("—" gibi) kullanır.
+ *
+ * # `not_ilk_satiri: string | null` — `null` ile `''` KARIŞTIRILMAZ
+ *
+ * Not YOKSA `null` ("not yazılmamış"); not açılıp boş bırakıldıysa `''`
+ * ("not açılmış ama boş"). Bu görev bu alanı görüntülemeyebilir ama tipi
+ * doğru taşımak zorunda — sonraki görev (Seanslar alt sekmesi) ikisini
+ * farklı gösterecek.
+ */
+export type DanisanSeansi = {
+  appointment_id: number
+  /**
+   * Randevunun DUVAR SAATİ başlangıcı (`YYYY-AA-GGTSS:DD`, 16 karakter) —
+   * zaman dilimi TAŞIMAZ. `new Date()`e verilmez (`Randevu.baslangic` ile
+   * aynı gerekçe, bkz. `HaftalikTakvim.ts`): UTC varsayımına düşmek saati
+   * kaydırırdı.
+   */
+  baslangic: string
+  durum: string
+  ucret_kurus: number | null
+  odendi: boolean
+  not_ilk_satiri: string | null
+}
+
 /** `GET /api/danisanlar/{id}/ekler` yanıtı (sunucudaki `EkBilgisi`). */
 export type EkBilgisi = {
   id: number
@@ -282,7 +317,7 @@ export async function ekIndir(ek: { id: number; dosya_adi: string }): Promise<vo
     bag.click()
   } finally {
     // Kişisel veri taşıyan bir blob URL'i sayfa ömrü boyunca canlı
-    // bırakmak, onu adresi bilen her koda açık tutardı (`DanisanKarti`'nin
+    // bırakmak, onu adresi bilen her koda açık tutardı (`DosyaBilgileri`'nin
     // rapor blob'u için verilen kararın aynısı). Bir sonraki makro
     // görevde serbest bırakılıyor: aynı karede iptal etmek bazı
     // tarayıcılarda indirmeyi yarıda keser.
@@ -546,6 +581,18 @@ export const danisanApi = {
     }),
   ekleriGetir: (id: number) => istek<EkBilgisi[]>(`/api/danisanlar/${id}/ekler`),
   /**
+   * Danışanın TÜM seansları — notu olsun olmasın, en yeniden eskiye
+   * (`GET /api/danisanlar/{id}/seanslar`, Plan 5 Görev 4).
+   *
+   * Bilinmeyen (silinmiş/arşivlenmiş değil, hiç var olmamış ya da geçersiz)
+   * `id` için sunucu **404** döner — boş dizi DEĞİL. `istek()` bu durumu
+   * sıradan bir `Error` olarak fırlatır (401 ve "veritabanı bozuk" dışında
+   * ayrı bir hata sınıfı yok); çağıran taraf (`useDanisanSeanslari`) bunu
+   * "boş dosya" olarak ele almalı, çökmüş bir ekran olarak DEĞİL.
+   */
+  seanslar: (clientId: number) =>
+    istek<DanisanSeansi[]>(`/api/danisanlar/${clientId}/seanslar`),
+  /**
    * Danışan veri raporunu (KVKK md. 11) **sunucuda** üretilmiş, AES-256
    * parola korumalı PDF olarak indirir
    * (`POST /api/danisanlar/{id}/veri-raporu`, Plan 4 Görev 6–7).
@@ -642,7 +689,7 @@ export const danisanApi = {
    * # Geri alınamaz
    *
    * Dosya BLOB'u gider; yedek dışında geri dönüşü yoktur. Çağıran taraf
-   * (`DanisanKarti`) bu yüzden iki adımlı onay gösterir. Sunucudaki
+   * (`DosyaBilgileri`) bu yüzden iki adımlı onay gösterir. Sunucudaki
    * `attachments::sil` ayrıca **sarkan `clients.riza_dosya_id`'yi aynı
    * transaction'da temizler** (`riza_tarihi` korunur) — onay metni bunu
    * söylemek zorunda, çünkü silinen dosya rıza belgesiyse danışanın rıza

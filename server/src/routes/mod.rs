@@ -3,6 +3,9 @@ pub mod attachments;
 /// Yedek **alma** ve yedek klasörü ayarı — kilit kapısının içinde.
 pub mod backup;
 pub mod clients;
+/// Danışanın seans listesi (Plan 5 Görev 4) -- notu olsun olmasın TÜM
+/// seanslar; kapının içinde.
+pub mod danisan_seanslari;
 pub mod notes;
 /// Ay sonu özeti (Plan 4 Görev 3) — salt okur, kapının içinde.
 pub mod ozet;

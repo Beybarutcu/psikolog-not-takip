@@ -1,0 +1,57 @@
+[
+  {
+    "ad": "duz tek satir",
+    "icerik": "Danışan bugün daha rahattı",
+    "beklenen": "Danışan bugün daha rahattı"
+  },
+  {
+    "ad": "bos satirla baslayan not ilk DOLU satiri verir",
+    "icerik": "\n\n   \nUyku düzeni iyileşmiş\nikinci satır",
+    "beklenen": "Uyku düzeni iyileşmiş"
+  },
+  {
+    "ad": "DAP sablonlu not baslik satirini atlar",
+    "icerik": "Veri:\n\nİş yerinde çatışma yaşamış\n\nDeğerlendirme:\n\nPlan:\n\n",
+    "beklenen": "İş yerinde çatışma yaşamış"
+  },
+  {
+    "ad": "SOAP sablonlu not, ilk bolum bos, sonraki bolum dolu",
+    "icerik": "Öznel:\n\nNesnel:\nGöz teması kurdu\n",
+    "beklenen": "Göz teması kurdu"
+  },
+  {
+    "ad": "baslikla ayni satirda metin baslik SAYILMAZ",
+    "icerik": "Veri: annesiyle görüşmüş\nPlan:\n",
+    "beklenen": "Veri: annesiyle görüşmüş"
+  },
+  {
+    "ad": "satir basi ve sonu bosluk kirpilir",
+    "icerik": "   Değerlendirme:   \n\t  kaygı azalmış  \n",
+    "beklenen": "kaygı azalmış"
+  },
+  {
+    "ad": "CRLF satir sonlari",
+    "icerik": "Veri:\r\n\r\nEvden çalışıyor\r\n",
+    "beklenen": "Evden çalışıyor"
+  },
+  {
+    "ad": "yalnizca sablon basliklari: bos DEGIL, ilk baslik doner",
+    "icerik": "Veri:\n\nDeğerlendirme:\n\nPlan:\n\n",
+    "beklenen": "Veri:"
+  },
+  {
+    "ad": "tamamen bos not",
+    "icerik": "",
+    "beklenen": ""
+  },
+  {
+    "ad": "yalnizca bosluk ve satir sonu",
+    "icerik": "  \n\t\n   \n",
+    "beklenen": ""
+  },
+  {
+    "ad": "cok baytli uzun satir KARAKTERDE kirpilir (120)",
+    "icerik": "Plan:\n\naşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşş\nikinci",
+    "beklenen": "aşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşş"
+  }
+]

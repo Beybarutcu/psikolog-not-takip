@@ -128,6 +128,10 @@ fn api_router() -> Router<AppState> {
             get(routes::clients::getir_uc).patch(routes::clients::guncelle_uc),
         )
         .route("/danisanlar/{id}/notlar", get(routes::notes::danisan_listesi))
+        // Danisan dosyasinin seans listesi (Plan 5 Gorev 4): notu olsun
+        // olmasin TUM seanslar -- `.../notlar`'in aksine notu yazilmamis
+        // randevu da doner (bkz. `store::danisan_seanslari` modul basligi).
+        .route("/danisanlar/{id}/seanslar", get(routes::danisan_seanslari::liste))
         .route(
             "/danisanlar/{id}/ekler",
             get(routes::attachments::liste)

@@ -437,7 +437,7 @@ describe('HizliArama — sonuçlar', () => {
 
     // Erişilebilir ad saati de taşıyor: aynı gün iki seansı olan bir
     // danışanda yalnızca tarih ayırt edici olmazdı.
-    const dugme = await screen.findByRole('button', { name: /07\.09\.2026 10:00 seansına git/ })
+    const dugme = await screen.findByRole('button', { name: /7 Eylül 2026, 10:00 seansına git/ })
     await userEvent.click(dugme)
 
     expect(onSeansSec).toHaveBeenCalledWith(101, '2026-09-07T10:00')

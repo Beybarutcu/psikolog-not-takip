@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import type { OzelNot, SeansNotu } from '../api'
 import type { Randevu } from '../takvim/HaftalikTakvim'
-import { AYLAR } from '../takvim/hafta'
+import { zamanMetni } from '../tarih'
 import { GecmisNotlar } from './GecmisNotlar'
 import { NotEditoru } from './NotEditoru'
 import { SeansAltSatiri } from './SeansAltSatiri'
@@ -93,6 +93,14 @@ type Props = {
   onOzelYenidenDene?: () => void
   onKapat: () => void
   /**
+   * Başlıktaki danışan adına tıklanınca çağrılır: Danışanlar sekmesi bu
+   * danışanın dosyasıyla açılır (bkz. `AnaEkran.tsx::danisanaGit` — inceleme
+   * CRITICAL-1: Görev 8 öncesi takvimden danışana giden TEK yol hızlı arama
+   * ve ay özetiydi; seçili bir randevunun panelinden doğrudan danışana
+   * gitmenin yolu YOKTU, brief'in Adım 1'i buydu).
+   */
+  onDanisanAc: (clientId: number) => void
+  /**
    * Alt satırdaki durum düğmesi (`geldi` / `gelmedi` / `iptal`). Seçili
    * düğme `randevu.durum`'dan okunur, yerel kopyadan DEĞİL: çağıran taraf
    * başarıda seçili randevunun kopyasını aynı kimlikle tazeliyor ve panel
@@ -115,21 +123,6 @@ const OZEL_SEKME_SINIFI = 'border-violet-400 bg-violet-100 text-violet-900'
 const OZEL_GOVDE_SINIFI = 'border-violet-400 bg-violet-50'
 const RESMI_GOVDE_SINIFI = 'border-slate-200 bg-white'
 
-/**
- * "2026-09-07T10:00" -> "7 Eylül 2026, 10:00".
- *
- * `baslangic` yerel naive biçimde geliyor; parçalar olduğu gibi doğru.
- * `Date`'e çevirmiyoruz — zaman dilimi çevrimi burada yalnızca kayma riski
- * üretirdi (bkz. `hafta.ts::zamandanDate`).
- */
-function seansZamani(zaman: string): string {
-  const [tarih, saat] = zaman.split('T')
-  const [yil, ay, gun] = (tarih ?? '').split('-')
-  const ayAdi = AYLAR[Number(ay) - 1]
-  if (!saat || ayAdi === undefined) return zaman
-  return `${Number(gun)} ${ayAdi} ${yil}, ${saat.slice(0, 5)}`
-}
-
 export function SeansPaneli({
   randevu,
   gecmisNotlar,
@@ -143,6 +136,7 @@ export function SeansPaneli({
   onKapat,
   onDurumDegis,
   onOdemeDegis,
+  onDanisanAc,
 }: Props) {
   const [sekme, setSekme] = useState<'resmi' | 'ozel'>('resmi')
   const ozelAcik = sekme === 'ozel'
@@ -200,7 +194,19 @@ export function SeansPaneli({
             Seans
           </h2>
           <p className="text-sm text-slate-600">
-            {randevu.danisan_adi} — {seansZamani(randevu.baslangic)}
+            {/* CRITICAL-1: takvimden danışana giden yol. Erişilebilir ad
+                danışan listesindeki çiple AYNI kalıp ("… dosyasını aç") —
+                iki farklı yoldan gelen iki buton aynı işi aynı isimle
+                anlatmalı. */}
+            <button
+              type="button"
+              className="underline"
+              aria-label={`${randevu.danisan_adi} dosyasını aç`}
+              onClick={() => onDanisanAc(randevu.client_id)}
+            >
+              {randevu.danisan_adi}
+            </button>{' '}
+            — {zamanMetni(randevu.baslangic)}
           </p>
         </div>
         <button type="button" className="rounded border px-3 py-1 text-sm" onClick={onKapat}>
@@ -340,6 +346,15 @@ export function SeansPaneli({
                   // başına başlık eklemek yazılmış metni bozardı.
                   baslangicIcerik={not.icerik === '' ? sablonMetni(not.sablon) : not.icerik}
                   baslangicSablon={not.sablon}
+                  // Başka bir ekrandan (danışan dosyası) gelen kayıt editör
+                  // monte olduktan SONRA biterse temiz editör onu benimser
+                  // (son inceleme C1 — bkz. `NotEditoru::sunucuHali`). Açılış
+                  // içeriğiyle AYNI dönüşüm: yoksa boş not için başlıklar ile
+                  // `''` farklı sayılır ve editör başlıkları silerdi.
+                  sunucuHali={{
+                    sablon: not.sablon,
+                    icerik: not.icerik === '' ? sablonMetni(not.sablon) : not.icerik,
+                  }}
                   taslakAnahtari={`not-${randevu.id}`}
                   onKaydet={onNotKaydet}
                 />

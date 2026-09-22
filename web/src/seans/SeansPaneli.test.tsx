@@ -97,6 +97,7 @@ function propsKur(ozel: Partial<PanelProps> = {}) {
     onKapat: vi.fn(),
     onDurumDegis: vi.fn().mockResolvedValue(undefined),
     onOdemeDegis: vi.fn().mockResolvedValue(undefined),
+    onDanisanAc: vi.fn(),
     ...ozel,
   }
 }
@@ -123,14 +124,41 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+// İnceleme CRITICAL-1: Görev 8 öncesi takvimden danışana giden yol yoktu —
+// randevu ÇİPİNİN kendisi yalnızca seansı seçiyordu (`onSec`), panelin
+// içinde danışana giden bir düğme YOKTU. Başlıktaki ad artık bir düğme ve
+// `danisanaGit`e (burada `onDanisanAc` olarak enjekte ediliyor) gidiyor.
+describe('SeansPaneli — başlıktaki danışan adı', () => {
+  it('danisan adi bir dugme, tiklaninca onDanisanAc dogru client_id ile cagrilir', async () => {
+    const onDanisanAc = vi.fn()
+    const kullanici = userEvent.setup()
+    kur({ onDanisanAc })
+
+    const dugme = screen.getByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
+    await kullanici.click(dugme)
+
+    expect(onDanisanAc).toHaveBeenCalledTimes(1)
+    expect(onDanisanAc).toHaveBeenCalledWith(randevu.client_id)
+  })
+
+  it('erisilebilir ad danisan listesindeki cipin adiyla AYNI kalipta ("... dosyasini ac")', () => {
+    // Aynı işe giden iki farklı düğmenin (seans paneli + danışan listesi
+    // çipi) ekran okuyucuya AYNI şekilde tanıtılması gerekir — biri
+    // "... dosyasını aç" derken öteki farklı bir kalıp kullansaydı
+    // kullanıcı iki düğmenin aynı işi yaptığını anlayamazdı.
+    kur()
+    expect(screen.getByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })).toBeDefined()
+  })
+})
+
 describe('SeansPaneli — geçmiş bağlam', () => {
   it('sol tarafta son seanslarin notlari gorunur', () => {
     kur()
     // Başlık: seans tarihi + şablon adı + son düzenleme.
-    expect(screen.getByRole('button', { name: /31\.08\.2026 10:00.*DAP.*05\.09\.2026/ })).toBeDefined()
-    expect(screen.getByRole('button', { name: /24\.08\.2026 10:00.*SOAP.*31\.08\.2026/ })).toBeDefined()
+    expect(screen.getByRole('button', { name: /31 Ağustos 2026, 10:00.*DAP.*05\.09\.2026/ })).toBeDefined()
+    expect(screen.getByRole('button', { name: /24 Ağustos 2026, 10:00.*SOAP.*31\.08\.2026/ })).toBeDefined()
     expect(
-      screen.getByRole('button', { name: /17\.08\.2026 10:00.*Serbest.*20\.09\.2026/ }),
+      screen.getByRole('button', { name: /17 Ağustos 2026, 10:00.*Serbest.*20\.09\.2026/ }),
     ).toBeDefined()
   })
 
@@ -146,8 +174,8 @@ describe('SeansPaneli — geçmiş bağlam', () => {
       .map((d) => d.textContent ?? '')
 
     // Seans tarihleri ekranda, ve azalan sırada.
-    const seansTarihleri = metinler.map((m) => /Seans: (\d{2}\.\d{2}\.\d{4})/.exec(m)?.[1])
-    expect(seansTarihleri).toEqual(['31.08.2026', '24.08.2026', '17.08.2026'])
+    const seansTarihleri = metinler.map((m) => /Seans: (\d{1,2} \S+ \d{4})/.exec(m)?.[1])
+    expect(seansTarihleri).toEqual(['31 Ağustos 2026', '24 Ağustos 2026', '17 Ağustos 2026'])
 
     // "Son düzenleme" hâlâ var ama SIRALI DEĞİL: ekrandaki tek tarih o
     // olsaydı liste sırasız görünürdü. Bu iddia olmadan üstteki, seans
@@ -163,7 +191,7 @@ describe('SeansPaneli — geçmiş bağlam', () => {
     kur({
       gecmisNotlar: [{ ...gecmisNotlar[0], seans_zamani: '2026-08-31T00:30' }],
     })
-    expect(screen.getByRole('button', { name: /Seans: 31\.08\.2026 00:30/ })).toBeDefined()
+    expect(screen.getByRole('button', { name: /Seans: 31 Ağustos 2026, 00:30/ })).toBeDefined()
   })
 
   it('liste SUNUCUDAN geldigi sirada basilir, guncelleme zamanina gore yeniden siralanmaz', () => {
@@ -513,6 +541,7 @@ function Harness() {
       onKapat={vi.fn()}
       onDurumDegis={vi.fn()}
       onOdemeDegis={vi.fn()}
+      onDanisanAc={vi.fn()}
     />
   )
 }
@@ -581,6 +610,7 @@ describe('SeansPaneli — seans değişimi (`key` yolu, ikincil hat)', () => {
         onKapat={vi.fn()}
         onDurumDegis={vi.fn()}
         onOdemeDegis={vi.fn()}
+        onDanisanAc={vi.fn()}
       />,
     )
 
@@ -598,6 +628,7 @@ describe('SeansPaneli — seans değişimi (`key` yolu, ikincil hat)', () => {
         onKapat={vi.fn()}
         onDurumDegis={vi.fn()}
         onOdemeDegis={vi.fn()}
+        onDanisanAc={vi.fn()}
       />,
     )
 
@@ -634,6 +665,7 @@ describe('SeansPaneli — seans değişimi (`key` yolu, ikincil hat)', () => {
         onKapat={vi.fn()}
         onDurumDegis={vi.fn()}
         onOdemeDegis={vi.fn()}
+        onDanisanAc={vi.fn()}
       />
     )
     const { rerender } = render(paneli(randevu, { ...ozelNot, icerik: 'A ozel' }, ozelA))
@@ -786,6 +818,11 @@ describe('SeansPaneli — kapatma', () => {
   it('baslikta danisan adi ve saat gorunur', () => {
     kur()
     const baslik = screen.getByRole('region', { name: 'Seans' })
-    expect(within(baslik).getByText(/Ayşe Yılmaz — 7 Eylül 2026, 10:00/)).toBeDefined()
+    // İnceleme CRITICAL-1: danışan adı artık bir DÜĞME (bkz. "başlıktaki
+    // danışan adı" bloğu) — `getByText` bir düzenli ifadeyi tek bir metin
+    // düğümünde arar ve ad artık ayrı bir öğede olduğu için "metin birden
+    // çok öğeye bölünmüş" hatasıyla patlar. `textContent` düğüm sınırlarını
+    // GÖRMEZDEN GELİR, birleşik metni ölçer.
+    expect(baslik.textContent).toMatch(/Ayşe Yılmaz — 7 Eylül 2026, 10:00/)
   })
 })

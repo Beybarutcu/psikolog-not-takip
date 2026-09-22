@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { notApi, ozelNotApi, YetkisizHata, type OzelNot, type SeansNotu } from '../../api'
 import type { Randevu } from '../../takvim/HaftalikTakvim'
+import { yazmaSaatiOlustur } from './yazmaSaati'
 
 /**
  * Seans panelinde gösterilecek geçmiş not sayısı — ve sunucudan istenen
@@ -76,10 +77,26 @@ const BOS_SEANS: SeansVerisi = {
 export function useSeansNotlari({
   randevu,
   onYetkisiz,
+  notYaz,
 }: {
   randevu: Randevu | null
   onYetkisiz: () => void
+  /**
+   * Resmî notun TEK yazma yolu (`AnaEkran.seansNotuKaydet`): API çağrısı ve
+   * sonucun bütün önbelleklere yayılması orada (son inceleme C1). REF'te
+   * tutuluyor: çağıran her render'da yeni bir kapanış geçiriyor.
+   */
+  notYaz: (appointmentId: number, kayit: { sablon: string; icerik: string }) => Promise<void>
 }) {
+  const notYazRef = useRef(notYaz)
+  notYazRef.current = notYaz
+  // Uçuştaki yazma × not okuması (bkz. `yazmaSaati.ts`, dördüncü kullanıcı):
+  // dosyada yazılan notun kaydı (ya da dosya editörünün unmount tahliyesi)
+  // bu seansın not GET'i uçuştayken biterse, geç dönen yanıt eski metni
+  // getirmesin.
+  const [notSaati] = useState(() =>
+    yazmaSaatiOlustur<SeansNotu, SeansNotu>((n) => n.appointment_id),
+  )
   // Seans paneli verisi, HANGİ SEANSA ait olduğuyla birlikte. `id` alanı
   // tek başına bir kolaylık değil: seçim değiştiği anda önceki danışanın
   // notu ekranda kalmamalı ve bunun için bir efektin çalışmasını beklemek
@@ -123,6 +140,7 @@ export function useSeansNotlari({
     if (seansId === null || seansDanisanId === null || seansBaslangici === null) return
     let iptal = false
 
+    const okumaDamgasi = notSaati.okumaBasladi()
     void (async () => {
       try {
         // İkisi birlikte: geçmiş notların isteği ayrı yakalanıp yutulsaydı,
@@ -144,7 +162,9 @@ export function useSeansNotlari({
         if (iptal) return
         setSeansVerisi({
           id: seansId,
-          not: gelenNot,
+          // Okuma başladıktan SONRA biten bir kayıt yanıtın üstüne uygulanır
+          // (bkz. `notSaati`).
+          not: notSaati.uygula([gelenNot], okumaDamgasi)[0] ?? gelenNot,
           ozelNot: null,
           ozelHata: null,
           // Bu seansın KENDİ notu geçmiş listesine girmez: üstte düzenlenen
@@ -176,7 +196,7 @@ export function useSeansNotlari({
     return () => {
       iptal = true
     }
-  }, [seansId, seansDanisanId, seansBaslangici, seansTazeleme])
+  }, [seansId, seansDanisanId, seansBaslangici, seansTazeleme, notSaati])
 
   // Özel not: YALNIZCA sekmeye geçilince. Efektin bağımlılığı
   // `ozelNotIstenen` olduğu için sekme değişimi dışında hiçbir şey
@@ -221,15 +241,52 @@ export function useSeansNotlari({
   // an seçim çoktan başka bir randevuya geçmiş olabilir — o durumda giden
   // seansın metni YENİ randevunun notuna yazılırdı: yanlış danışanın
   // dosyasına not.
+  //
+  // Kaydın KENDİSİ artık burada değil (son inceleme C1): `notYaz` üzerinden
+  // `AnaEkran`'ın TEK yazma yoluna gidiyor ve sonuç oradan, hangi ekrandan
+  // yazıldığına bakılmaksızın, `notYansit` ile buraya (ve danışan
+  // dosyasının not önbelleğine, seans listesine) geri geliyor.
   const notKaydet = useCallback(
     async (kayit: { sablon: string; icerik: string }) => {
       if (seansId === null) return
-      const yeni = await notApi.notKaydet(seansId, kayit.sablon, kayit.icerik)
-      // Geciken bir yanıt, o sırada açılmış BAŞKA bir seansın notunu
-      // ezmemeli: state hâlâ bu seansa aitse tazelenir, değilse dokunulmaz.
-      setSeansVerisi((onceki) => (onceki.id === seansId ? { ...onceki, not: yeni } : onceki))
+      await notYazRef.current(seansId, kayit)
     },
     [seansId],
+  )
+
+  /**
+   * Başarılı bir resmî not kaydını bu önbelleğe yansıtır — kayıt takvimden
+   * de, danışan dosyasından da gelmiş olabilir (son inceleme C1: dosyada
+   * yazılan not takvime dönünce ESKİ görünüyordu ve bir tuş, eski metni PUT
+   * edip yazılanı SİLİYORDU).
+   *
+   * - Açık seans buysa `not` tazelenir. Geciken bir yanıt, o sırada açılmış
+   *   BAŞKA bir seansın notunu ezmez: state başka seansa aitse dokunulmaz.
+   * - Açık seansın "Önceki seans notları" listesinde bu seans varsa oradaki
+   *   kopya da tazelenir (dosyada eski bir seansın notu düzeltilince takvim
+   *   panelindeki geçmiş listesi bayat kalmasın).
+   * - Yazma her durumda saate işlenir (`yazmaSaati`, dördüncü kullanıcı): bu
+   *   seansın not okuması uçuştaysa geç dönen yanıt ESKİ metni getirmez.
+   *
+   * `useCallback` + sabit bağımlılık: çağıran bunu bir `await`in ARDINDAN,
+   * birkaç render eski bir kanca dönüşü üzerinden çağırabilir.
+   */
+  const notYansit = useCallback(
+    (id: number, yeni: SeansNotu) => {
+      notSaati.yazmaBitti(id, yeni)
+      setSeansVerisi((onceki) => {
+        const gecmisteVar = onceki.gecmisNotlar.some((n) => n.appointment_id === id)
+        if (onceki.id !== id && !gecmisteVar) return onceki
+        return {
+          ...onceki,
+          not: onceki.id === id ? yeni : onceki.not,
+          gecmisNotlar: gecmisteVar
+            ? onceki.gecmisNotlar.map((n) => (n.appointment_id === id ? yeni : n))
+            : onceki.gecmisNotlar,
+        }
+      })
+    },
+    [notSaati],
   )
 
   const ozelNotKaydet = useCallback(
@@ -258,5 +315,13 @@ export function useSeansNotlari({
     setSeansTazeleme((n) => n + 1)
   }
 
-  return { seans, notKaydet, ozelNotKaydet, ozelSekmeAcildi, ozelYenidenDene, yenidenDene }
+  return {
+    seans,
+    notKaydet,
+    notYansit,
+    ozelNotKaydet,
+    ozelSekmeAcildi,
+    ozelYenidenDene,
+    yenidenDene,
+  }
 }

@@ -48,14 +48,22 @@ async function kaydedildiBekle(page: Page) {
   ).toBeVisible()
 }
 
-/** Danışan ekler, verilen saate randevu kurar ve takvimdeki bloğunu döndürür. */
+/**
+ * Danışan ekler, verilen saate randevu kurar ve takvimdeki bloğunu döndürür.
+ *
+ * Görev 8: "Danışan ekle" formu artık Danışanlar sekmesinin İÇİNDE (eskiden
+ * ana ekranda HER ZAMAN görünüyordu); boş saat düğmesi Takvim sekmesinde —
+ * yardımcı bu yüzden iki sekme arasında gidip geliyor.
+ */
 async function danisanVeRandevu(page: Page, ad: string, saat: string) {
+  await page.getByRole('tab', { name: 'Danışanlar', exact: true }).click()
   await page.getByRole('button', { name: 'Danışan ekle' }).click()
   await page.getByLabel('Ad soyad').fill(ad)
   // `exact: true`: "Danışan ekle" düğmesi de "Ekle" alt dizgisini içeriyor.
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
   await expect(page.getByText(ad, { exact: true })).toBeVisible()
 
+  await page.getByRole('tab', { name: 'Takvim', exact: true }).click()
   await page.locator(`button[aria-label$="${saat} boş"]`).first().click()
   // `exact: true` şart: danışan listesindeki "… adlı danışanı arşivle"
   // düğmesi de "Danışan" alt dizgisiyle eşleşir.
@@ -90,9 +98,16 @@ async function ozelSekmeyeGec(page: Page) {
   return alan
 }
 
-/** Danışan kartını danışan çipinden açar. */
+/**
+ * Danışan kartını danışan çipinden açar. Görev 8: çip Danışanlar sekmesinin
+ * İÇİNDE; kart kendisi de "Seanslar/Bilgiler" alt sekmeleriyle açılıyor ve
+ * varsayılan "Seanslar" — onam/saklama/ek gibi içerik (`DosyaBilgileri`)
+ * yalnızca "Bilgiler" alt sekmesinde, bu yüzden yardımcı oraya da geçiyor.
+ */
 async function danisanKartiAc(page: Page, ad: string) {
+  await page.getByRole('tab', { name: 'Danışanlar', exact: true }).click()
   await page.getByRole('button', { name: `${ad} dosyasını aç`, exact: true }).click()
+  await page.getByRole('tab', { name: 'Bilgiler', exact: true }).click()
   await expect(page.getByRole('heading', { name: ad, exact: true })).toBeVisible()
 }
 
@@ -393,7 +408,7 @@ test('danisan dosyasi: ek dosya, riza ve saklama suresi', async ({ page }) => {
   // İŞLEM ÖNCESİ DURUM açıkça sabitleniyor: aşağıdaki her iddia bu üç
   // satırdan farklı bir ekran gerektiriyor, yani hiçbiri "zaten öyleydi"
   // ile tatmin olamaz.
-  await expect(page.getByText(/açık rıza kaydı yok/)).toBeVisible()
+  await expect(page.getByText(/onam kaydı yok/)).toBeVisible()
   await expect(page.getByText(/Saklama süresi henüz hesaplanmadı/)).toBeVisible()
   await expect(page.getByText('Bu danışana henüz dosya eklenmemiş.')).toBeVisible()
 
@@ -439,11 +454,14 @@ test('danisan dosyasi: ek dosya, riza ve saklama suresi', async ({ page }) => {
   await expect(page.getByRole('link', { name: `İmzalı onam belgesi: ${ekAdi}` })).toBeVisible()
   // EKSİ YÖN: uyarı şeridi gitti. Kaydetmeden ÖNCE görünür olduğu yukarıda
   // ölçüldüğü için bu sayım işlem öncesi durumla tatmin olamaz.
-  await expect(page.getByText(/açık rıza kaydı yok/)).toHaveCount(0)
+  await expect(page.getByText(/onam kaydı yok/)).toHaveCount(0)
 
   // Saklama süresi, danışanın SON TEMASINDAN hesaplanıyor ve son temas
   // yalnızca "geldi" işaretlenince ileri taşınıyor (`son_temasi_isaretle`).
   await page.getByRole('button', { name: 'Danışan kartını kapat' }).click()
+  // Kart kapatınca Danışanlar sekmesinde kalıyoruz (kabuk sekmesi kartla
+  // birlikte DEĞİŞMEZ); `blok` Takvim sekmesinde, oraya geçmek gerekiyor.
+  await page.getByRole('tab', { name: 'Takvim', exact: true }).click()
   await blok.click()
   await page.getByRole('button', { name: 'Geldi' }).click()
   // BARİYER: durum değişikliği ekrana yansıyana kadar bekle. Kart bundan

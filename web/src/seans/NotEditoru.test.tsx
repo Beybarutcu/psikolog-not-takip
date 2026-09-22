@@ -214,6 +214,11 @@ describe('NotEditoru — sablon-yalniz degisim', () => {
     await ilerle(20)
     expect(kilitli).toHaveBeenCalled()
     unmount()
+    // Kilit açılması zaman alır: bu arada unmount tahliyesinin 401 reddi
+    // yerleşir ve taslak artık "canlı" (uçuşta) değildir — ancak o zaman bir
+    // KİLİT kurtarmasıdır ve şerit gösterilir (bkz. `taslak.ts` "Canlı
+    // taslak"). Sekme değişiminde aynı taslak uçuştayken şerit GÖSTERİLMEZ.
+    await ilerle(0)
 
     // Kilit açıldı. Sunucu hâlâ ESKİ şablonu döndürüyor (kayıt olmamıştı).
     const acik = vi.fn().mockResolvedValue(undefined)
@@ -262,6 +267,11 @@ describe('NotEditoru — 401 sirasinda yazilmamis icerik', () => {
 
     // App'in yaptığı şey: görsel perde değil, gerçek unmount.
     unmount()
+    // Kilit açılması zaman alır: bu arada unmount tahliyesinin 401 reddi
+    // yerleşir ve taslak artık "canlı" (uçuşta) değildir — ancak o zaman bir
+    // KİLİT kurtarmasıdır ve şerit gösterilir (bkz. `taslak.ts` "Canlı
+    // taslak"). Sekme değişiminde aynı taslak uçuştayken şerit GÖSTERİLMEZ.
+    await ilerle(0)
 
     // Kilit açıldı; AnaEkran yeniden mount edildi. Sunucudan gelen içerik
     // ESKİ hâl (yazılan metin hiç kaydedilemedi).
@@ -528,6 +538,11 @@ describe('NotEditoru — ekran okuyucuya duyurulanlar', () => {
     await ilerle(20)
     expect(kilitli).toHaveBeenCalled()
     unmount()
+    // Kilit açılması zaman alır: bu arada unmount tahliyesinin 401 reddi
+    // yerleşir ve taslak artık "canlı" (uçuşta) değildir — ancak o zaman bir
+    // KİLİT kurtarmasıdır ve şerit gösterilir (bkz. `taslak.ts` "Canlı
+    // taslak"). Sekme değişiminde aynı taslak uçuştayken şerit GÖSTERİLMEZ.
+    await ilerle(0)
 
     render(
       <NotEditoru
@@ -670,5 +685,87 @@ describe('NotEditoru — sablon secici ve etiket', () => {
     await ilerle(20)
     expect(props.onKaydet).toHaveBeenCalledTimes(1)
     expect(props.onKaydet).toHaveBeenCalledWith({ sablon: 'dap', icerik: 'ozel metin' })
+  })
+})
+
+// Son inceleme C1 — ters yarış. Aynı resmî nota iki editör bakıyor (takvim ve
+// danışan dosyası) ve biri giderken diğeri geliyor. Uçtan uca hâli
+// `AnaEkran.yayilim.test.tsx` > "ters yarış A/B/C"de; burada editörün kendi
+// kuralları, prop değişimiyle (`rerender`) — üretimdeki geçiş bu (4. biçim).
+describe('NotEditoru — sunucuHali: editör monte olduktan sonra başka yoldan gelen kayıt', () => {
+  const temel = {
+    baslangicIcerik: 'ESKI',
+    baslangicSablon: 'serbest',
+    gecikmeMs: 20,
+    taslakAnahtari: 'not-7',
+  }
+
+  it('TEMİZ editör yeni sunucu hâlini benimser ve onu GERİ YAZMAZ', async () => {
+    const onKaydet = vi.fn().mockResolvedValue(undefined)
+    const r = render(
+      <NotEditoru {...temel} onKaydet={onKaydet} sunucuHali={{ sablon: 'serbest', icerik: 'ESKI' }} />,
+    )
+    r.rerender(
+      <NotEditoru {...temel} onKaydet={onKaydet} sunucuHali={{ sablon: 'serbest', icerik: 'ESKI YENI' }} />,
+    )
+    await ilerle(0)
+    expect(alan().value).toBe('ESKI YENI')
+    await ilerle(100)
+    expect(onKaydet).not.toHaveBeenCalled()
+  })
+
+  it('KİRLİ editör (kullanıcı yazmış) DOKUNULMAZ: yazılan metin kazanır', async () => {
+    const onKaydet = vi.fn().mockResolvedValue(undefined)
+    const r = render(
+      <NotEditoru {...temel} onKaydet={onKaydet} sunucuHali={{ sablon: 'serbest', icerik: 'ESKI' }} />,
+    )
+    fireEvent.change(alan(), { target: { value: 'ESKI benim' } })
+    r.rerender(
+      <NotEditoru {...temel} onKaydet={onKaydet} sunucuHali={{ sablon: 'serbest', icerik: 'ESKI YENI' }} />,
+    )
+    await ilerle(0)
+    expect(alan().value).toBe('ESKI benim')
+    await ilerle(20)
+    expect(onKaydet).toHaveBeenCalledWith({ sablon: 'serbest', icerik: 'ESKI benim' })
+  })
+
+  it('öbür editörün taslağıyla açılır (şeritsiz); o metin sunucudan dönünce İKİNCİ kez yazılmaz', async () => {
+    // Aynı anahtarlı ilk editör hâlâ monte ve metni taslakta (sekme değişimi:
+    // yeni editör AYNI render'da kuruluyor, eskinin tahliyesi sonra).
+    const onKaydet = vi.fn().mockResolvedValue(undefined)
+    const ilk = render(<NotEditoru {...temel} onKaydet={onKaydet} />)
+    fireEvent.change(alan(), { target: { value: 'ESKI T' } })
+    const ikinci = render(
+      <NotEditoru {...temel} onKaydet={onKaydet} sunucuHali={{ sablon: 'serbest', icerik: 'ESKI' }} />,
+    )
+    // Aynı anahtar = aynı `id`: etiket iki alanı ayırt edemez, alan kapsayıcıdan.
+    const ikinciAlan = ikinci.container.querySelector('textarea') as HTMLTextAreaElement
+    // Sunucudaki ESKİ metin DEĞİL, yoldaki metin.
+    expect(ikinciAlan.value).toBe('ESKI T')
+    // Kilit şeridi YOK: bu bir kilit kurtarması değil (taslak canlı).
+    expect(within(ikinci.container).queryByText(/geri yüklendi/i)).toBeNull()
+    ilk.unmount()
+    ikinci.rerender(
+      <NotEditoru {...temel} onKaydet={onKaydet} sunucuHali={{ sablon: 'serbest', icerik: 'ESKI T' }} />,
+    )
+    await ilerle(100)
+    // Tek yazma: ilk editörün unmount tahliyesi. İkincinin zamanlayıcısı AYNI
+    // metni tekrar göndermedi (her yazma silinemez bir denetim satırı).
+    expect(onKaydet).toHaveBeenCalledTimes(1)
+    expect(ikinciAlan.value).toBe('ESKI T')
+  })
+
+  it('EKSİ YÖN: sahibi ve uçuşu olmayan (kilitte kalmış) taslak ŞERİTLE geri yüklenir', async () => {
+    // Canlılık işareti her taslağı sessizce geri yükleseydi, gerçek bir kilit
+    // kurtarması da duyurulmadan yapılırdı (yedinci biçim: iki yön).
+    const ilk = render(
+      <NotEditoru {...temel} onKaydet={vi.fn().mockRejectedValue(new YetkisizHata('Oturum kilitli.'))} />,
+    )
+    fireEvent.change(alan(), { target: { value: 'ESKI kilitte' } })
+    ilk.unmount()
+    await ilerle(0)
+    render(<NotEditoru {...temel} onKaydet={vi.fn().mockResolvedValue(undefined)} />)
+    expect(alan().value).toBe('ESKI kilitte')
+    expect(screen.getByText(/geri yüklendi/i)).toBeDefined()
   })
 })

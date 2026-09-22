@@ -160,6 +160,11 @@ type Bulgular = {
   textPlain: number
   dataDizgisi: string[]
   yasakApi: string[]
+  /**
+   * `ozelNotApi` / `OzelNot` (Identifier) ya da `'ozel-not'` / `private_notes`
+   * (StringLiteral/şablon parçası) geçişleri — bkz. `OZEL_NOT_IZINLI_DOSYALAR`.
+   */
+  ozelNot: string[]
 }
 
 /** Her yerde (erişim, çağrı, destructuring, JSX) yasak olan adlar. */
@@ -169,12 +174,70 @@ const TARAYICI_NESNELERI = new Set(['window', 'document', 'navigator', 'globalTh
 /** `open` yalnızca bunların üstünde yasak (`<details open>` meşru). */
 const PENCERE_NESNELERI = new Set(['window', 'globalThis', 'self', 'top', 'parent'])
 
+/**
+ * Özel not (`private_notes`) sızıntısı taraması — Görev 6 inceleme turu.
+ *
+ * # Bu koruma bir zamanlar VARDI, sessizce düştü
+ *
+ * `web/src/danisan/veriRaporu.test.ts` (commit `6dfa316` ile silindi)
+ * `expect(kod).not.toContain('ozelNotApi' | 'ozel-not' | 'OzelNot' |
+ * 'private_notes')` biçiminde bir kaynak taraması yapıyordu. Yerine gelen bu
+ * dosya (`istemciRaporUretimi.test.ts`) dosya kümesini GENİŞLETTİ (glob +
+ * AST altyapısı) ama bu KURALI hiç almadı — Görev 6'nın kendi mutasyon
+ * turunda (`SeansListesi.tsx`'e geçici `ozelNotApi` çağrısı eklenip tam takım
+ * koşturuldu) hiçbir testin kırmızıya dönmediği GÖZLEMLENDİ. Bu blok o
+ * boşluğu kapatıyor.
+ *
+ * # İzinli dosyalar
+ *
+ * - `./api.ts`: `ozelNotApi`/`OzelNot`in AUTHORİTATİF tanımı ve `/ozel-not`
+ *   uç noktasının TEK istemci çağrısı.
+ * - `./screens/anaEkranKancalari/useSeansNotlari.ts`: `SeansPaneli`nin "Özel
+ *   Notlarım" sekmesini besleyen kanca; `ozelNotApi.getir`/`.kaydet`'i
+ *   ÇAĞIRAN meşru tek yer (Plan 3'ün tasarladığı ayrı sekme).
+ * - `./seans/SeansPaneli.tsx`: `OzelNot` tipini yalnızca PROP olarak alıp
+ *   (çağıran taraf zaten `ozelNotApi`den çekmiş) özel sekmede gösterir;
+ *   kendisi `ozelNotApi`ye HİÇ gitmez ama `OzelNot` tipini import eder.
+ *
+ * Bunların DIŞINDAKİ hiçbir dosyada (özellikle `web/src/danisan/*`, bu
+ * dosyanın seans notu okuma-yazma akışını taşıyan yeni bileşenleri) bu
+ * dörtlünün hiçbiri geçmemeli.
+ */
+const OZEL_NOT_IZINLI_DOSYALAR = new Set([
+  './api.ts',
+  './screens/anaEkranKancalari/useSeansNotlari.ts',
+  './seans/SeansPaneli.tsx',
+])
+
 /** `window`, `x.document`, `window.URL` → son ad; başka biçim → null. */
 function sonAd(ifade: ts.Expression): string | null {
   if (ts.isIdentifier(ifade)) return ifade.text
   if (ts.isPropertyAccessExpression(ifade)) return ifade.name.text
   if (ts.isNonNullExpression(ifade) || ts.isParenthesizedExpression(ifade)) {
     return sonAd(ifade.expression)
+  }
+  return null
+}
+
+/**
+ * Bir düğümün dizgi-benzeri METNİ — sade bir `StringLiteral`/şablon dizgisi
+ * (`` `x` ``) İÇİN OLDUĞU GİBİ, parçalı bir şablonun (`` `a${b}c` ``) HER
+ * parçası için AYRI AYRI (`TemplateHead`/`Middle`/`Tail`). `api.ts`teki
+ * `/ozel-not` uç noktası tam olarak bu ikinci biçimde yazılıyor
+ * (`` `/api/randevular/${randevuId}/ozel-not` `` — 'ozel-not' bir
+ * `TemplateTail`'in içinde), `ts.isStringLiteralLike` bunu YAKALAMAZ (bkz.
+ * `dataDizgisi` kuralının `TemplateHead` için yaptığı ayrı kontrolle aynı
+ * gerekçe, burada Head/Middle/Tail'in ÜÇÜ birden gerekiyor çünkü aranan
+ * parça baş, orta ya da son konumda olabilir).
+ */
+function dizgiBenzeriMetin(d: ts.Node): string | null {
+  if (ts.isStringLiteralLike(d)) return d.text
+  if (
+    d.kind === ts.SyntaxKind.TemplateHead ||
+    d.kind === ts.SyntaxKind.TemplateMiddle ||
+    d.kind === ts.SyntaxKind.TemplateTail
+  ) {
+    return (d as ts.TemplateHead | ts.TemplateMiddle | ts.TemplateTail).text
   }
   return null
 }
@@ -197,10 +260,27 @@ function incele(ad: string, kaynak: string): Bulgular {
     textPlain: 0,
     dataDizgisi: [],
     yasakApi: [],
+    ozelNot: [],
   }
   const metin = (d: ts.Node) => d.getText(kok)
   const ziyaret = (d: ts.Node) => {
     if (ts.isIdentifier(d) && d.text === 'veriRaporuMetni') b.veriRaporuMetni += 1
+
+    // Özel not sızıntısı: bkz. `OZEL_NOT_IZINLI_DOSYALAR` başlığı. Kimlik
+    // (Identifier) eşleşmesi TAM METİNLE: `onOzelNotKaydet` ya da
+    // `ozelNotKaydet` gibi başka meşru adların İÇİNDE geçen alt dizgiler
+    // (bkz. `TakvimSekmesi.tsx`/`SeansPaneli.tsx`teki callback adları)
+    // YANLIŞLIKLA yakalanmasın diye.
+    if (ts.isIdentifier(d) && (d.text === 'ozelNotApi' || d.text === 'OzelNot')) {
+      b.ozelNot.push(metin(d))
+    }
+    if (ts.isIdentifier(d) && d.text === 'private_notes') {
+      b.ozelNot.push(metin(d))
+    }
+    const dizgiMetni = dizgiBenzeriMetin(d)
+    if (dizgiMetni !== null && (dizgiMetni.includes('ozel-not') || dizgiMetni.includes('private_notes'))) {
+      b.ozelNot.push(metin(d))
+    }
 
     if (ts.isNewExpression(d)) {
       const yapici = sonAd(d.expression)
@@ -294,6 +374,7 @@ const BOS: Bulgular = {
   textPlain: 0,
   dataDizgisi: [],
   yasakApi: [],
+  ozelNot: [],
 }
 
 type Alan = Exclude<keyof Bulgular, 'veriRaporuMetni' | 'textPlain' | 'objectUrlArgumanlari'>
@@ -367,6 +448,21 @@ const YASAK_YAPILAR: { ad: string; dosya: string; kod: string; alan: Alan }[] = 
   { ad: "'createObjectURL' dizgisi", dosya: 'x.ts', kod: `const k = 'createObjectURL'`, alan: 'dolayliObjectUrl' },
   { ad: '.mjs dosyasinda clipboard', dosya: 'x.mjs', kod: `navigator.clipboard.writeText(x)`, alan: 'yasakApi' },
   { ad: '.jsx dosyasinda data: + JSX', dosya: 'x.jsx', kod: `const a = <a href={'data:,x'}>i</a>`, alan: 'dataDizgisi' },
+  { ad: 'ozelNotApi cagrisi', dosya: 'x.ts', kod: `await ozelNotApi.getir(7)`, alan: 'ozelNot' },
+  { ad: 'OzelNot tip importu', dosya: 'x.ts', kod: `import type { OzelNot } from '../api'`, alan: 'ozelNot' },
+  {
+    ad: "'ozel-not' duz dizgi",
+    dosya: 'x.ts',
+    kod: `const y = '/api/randevular/7/ozel-not'`,
+    alan: 'ozelNot',
+  },
+  {
+    ad: "'ozel-not' parcali sablon (TemplateTail)",
+    dosya: 'x.ts',
+    kod: 'const y = `/api/randevular/${id}/ozel-not`',
+    alan: 'ozelNot',
+  },
+  { ad: 'private_notes tablo adi', dosya: 'x.ts', kod: `db.exec('DELETE FROM private_notes')`, alan: 'ozelNot' },
 ]
 
 describe('tarayıcının kendisi (iki yön)', () => {
@@ -478,7 +574,7 @@ describe('web/src üretim kaynaklarında istemci rapor üretimi YOK', () => {
     // (ör. `./*.ts`) kavşak dosyaları sessizce kümeden düşerdi.
     for (const beklenen of [
       './api.ts',
-      './danisan/DanisanKarti.tsx',
+      './danisan/DosyaBilgileri.tsx',
       './screens/AnaEkran.tsx',
       './screens/anaEkranKancalari/yerelGun.ts',
     ]) {
@@ -490,6 +586,8 @@ describe('web/src üretim kaynaklarında istemci rapor üretimi YOK', () => {
     expect(Object.keys(tumKaynaklar)).toContain(TEST_KURULUMU)
     // Silinen üretici geri gelmedi.
     expect(yollar).not.toContain('./danisan/veriRaporu.ts')
+    // Görev 7'de taşınan/silinen eski dosya geri gelmedi.
+    expect(yollar).not.toContain('./danisan/DanisanKarti.tsx')
     // Okuma boş değil: api.ts'teki iki indirme GERÇEKTEN bulunuyor — boş
     // bir okuma aşağıdaki "yok" iddialarını hiçbir şeyi sınamayan yeşile
     // çevirirdi.
@@ -550,5 +648,30 @@ describe('web/src üretim kaynaklarında istemci rapor üretimi YOK', () => {
     // Okuma boş değil: bilinen bağımlılık gerçekten görünüyor.
     expect(Object.keys(JSON.parse(paketMetni).dependencies)).toContain('react')
     expect(yasakBagimliliklar(paketMetni)).toEqual([])
+  })
+
+  // Görev 6 inceleme turu — bkz. `OZEL_NOT_IZINLI_DOSYALAR` başlığı: bu
+  // koruma bir zamanlar (`veriRaporu.test.ts`) vardı, dosya silinirken
+  // sessizce düştü. `SeansListesi.tsx`'e geçici bir `ozelNotApi` çağrısı
+  // eklenip tam takım koşturularak boşluk EMPİRİK olarak doğrulandı (hiçbir
+  // test kırmızıya dönmüyordu); bu iki test o boşluğu kapatıyor.
+  it('izinli DIŞINDAKİ hiçbir dosyada ozelNotApi/OzelNot/ozel-not/private_notes gecmiyor', () => {
+    const ihlal = bulgular
+      .filter(([y]) => !OZEL_NOT_IZINLI_DOSYALAR.has(y))
+      .flatMap(([y, b]) => b.ozelNot.map((m) => `${y}: ${m}`))
+    expect(ihlal).toEqual([])
+  })
+
+  // ZORUNLU ARTI YÖN (bkz. dosya başlığındaki "iki yön" ilkesi, 7. biçim):
+  // yukarıdaki test tek başına `incele`nin `ozelNot`u hiç doldurmadığı bir
+  // regresyonda da (boş dizi hep boş dizide kalır) YEŞİL kalırdı. Bu test
+  // İZİNLİ üç dosyanın GERÇEKTEN bulgu ürettiğini iddia ederek o körlüğü
+  // kapatır: okuma boş değilse, "yok" iddiası bir şeyi gerçekten sınıyordur.
+  it('izinli dosyaların ÜÇÜ de ozelNot bulgusu GERÇEKTEN üretiyor (körlüğe karşı)', () => {
+    for (const izinli of OZEL_NOT_IZINLI_DOSYALAR) {
+      const b = bulgular.find(([y]) => y === izinli)?.[1]
+      expect(b, `${izinli} taranan kaynaklar arasında yok`).toBeDefined()
+      expect(b?.ozelNot.length, `${izinli} hiç ozelNot bulgusu üretmedi`).toBeGreaterThan(0)
+    }
   })
 })

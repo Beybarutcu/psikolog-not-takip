@@ -269,13 +269,23 @@ fn v4_uygula(tx: &Connection) -> Result<(), MigrateHatasi> {
 /// zaten ayni ilkeyi (kapili, idempotent OLMAYAN adim) izliyor; kapinin
 /// dustugu durumu `basarisiz_v5_migrate_semayi_geri_alir` testi yakalar.
 ///
-/// # `tags.ad_katli`: Turkce katlanmis bicim
+/// # `tags.ad_anahtar`: KİMLİK ile ARAMA farklı normalleşme ister (inceleme
+/// düzeltmesi -- ilk sürümde `store::search::katla` yeniden kullanılıyordu,
+/// bu YANLIŞTI)
 ///
-/// "Kaygi", "kaygi" ve "KAYGI" AYNI etiket olmali. `ad_katli` UNIQUE'tir ve
-/// deposu (`store::tags`) buraya `store::search::katla`'nin (arama
-/// modulunun Turkce katlama kurali, `pub(crate)` yapilip YENIDEN
-/// KULLANILDI) ciktisini yazar -- ikinci bir katlama kurali YOKTUR. Kullanici
-/// gorunumu (`ad`) HAM biciminde ayri sutunda kalir.
+/// "Kaygı", "kaygı" ve "KAYGI" AYNI etiket olmalı -- ama `search::katla`
+/// (arama modülünün YUMUŞAK eşleşme kuralı: `ş->s`, `ı->i`, `ğ->g`, `ü->u`,
+/// `ö->o`, `ç->c`) buraya KİMLİK için YANLIŞ araçtır: harf işaretlerini
+/// düzleştirdiği için ANLAMI FARKLI kelimeleri tek etikete birleştirir --
+/// "yas" (matem) ile "yaş" aynı `ad_katli`'ya giderdi, terapist "yaş" yazsa
+/// bile seansa "yas" etiketi (yanlış klinik sınıflandırma) bağlanırdı. Bu
+/// yüzden `ad_anahtar` `store::tags::ad_anahtar_uret`'in ürettiği, Türkçe'ye
+/// duyarlı KÜÇÜK HARFE çevrilmiş ama harf işaretleri KORUNMUŞ biçimi taşır:
+/// `I->ı`, `İ->i`, gerisi Unicode küçültme. `UNIQUE`'tir. Kullanıcı görünümü
+/// (`ad`) HAM biçiminde ayrı sütunda kalır. `search::katla` bu tabloya HİÇ
+/// dokunmaz -- Görev 7'de arama tarafında etiket eşleşmesi için ayrıca
+/// kullanılacak (orada YUMUŞAK eşleşme doğrudur), o zaman `pub(crate)`
+/// açılır.
 ///
 /// # `ON DELETE CASCADE` burada BILEREK var -- V4'teki uyariyla KARISTIRILMASIN
 ///
@@ -289,12 +299,29 @@ fn v4_uygula(tx: &Connection) -> Result<(), MigrateHatasi> {
 /// yabanci anahtarlari GECICI KAPATMAYA gerek yok: hicbir mevcut tablo
 /// yeniden olusturulmuyor, `ON DELETE CASCADE` yalnizca YENI bir tabloda
 /// tanimlaniyor.
+///
+/// # `progress_note_tags_temizle_kullanilmayan` tetikleyicisi (inceleme
+/// düzeltmesi, Minor 1)
+///
+/// `progress_note_tags`'ten bir satır SİLİNDİĞİNDE (`etiket_kaldir` ile
+/// TEKİL olarak da, `ON DELETE CASCADE` ile TOPLU olarak da -- SQLite FK
+/// eylemleri normal `AFTER DELETE` tetikleyicilerini `recursive_triggers`
+/// kapalıyken bile tetikler) o satırın `tag_id`'sinin BAŞKA hiçbir bağı
+/// kalmadıysa `tags` sözlüğünden de silinir. Gerekçe: veri en aza indirme --
+/// bir randevu (ve onunla giden tek etiket bağı) silindiğinde "kriz" gibi
+/// hassas bir etiket adının otomatik tamamlama sözlüğünde hiçbir seansa
+/// bağlı olmadan yaşamaya devam etmesi istenmez. Uygulama katmanında
+/// (`store::tags::etiket_kaldir`) AYRICA elle bir `DELETE FROM tags` YOKTUR
+/// -- tek temizlik yolu bu tetikleyicidir, hem tekil kaldırmayı hem cascade
+/// silmeyi TEK yerden kapsar.
 const V5: &str = r#"
 CREATE TABLE tags (
-  id       INTEGER PRIMARY KEY,
-  ad       TEXT NOT NULL CHECK (length(ad) BETWEEN 1 AND 40),
-  -- Turkce katlanmis bicim: "Kaygi" ile "kaygi" ve "KAYGI" ayni etikettir.
-  ad_katli TEXT NOT NULL UNIQUE
+  id         INTEGER PRIMARY KEY,
+  ad         TEXT NOT NULL CHECK (length(ad) BETWEEN 1 AND 40),
+  -- Turkce kucuk harfe cevrilmis (harf isaretleri KORUNMUS) kimlik bicimi:
+  -- "Kaygi"/"kaygi"/"KAYGI" ayni etikettir; "yas" (matem) ile "yaş" (harf
+  -- isaretli, farkli kelime) FARKLI etikettir (bkz. modul basligi).
+  ad_anahtar TEXT NOT NULL UNIQUE
 );
 
 CREATE TABLE progress_note_tags (
@@ -303,6 +330,17 @@ CREATE TABLE progress_note_tags (
   PRIMARY KEY (appointment_id, tag_id)
 );
 CREATE INDEX progress_note_tags_tag ON progress_note_tags(tag_id);
+
+-- Bkz. modul basligi: bir etiketin son bagi gidince sozlukten de silinir.
+-- Hem `etiket_kaldir`'in tekil DELETE'ini hem `ON DELETE CASCADE`'in toplu
+-- silmesini kapsar -- tek temizlik yolu budur.
+CREATE TRIGGER progress_note_tags_temizle_kullanilmayan
+AFTER DELETE ON progress_note_tags
+BEGIN
+  DELETE FROM tags
+   WHERE id = OLD.tag_id
+     AND NOT EXISTS (SELECT 1 FROM progress_note_tags WHERE tag_id = OLD.tag_id);
+END;
 "#;
 
 /// Surum 3'te `clients` tablosuna eklenen sutunlar.
@@ -1360,7 +1398,10 @@ mod tests {
     }
 
     #[test]
-    fn v3_veritabani_veri_kaybetmeden_v4e_yukselir() {
+    fn v3_veritabani_veri_kaybetmeden_guncel_surume_yukselir() {
+        // ADI DUZELTILDI (Minor-4, inceleme bulgusu): eski ad "...v4e_yukselir"
+        // idi ama `migrate` burada TAM SURUME (artik 5) kadar yukseliyor --
+        // testin konusu hala V4'un ucret kisiti, ama isim yanilticiydi.
         let dir = tempfile::tempdir().unwrap();
         let yol = dir.path().join("veri.db");
         let key = crate::crypto::keyring::generate_data_key();
@@ -1801,6 +1842,44 @@ mod tests {
             c.query_row("SELECT icerik FROM private_notes WHERE id=1", [], |r| r.get(0)).unwrap();
         assert_eq!(ozel, "V3TEN KALAN OZEL NOT");
         assert_eq!(randevu_ve_not_sayilari(&c), (1, 1, 1));
+
+        // Minor-3 duzeltmesi: yalnizca SAYI degil, randevunun HER ALANI da
+        // (v3_veritabani'nin yazdigi degerlerle birebir) tasindi mi
+        // dogrulanir -- "satir sayisi ayni" bos/bozuk alanlarla da
+        // saglanabilirdi (desen `v3_veritabani_veri_kaybetmeden_guncel_
+        // surume_yukselir`'deki ayni kontrolle aym gerekce).
+        #[allow(clippy::type_complexity)]
+        let (cid, bas, bit, durum, ucret, odendi, seri): (
+            i64,
+            String,
+            String,
+            String,
+            Option<i64>,
+            i64,
+            Option<String>,
+        ) = c
+            .query_row(
+                "SELECT client_id, baslangic, bitis, durum, ucret, odendi, seri_id
+                 FROM appointments WHERE id = 1",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            (cid, bas.as_str(), bit.as_str(), durum.as_str(), ucret, odendi, seri.as_deref()),
+            (1, "2026-09-07T14:00", "2026-09-07T15:00", "geldi", Some(45000), 1, Some("seri-abc")),
+            "v4 -> v5 yukseltmesi randevunun HER alanini oldugu gibi tasimali"
+        );
     }
 
     #[test]
@@ -1810,7 +1889,7 @@ mod tests {
         // YOK) ikinci cagrida hata verirdi; kapi tutuyorsa ikinci `migrate`
         // hicbir seye dokunmadan basarili doner.
         let (_d, c) = baglanti();
-        c.execute("INSERT INTO tags (ad, ad_katli) VALUES ('kaygi','kaygi')", []).unwrap();
+        c.execute("INSERT INTO tags (ad, ad_anahtar) VALUES ('kaygi','kaygi')", []).unwrap();
 
         migrate(&c).unwrap();
         migrate(&c).unwrap();

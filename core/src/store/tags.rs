@@ -17,20 +17,55 @@
 //! yenileyen bir işlemdir (terapist bir seansta birkaç etiketi art arda
 //! deneyip düzeltebilir) — bkz. `store::notes` modül başlığındaki aynı
 //! muhakeme: `HerCagri` seçilseydi ekleme/kaldırma denemeleri silinemez log
-//! satırları biriktirirdi. Bu yüzden hem ekleme/kaldırma hem görüntüleme
-//! yolları `LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK)` kullanır.
-//! `etiket_ekle` ve `etiket_kaldir` BİLEREK AYNI (eylem, varlık, varlık_id)
-//! üçlüsünü paylaşır (`Duzenleme`/`progress_note`/appointment_id) — ikisi de
+//! satırları biriktirirdi. **Görüntüleme yolları (`seans_etiketleri`,
+//! `etiketli_seanslar`) da aynı kuralı izler** — `seans_etiketleri` seans
+//! paneli her açılışta çalışacak bir yoldur; `HerCagri` olsaydı panel her
+//! açılışta silinemez bir satır bırakırdı (inceleme bulgusu, bkz. iki yönlü
+//! hacim testleri: `seans_etiketleri_otuz_goruntuleme_tam_bir_satir_uretir`,
+//! `seans_etiketleri_pencere_disindaki_eski_satiri_susturmaz` ve
+//! `etiketli_seanslar` için aynı çiftler). Bu yüzden BÜTÜN dört yol
+//! (`etiket_ekle`, `etiket_kaldir`, `seans_etiketleri`, `etiketli_seanslar`)
+//! `LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK)` kullanır. `etiket_ekle`
+//! ve `etiket_kaldir` BİLEREK AYNI (eylem, varlık, varlık_id) üçlüsünü
+//! paylaşır (`Duzenleme`/`progress_note`/appointment_id) — ikisi de
 //! sonuçta "bu seansın resmî notu değişti" demektir.
 //!
-//! # `ad_katli`: Türkçe katlama `search::katla`'dan YENİDEN KULLANILIR
+//! # KRİTİK: hiçbir satırı etkilemeyen işlem loglanmaz (inceleme düzeltmesi)
 //!
-//! "Kaygı", "kaygı" ve "KAYGI" aynı etiket olmalı. Bu katlama kuralı
-//! `store::search::katla` içinde zaten tanımlı (SQL tarafındaki `lower()` +
-//! 12 `replace()` zincirinin Rust karşılığı); burada İKİNCİ bir katlama
-//! fonksiyonu YAZILMAZ — arama ile etiket eşleşmesi ayrışırsa "kaygı"
-//! etiketi taşıyan bir seans aramada bulunamayabilir. Fonksiyon bu yüzden
-//! `pub(crate)` yapılıp doğrudan çağrılır.
+//! `store::audit` modül başlığındaki kural ("hiçbir satırı etkilemeyen
+//! mutasyonlar loglanmaz — aksi hâlde dışarıdan tetiklenebilir, sınırsız ve
+//! silinemez bir gürültü yolu açılır", desen `appointments.rs`'teki
+//! `etkilenen == 0 → Bulunamadi`) burada da uygulanır:
+//! - `etiket_kaldir` `DELETE`'in **etkilediği satır sayısına** bakar
+//!   (`Connection::execute`'ın döndürdüğü değer). Sıfırsa (bilinmeyen
+//!   `tag_id`, ya da bu seansa hiç bağlanmamış bir etiket) `DepoHatasi::Bulunamadi`
+//!   döner ve **log YAZILMAZ** — "seansın resmî notu değişti" demek, hiçbir
+//!   şey değişmediğinde yalandır.
+//! - `etiket_ekle` aynı şekilde `progress_note_tags` `INSERT`'inin
+//!   (`ON CONFLICT ... DO NOTHING`) GERÇEKTEN bir satır ekleyip eklemediğine
+//!   bakar. Etiket zaten bu seansa bağlıysa (terapist aynı etikete iki kez
+//!   tıklarsa) çağrı hata VERMEZ (idempotent, dönüş değeri mevcut etiket) ama
+//!   **log yazmaz**.
+//!
+//! # `ad_anahtar`: KİMLİK için AYRI bir normalleşme — `search::katla` BURADA
+//! KULLANILMAZ (inceleme düzeltmesi)
+//!
+//! İlk sürümde bu modül `store::search::katla`'yı (arama modülünün YUMUŞAK
+//! eşleşme kuralı) yeniden kullanıyordu. Bu YANLIŞTI: `katla` harf
+//! işaretlerini de düzleştirir (`ş->s`, `ı->i`, `ğ->g`, `ü->u`, `ö->o`,
+//! `ç->c`) — arama için doğru (kullanıcı aksansız yazabilir) ama KİMLİK için
+//! yanlıştır, çünkü ANLAMI FARKLI kelimeleri tek etikete birleştirir: "yas"
+//! (matem) ile "yaş" aynı `ad_katli`'ya giderdi ve ikinci ekleyen kişinin
+//! yazdığı ad sessizce ilkinin görünen adını alırdı — terapist "yaş" yazsa
+//! bile seansa "yas" etiketi bağlanmış görünürdü (yanlış klinik
+//! sınıflandırma).
+//!
+//! Bu yüzden kimlik `ad_anahtar_uret` ile üretilir: yalnızca BÜYÜK/küçük
+//! harf farkını yok sayar, harf işaretlerini KORUR. "Kaygı"/"kaygı"/"KAYGI"
+//! yine aynı etiket, ama "yas"/"yaş" FARKLI etikettir. `store::search::katla`
+//! bu modülde HİÇ kullanılmaz ve `search.rs`'te `pub(crate)` DEĞİLDİR —
+//! Görev 7'de arama tarafında etiket eşleşmesi için gerektiğinde (orada
+//! YUMUŞAK eşleşme doğru davranıştır) ayrıca açılacaktır.
 //!
 //! # `private_notes`'a hiçbir referans yok
 //!
@@ -44,6 +79,16 @@
 //! kapsar — yeni bir dosya eklendiğinde izin listesine elle eklenmesi
 //! GEREKMEZ.
 //!
+//! # Sözlük temizliği tetikleyicide, burada DEĞİL
+//!
+//! Bir etiketin son bağı gidince (`etiket_kaldir` ile TEKİL, ya da randevu
+//! silinip `ON DELETE CASCADE` ile TOPLU) sözlükten de silinmesi
+//! `schema.rs`'teki `progress_note_tags_temizle_kullanilmayan` tetikleyicisi
+//! ile yapılır (bkz. o modülün V5 dokümantasyonu) — burada AYRICA elle bir
+//! `DELETE FROM tags` YOKTUR. Tek temizlik yolu tetikleyicidir: hem tekil
+//! kaldırmayı hem cascade silmeyi kapsar, ikinci bir kopyası unutulup
+//! ayrışamaz.
+//!
 //! # `Debug` elle yazılır
 //!
 //! `Etiket.ad` ve `EtiketliSeans.danisan_adi`/`baslangic` türetilmiş
@@ -55,7 +100,6 @@
 
 use crate::store::audit::{kaydet, Cihaz, Eylem, LogHacmi, BIRLESTIRME_PENCERESI_DK};
 use crate::store::clients::DepoHatasi;
-use crate::store::search::katla;
 use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 
@@ -125,12 +169,50 @@ fn normallesmis_ad(ad: &str) -> String {
     ad.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Etiket KİMLİĞİ için Türkçe'ye duyarlı küçük harfe çevirme.
+///
+/// `store::search::katla` (aramanın YUMUŞAK eşleşmesi) ile KARIŞTIRILMASIN:
+/// `katla` harf işaretlerini de düzleştirir ve bu ARAMA için doğrudur
+/// (kullanıcı aksansız yazabilir, "kaygı" araması "kaygı" içeren her notu
+/// bulmalı) ama KİMLİK için YANLIŞTIR — anlamı farklı kelimeleri (`"yas"`
+/// matem, `"yaş"` harf işaretli farklı kelime) tek etikete birleştirirdi.
+/// Bu fonksiyon yalnızca BÜYÜK/küçük harf farkını yok sayar, harf
+/// işaretlerini KORUR: `"Kaygı"`/`"kaygı"`/`"KAYGI"` aynı anahtara gider,
+/// `"yas"`/`"yaş"` FARKLI kalır.
+///
+/// Rust'ın `str::to_lowercase()`'i Türkçe'ye duyarlı DEĞİLDİR: `'I'` ASCII
+/// kuralıyla `'i'` yapar, oysa Türkçede büyük noktasız `I`'nın küçüğü
+/// noktasız `ı`'dır (büyük noktalı `İ`'nin küçüğü noktalı `i`'dir — bu ikisi
+/// zaten `to_lowercase()`'in Unicode kuralıyla doğru sonucu verir). Bu
+/// yüzden `I`/`İ` ÖNCE elle çevrilir, GERİ KALAN karakterler
+/// `to_lowercase()`'e bırakılır (Unicode'un genel küçültme kuralı
+/// `ş/Ş`, `ğ/Ğ`, `ü/Ü`, `ö/Ö`, `ç/Ç` için zaten doğru sonucu verir — bunlar
+/// harf işaretini KORUYARAK küçülür, `katla`'nın aksine).
+///
+/// `"ISIK"` (tamamı büyük, noktasız `I`) `"ısık"`a gider — `"ışık"`a DEĞİL:
+/// büyük harfte harf işareti bilgisi zaten kaybolmuştur (`I` hem `ı`'nın hem
+/// -yanlış yazılmış- `ı`'nın büyüğü olabilir), bu fonksiyon var olmayan bir
+/// işareti UYDURMAZ; yalnızca büyük/küçük dönüşümü yapar.
+fn ad_anahtar_uret(normal_ad: &str) -> String {
+    normal_ad
+        .chars()
+        .map(|k| match k {
+            'I' => 'ı',
+            'İ' => 'i',
+            d => d,
+        })
+        .collect::<String>()
+        .to_lowercase()
+}
+
 /// Normalleşmiş adın 1-40 KARAKTER (`chars().count()`, bayt değil)
 /// aralığında olduğunu doğrular; aksi hâlde `DepoHatasi::GecersizVeri`.
 /// Sınır veritabanı `CHECK (length(ad) BETWEEN 1 AND 40)` ile de tutulur
 /// (SQLite'ta TEXT için `length()` karakter sayar) — burasi kullanıcıya
 /// anlaşılır bir hata mesajı vermek için ÖNDEN yapılan aynı kontrol
-/// (`notes::not_kaydet`'teki şablon doğrulamasıyla aynı desen).
+/// (`notes::not_kaydet`'teki şablon doğrulamasıyla aynı desen). Hata mesajı
+/// yalnızca UZUNLUĞU taşır, adın kendisini DEĞİL (bkz. modül başlığı: etiket
+/// adı hiçbir yere -log dahil- doğrulanmamış hâliyle sızmamalı).
 fn ad_dogrula(ad: &str) -> Result<String, DepoHatasi> {
     let normal = normallesmis_ad(ad);
     let uzunluk = normal.chars().count();
@@ -149,7 +231,7 @@ fn randevu_var_mi(conn: &Connection, appointment_id: i64) -> Result<bool, DepoHa
     Ok(var.is_some())
 }
 
-/// Bütün etiketler, en çok kullanılandan aza (eşitlikte katlanmış ada göre
+/// Bütün etiketler, en çok kullanılandan aza (eşitlikte anahtar sütuna göre
 /// belirlenebilir bir sıra). Danışana bağlı veri DÖNDÜRMEZ — yalnızca
 /// sözlük — bu yüzden denetime hiç yazmaz (bkz. brief denetim tablosu:
 /// `etiketleri_listele` satırı boş).
@@ -163,7 +245,7 @@ pub fn etiketleri_listele(conn: &Connection, _cihaz: Cihaz) -> Result<Vec<Etiket
            FROM tags t
            LEFT JOIN progress_note_tags pt ON pt.tag_id = t.id
           GROUP BY t.id, t.ad
-          ORDER BY kullanim DESC, t.ad_katli ASC",
+          ORDER BY kullanim DESC, t.ad_anahtar ASC",
     )?;
     let etiketler = stmt
         .query_map([], |r| Ok(Etiket { id: r.get(0)?, ad: r.get(1)?, kullanim: r.get(2)? }))?
@@ -171,12 +253,13 @@ pub fn etiketleri_listele(conn: &Connection, _cihaz: Cihaz) -> Result<Vec<Etiket
     Ok(etiketler)
 }
 
-/// Bir seansın etiketleri, ada göre (katlanmış ada göre sıralanır — kullanıcı
-/// görünümü aynı kalır, sıralama Türkçe harf sırasından bağımsız kararlı
-/// olur).
+/// Bir seansın etiketleri, ada göre (anahtar sütuna göre sıralanır —
+/// kullanıcı görünümü aynı kalır, sıralama büyük/küçük harften bağımsız
+/// kararlı olur).
 ///
 /// Log: `goruntuleme` / `progress_note` / randevu kimliği, birleştirilerek
-/// (bkz. modül başlığı).
+/// (bkz. modül başlığı — bu panel her açılışta çalışan kendi kendini
+/// yenileyen bir yoldur, `HerCagri` OLMAMALI).
 pub fn seans_etiketleri(
     conn: &Connection,
     appointment_id: i64,
@@ -192,7 +275,7 @@ pub fn seans_etiketleri(
            FROM tags t
            JOIN progress_note_tags pt ON pt.tag_id = t.id
           WHERE pt.appointment_id = ?1
-          ORDER BY t.ad_katli ASC",
+          ORDER BY t.ad_anahtar ASC",
     )?;
     let etiketler = stmt
         .query_map([appointment_id], |r| {
@@ -216,13 +299,14 @@ pub fn seans_etiketleri(
     Ok(etiketler)
 }
 
-/// Seansa etiket koyar; aynı katlanmış adla etiket varsa onu kullanır, yoksa
+/// Seansa etiket koyar; aynı anahtarla etiket varsa onu kullanır, yoksa
 /// oluşturur. Yazma + log **tek transaction**'da (desen `notes::not_kaydet`
 /// ile aynı) — log başarısız olursa etiket bağı da geri alınır.
 ///
 /// Aynı etiket aynı seansa iki kez eklenirse (`ON CONFLICT ... DO NOTHING`)
 /// hata VERMEZ, idempotenttir: terapist aynı etikete iki kez tıklarsa ikinci
-/// tıklama sessizce no-op'tur.
+/// tıklama sessizce no-op'tur VE bu no-op **log yazmaz** (bkz. modül
+/// başlığı: hiçbir satırı etkilemeyen işlem loglanmaz).
 pub fn etiket_ekle(
     conn: &Connection,
     appointment_id: i64,
@@ -233,29 +317,31 @@ pub fn etiket_ekle(
     if !randevu_var_mi(conn, appointment_id)? {
         return Err(DepoHatasi::Bulunamadi);
     }
-    let katli = katla(&normal);
+    let anahtar = ad_anahtar_uret(&normal);
 
     let tx = conn.unchecked_transaction()?;
 
-    // Ayni katlanmis adla etiket VARSA onu kullan -- gorunen ad ILK
-    // yazildigi haliyle kalir ("Kaygi" once eklendiyse sonraki "kaygi"
-    // cagrisi gorunumu degistirmez, yalnizca ayni id'ye baglanir). YOKSA
-    // yeni satir olusturulur.
+    // Ayni anahtarla etiket VARSA onu kullan -- gorunen ad ILK yazildigi
+    // haliyle kalir ("Kaygi" once eklendiyse sonraki "kaygi" cagrisi
+    // gorunumu degistirmez, yalnizca ayni id'ye baglanir). YOKSA yeni satir
+    // olusturulur.
     tx.execute(
-        "INSERT INTO tags (ad, ad_katli) VALUES (?1, ?2)
-         ON CONFLICT(ad_katli) DO NOTHING",
-        rusqlite::params![normal, katli],
+        "INSERT INTO tags (ad, ad_anahtar) VALUES (?1, ?2)
+         ON CONFLICT(ad_anahtar) DO NOTHING",
+        rusqlite::params![normal, anahtar],
     )?;
     let (tag_id, gorunen_ad): (i64, String) = tx
-        .query_row("SELECT id, ad FROM tags WHERE ad_katli = ?1", [&katli], |r| {
+        .query_row("SELECT id, ad FROM tags WHERE ad_anahtar = ?1", [&anahtar], |r| {
             Ok((r.get(0)?, r.get(1)?))
         })?;
 
-    tx.execute(
+    // DONUS DEGERI (etkilenen satir sayisi) BURADA ONEMLI: etiket zaten bu
+    // seansa bagliysa 0 doner ve asagida log YAZILMAZ (bkz. modul basligi).
+    let eklendi = tx.execute(
         "INSERT INTO progress_note_tags (appointment_id, tag_id) VALUES (?1, ?2)
          ON CONFLICT(appointment_id, tag_id) DO NOTHING",
         rusqlite::params![appointment_id, tag_id],
-    )?;
+    )? > 0;
 
     let kullanim: i64 = tx.query_row(
         "SELECT COUNT(*) FROM progress_note_tags WHERE tag_id = ?1",
@@ -263,28 +349,34 @@ pub fn etiket_ekle(
         |r| r.get(0),
     )?;
 
-    // Etiket ekleme/kaldirma NOT DUZENLEMESI gibi sik bir islem -- ayni
-    // (eylem, varlik, varlik_id) uclusuyle `etiket_kaldir` ile PAYLASILIR
-    // (bkz. modul basligi). Etiket ADI buraya ASLA gecmez.
-    kaydet(
-        &tx,
-        Eylem::Duzenleme,
-        VARLIK_NOT,
-        &appointment_id.to_string(),
-        cihaz,
-        None,
-        LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK),
-    )?;
+    if eklendi {
+        // Etiket ekleme/kaldirma NOT DUZENLEMESI gibi sik bir islem -- ayni
+        // (eylem, varlik, varlik_id) uclusuyle `etiket_kaldir` ile
+        // PAYLASILIR (bkz. modul basligi). Etiket ADI buraya ASLA gecmez.
+        kaydet(
+            &tx,
+            Eylem::Duzenleme,
+            VARLIK_NOT,
+            &appointment_id.to_string(),
+            cihaz,
+            None,
+            LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK),
+        )?;
+    }
 
     tx.commit()?;
     Ok(Etiket { id: tag_id, ad: gorunen_ad, kullanim })
 }
 
-/// Seanstan etiketi kaldırır; etiket artık hiçbir seansta kullanılmıyorsa
-/// sözlükten de silinir. Gerekçe: kullanılmayan bir etiketin otomatik
-/// tamamlamada asılı kalması `etiketleri_listele`'yi zamanla artık hiçbir
-/// seansa bağlı olmayan girdilerle doldururdu -- terapistin "bu etiketi bir
-/// daha görmeyeceğim" beklentisiyle çelişir.
+/// Seanstan etiketi kaldırır. Sözlük temizliği burada DEĞİL, tetikleyicide
+/// yapılır (bkz. modül başlığı ve `schema.rs`'teki
+/// `progress_note_tags_temizle_kullanilmayan`).
+///
+/// `DELETE`'in etkilediği satır sayısı SIFIRSA (bilinmeyen `tag_id`, ya da
+/// bu seansa hiç bağlanmamış bir etiket) `DepoHatasi::Bulunamadi` döner ve
+/// **log yazılmaz** (bkz. modül başlığı: hiçbir satırı etkilemeyen işlem
+/// loglanmaz — desen `appointments.rs`'teki `etkilenen == 0 → Bulunamadi`
+/// ile aynı).
 pub fn etiket_kaldir(
     conn: &Connection,
     appointment_id: i64,
@@ -297,20 +389,19 @@ pub fn etiket_kaldir(
 
     let tx = conn.unchecked_transaction()?;
 
-    tx.execute(
+    let silinen = tx.execute(
         "DELETE FROM progress_note_tags WHERE appointment_id = ?1 AND tag_id = ?2",
         rusqlite::params![appointment_id, tag_id],
     )?;
-
-    let kalan: i64 = tx.query_row(
-        "SELECT COUNT(*) FROM progress_note_tags WHERE tag_id = ?1",
-        [tag_id],
-        |r| r.get(0),
-    )?;
-    if kalan == 0 {
-        // Son kullanimda sozlukten de sil (bkz. fonksiyon dokumantasyonu).
-        tx.execute("DELETE FROM tags WHERE id = ?1", [tag_id])?;
+    if silinen == 0 {
+        // Bag zaten yoktu -- hicbir satiri etkilemeyen bir islem. `tx` burada
+        // commit EDILMEDEN dusuyor (rollback), zaten hicbir yan etkisi yoktu.
+        return Err(DepoHatasi::Bulunamadi);
     }
+
+    // Sozluk temizligi ARTIK burada DEGIL: `progress_note_tags_temizle_
+    // kullanilmayan` tetikleyicisi yukaridaki DELETE'ten SONRA otomatik
+    // calisir (bkz. modul basligi).
 
     kaydet(
         &tx,
@@ -331,7 +422,7 @@ pub fn etiket_kaldir(
 /// desen `danisan_seanslari.rs`/`notes.rs` ile aynı).
 ///
 /// Log: `varlik_id` **tag_id**'dir (kimlik), etiket ADI değil (bkz. modül
-/// başlığı).
+/// başlığı). Bu yol da `OturumBasi` ile birleştirilir (bkz. modül başlığı).
 pub fn etiketli_seanslar(
     conn: &Connection,
     tag_id: i64,
@@ -453,16 +544,49 @@ mod testler {
         .unwrap()
     }
 
-    /// Denetim kaydındaki TÜM satırların, sızıntı taramasına uygun tek bir
-    /// metne birleştirilmiş hâli (desen `danisan_seanslari.rs` ile aynı).
+    /// Denetim kaydındaki TÜM satırların (`olay_zamani` DAHİL — brief
+    /// "bütün sütunlar" diyor, inceleme düzeltmesi), sızıntı taramasına
+    /// uygun tek bir metne birleştirilmiş hâli (desen `danisan_seanslari.rs`
+    /// ile aynı, genişletilmiş).
     fn tum_log_metni(c: &rusqlite::Connection) -> String {
         son_kayitlar(c, 1000)
             .unwrap()
             .into_iter()
-            .map(|k| format!("{} {} {} {} {:?}", k.eylem, k.varlik, k.varlik_id, k.cihaz, k.ayrinti))
+            .map(|k| {
+                format!(
+                    "{} {} {} {} {} {:?}",
+                    k.olay_zamani, k.eylem, k.varlik, k.varlik_id, k.cihaz, k.ayrinti
+                )
+            })
             .collect::<Vec<_>>()
             .join("\n")
     }
+
+    /// `dk_once` dakika onceye ait bir log satirini DOGRUDAN (API'yi
+    /// kullanmadan) yazar; pencere disi senaryolari icin (desen
+    /// `notes.rs`/`audit.rs` testleriyle ayni: `audit_log`'a INSERT
+    /// serbesttir, yasak olan UPDATE/DELETE'tir).
+    fn eski_satir_ekle(
+        c: &rusqlite::Connection,
+        eylem: &str,
+        varlik: &str,
+        varlik_id: &str,
+        dk_once: i64,
+    ) {
+        let zaman = (time::OffsetDateTime::now_utc() - time::Duration::minutes(dk_once))
+            .replace_nanosecond(0)
+            .unwrap()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        c.execute(
+            "INSERT INTO audit_log (olay_zamani, eylem, varlik, varlik_id, cihaz, ayrinti)
+             VALUES (?1, ?2, ?3, ?4, 'masaustu', NULL)",
+            rusqlite::params![zaman, eylem, varlik, varlik_id],
+        )
+        .unwrap();
+    }
+
+    // --- Kimlik normalleşmesi (`ad_anahtar_uret`) -------------------------
 
     #[test]
     fn ayni_etiket_buyuk_kucuk_harf_ve_bosluktan_bagimsiz_ayni_kimlige_gider() {
@@ -484,6 +608,70 @@ mod testler {
 
         let toplam: i64 = c.query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0)).unwrap();
         assert_eq!(toplam, 1, "dort farkli yazim TEK etiket satirinda kalmali");
+    }
+
+    #[test]
+    fn harf_isaretli_ve_isaretsiz_kelimeler_farkli_etikettir() {
+        // INCELEME DUZELTMESI (Important-3): kimlik icin `search::katla`
+        // kullanmak "yas" (matem) ile "yaş"i (harf isaretli, tamamen farkli
+        // bir kelime) ayni etikete birlestiriyordu -- yanlis klinik
+        // siniflandirma. `ad_anahtar_uret` harf isaretlerini KORUR.
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let r1 = randevu(&c, cid, "2026-09-07T10:00");
+        let r2 = randevu(&c, cid, "2026-09-14T10:00");
+
+        let yas = etiket_ekle(&c, r1, "yas", Cihaz::Masaustu).unwrap();
+        let yas_isaretli = etiket_ekle(&c, r2, "yaş", Cihaz::Masaustu).unwrap();
+
+        assert_ne!(yas.id, yas_isaretli.id, "\"yas\" ve \"yaş\" FARKLI etiket olmali");
+        let toplam: i64 = c.query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0)).unwrap();
+        assert_eq!(toplam, 2, "iki farkli anlamli kelime iki ayri etiket satiri birakmali");
+    }
+
+    #[test]
+    fn buyuk_kucuk_harf_donusumu_harf_isaretini_koruyarak_calisir() {
+        // "Işık" (basi noktasiz buyuk I) ile "ışık" (kucuk, noktasiz i)
+        // AYNI etiket olmali; "İzmir" (noktali buyuk İ) ile "izmir" de AYNI.
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let r1 = randevu(&c, cid, "2026-09-07T10:00");
+        let r2 = randevu(&c, cid, "2026-09-14T10:00");
+        let r3 = randevu(&c, cid, "2026-09-21T10:00");
+        let r4 = randevu(&c, cid, "2026-09-28T10:00");
+
+        let a1 = etiket_ekle(&c, r1, "Işık", Cihaz::Masaustu).unwrap();
+        let a2 = etiket_ekle(&c, r2, "ışık", Cihaz::Masaustu).unwrap();
+        assert_eq!(a1.id, a2.id, "\"Işık\" ve \"ışık\" ayni etiket olmali");
+
+        let b1 = etiket_ekle(&c, r3, "İzmir", Cihaz::Masaustu).unwrap();
+        let b2 = etiket_ekle(&c, r4, "izmir", Cihaz::Masaustu).unwrap();
+        assert_eq!(b1.id, b2.id, "\"İzmir\" ve \"izmir\" ayni etiket olmali");
+
+        assert_ne!(a1.id, b1.id, "iki farkli kelime hala farkli etiket olmali");
+    }
+
+    #[test]
+    fn tamami_buyuk_harfli_ad_turkce_kurala_gore_kucultulur() {
+        // "ISIK" (tamami buyuk, noktasiz I) -> "ısık" (noktasiz kucuk i)
+        // -- "ışık" DEGIL: buyuk harfte harf isareti bilgisi zaten
+        // kaybolmustur, fonksiyon var olmayan bir isareti UYDURMAZ. Yine de
+        // "ISIK" yazan kisi byuk olasilikla "ışık" demek istemistir; bu
+        // sinir taniyan bir davranistir, mukemmel bir tahmin degil (bkz.
+        // `ad_anahtar_uret` dokumantasyonu).
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let r1 = randevu(&c, cid, "2026-09-07T10:00");
+        let r2 = randevu(&c, cid, "2026-09-14T10:00");
+
+        let buyuk = etiket_ekle(&c, r1, "ISIK", Cihaz::Masaustu).unwrap();
+        let kucuk_isaretsiz = etiket_ekle(&c, r2, "ısık", Cihaz::Masaustu).unwrap();
+        assert_eq!(buyuk.id, kucuk_isaretsiz.id, "\"ISIK\" \"ısık\"a esitlenmeli (\"ışık\"a degil)");
+
+        let anahtar: String = c
+            .query_row("SELECT ad_anahtar FROM tags WHERE id=?1", [buyuk.id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(anahtar, "ısık");
     }
 
     #[test]
@@ -519,6 +707,8 @@ mod testler {
         assert_eq!(sonuc.ad.chars().count(), 40, "40 karakterlik cok baytli ad kabul edilmeli");
     }
 
+    // --- Sozluk temizligi (tetikleyici) ------------------------------------
+
     #[test]
     fn son_kullanimda_sozlukten_silinir_baska_seansta_kullanilan_silinmez() {
         let (_d, c) = kurulum();
@@ -537,7 +727,7 @@ mod testler {
         etiket_kaldir(&c, r2, e1.id, Cihaz::Masaustu).unwrap();
         let kaldi: i64 =
             c.query_row("SELECT COUNT(*) FROM tags WHERE id=?1", [e1.id], |r| r.get(0)).unwrap();
-        assert_eq!(kaldi, 0, "son kullanimda etiket sozlukten silinmeli");
+        assert_eq!(kaldi, 0, "son kullanimda etiket sozlukten silinmeli (tetikleyici)");
     }
 
     #[test]
@@ -557,6 +747,47 @@ mod testler {
             c.query_row("SELECT COUNT(*) FROM progress_note_tags", [], |r| r.get(0)).unwrap();
         assert_eq!(bag_sonra, 0, "randevu silinince etiket bagi da silinmeli (ON DELETE CASCADE)");
     }
+
+    #[test]
+    fn randevu_silinince_kullanilmayan_etiket_sozlukten_de_temizlenir() {
+        // MINOR-1 duzeltmesi: cascade ile giden BAG'in yaninda, artik
+        // hicbir seansa bagli olmayan etiket ADI da sozlukte kalmamali --
+        // veri en aza indirme. Tetikleyici `ON DELETE CASCADE`'in urettigi
+        // silmeyi de yakalar (bkz. schema.rs V5 dokumantasyonu).
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let rid = randevu(&c, cid, "2026-09-07T10:00");
+        let e = etiket_ekle(&c, rid, "kriz", Cihaz::Masaustu).unwrap();
+
+        c.execute("DELETE FROM appointments WHERE id=?1", [rid]).unwrap();
+
+        let hala_var: i64 =
+            c.query_row("SELECT COUNT(*) FROM tags WHERE id=?1", [e.id], |r| r.get(0)).unwrap();
+        assert_eq!(
+            hala_var, 0,
+            "randevu silinince artik kullanilmayan etiket sozlukten de silinmeli (tetikleyici)"
+        );
+    }
+
+    #[test]
+    fn randevu_silinince_baska_seansta_kullanilan_etiket_sozlukte_kalir() {
+        // Yukaridaki testin ARTI yonu: cascade silme her etiketi
+        // silmiyor, yalnizca KULLANIMI SIFIRA DUSENI.
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let r1 = randevu(&c, cid, "2026-09-07T10:00");
+        let r2 = randevu(&c, cid, "2026-09-14T10:00");
+        let e = etiket_ekle(&c, r1, "aile", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, r2, "aile", Cihaz::Masaustu).unwrap();
+
+        c.execute("DELETE FROM appointments WHERE id=?1", [r1]).unwrap();
+
+        let hala_var: i64 =
+            c.query_row("SELECT COUNT(*) FROM tags WHERE id=?1", [e.id], |r| r.get(0)).unwrap();
+        assert_eq!(hala_var, 1, "baska seansta hala kullanilan etiket cascade ile silinmemeli");
+    }
+
+    // --- Yetkili kaynak / siralama ------------------------------------------
 
     #[test]
     fn etiketli_seanslar_client_id_yi_yetkili_kaynaktan_okur() {
@@ -603,6 +834,8 @@ mod testler {
         assert_eq!(sira, vec![en_yeni, orta, en_eski]);
     }
 
+    // --- Sizinti ---------------------------------------------------------
+
     #[test]
     fn etiket_adi_denetim_kaydina_hicbir_bicimde_girmez() {
         let (_d, c) = kurulum();
@@ -618,59 +851,28 @@ mod testler {
         let log = tum_log_metni(&c);
         assert!(!log.is_empty(), "on kosul: denetlenecek log satiri olmali");
         assert!(!log.contains("ÇOKGİZLİETİKET"), "ham etiket adi loga sizmis: {log}");
-        // Katlanmis hali de (search.rs'teki emsal test gibi) aranir.
+        // Katlanmis/kucultulmus hali de (search.rs'teki emsal test gibi) aranir.
+        assert!(!log.contains("çokgizlietiket"), "kucultulmus etiket adi loga sizmis: {log}");
         assert!(!log.contains("cokgizlietiket"), "katlanmis etiket adi loga sizmis: {log}");
         assert!(!log.contains("COKGIZLIETIKET"));
     }
 
     #[test]
-    fn otuz_ekle_kaldir_ayni_seans_icin_tam_olarak_bir_duzenleme_satiri_uretir() {
+    fn debug_ciktisi_etiket_adini_ve_danisan_bilgisini_basmaz() {
         let (_d, c) = kurulum();
         let cid = danisan(&c, "Ayse");
         let rid = randevu(&c, cid, "2026-09-07T10:00");
+        let e = etiket_ekle(&c, rid, "COK_GIZLI_AD", Cihaz::Masaustu).unwrap();
+        let etiket_debug = format!("{e:?}");
+        assert!(!etiket_debug.contains("COK_GIZLI_AD"));
 
-        for i in 0..30 {
-            let e = etiket_ekle(&c, rid, &format!("etiket{i}"), Cihaz::Masaustu).unwrap();
-            etiket_kaldir(&c, rid, e.id, Cihaz::Masaustu).unwrap();
-        }
-
-        assert_eq!(
-            log_sayisi(&c, "duzenleme", "progress_note", &rid.to_string()),
-            1,
-            "30 ardisik ekle/kaldir cagrisi TAM OLARAK 1 duzenleme satiri uretmeli"
-        );
+        let seans = etiketli_seanslar(&c, e.id, Cihaz::Masaustu).unwrap();
+        let seans_debug = format!("{:?}", seans[0]);
+        assert!(!seans_debug.contains("Ayse"));
+        assert!(!seans_debug.contains("2026-09-07"));
     }
 
-    #[test]
-    fn pencere_disindaki_eski_satir_yeni_etiket_kaydini_susturmaz() {
-        // Hacim testinin "cok az" yonu (desen `notes.rs`'teki
-        // `pencere_disindaki_satir_...` ile ayni): pencere bir yila
-        // cikarilsaydi bu test kirilirdi ama "otuz cagri tek satir" testi
-        // hicbir sey fark etmezdi.
-        let (_d, c) = kurulum();
-        let cid = danisan(&c, "Ayse");
-        let rid = randevu(&c, cid, "2026-09-07T10:00");
-
-        let zaman = (time::OffsetDateTime::now_utc() - time::Duration::minutes(10))
-            .replace_nanosecond(0)
-            .unwrap()
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap();
-        c.execute(
-            "INSERT INTO audit_log (olay_zamani, eylem, varlik, varlik_id, cihaz, ayrinti)
-             VALUES (?1, 'duzenleme', 'progress_note', ?2, 'masaustu', NULL)",
-            rusqlite::params![zaman, rid.to_string()],
-        )
-        .unwrap();
-
-        etiket_ekle(&c, rid, "aile", Cihaz::Masaustu).unwrap();
-
-        assert_eq!(
-            log_sayisi(&c, "duzenleme", "progress_note", &rid.to_string()),
-            2,
-            "pencere disindaki eski satir yeni kaydi susturmamali -- pencere zamana bagli olmali"
-        );
-    }
+    // --- Bilinmeyen kimlikler / hicbir satiri etkilemeyen islemler --------
 
     #[test]
     fn bilinmeyen_seansa_etiket_eklenemez_ve_kaldirilamaz() {
@@ -705,19 +907,243 @@ mod testler {
     }
 
     #[test]
-    fn debug_ciktisi_etiket_adini_ve_danisan_bilgisini_basmaz() {
+    fn bilinmeyen_tag_id_ile_kaldirma_bulunamadi_doner_log_yazilmaz() {
+        // INCELEME DUZELTMESI (Important-2): `etiket_kaldir` DELETE'in
+        // etkiledigi satir sayisina bakmiyordu -- seansta olmayan/hic var
+        // olmayan bir tag_id ile 0 satir silinip `Bulunamadi` DONMEDEN
+        // "resmi not degisti" diyen yanlis bir log satiri yaziliyordu.
         let (_d, c) = kurulum();
         let cid = danisan(&c, "Ayse");
         let rid = randevu(&c, cid, "2026-09-07T10:00");
-        let e = etiket_ekle(&c, rid, "COK_GIZLI_AD", Cihaz::Masaustu).unwrap();
-        let etiket_debug = format!("{e:?}");
-        assert!(!etiket_debug.contains("COK_GIZLI_AD"));
+        let once = son_kayitlar(&c, 1000).unwrap().len();
 
-        let seans = etiketli_seanslar(&c, e.id, Cihaz::Masaustu).unwrap();
-        let seans_debug = format!("{:?}", seans[0]);
-        assert!(!seans_debug.contains("Ayse"));
-        assert!(!seans_debug.contains("2026-09-07"));
+        let hata = etiket_kaldir(&c, rid, 999, Cihaz::Masaustu).unwrap_err();
+        assert!(matches!(hata, DepoHatasi::Bulunamadi));
+        assert_eq!(
+            son_kayitlar(&c, 1000).unwrap().len(),
+            once,
+            "hicbir satiri etkilemeyen kaldirma islemi log birakmamali"
+        );
     }
+
+    #[test]
+    fn baglanmamis_ama_var_olan_etiketi_kaldirmak_da_bulunamadi_doner() {
+        // Ayirt edici senaryo: `tag_id` GERCEKTEN var (baska bir seansa
+        // bagli) ama BU seansa hic baglanmamis -- yine 0 satir silinir.
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let r1 = randevu(&c, cid, "2026-09-07T10:00");
+        let r2 = randevu(&c, cid, "2026-09-14T10:00");
+        let e = etiket_ekle(&c, r1, "aile", Cihaz::Masaustu).unwrap();
+
+        let hata = etiket_kaldir(&c, r2, e.id, Cihaz::Masaustu).unwrap_err();
+        assert!(matches!(hata, DepoHatasi::Bulunamadi));
+    }
+
+    #[test]
+    fn zaten_bagli_etiketi_eklemek_pencere_disindaki_eski_satiri_bile_yeni_satira_cevirmez() {
+        // INCELEME DUZELTMESI (Important-2): `etiket_ekle` bag zaten VARSA
+        // (ON CONFLICT DO NOTHING no-op) log yazmamali. Bunu MERGE
+        // PENCERESININ MASKELEMEDIGI bir kurulumla sinamak icin: gercek log
+        // satiri API'den DEGIL, dogrudan SQL ile PENCERE DISINA (10 dk
+        // once) konur -- boylece "ikinci ekleme log birakmamali" iddiasi,
+        // OturumBasi'nin zaten sustur-muyor olmasiyla degil, GERCEKTEN
+        // hicbir satiri etkilemedigi icin dogrulanir (mutasyon: etkilenen
+        // satir kontrolu kaldirilirsa bu test KIRILIR, `OturumBasi`
+        // penceresi 10 dakikalik farki susturamaz).
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let rid = randevu(&c, cid, "2026-09-07T10:00");
+
+        c.execute("INSERT INTO tags (ad, ad_anahtar) VALUES ('aile','aile')", []).unwrap();
+        let tag_id: i64 =
+            c.query_row("SELECT id FROM tags WHERE ad_anahtar='aile'", [], |r| r.get(0)).unwrap();
+        c.execute(
+            "INSERT INTO progress_note_tags (appointment_id, tag_id) VALUES (?1, ?2)",
+            rusqlite::params![rid, tag_id],
+        )
+        .unwrap();
+        eski_satir_ekle(&c, "duzenleme", "progress_note", &rid.to_string(), 10);
+
+        let sonuc = etiket_ekle(&c, rid, "aile", Cihaz::Masaustu).unwrap();
+        assert_eq!(sonuc.id, tag_id);
+
+        assert_eq!(
+            log_sayisi(&c, "duzenleme", "progress_note", &rid.to_string()),
+            1,
+            "zaten bagli etiketi tekrar eklemek hicbir satiri etkilemez -- pencere disindaki \
+             eski satira ragmen YENI satir eklenmemeli"
+        );
+        let bag_sayisi: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM progress_note_tags WHERE appointment_id=?1 AND tag_id=?2",
+                rusqlite::params![rid, tag_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(bag_sayisi, 1, "bag tekil kalmali, cogalmamali");
+    }
+
+    // --- Hacim: etiket_ekle/etiket_kaldir (Duzenleme) ----------------------
+
+    #[test]
+    fn otuz_ekle_kaldir_ayni_seans_icin_tam_olarak_bir_duzenleme_satiri_uretir() {
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let rid = randevu(&c, cid, "2026-09-07T10:00");
+
+        for i in 0..30 {
+            let e = etiket_ekle(&c, rid, &format!("etiket{i}"), Cihaz::Masaustu).unwrap();
+            etiket_kaldir(&c, rid, e.id, Cihaz::Masaustu).unwrap();
+        }
+
+        assert_eq!(
+            log_sayisi(&c, "duzenleme", "progress_note", &rid.to_string()),
+            1,
+            "30 ardisik ekle/kaldir cagrisi TAM OLARAK 1 duzenleme satiri uretmeli"
+        );
+    }
+
+    #[test]
+    fn pencere_disindaki_eski_satir_yeni_etiket_kaydini_susturmaz() {
+        // Hacim testinin "cok az" yonu (desen `notes.rs`'teki
+        // `pencere_disindaki_satir_...` ile ayni): pencere bir yila
+        // cikarilsaydi bu test kirilirdi ama "otuz cagri tek satir" testi
+        // hicbir sey fark etmezdi.
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let rid = randevu(&c, cid, "2026-09-07T10:00");
+
+        eski_satir_ekle(&c, "duzenleme", "progress_note", &rid.to_string(), 10);
+
+        etiket_ekle(&c, rid, "aile", Cihaz::Masaustu).unwrap();
+
+        assert_eq!(
+            log_sayisi(&c, "duzenleme", "progress_note", &rid.to_string()),
+            2,
+            "pencere disindaki eski satir yeni kaydi susturmamali -- pencere zamana bagli olmali"
+        );
+    }
+
+    // --- Hacim: seans_etiketleri (Goruntuleme) -----------------------------
+    //
+    // INCELEME DUZELTMESI (Important-1): bu goruntuleme yolu HICBIR testle
+    // korunmuyordu; incelemeci mutasyonla (Goruntuleme->Duzenleme,
+    // OturumBasi->HerCagri) kanitladi -- 14/14 test hala YESIL kaliyordu.
+
+    #[test]
+    fn seans_etiketleri_dogru_eylem_varlik_ve_kimlikle_loglanir() {
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let rid = randevu(&c, cid, "2026-09-07T10:00");
+        etiket_ekle(&c, rid, "aile", Cihaz::Masaustu).unwrap();
+
+        seans_etiketleri(&c, rid, Cihaz::Masaustu).unwrap();
+
+        assert_eq!(
+            log_sayisi(&c, "goruntuleme", "progress_note", &rid.to_string()),
+            1,
+            "seans_etiketleri goruntuleme/progress_note/appointment_id olarak loglanmali"
+        );
+    }
+
+    #[test]
+    fn seans_etiketleri_otuz_goruntuleme_tam_olarak_bir_satir_uretir() {
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let rid = randevu(&c, cid, "2026-09-07T10:00");
+        etiket_ekle(&c, rid, "aile", Cihaz::Masaustu).unwrap();
+        let ekleme_log_sayisi = log_sayisi(&c, "duzenleme", "progress_note", &rid.to_string());
+
+        for _ in 0..30 {
+            seans_etiketleri(&c, rid, Cihaz::Masaustu).unwrap();
+        }
+
+        assert_eq!(
+            log_sayisi(&c, "goruntuleme", "progress_note", &rid.to_string()),
+            1,
+            "30 ardisik seans_etiketleri cagrisi TAM OLARAK 1 goruntuleme satiri uretmeli"
+        );
+        // Duzenleme satirina DOKUNULMADI -- iki eylem birbirini gizlemez.
+        assert_eq!(
+            log_sayisi(&c, "duzenleme", "progress_note", &rid.to_string()),
+            ekleme_log_sayisi
+        );
+    }
+
+    #[test]
+    fn seans_etiketleri_pencere_disindaki_eski_satiri_susturmaz() {
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let rid = randevu(&c, cid, "2026-09-07T10:00");
+        etiket_ekle(&c, rid, "aile", Cihaz::Masaustu).unwrap();
+
+        eski_satir_ekle(&c, "goruntuleme", "progress_note", &rid.to_string(), 10);
+
+        seans_etiketleri(&c, rid, Cihaz::Masaustu).unwrap();
+
+        assert_eq!(
+            log_sayisi(&c, "goruntuleme", "progress_note", &rid.to_string()),
+            2,
+            "pencere disindaki eski goruntuleme satiri yenisini susturmamali"
+        );
+    }
+
+    // --- Hacim: etiketli_seanslar (Goruntuleme) -----------------------------
+
+    #[test]
+    fn etiketli_seanslar_dogru_eylem_varlik_ve_kimlikle_loglanir() {
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let rid = randevu(&c, cid, "2026-09-07T10:00");
+        let e = etiket_ekle(&c, rid, "aile", Cihaz::Masaustu).unwrap();
+
+        etiketli_seanslar(&c, e.id, Cihaz::Masaustu).unwrap();
+
+        assert_eq!(
+            log_sayisi(&c, "goruntuleme", "etiket", &e.id.to_string()),
+            1,
+            "etiketli_seanslar goruntuleme/etiket/tag_id olarak loglanmali"
+        );
+    }
+
+    #[test]
+    fn etiketli_seanslar_otuz_goruntuleme_tam_olarak_bir_satir_uretir() {
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let rid = randevu(&c, cid, "2026-09-07T10:00");
+        let e = etiket_ekle(&c, rid, "aile", Cihaz::Masaustu).unwrap();
+
+        for _ in 0..30 {
+            etiketli_seanslar(&c, e.id, Cihaz::Masaustu).unwrap();
+        }
+
+        assert_eq!(
+            log_sayisi(&c, "goruntuleme", "etiket", &e.id.to_string()),
+            1,
+            "30 ardisik etiketli_seanslar cagrisi TAM OLARAK 1 goruntuleme satiri uretmeli"
+        );
+    }
+
+    #[test]
+    fn etiketli_seanslar_pencere_disindaki_eski_satiri_susturmaz() {
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        let rid = randevu(&c, cid, "2026-09-07T10:00");
+        let e = etiket_ekle(&c, rid, "aile", Cihaz::Masaustu).unwrap();
+
+        eski_satir_ekle(&c, "goruntuleme", "etiket", &e.id.to_string(), 10);
+
+        etiketli_seanslar(&c, e.id, Cihaz::Masaustu).unwrap();
+
+        assert_eq!(
+            log_sayisi(&c, "goruntuleme", "etiket", &e.id.to_string()),
+            2,
+            "pencere disindaki eski goruntuleme satiri yenisini susturmamali"
+        );
+    }
+
+    // --- etiketleri_listele --------------------------------------------------
 
     #[test]
     fn etiketleri_listele_kullanima_gore_azalan_sirali_doner() {
@@ -739,7 +1165,12 @@ mod testler {
     }
 
     #[test]
-    fn etiketleri_listele_ve_seans_etiketleri_denetime_yazmaz() {
+    fn etiketleri_listele_denetime_yazmaz() {
+        // ADI DUZELTILDI (inceleme bulgusu): eski ad
+        // `etiketleri_listele_ve_seans_etiketleri_denetime_yazmaz` idi ama
+        // `seans_etiketleri`'ni HIC CAGIRMIYORDU -- o yol GORUNTULEME olarak
+        // loglanMALIDIR (bkz. yukaridaki `seans_etiketleri_*` testleri).
+        // Bu test yalnizca `etiketleri_listele`'yi sinar.
         let (_d, c) = kurulum();
         let cid = danisan(&c, "Ayse");
         let rid = randevu(&c, cid, "2026-09-07T10:00");

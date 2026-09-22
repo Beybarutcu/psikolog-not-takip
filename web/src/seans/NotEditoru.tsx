@@ -471,7 +471,16 @@ export function NotEditoru({
   // düzeninden bağımsızdır: fiziksel B/I/1/2/3/8 tuşu hangi dilde
   // yazılıyor olursa olsun sırasıyla `'KeyB'`/`'KeyI'`/`'Digit1'`/
   // `'Digit2'`/`'Digit3'`/`'Digit8'` üretir.
+  //
+  // # Alt basılıyken kısayol YOK (son inceleme M1)
+  //
+  // Windows Chromium AltGr'yi `ctrlKey + altKey` olarak bildirir. Türkçe Q'da
+  // Markdown'un kendi karakterleri AltGr ile yazılıyor: AltGr+3 `#`, AltGr+1
+  // `>`, AltGr+2 `£`... Alt denetlenmeseydi AltGr+3 "Başlık 3"e dönüşür ve
+  // `#` hiç yazılamazdı. Alt'lı hiçbir kombinasyon kısayol değil; olay
+  // olduğu gibi tarayıcıya bırakılır (varsayılan davranış engellenmez).
   function kisayolTusu(olay: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (olay.altKey) return
     const komutTusu = olay.ctrlKey || olay.metaKey // macOS'ta Cmd, hedef platform macOS
     if (!komutTusu) return
     let tur: BicimTuru | null = null

@@ -858,6 +858,35 @@ describe('NotEditoru — bicim cubugu, kisayollar ve onizleme (Görev 2)', () =>
     expect(alanEl.value).toBe('- bir\n- iki')
   })
 
+  // -------------------------------------------------------------------
+  // Son inceleme M1: Windows Chromium AltGr'yi `ctrlKey + altKey` olarak
+  // bildirir; Türkçe Q'da AltGr+3 `#`, AltGr+1 `>`. Bunlar kısayola
+  // dönüşürse Markdown'un kendi karakterleri yazılamaz.
+  // -------------------------------------------------------------------
+  it.each([
+    ['Digit3', '#'],
+    ['Digit1', '>'],
+    ['Digit2', '£'],
+    ['KeyB', 'b'],
+  ])('AltGr (ctrl+alt) + %s biçim UYGULAMAZ ve varsayılan davranışı engellemez', (code, key) => {
+    kur({ baslangicIcerik: 'yorgun' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 6)
+    // `fireEvent` olay İPTAL edildiyse (`preventDefault`) `false` döner.
+    const devam = fireEvent.keyDown(alanEl, { code, key, ctrlKey: true, altKey: true })
+    expect(devam).toBe(true)
+    expect(alanEl.value).toBe('yorgun')
+  })
+
+  it('Alt OLMADAN Ctrl+3 başlık uygular ve varsayılanı engeller (AltGr testinin karşılığı)', () => {
+    kur({ baslangicIcerik: 'yorgun' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 6)
+    const devam = fireEvent.keyDown(alanEl, { code: 'Digit3', key: '3', ctrlKey: true })
+    expect(devam).toBe(false)
+    expect(alanEl.value).toBe('### yorgun')
+  })
+
   it("Önizle'ye geçince <strong> görünür, textarea görünmez; Yaz'a dönünce textarea aynı metinle geri gelir", () => {
     kur({ baslangicIcerik: '**kalin** metin' })
     expect(screen.getByLabelText('Seans notu')).toBeDefined()

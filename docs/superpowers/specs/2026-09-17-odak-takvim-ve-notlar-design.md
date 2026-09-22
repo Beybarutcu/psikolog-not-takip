@@ -162,7 +162,9 @@ olan kuralın etiketlere genişletilmesidir.
 
 ## 8. Tüm notlarda arama
 
-Ctrl+K bugün yalnızca danışan adında arıyor. Genişliyor:
+**Düzeltme (2026-09-22):** bu bölüm ilk yazıldığında "Ctrl+K bugün yalnızca danışan adında arıyor" diyordu; bu yanlıştı. `core/src/store/search.rs::SORGU_NOT` Plan 3'ten beri not içeriğinde Türkçe harf katlamalı arama yapıyor ve eşleşen parçayı gösteriyor. Aşağıdakilerden kalan iş: etiket adlarını aramak ve not sonucunu danışan dosyasına yönlendirmek.
+
+Hedef davranış:
 
 - Sonuçlar iki grupta: **danışanlar** ve **notlar**.
 - Not sonucunda danışan adı, seans tarihi ve eşleşen satır görünür.
@@ -186,6 +188,8 @@ harfe çevirme ile yapılır (`İ→i`, `I→ı`).
 - Özel notlar ayrı tabloda; `WHERE gizli=0` filtresi yok.
 - Veri raporu sunucuda üretilir, AES-256 parola korumalı, özel notlar dışarıda.
 - Zaman duvar saati, para tam sayı kuruş.
+
+**Kullanıcı kararı (2026-09-22):** etiketler danışan veri raporuna (KVKK md. 11) girer.
 
 ## 10. Bölünme
 

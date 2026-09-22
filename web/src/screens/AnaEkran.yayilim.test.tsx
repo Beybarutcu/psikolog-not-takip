@@ -50,9 +50,10 @@ const R203 = {
   baslangic: '2026-09-08T13:00', bitis: '2026-09-08T14:00',
   durum: 'planlandi', ucret: null as number | null, odendi: false, seri_id: null,
 }
-type SahteRandevu = Omit<typeof R201, 'client_id' | 'danisan_adi'> & {
+type SahteRandevu = Omit<typeof R201, 'client_id' | 'danisan_adi' | 'seri_id'> & {
   client_id: number
   danisan_adi: string
+  seri_id: string | null
 }
 // Sunucunun randevu tablosu. Test başına SIFIRLANIR (`beforeEach`): takvimdeki
 // oluşturma/düzenleme/silme bunu GERÇEKTEN değiştirir ("Bayatlık" bloğu).
@@ -147,6 +148,18 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
     return json({})
   }
   if (/^\/api\/randevular\/\d+\/silinecekler$/.test(yol)) return json({ not_adedi: 0 })
+  const seri = /^\/api\/randevular\/seri\/([^?]+)\?bu_tarihten_itibaren=(.+)$/.exec(yol)
+  if (seri) {
+    const seriId = decodeURIComponent(seri[1])
+    const tarih = decodeURIComponent(seri[2])
+    const kapsam = (r: SahteRandevu) => r.seri_id === seriId && r.baslangic >= tarih
+    if (method === 'DELETE') {
+      const silinen = TUMU.filter(kapsam).length
+      TUMU = TUMU.filter((r) => !kapsam(r))
+      return json({ silinen })
+    }
+    return json({ adet: TUMU.filter(kapsam).length, not_adedi: 0 })
+  }
   if (yol === '/api/randevular' && method === 'POST') {
     const g = govde as { client_id: number; baslangic: string; bitis: string; ucret: number | null }
     const yeni: SahteRandevu = {
@@ -693,6 +706,54 @@ describe('Bayatlık — takvimin yamanamayan yazmaları dosyanın seans listesin
     // Pozitif bariyer: liste gerçekten geldi (boş "yükleniyor" hâli değil).
     expect(listeMetni()).toContain('7 Eylül 2026, 10:00')
     expect(listeMetni()).not.toContain('14 Eylül 2026')
+  })
+
+  // Yukarıdaki senaryoda `seansSec`in ikinci savunması da listeyi tazeler;
+  // bu test oluşturma BİLDİRİMİNİ tek başına ölçer (seans seçilmeden,
+  // sekmeyle dönülüyor).
+  it('takvimde oluşturulan randevu, sekmeyle dönülünce açık dosyanın listesinde görünür', async () => {
+    ciz()
+    await danisanlarda()
+    expect(listeMetni()).not.toContain('21 Eylül 2026')
+
+    await takvimeDon()
+    await userEvent.click(await screen.findByRole('button', { name: 'Sonraki hafta' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
+    const bosSaat = (await screen.findAllByLabelText(/boş$/)).find(
+      (el) => el.getAttribute('aria-label') === '21 Eylül 10:00 boş',
+    )
+    await userEvent.click(bosSaat!)
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    await waitFor(() => expect(TUMU.some((r) => r.id === 300)).toBe(true))
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await listeYuklendi()
+    expect(listeMetni()).toContain('21 Eylül 2026, 10:00')
+  })
+
+  it('takvimde seri iptali ("bu ve sonrakiler") açık dosyanın listesinden o seansları kaldırır, geçmiş kalır', async () => {
+    TUMU.find((r) => r.id === 202)!.seri_id = 'seri-1'
+    TUMU.push({
+      ...R202, id: 204, baslangic: '2026-09-21T10:00', bitis: '2026-09-21T11:00',
+      durum: 'planlandi', seri_id: 'seri-1',
+    })
+    ciz()
+    await danisanlarda()
+    expect(listeMetni()).toContain('14 Eylül 2026, 10:00')
+    expect(listeMetni()).toContain('21 Eylül 2026, 10:00')
+
+    await takvimeDon()
+    await takvimde202Ac()
+    await userEvent.click(screen.getByRole('button', { name: 'Bu ve sonraki tüm tekrarları sil' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Evet, tekrarları sil' }))
+    await waitFor(() => expect(TUMU.some((r) => r.seri_id === 'seri-1')).toBe(false))
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await listeYuklendi()
+    expect(listeMetni()).toContain('7 Eylül 2026, 10:00')
+    expect(listeMetni()).not.toContain('14 Eylül 2026')
+    expect(listeMetni()).not.toContain('21 Eylül 2026')
   })
 
   it('takvimde silinen randevu açık dosyanın listesinden kalkar', async () => {

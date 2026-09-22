@@ -132,6 +132,11 @@ import { yerelGun } from './anaEkranKancalari/yerelGun'
  * geri çağrısı (`oturumKapandi`, takvimin `onYetkisiz`'i) `etiketler.
  * temizle`'yi de çağırır.
  */
+/** Etiket yazma hatasının ekrandaki metni: ne denendi + sunucunun mesajı. */
+function yazmaHataMetni(ne: string, e: unknown): string {
+  return `${ne} ${e instanceof Error ? e.message : ''}`.trim()
+}
+
 export function AnaEkran({
   kilitle,
   onGeriYukle,
@@ -364,6 +369,9 @@ export function AnaEkran({
       etiket = await etiketApi.etiketEkle(appointmentId, ad)
     } catch (e) {
       if (e instanceof YetkisizHata) etiketler.yetkisiz()
+      // Hata SEANSA bağlı tutulur (inceleme M6): Enter'dan sonra seans
+      // değiştiyse satır sökülmüştür; terapist seansa dönünce görür.
+      else etiketler.yazmaHatasiKaydet(appointmentId, yazmaHataMetni(`"${ad}" etiketi eklenemedi.`, e))
       throw e
     }
     const adlar = etiketler.eklendi(appointmentId, etiket)
@@ -376,6 +384,11 @@ export function AnaEkran({
       await etiketApi.etiketKaldir(appointmentId, etiket.id)
     } catch (e) {
       if (e instanceof YetkisizHata) etiketler.yetkisiz()
+      else
+        etiketler.yazmaHatasiKaydet(
+          appointmentId,
+          yazmaHataMetni(`"${etiket.ad}" etiketi kaldırılamadı.`, e),
+        )
       throw e
     }
     const adlar = etiketler.kaldirildi(appointmentId, etiket)
@@ -397,7 +410,20 @@ export function AnaEkran({
       onEkle: (ad) => etiketEkle(appointmentId, ad),
       onKaldir: (etiket) => etiketKaldir(appointmentId, etiket),
       onEtiketAc: etiketler.etiketAc,
+      yazmaHatasi: etiketler.yazmaHatasi(appointmentId),
+      onYazmaHatasiTemizle: () => etiketler.yazmaHatasiKaydet(appointmentId, null),
     }
+  }
+
+  /**
+   * Sekme değişimi. Etiketli seanslar paneli Ayarlar'a geçince KAPANIR
+   * (inceleme M4, kontrol kararı): Ayarlar ekranında başka danışanların adları
+   * kalmamalı. Takvim ↔ Danışanlar arasında açık kalır — terapist aynı
+   * etiketin seansları arasında gezinirken sekme değişiyor (`danisanaGit`).
+   */
+  function sekmeSec(yeni: SekmeKodu) {
+    if (yeni === 'ayarlar') etiketler.etiketKapat()
+    setSekme(yeni)
   }
 
   function veriRaporuIndir(danisanId: number, parola: string): Promise<void> {
@@ -438,7 +464,7 @@ export function AnaEkran({
         <h1 className="text-2xl font-semibold">Terapi Notları</h1>
         <Sekmeler
           secili={sekme}
-          onSecim={setSekme}
+          onSecim={sekmeSec}
           uyaran={ilgilenilmesiGereken ? 'ayarlar' : undefined}
         />
         <button type="button" className="ml-auto rounded-lg border px-4 py-2" onClick={kilitle}>

@@ -163,6 +163,8 @@ const ILGISIZ = {
     onEkle: async () => {},
     onKaldir: async () => {},
     onEtiketAc: () => {},
+    yazmaHatasi: null,
+    onYazmaHatasiTemizle: () => {},
   }),
 }
 

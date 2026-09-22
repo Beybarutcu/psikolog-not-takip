@@ -271,6 +271,8 @@ describe('DanisanDosyasi — etiketler', () => {
       onEkle: vi.fn(async () => {}),
       onKaldir: vi.fn(async () => {}),
       onEtiketAc: vi.fn(),
+      yazmaHatasi: null,
+      onYazmaHatasiTemizle: vi.fn(),
     }
   }
 

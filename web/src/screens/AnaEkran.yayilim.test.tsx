@@ -90,12 +90,22 @@ let baglar: Record<number, number[]>
 let sonrakiEtiketId: number
 /** Kurulursa HER istek 401 döner (oturum kilitlendi). */
 let yetkisiz: boolean
+/**
+ * SQLite'ın `AUTOINCREMENT`'SİZ `INTEGER PRIMARY KEY` kuralı: yeni kimlik =
+ * o anki en büyük kimlik + 1, yani silinen EN BÜYÜK kimlik yeniden verilir
+ * (Görev 6 inceleme IMPORTANT-1). Varsayılan KAPALI (artan sayaç, şemanın
+ * bugünkü `AUTOINCREMENT` davranışı); açıkken istemcinin kimliği tek başına
+ * kalıcı kimlik saymadığı ölçülür.
+ */
+let idYenidenKullan: boolean
+/** Kurulursa `POST .../etiketler` 500 döner. */
+let etiketEklemeHatasi: boolean
 
 /** Kurulum kolaylığı: seansa adıyla etiket bağlar, etiketin kimliğini döner. */
 function etiketBagla(randevuId: number, ad: string): number {
   let id = [...etiketDeposu].find(([, a]) => etiketAnahtari(a) === etiketAnahtari(ad))?.[0]
   if (id === undefined) {
-    id = sonrakiEtiketId++
+    id = idYenidenKullan ? Math.max(0, ...etiketDeposu.keys()) + 1 : sonrakiEtiketId++
     etiketDeposu.set(id, ad)
   }
   baglar[randevuId] = [...new Set([...(baglar[randevuId] ?? []), id])]
@@ -177,6 +187,7 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
   if (seansEtiketi) {
     const rid = Number(seansEtiketi[1])
     if (method === 'POST') {
+      if (etiketEklemeHatasi) return json({ hata: 'Veritabanı okunamadı.' }, 500)
       const ad = etiketAdiNormallestir((govde as { ad: string }).ad)
       const uzunluk = [...ad].length
       if (uzunluk < 1 || uzunluk > 40) {
@@ -278,6 +289,8 @@ beforeEach(() => {
   baglar = {}
   sonrakiEtiketId = 1
   yetkisiz = false
+  idYenidenKullan = false
+  etiketEklemeHatasi = false
   kilitle = vi.fn<() => void>()
   taslaklariUnut()
   globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
@@ -999,8 +1012,9 @@ describe('Etiketler — geciken yanıt ve istek zamanlaması', () => {
     const k = kapi()
     sonraBekle['GET /api/etiketler'] = k.bekle
     await userEvent.type(await screen.findByLabelText('Etiket ekle'), 'yepyeni{Enter}')
-    // BARİYER: sözlük sunucuda 'yepyeni'den ÖNCE okundu, ekleme SONRA bitti.
-    await waitFor(() => expect(sozlukGetleri()).toHaveLength(1))
+    // BARİYER: sözlük sunucuda 'yepyeni'den ÖNCE okundu (odakta, yazmadan
+    // önce), ekleme SONRA bitti.
+    await waitFor(() => expect(sozlukGetleri().length).toBeGreaterThan(0))
     await waitFor(() => expect(kaldirDugmesi('yepyeni')).not.toBeNull())
     await act(async () => {
       k.ac()
@@ -1011,8 +1025,10 @@ describe('Etiketler — geciken yanıt ve istek zamanlaması', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Önceki hafta' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
     await userEvent.click(await screen.findByLabelText('Etiket ekle'))
-    expect(oneriler()).toEqual(expect.arrayContaining(['kaygı', 'yepyeni']))
-    expect(sozlukGetleri()).toHaveLength(1)
+    await waitFor(() => expect(oneriler()).toEqual(expect.arrayContaining(['kaygı', 'yepyeni'])))
+    // Sözlük yazmadan sonra yeniden OKUNDU (inceleme M1 — yerel yama yok):
+    // ilk okuma + eklemenin ardından bir okuma.
+    expect(sozlukGetleri()).toHaveLength(2)
   })
 
   it('Bilgiler alt sekmesindeyken seçili seansın etiketleri İSTENMEZ; Seanslar\'a geçince istenir', async () => {
@@ -1117,5 +1133,143 @@ describe('Etiketler — etiketli seanslar paneli', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Mehmet Demir' }))
     await waitFor(() => expect(kaldirDugmesi('kaygı')).not.toBeNull())
     expect(etiketGetleri(203)).toHaveLength(2)
+  })
+})
+
+// =============================================================================
+// Görev 6 inceleme düzeltmeleri (IMPORTANT-1, M1, M2, M4, M6)
+// =============================================================================
+
+const panelSatiri = (bolge: HTMLElement, ad: RegExp) =>
+  within(bolge).queryAllByRole('button').filter((b) => ad.test(b.textContent ?? ''))
+
+describe('Etiketler — inceleme düzeltmeleri', () => {
+  it('IMPORTANT-1: silinen etiketin kimliğini alan YENİ etiket, açık paneli başka etikete kaydırmaz', async () => {
+    idYenidenKullan = true
+    etiketBagla(202, 'aile')
+    const kriz = etiketBagla(203, 'kriz')
+    ciz()
+    await userEvent.click(await screen.findByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'kriz etiketli seansları göster' }),
+    )
+    const bolge = await screen.findByRole('region', { name: 'kriz etiketli seanslar' })
+    await within(bolge).findByRole('button', { name: 'Mehmet Demir — 8 Eylül 2026, 13:00' })
+
+    // "kriz" son seanstan kaldırılır: sunucu onu siler; panel açık kalır.
+    await userEvent.click(screen.getByRole('button', { name: 'kriz etiketini kaldır' }))
+    await within(bolge).findByText('Bu etiketi taşıyan seans kalmadı.')
+    expect(etiketDeposu.has(kriz)).toBe(false)
+
+    // "öfke" eklenir ve AYNI kimliği alır (kurulumun ön koşulu).
+    await userEvent.type(screen.getByLabelText('Etiket ekle'), 'öfke{Enter}')
+    await waitFor(() => expect(kaldirDugmesi('öfke')).not.toBeNull())
+    expect([...etiketDeposu].find(([, ad]) => ad === 'öfke')?.[0]).toBe(kriz)
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    // Panel "kriz" başlığı altında "öfke" seanslarını GÖSTERMİYOR.
+    expect(screen.getByRole('region', { name: 'kriz etiketli seanslar' })).toBe(bolge)
+    expect(panelSatiri(bolge, /Mehmet Demir —/)).toHaveLength(0)
+    expect(within(bolge).getByText('Bu etiketi taşıyan seans kalmadı.')).toBeDefined()
+    expect(istekler.filter((i) => i.yol === `/api/etiketler/${kriz}/seanslar`)).toHaveLength(1)
+  })
+
+  it('M1: DELETE sözlük okumasından ÖNCE işlenip yanıtı SONRA dönerse etiket öneriden kaybolmaz', async () => {
+    etiketBagla(202, 'kaygı')
+    etiketBagla(203, 'kaygı')
+    ciz()
+    await takvimde202Ac()
+    const k = kapi()
+    sonraBekle[`DELETE /api/randevular/202/etiketler/1`] = k.bekle
+    await userEvent.click(await screen.findByRole('button', { name: 'kaygı etiketini kaldır' }))
+    // BARİYER: sunucu kaldırmayı YAPTI (kullanım 1), yanıt yolda.
+    await waitFor(() => expect(baglar[202]).toEqual([]))
+    await userEvent.click(screen.getByLabelText('Etiket ekle'))
+    // Sözlük okuması sunucuda kaldırmadan SONRA yapıldı ve döndü.
+    await waitFor(() => expect(sozlukGetleri()).toHaveLength(1))
+    await act(async () => {
+      k.ac()
+      await new Promise((r) => setTimeout(r, 50))
+    })
+    await waitFor(() => expect(kaldirDugmesi('kaygı')).toBeNull())
+    // Etiket 203'te hâlâ kullanılıyor: 202'den kaldırılınca ÖNERİLMELİ.
+    await waitFor(() => expect(oneriler()).toEqual(['kaygı']))
+  })
+
+  it('M2: panel YÜKLENİRKEN kaldırılan seans, kaldırmadan önce okunmuş yanıtla geri gelmez', async () => {
+    etiketBagla(202, 'kaygı')
+    etiketBagla(203, 'kaygı')
+    ciz()
+    await userEvent.click(await screen.findByRole('button', { name: 'Mehmet Demir' }))
+    const k = kapi()
+    sonraBekle['GET /api/etiketler/1/seanslar'] = k.bekle
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'kaygı etiketli seansları göster' }),
+    )
+    const bolge = await screen.findByRole('region', { name: 'kaygı etiketli seanslar' })
+    // BARİYER: panel okuması sunucuda yapıldı (203 dahil), yanıt yolda.
+    await waitFor(() =>
+      expect(istekler.some((i) => i.yol === '/api/etiketler/1/seanslar')).toBe(true),
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'kaygı etiketini kaldır' }))
+    await waitFor(() => expect(baglar[203]).toEqual([]))
+    await act(async () => {
+      k.ac()
+      await new Promise((r) => setTimeout(r, 30))
+    })
+    await within(bolge).findByRole('button', { name: 'Ayşe Yılmaz — 14 Eylül 2026, 10:00' })
+    expect(panelSatiri(bolge, /Mehmet Demir —/)).toHaveLength(0)
+  })
+
+  it('M4: etiketli seanslar paneli Ayarlar\'a geçince KAPANIR; Takvim <-> Danışanlar arasında açık kalır', async () => {
+    etiketBagla(203, 'kaygı')
+    ciz()
+    await userEvent.click(await screen.findByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(
+      await screen.findByRole('button', { name: 'kaygı etiketli seansları göster' }),
+    )
+    await screen.findByRole('button', { name: 'Mehmet Demir — 8 Eylül 2026, 13:00' })
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    expect(screen.getByRole('region', { name: 'kaygı etiketli seanslar' })).toBeDefined()
+    await takvimeDon()
+    expect(screen.getByRole('region', { name: 'kaygı etiketli seanslar' })).toBeDefined()
+
+    await userEvent.click(screen.getByRole('tab', { name: /^Ayarlar/ }))
+    expect(
+      screen.getByRole('tab', { name: /^Ayarlar/ }).getAttribute('aria-selected'),
+    ).toBe('true')
+    expect(screen.queryByRole('region', { name: 'kaygı etiketli seanslar' })).toBeNull()
+    expect(document.body.textContent).not.toContain('Mehmet Demir — ')
+    // Kapandı, gizlenmedi: geri dönünce de yok.
+    await takvimeDon()
+    expect(screen.queryByRole('region', { name: 'kaygı etiketli seanslar' })).toBeNull()
+  })
+
+  it('M6: Enter\'dan sonra seans değişir ve ekleme reddedilirse hata KAYBOLMAZ; o seansa dönünce görünür, diğerinde görünmez', async () => {
+    ciz()
+    await danisanlarda()
+    await userEvent.click(listeSatiri('14 Eylül 2026, 10:00'))
+    await screen.findByLabelText('Etiket ekle')
+    etiketEklemeHatasi = true
+    const k = kapi()
+    onceBekle['POST /api/randevular/202/etiketler'] = k.bekle
+    await userEvent.type(screen.getByLabelText('Etiket ekle'), 'kaygı{Enter}')
+    await userEvent.click(listeSatiri('7 Eylül 2026, 10:00'))
+    await screen.findByLabelText('Etiket ekle')
+    await act(async () => {
+      k.ac()
+      await new Promise((r) => setTimeout(r, 30))
+    })
+    // BARİYER: ekleme GERÇEKTEN reddedildi (sunucuda bağ yok).
+    expect(baglar[202]).toBeUndefined()
+    expect(screen.queryByText(/etiketi eklenemedi/)).toBeNull()
+
+    await userEvent.click(listeSatiri('14 Eylül 2026, 10:00'))
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      '"kaygı" etiketi eklenemedi. Veritabanı okunamadı.',
+    )
   })
 })

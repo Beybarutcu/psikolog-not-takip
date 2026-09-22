@@ -1,6 +1,11 @@
 import { useState } from 'react'
 import type { Etiket } from '../api'
-import { ETIKET_AZAMI_KARAKTER, etiketAdiNormallestir, etiketAdiUzunlugu } from './etiketAdi'
+import {
+  ayniEtiket,
+  ETIKET_AZAMI_KARAKTER,
+  etiketAdiNormallestir,
+  etiketAdiUzunlugu,
+} from './etiketAdi'
 
 /**
  * Bir seansın etiketleri için gereken her şey — `AnaEkran` üretir
@@ -22,6 +27,15 @@ export type EtiketBaglami = {
   onKaldir: (etiket: Etiket) => Promise<void>
   /** Çipe tıklandı — o etiketi taşıyan seansları aç. */
   onEtiketAc: (etiket: Etiket) => void
+  /**
+   * Bu seansa yapılan son yazmanın (ekleme/kaldırma) sunucu hatası. Bileşende
+   * DEĞİL `useEtiketler`'de, seans kimliğiyle tutulur: Enter'dan sonra seans
+   * değişirse bu bileşen sökülür ve hata yerel state'te olsaydı kaybolurdu
+   * (inceleme M6). Terapist seansa dönünce görür.
+   */
+  yazmaHatasi: string | null
+  /** Kutuya yazmaya başlandı — seansın yazma hatasını temizle. */
+  onYazmaHatasiTemizle: () => void
 }
 
 type Props = EtiketBaglami & {
@@ -38,7 +52,8 @@ type Props = EtiketBaglami & {
  *
  * # Mount'ta state tutar: çağıran `key` VERMEK ZORUNDA
  *
- * Kutudaki yazı (`metin`) ve son hata (`hata`) bu bileşenin yerel state'i.
+ * Kutudaki yazı (`metin`) ve doğrulama hatası (`hata`) bu bileşenin yerel
+ * state'i (sunucu hataları DEĞİL — onlar `yazmaHatasi` ile yukarıdan gelir).
  * Seçili seans değişip bileşen yeniden monte EDİLMEZSE önceki seansa yazılıp
  * gönderilmemiş metin ve onun hatası YENİ seansın satırında kalır — Enter
  * ona basıldığında etiket yanlış seansa gider. Takvimde seans paneli zaten
@@ -78,6 +93,8 @@ export function EtiketSatiri({
   onEkle,
   onKaldir,
   onEtiketAc,
+  yazmaHatasi,
+  onYazmaHatasiTemizle,
 }: Props) {
   const [metin, setMetin] = useState('')
   const [hata, setHata] = useState<string | null>(null)
@@ -102,8 +119,9 @@ export function EtiketSatiri({
     try {
       await onEkle(ad)
       setMetin('')
-    } catch (e) {
-      setHata(`Etiket eklenemedi. ${e instanceof Error ? e.message : ''}`.trim())
+    } catch {
+      // Mesaj `yazmaHatasi` ile yukarıdan gelir (bkz. prop); yazılan ad
+      // kutuda kalır ki terapist düzeltip yeniden deneyebilsin.
     } finally {
       setMesgul(false)
     }
@@ -113,10 +131,12 @@ export function EtiketSatiri({
     setHata(null)
     try {
       await onKaldir(etiket)
-    } catch (e) {
-      setHata(`Etiket kaldırılamadı. ${e instanceof Error ? e.message : ''}`.trim())
+    } catch {
+      // Mesaj `yazmaHatasi` ile yukarıdan gelir.
     }
   }
+
+  const gorunenHata = hata ?? yazmaHatasi
 
   if (yuklemeHatasi !== null) {
     return (
@@ -137,8 +157,7 @@ export function EtiketSatiri({
     return <p className="mt-3 text-sm text-slate-500">Etiketler yükleniyor…</p>
   }
 
-  const bagli = new Set(etiketler.map((e) => e.id))
-  const oneriler = (sozluk ?? []).filter((e) => !bagli.has(e.id))
+  const oneriler = (sozluk ?? []).filter((s) => !etiketler.some((e) => ayniEtiket(e, s)))
 
   return (
     <div className="mt-3" data-testid="etiket-satiri">
@@ -183,6 +202,7 @@ export function EtiketSatiri({
           onChange={(olay) => {
             setMetin(olay.target.value)
             setHata(null)
+            if (yazmaHatasi !== null) onYazmaHatasiTemizle()
           }}
           onKeyDown={(olay) => {
             // IME birleştirmesi sürerken Enter bir harfi onaylar, etiketi
@@ -198,9 +218,9 @@ export function EtiketSatiri({
           ))}
         </datalist>
       </div>
-      {hata !== null && (
+      {gorunenHata !== null && (
         <p role="alert" className="mt-1 text-sm text-red-700">
-          {hata}
+          {gorunenHata}
         </p>
       )}
     </div>

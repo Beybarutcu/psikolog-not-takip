@@ -46,6 +46,17 @@ export function etiketAnahtari(ad: string): string {
 }
 
 /**
+ * İki etiket nesnesi AYNI etiket mi: kimlik VE ad anahtarı (Görev 6 inceleme
+ * IMPORTANT-1). Kimlik tek başına yetmez: kullanımı sıfıra düşen etiket
+ * sunucuda silinir ve şema bugün kimliği yeniden vermese de (`tags.id
+ * AUTOINCREMENT`) istemci kimliğin sonsuza kadar tek olduğunu VARSAYMAZ —
+ * aynı kimliği taşıyan ama adı farklı bir etiket BAŞKA etikettir.
+ */
+export function ayniEtiket(a: { id: number; ad: string }, b: { id: number; ad: string }): boolean {
+  return a.id === b.id && etiketAnahtari(a.ad) === etiketAnahtari(b.ad)
+}
+
+/**
  * İki adı sunucunun `ORDER BY ad_anahtar ASC` sırasıyla karşılaştırır: kod
  * noktası sırası (UTF-8 bayt sırasıyla aynı). `localeCompare` KULLANILMAZ —
  * Türkçe alfabetik sıra ("ç" "c"den hemen sonra) sunucunun sırası değil ve

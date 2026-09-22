@@ -840,6 +840,8 @@ describe('SeansPaneli — etiketler', () => {
     onEkle: vi.fn(async () => {}),
     onKaldir: vi.fn(async () => {}),
     onEtiketAc: vi.fn(),
+    yazmaHatasi: null,
+    onYazmaHatasiTemizle: vi.fn(),
   }
 
   it('etiket satırı "Seans Notu" sekmesinde görünür, "Özel Notlarım" sekmesinde YOK', async () => {

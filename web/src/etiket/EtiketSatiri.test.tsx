@@ -22,6 +22,8 @@ function kur(oz: Partial<EtiketBaglami> = {}) {
     onEkle: vi.fn(async () => {}),
     onKaldir: vi.fn(async () => {}),
     onEtiketAc: vi.fn(),
+    yazmaHatasi: null,
+    onYazmaHatasiTemizle: vi.fn(),
     ...oz,
   }
   const sonuc = render(<EtiketSatiri kimlik="t-1" {...props} />)
@@ -73,21 +75,19 @@ describe('EtiketSatiri', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
-  it('sunucu reddederse mesaj gösterilir ve yazılan ad kutuda KALIR', async () => {
+  it('sunucu reddederse yazılan ad kutuda KALIR (mesaj yukarıdan, seansa bağlı gelir)', async () => {
     kur({ onEkle: vi.fn(async () => Promise.reject(new Error('Kayıt bulunamadı.'))) })
     await userEvent.type(kutu(), 'kaygı{Enter}')
-    expect((await screen.findByRole('alert')).textContent).toBe(
-      'Etiket eklenemedi. Kayıt bulunamadı.',
-    )
     expect(kutu().value).toBe('kaygı')
   })
 
-  it('kaldırma reddedilirse mesaj gösterilir', async () => {
-    kur({ onKaldir: vi.fn(async () => Promise.reject(new Error('Kayıt bulunamadı.'))) })
-    await userEvent.click(screen.getByRole('button', { name: 'kaygı etiketini kaldır' }))
-    expect((await screen.findByRole('alert')).textContent).toBe(
-      'Etiket kaldırılamadı. Kayıt bulunamadı.',
+  it('seansın yazma hatası gösterilir; kutuya yazmaya başlamak onu temizletir', async () => {
+    const { onYazmaHatasiTemizle } = kur({ yazmaHatasi: '"kaygı" etiketi eklenemedi. Kayıt bulunamadı.' })
+    expect(screen.getByRole('alert').textContent).toBe(
+      '"kaygı" etiketi eklenemedi. Kayıt bulunamadı.',
     )
+    await userEvent.type(kutu(), 'k')
+    expect(onYazmaHatasiTemizle).toHaveBeenCalled()
   })
 
   it('odakta sözlük istenir; öneriler sözlükten, seansa zaten bağlı olanlar HARİÇ', async () => {

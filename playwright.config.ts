@@ -29,6 +29,9 @@ const SUNUCULAR = [
   { ad: 'yedekleme', spec: 'yedekleme.spec.ts', port: 7703 },
   { ad: 'odeme', spec: 'odeme.spec.ts', port: 7704 },
   { ad: 'kabuk', spec: 'kabuk.spec.ts', port: 7705 },
+  // Görev 8: gelişmiş not alma (biçim çubuğu + Ctrl+Z, etiketler, arama
+  // sonucundan danışan dosyasına geçiş) uçtan uca doğrulaması.
+  { ad: 'notlar-gelismis', spec: 'notlar-gelismis.spec.ts', port: 7706 },
 ] as const
 
 // Bir spec dosyası hiçbir projeye bağlı değilse Playwright onu SESSİZCE

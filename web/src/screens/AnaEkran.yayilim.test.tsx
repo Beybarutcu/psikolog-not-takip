@@ -1198,6 +1198,27 @@ describe('Etiketler — inceleme düzeltmeleri', () => {
     await waitFor(() => expect(oneriler()).toEqual(['kaygı']))
   })
 
+  it('M1: son kullanımı kaldırılan (sunucuda silinen) etiket öneride KALMAZ — sözlük yazmadan sonra yeniden okunur', async () => {
+    etiketBagla(202, 'kriz')
+    ciz()
+    await takvimde202Ac()
+    await userEvent.click(await screen.findByLabelText('Etiket ekle'))
+    await waitFor(() => expect(sozlukGetleri()).toHaveLength(1))
+    // BARİYER: sözlük yüklendi ('kriz' bağlı olduğu için öneride değil).
+    await waitFor(() => expect(kaldirDugmesi('kriz')).not.toBeNull())
+    expect(oneriler()).toEqual([])
+
+    await userEvent.click(screen.getByRole('button', { name: 'kriz etiketini kaldır' }))
+    await waitFor(() => expect(kaldirDugmesi('kriz')).toBeNull())
+    expect(etiketDeposu.size).toBe(0)
+    await waitFor(() => expect(sozlukGetleri()).toHaveLength(2))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+    // Veri en aza indirme: sözlükten silinmiş hassas bir ad öneride durmaz.
+    expect(oneriler()).toEqual([])
+  })
+
   it('M2: panel YÜKLENİRKEN kaldırılan seans, kaldırmadan önce okunmuş yanıtla geri gelmez', async () => {
     etiketBagla(202, 'kaygı')
     etiketBagla(203, 'kaygı')

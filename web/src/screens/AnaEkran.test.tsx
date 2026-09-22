@@ -124,6 +124,17 @@ function ekUcYaniti(yol: string, secenekler?: RequestInit): Response | null {
     sunucuParolasi = g.yeni_parola
     return jsonYanit({})
   }
+  // Plan 6 Görev 6: seans paneli açılınca seansın etiketleri istenir
+  // (`useEtiketler`). Bu dosyanın testleri etiketleri ölçmüyor (bkz.
+  // `AnaEkran.yayilim.test.tsx` "Etiketler" blokları); boş liste döner.
+  // BURADA, her taklidin ortak girişinde: aksi hâlde `/api/randevular`
+  // önekini yakalayan taklitler bu isteği hafta yüklemesi sayıyordu ("401
+  // sonrası panel kapanır" ikinci hafta isteğini 401'e düşürüyor ve etiket
+  // GET'i o sayacı erkenden tüketiyordu).
+  if (/^\/api\/randevular\/\d+\/etiketler$/.test(yol) && (secenekler?.method ?? 'GET') === 'GET') {
+    return jsonYanit([])
+  }
+  if (yol === '/api/etiketler') return jsonYanit([])
   if (yol.startsWith('/api/saklama-suresi-dolanlar')) return jsonYanit(sunucuSaklamaDolanlar)
   if (yol.startsWith('/api/depolama-durumu')) return jsonYanit(sunucuDepolama)
   // `/api/yedekler` ONCE: `/api/yedek` onun oneki.
@@ -2334,6 +2345,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
               ucret_kurus: r.ucret,
               odendi: sunucuOdemeleri[r.id] ?? r.odendi,
               not_ilk_satiri: null,
+              etiketler: [],
             })),
         )
       }

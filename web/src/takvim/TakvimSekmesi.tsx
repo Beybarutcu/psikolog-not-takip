@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { aramaApi, takvimApi, type Danisan } from '../api'
+import type { EtiketBaglami } from '../etiket/EtiketSatiri'
 import { HizliArama } from '../arama/HizliArama'
 import { AyOzeti } from '../ozet/AyOzeti'
 import { SeansAltSatiri } from '../seans/SeansAltSatiri'
@@ -92,6 +93,12 @@ type Props = {
   onSeansSec: (appointmentId: number, tarih: string) => void
   onDurumDegis: (id: number, durum: string) => Promise<void>
   onOdemeDegis: (id: number, odendi: boolean) => Promise<void>
+  /**
+   * Açık seansın etiketleri (`AnaEkran.etiketBaglami`, Plan 6 Görev 6). Veri
+   * ve yazmalar `AnaEkran`'da — danışan dosyası AYNI önbellekten okuyor (bkz.
+   * `useEtiketler` modül başlığı). Bu bileşen yalnızca kimliği bağlıyor.
+   */
+  etiketBaglami: (appointmentId: number) => EtiketBaglami
 }
 
 export function TakvimSekmesi({
@@ -103,6 +110,7 @@ export function TakvimSekmesi({
   onSeansSec,
   onDurumDegis,
   onOdemeDegis,
+  etiketBaglami,
 }: Props) {
   // Bkz. modül başlığı: kapalı başlama kuralı burada yaşıyor.
   const [ozetAcik, setOzetAcik] = useState(false)
@@ -209,6 +217,7 @@ export function TakvimSekmesi({
             // kimliği de gidiyor: dosya BU seans seçili açılır (son inceleme
             // I3 — terapist panelde baktığı seansın dosyadaki hâlini arıyor).
             onDanisanAc={(clientId) => onDanisanAc(clientId, seciliRandevu.id)}
+            etiket={etiketBaglami(seciliRandevu.id)}
           />
         ) : (
           // Yükleme başarısızsa panel AÇILMAZ: "yükleniyor…" yazan bir panel

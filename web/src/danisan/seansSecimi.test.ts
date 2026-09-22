@@ -10,6 +10,7 @@ function s(appointment_id: number, baslangic: string): DanisanSeansi {
     ucret_kurus: null,
     odendi: false,
     not_ilk_satiri: null,
+    etiketler: [],
   }
 }
 

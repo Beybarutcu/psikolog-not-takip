@@ -160,6 +160,14 @@ export type DanisanSeansi = {
   ucret_kurus: number | null
   odendi: boolean
   not_ilk_satiri: string | null
+  /**
+   * Seansın etiket ADLARI, sunucunun kimlik anahtarı (`ad_anahtar`) sırasıyla
+   * (Plan 6 Görev 6, `store::danisan_seanslari` modül başlığı "Etiketler").
+   * Etiketsiz seansta `[]`. Dosyadaki "Etikete göre süz" seçimi ve satırdaki
+   * çipler buradan; etiket yazması listeyi yeniden çekmez,
+   * `useDanisanSeanslari.yamala` ile bu alanı yamanır (bkz. `AnaEkran.tsx`).
+   */
+  etiketler: string[]
 }
 
 /** `GET /api/danisanlar/{id}/ekler` yanıtı (sunucudaki `EkBilgisi`). */

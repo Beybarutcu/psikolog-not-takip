@@ -3,6 +3,7 @@ import type { useDanisanDosyasi } from '../screens/anaEkranKancalari/useDanisanD
 import type { useDanisanListesi } from '../screens/anaEkranKancalari/useDanisanListesi'
 import type { useDanisanSeanslari } from '../screens/anaEkranKancalari/useDanisanSeanslari'
 import type { useDosyaNotu } from '../screens/anaEkranKancalari/useDosyaNotu'
+import type { EtiketBaglami } from '../etiket/EtiketSatiri'
 import { DanisanDosyasi, type DosyaAltSekme } from './DanisanDosyasi'
 
 /**
@@ -52,6 +53,7 @@ export function DanisanlarSekmesi({
   onNotKaydet,
   onDurumDegis,
   onOdemeDegis,
+  etiketBaglami,
 }: {
   liste: ReturnType<typeof useDanisanListesi>
   dosya: ReturnType<typeof useDanisanDosyasi>
@@ -71,6 +73,12 @@ export function DanisanlarSekmesi({
   onNotKaydet: (appointmentId: number, kayit: { sablon: string; icerik: string }) => Promise<void>
   onDurumDegis: (appointmentId: number, durum: string) => Promise<void>
   onOdemeDegis: (appointmentId: number, odendi: boolean) => Promise<void>
+  /**
+   * Seçili seansın etiketleri (`AnaEkran.etiketBaglami`, Plan 6 Görev 6) —
+   * takvim seans paneliyle AYNI önbellek ve AYNI yazma yolu (bkz.
+   * `useEtiketler` modül başlığı).
+   */
+  etiketBaglami: (appointmentId: number) => EtiketBaglami
 }) {
   const { seciliDanisanId, kart } = dosya
   // Yerel değişkene alınıyor: `liste.arsivOnayi` üzerinden daralan tür bir
@@ -274,6 +282,7 @@ export function DanisanlarSekmesi({
                 ekSil={dosya.ekSil}
                 onRizaKaydet={dosya.rizaKaydet}
                 onKapat={dosya.kapat}
+                etiketBaglami={etiketBaglami}
               />
             )
           ))}

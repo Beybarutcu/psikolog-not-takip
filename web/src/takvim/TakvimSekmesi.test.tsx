@@ -76,6 +76,8 @@ function varsayilanProplar(ozelleştirme?: { ozetIstegi?: (ay: string) => Promis
     onSeansSec: vi.fn(),
     onDurumDegis: vi.fn(async () => {}),
     onOdemeDegis: vi.fn(async () => {}),
+    // Bu testlerde seans paneli hiç açılmıyor; bağlam hiç çağrılmaz.
+    etiketBaglami: vi.fn(),
   }
 }
 

@@ -1,4 +1,7 @@
+import { useState } from 'react'
 import type { DanisanSeansi, SeansNotu } from '../api'
+import { EtiketSatiri, type EtiketBaglami } from '../etiket/EtiketSatiri'
+import { etiketSirasi } from '../etiket/etiketAdi'
 import type { KartVerisi } from '../screens/anaEkranKancalari/useDanisanDosyasi'
 import type { Randevu } from '../takvim/HaftalikTakvim'
 import { NotEditoru } from '../seans/NotEditoru'
@@ -69,7 +72,24 @@ type NotKaydi = { sablon: string; icerik: string }
  *
  * `NotEditoru` açılış içeriğini, `SeansAltSatiri` "Ödendi" kutusunu yalnızca
  * MOUNT'ta okur; seçili seans değişince ikisi de seans kimliğiyle yeniden
- * monte edilir (takvim tarafındaki emsalle aynı desen).
+ * monte edilir (takvim tarafındaki emsalle aynı desen). `EtiketSatiri` de
+ * (kutudaki yazılmış ama gönderilmemiş ad ve son hata yerel state'i —
+ * `key`siz, önceki seansa yazılan ad yeni seansın kutusunda kalır ve Enter
+ * onu YANLIŞ seansa ekler).
+ *
+ * # Etikete göre süzme (Plan 6 Görev 6)
+ *
+ * Listenin üstündeki seçim yalnızca BU danışanın seanslarında kullanılan
+ * etiketleri sunar (`DanisanSeansi.etiketler`'den türetilir — ayrı bir istek
+ * yok). Süzgeç bu bileşenin yerel state'i: danışan değişince bileşen
+ * (`key={danisan-<id>}`) yeniden monte olur ve süzgeç sıfırlanır — bir
+ * danışanda seçilen etiket başka danışanın dosyasına taşınmaz. Seçili etiket
+ * son seanstan da kaldırılırsa seçenek listeden düşer ve süzgeç kendiliğinden
+ * "Tüm seanslar"a döner (render'da türetiliyor, efekt yok).
+ *
+ * Süzgeç SEÇİMİ değiştirmez: süzülmüş listede görünmeyen seçili seansın
+ * notu sağda açık kalır. Süzgeci değiştirmek terapistin elinin altındaki
+ * editörü değiştirmemeli.
  */
 type Props = {
   kart: KartVerisi
@@ -98,6 +118,12 @@ type Props = {
   ekSil: (ekId: number) => Promise<void>
   onRizaKaydet: (alan: { riza_tarihi: string; riza_dosya_id: number | null }) => Promise<void>
   onKapat: () => void
+  /**
+   * Seçili seansın etiketleri (`AnaEkran.etiketBaglami`). İsteğe bağlı: bu
+   * bileşenin kendi testlerinin çoğu etiketsiz kurulur; üretimde
+   * `DanisanlarSekmesi` her zaman geçirir.
+   */
+  etiketBaglami?: (appointmentId: number) => EtiketBaglami
 }
 
 export function DanisanDosyasi({
@@ -122,7 +148,13 @@ export function DanisanDosyasi({
   ekSil,
   onRizaKaydet,
   onKapat,
+  etiketBaglami,
 }: Props) {
+  const [suzgec, setSuzgec] = useState('')
+  const kullanilanEtiketler = [...new Set(seanslar.flatMap((s) => s.etiketler))].sort(etiketSirasi)
+  const etkinSuzgec = kullanilanEtiketler.includes(suzgec) ? suzgec : ''
+  const gorunenSeanslar =
+    etkinSuzgec === '' ? seanslar : seanslar.filter((s) => s.etiketler.includes(etkinSuzgec))
   const seciliSeans = seanslar.find((s) => s.appointment_id === seciliSeansId) ?? null
   // Not seçili seansa ait değilse (seçim değişti, yenisi yükleniyor)
   // gösterilmez — bir seansın notu başka seansın editöründe bir kare bile
@@ -205,12 +237,34 @@ export function DanisanDosyasi({
             </div>
           ) : (
             <>
-              <SeansListesi
-                seanslar={seanslar}
-                secili={seciliSeansId}
-                onSecim={onSeansSec}
-                yuklendi={yuklendi}
-              />
+              <div>
+                {kullanilanEtiketler.length > 0 && (
+                  <div className="mb-2">
+                    <label htmlFor="etikete-gore-suz" className="block text-xs text-slate-600">
+                      Etikete göre süz
+                    </label>
+                    <select
+                      id="etikete-gore-suz"
+                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                      value={etkinSuzgec}
+                      onChange={(olay) => setSuzgec(olay.target.value)}
+                    >
+                      <option value="">Tüm seanslar</option>
+                      {kullanilanEtiketler.map((ad) => (
+                        <option key={ad} value={ad}>
+                          {ad}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <SeansListesi
+                  seanslar={gorunenSeanslar}
+                  secili={seciliSeansId}
+                  onSecim={onSeansSec}
+                  yuklendi={yuklendi}
+                />
+              </div>
 
               <div>
                 {seciliSeans === null ? (
@@ -247,6 +301,17 @@ export function DanisanDosyasi({
                         // diğerinde yazılmış olanın üstüne PUT edilebilirdi.
                         taslakAnahtari={`not-${seciliSeans.appointment_id}`}
                         onKaydet={(kayit) => onNotKaydet(seciliSeans.appointment_id, kayit)}
+                      />
+                    )}
+
+                    {etiketBaglami !== undefined && (
+                      <EtiketSatiri
+                        // ZORUNLU (bkz. modül başlığı): bu bileşen seçim
+                        // değişince yeniden monte OLMUYOR; kutudaki yazı ve
+                        // hata önceki seanstan kalırdı.
+                        key={`dosya-etiket-${seciliSeans.appointment_id}`}
+                        kimlik={`dosya-${seciliSeans.appointment_id}`}
+                        {...etiketBaglami(seciliSeans.appointment_id)}
                       />
                     )}
 

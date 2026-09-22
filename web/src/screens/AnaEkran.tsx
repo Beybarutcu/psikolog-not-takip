@@ -1,8 +1,10 @@
 import { useState } from 'react'
-import { danisanApi, notApi } from '../api'
+import { danisanApi, etiketApi, notApi, YetkisizHata, type Etiket } from '../api'
 import { AyarlarSekmesi } from '../ayarlar/AyarlarSekmesi'
 import type { DosyaAltSekme } from '../danisan/DanisanDosyasi'
 import { DanisanlarSekmesi } from '../danisan/DanisanlarSekmesi'
+import { EtiketliSeanslar } from '../etiket/EtiketliSeanslar'
+import type { EtiketBaglami } from '../etiket/EtiketSatiri'
 import { Sekmeler } from '../kabuk/Sekmeler'
 import { ACILIS_SEKMESI, type SekmeKodu } from '../kabuk/sekme'
 import { notOnizlemesi } from '../seans/onizleme'
@@ -11,6 +13,7 @@ import { useDanisanDosyasi } from './anaEkranKancalari/useDanisanDosyasi'
 import { useDanisanListesi } from './anaEkranKancalari/useDanisanListesi'
 import { useDanisanSeanslari } from './anaEkranKancalari/useDanisanSeanslari'
 import { useDosyaNotu } from './anaEkranKancalari/useDosyaNotu'
+import { useEtiketler } from './anaEkranKancalari/useEtiketler'
 import { useParolaFormu } from './anaEkranKancalari/useParolaFormu'
 import { useSeansNotlari } from './anaEkranKancalari/useSeansNotlari'
 import { useTakvimAkisi } from './anaEkranKancalari/useTakvimAkisi'
@@ -37,6 +40,8 @@ import { yerelGun } from './anaEkranKancalari/yerelGun'
  *   - `useDanisanSeanslari`— açık danışanın Seanslar alt sekmesindeki listesi,
  *                            seçili seansı ve yamaları
  *   - `useDosyaNotu`       — danışan dosyasında seçili seansın resmî notu
+ *   - `useEtiketler`       — seansların etiketleri (İKİ ekranın ORTAK tek
+ *                            önbelleği), sözlük, açık etiketli seanslar paneli
  *   - `useYedekleme`       — otomatik/elle yedek ve KALICI uyarı
  *   - `useParolaFormu`     — parola değiştirme (yükleme değil, ama kendi başına
  *                            bir akış; parolalar form kapanınca siliniyor)
@@ -100,6 +105,32 @@ import { yerelGun } from './anaEkranKancalari/yerelGun'
  * ilgili BÜTÜN önbelleklere aynı çağrıdan yayılıyor. İki ekranı ayrı ayrı
  * yamalamak değil: tek yol, çok alıcı. Her alıcı yamayı kendi `yazmaSaati`ne
  * de işliyor, ki o an uçuşta olan bir okuma yazmayı ezmesin.
+ *
+ * ## Etiket yazmaları (Plan 6 Görev 6): aynı kural
+ *
+ * `etiketEkle` / `etiketKaldir` de YALNIZCA burada. Alıcılar:
+ *
+ *   | Önbellek                              | Nasıl                                   |
+ *   |---------------------------------------|-----------------------------------------|
+ *   | seansın etiketleri (takvim + dosya)   | `etiketler.eklendi/kaldirildi` — TEK    |
+ *   |                                       | harita, iki ekran aynı girdiyi okur     |
+ *   | dosyanın seans listesindeki satır     | `seanslar.yamala({ etiketler })`        |
+ *   |                                       | (+ o kancanın `yazmaSaati`'ı)           |
+ *   | sözlük                                | `eklendi/kaldirildi` içinde (+ uçuştaki |
+ *   |                                       | okumaya karşı işlem kaydı)              |
+ *   | açık etiketli seanslar paneli         | kaldırmada satır düşer; eklemede panel  |
+ *   |                                       | tek istekle tazelenir                   |
+ *
+ * Seansın etiketleri için İKİ önbellek YOK: takvim paneli ve dosya aynı
+ * `useEtiketler` girdisini okuyor — notta C1'i üreten "iki kopyadan biri
+ * bayat" durumu burada kurulamıyor.
+ *
+ * ## 401 temizliği etiketleri de kapsar
+ *
+ * Etiketli seanslar paneli sekme panellerinin DIŞINDA ve bütün danışanların
+ * adlarını taşıyor; takvim seçimini kapatmak onu kapatmaz. Bu yüzden her 401
+ * geri çağrısı (`oturumKapandi`, takvimin `onYetkisiz`'i) `etiketler.
+ * temizle`'yi de çağırır.
  */
 export function AnaEkran({
   kilitle,
@@ -121,9 +152,15 @@ export function AnaEkran({
   // duyuyor.
   const [sekme, setSekme] = useState<SekmeKodu>(ACILIS_SEKMESI)
 
-  // `dosya` aşağıda tanımlanıyor; closure çağrıldığı anda okunuyor, bu
-  // yüzden kancaların bildirim sırası bir kısıt değil (bkz. modül başlığı).
-  const takvim = useTakvimAkisi({ onYetkisiz: () => dosya.kapat() })
+  // `dosya` ve `etiketler` aşağıda tanımlanıyor; closure çağrıldığı anda
+  // okunuyor, bu yüzden kancaların bildirim sırası bir kısıt değil (bkz.
+  // modül başlığı).
+  const takvim = useTakvimAkisi({
+    onYetkisiz: () => {
+      dosya.kapat()
+      etiketler.temizle()
+    },
+  })
   // IMPORTANT-3 düzeltmesi: saklama süresi dolanlar isteği yalnızca Ayarlar
   // sekmesi GÖRÜNÜRKEN atılır. `clients::saklama_suresi_dolanlar` her
   // çağrıda `LogHacmi::HerCagri` ile SİLİNEMEZ bir `goruntuleme` satırı
@@ -131,10 +168,10 @@ export function AnaEkran({
   // Ayarlar sekmesinde gösterildiği için terapist Ayarlar'ı hiç açmasa bile
   // mount'ta atılan bir istek kalıcı, hiç görülmeyecek bir kayıt bırakırdı.
   const liste = useDanisanListesi({ ayarlarGorunur: sekme === 'ayarlar' })
-  const dosya = useDanisanDosyasi({ onYetkisiz: () => takvim.oturumKapandi() })
+  const dosya = useDanisanDosyasi({ onYetkisiz: () => oturumKapandi() })
   const seanslar = useDanisanSeanslari({
     clientId: dosya.seciliDanisanId,
-    onYetkisiz: () => takvim.oturumKapandi(),
+    onYetkisiz: () => oturumKapandi(),
   })
   // Danışan dosyasının alt sekmesi (Seanslar/Bilgiler). BURADA, bileşende
   // değil (son inceleme M1): `DanisanDosyasi` sekme gidip gelince yeniden
@@ -145,20 +182,47 @@ export function AnaEkran({
   // `useDosyaNotu` başlığı): Danışanlar sekmesi + Seanslar alt sekmesi + kart
   // yüklenmiş (dosya bileşeni kart yüklenmeden hiç çizilmiyor; çizilmeyen bir
   // not için silinemez görüntüleme kaydı bırakılmamalı).
+  const dosyaSeanslariGorunur =
+    sekme === 'danisanlar' &&
+    dosyaAltSekme === 'seanslar' &&
+    dosya.kart.dosya !== null &&
+    dosya.kart.hata === null
   const dosyaNotu = useDosyaNotu({
     appointmentId: seanslar.seciliSeansId,
-    gorunur:
-      sekme === 'danisanlar' &&
-      dosyaAltSekme === 'seanslar' &&
-      dosya.kart.dosya !== null &&
-      dosya.kart.hata === null,
+    gorunur: dosyaSeanslariGorunur,
   })
   const yedekleme = useYedekleme()
   const seansAkisi = useSeansNotlari({
     randevu: takvim.seciliRandevu,
-    onYetkisiz: () => takvim.oturumKapandi(),
+    onYetkisiz: () => oturumKapandi(),
     notYaz: seansNotuKaydet,
   })
+  // Etiketlerin istendiği TEK seans: o an bir panelde GÖRÜNEN (bkz.
+  // `useEtiketler` "İstek zamanlaması"). Takvimde seans paneli yalnızca not
+  // yüklemesi hatasızken çiziliyor (`TakvimSekmesi`); dosyada `useDosyaNotu`
+  // ile AYNI görünürlük şartı. Görünmeyen sekmedeki seçim istek ÜRETMEZ.
+  const gorunenSeansId =
+    sekme === 'takvim'
+      ? takvim.seciliRandevu !== null && seansAkisi.seans.hata === null
+        ? takvim.seciliRandevu.id
+        : null
+      : dosyaSeanslariGorunur
+        ? seanslar.seciliSeansId
+        : null
+  const etiketler = useEtiketler({
+    gorunenSeansId,
+    onYetkisiz: () => takvim.oturumKapandi(),
+  })
+
+  /**
+   * Seans/dosya/liste akışlarının 401'i: takvim seçimi kapanır VE etiket
+   * state'i (özellikle sekmelerin dışındaki etiketli seanslar paneli)
+   * temizlenir (bkz. modül başlığı "401 temizliği etiketleri de kapsar").
+   */
+  function oturumKapandi() {
+    takvim.oturumKapandi()
+    etiketler.temizle()
+  }
   const parola = useParolaFormu()
   // Ay sonu özetinin KAPALI başlama state'i artık `TakvimSekmesi`'nde
   // yaşıyor (Görev 3): o bileşen `AyOzeti`'ni koşullu mount eden JSX'i de
@@ -287,6 +351,55 @@ export function AnaEkran({
     seanslar.yamala(id, { not_ilk_satiri: notOnizlemesi(yeni.icerik) })
   }
 
+  /**
+   * Etiket eklemenin TEK yolu (bkz. modül başlığı "Etiket yazmaları"). Takvim
+   * paneli de dosya da buraya gelir; sonuç seansın ortak etiket önbelleğine,
+   * sözlüğe ve dosyanın seans listesindeki satıra aynı çağrıdan yayılır.
+   * Ret (400, 404, ağ) hiçbir şeyi yamamaz: `await`ten fırlar ve
+   * `EtiketSatiri`'na ulaşır.
+   */
+  async function etiketEkle(appointmentId: number, ad: string) {
+    let etiket: Etiket
+    try {
+      etiket = await etiketApi.etiketEkle(appointmentId, ad)
+    } catch (e) {
+      if (e instanceof YetkisizHata) etiketler.yetkisiz()
+      throw e
+    }
+    const adlar = etiketler.eklendi(appointmentId, etiket)
+    if (adlar !== null) seanslar.yamala(appointmentId, { etiketler: adlar })
+  }
+
+  /** Etiket kaldırmanın TEK yolu; `etiketEkle` ile aynı yayılım. */
+  async function etiketKaldir(appointmentId: number, etiket: Etiket) {
+    try {
+      await etiketApi.etiketKaldir(appointmentId, etiket.id)
+    } catch (e) {
+      if (e instanceof YetkisizHata) etiketler.yetkisiz()
+      throw e
+    }
+    const adlar = etiketler.kaldirildi(appointmentId, etiket)
+    if (adlar !== null) seanslar.yamala(appointmentId, { etiketler: adlar })
+  }
+
+  /**
+   * Bir seansın `EtiketSatiri` bağlamı. İki ekran da BUNU çağırıyor: aynı
+   * önbellek girdisi (`seansDurumu`), aynı yazma yolu.
+   */
+  function etiketBaglami(appointmentId: number): EtiketBaglami {
+    const durum = etiketler.seansDurumu(appointmentId)
+    return {
+      etiketler: durum.liste,
+      hata: durum.hata,
+      onYenidenDene: () => etiketler.yenidenDene(appointmentId),
+      sozluk: etiketler.sozluk,
+      onSozlukIste: etiketler.sozlukIste,
+      onEkle: (ad) => etiketEkle(appointmentId, ad),
+      onKaldir: (etiket) => etiketKaldir(appointmentId, etiket),
+      onEtiketAc: etiketler.etiketAc,
+    }
+  }
+
   function veriRaporuIndir(danisanId: number, parola: string): Promise<void> {
     return danisanApi.veriRaporuIndir(danisanId, parola, yerelGun(new Date()))
   }
@@ -333,6 +446,19 @@ export function AnaEkran({
         </button>
       </div>
 
+      {/* Etiketli seanslar sekme panellerinin DIŞINDA (bkz. `EtiketliSeanslar`
+          modül başlığı): bir satırdan dosyaya geçilince açık kalır. Satır
+          tıklaması danışana giden TEK yoldan (`danisanaGit`) geçer. */}
+      {etiketler.acik !== null && (
+        <EtiketliSeanslar
+          key={`etiketli-${etiketler.acik.etiket.id}`}
+          acik={etiketler.acik}
+          onSeansAc={(clientId, appointmentId) => danisanaGit(clientId, appointmentId)}
+          onKapat={etiketler.etiketKapat}
+          onYenidenDene={etiketler.acikYenidenDene}
+        />
+      )}
+
       {sekme === 'takvim' && (
         <div
           role="tabpanel"
@@ -352,6 +478,7 @@ export function AnaEkran({
             onSeansSec={seansaGit}
             onDurumDegis={durumDegis}
             onOdemeDegis={odemeDegis}
+            etiketBaglami={etiketBaglami}
           />
         </div>
       )}
@@ -375,6 +502,7 @@ export function AnaEkran({
             onNotKaydet={seansNotuKaydet}
             onDurumDegis={durumDegis}
             onOdemeDegis={odemeDegis}
+            etiketBaglami={etiketBaglami}
           />
         </div>
       )}

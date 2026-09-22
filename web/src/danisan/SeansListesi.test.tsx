@@ -11,6 +11,7 @@ function seans(oz: Partial<DanisanSeansi> = {}): DanisanSeansi {
     ucret_kurus: 15000,
     odendi: false,
     not_ilk_satiri: null,
+    etiketler: [],
     ...oz,
   }
 }

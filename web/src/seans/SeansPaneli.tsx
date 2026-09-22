@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import type { OzelNot, SeansNotu } from '../api'
+import { EtiketSatiri, type EtiketBaglami } from '../etiket/EtiketSatiri'
 import type { Randevu } from '../takvim/HaftalikTakvim'
 import { zamanMetni } from '../tarih'
 import { GecmisNotlar } from './GecmisNotlar'
@@ -52,6 +53,14 @@ import { sablonMetni } from './sablon'
  * (yalnızca taslakta kalır; kilit açılmadan kapatılan bir sekmede gider).
  * Bkz. `NotEditoru.test.tsx` içindeki "prop degisimi `key` yolunun yerini
  * TUTMAZ".
+ *
+ * # Etiketler yalnızca RESMİ sekmede (Plan 6 Görev 6)
+ *
+ * `EtiketSatiri` "Seans Notu" sekmesinin içinde, editörün altında. Özel
+ * notlar etiket ALMAZ: etiket randevuya bağlı ve danışan veri raporuna
+ * girer; "Özel Notlarım" sekmesinde görünmesi onu özel notun parçası
+ * sandırırdı. Etiket verisi ve yazmaları bu bileşende değil
+ * (`etiket` prop'u, `AnaEkran`'ın tek yolu — bkz. `useEtiketler`).
  *
  * # Alt satır: durum, ücret, ödendi (Plan 4 Görev 2)
  *
@@ -112,6 +121,12 @@ type Props = {
    * hata `role="alert"` ile duyurulur.
    */
   onOdemeDegis: (odendi: boolean) => Promise<void>
+  /**
+   * Seansın etiketleri (`AnaEkran.etiketBaglami`). İsteğe bağlı: bu
+   * bileşenin kendi testleri etiketsiz kurulur; üretimde `TakvimSekmesi`
+   * her zaman geçirir.
+   */
+  etiket?: EtiketBaglami
 }
 
 const OZEL_UYARISI = 'Bu notlar dışa aktarımlara ve danışan raporuna dahil edilmez.'
@@ -137,6 +152,7 @@ export function SeansPaneli({
   onDurumDegis,
   onOdemeDegis,
   onDanisanAc,
+  etiket,
 }: Props) {
   const [sekme, setSekme] = useState<'resmi' | 'ozel'>('resmi')
   const ozelAcik = sekme === 'ozel'
@@ -357,6 +373,16 @@ export function SeansPaneli({
                   }}
                   taslakAnahtari={`not-${randevu.id}`}
                   onKaydet={onNotKaydet}
+                />
+              )}
+              {etiket !== undefined && (
+                <EtiketSatiri
+                  // Panelin kendisi seans kimliğiyle `key`li, yani bu satır
+                  // seans değişince zaten yeniden monte olur; `key` dosya
+                  // tarafındaki (orada YÜK TAŞIYAN) kullanımla aynı kalıp.
+                  key={`etiket-${randevu.id}`}
+                  kimlik={`takvim-${randevu.id}`}
+                  {...etiket}
                 />
               )}
             </div>

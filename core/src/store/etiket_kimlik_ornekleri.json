@@ -24,6 +24,16 @@
       "ad": "Turkce harfler isaretini koruyarak kuculur",
       "girdiler": ["ŞİDDET", "Şiddet", "şiddet"],
       "anahtar": "şiddet"
+    },
+    {
+      "ad": "BOM (U+FEFF) ve NEL (U+0085) iki tarafta da bosluk sayilir",
+      "girdiler": ["\ufeffuyku", "uyku\u0085", "\ufeffUYKU\ufeff"],
+      "anahtar": "uyku"
+    },
+    {
+      "ad": "ic BOM/NEL tek bosluga iner",
+      "girdiler": ["ilaç\ufeffdeğişimi", "ilaç\u0085 değişimi"],
+      "anahtar": "ilaç değişimi"
     }
   ],
   "farkli_anahtar": [

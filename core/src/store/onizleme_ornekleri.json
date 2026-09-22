@@ -118,5 +118,20 @@
     "ad": "parantezli numara kapali kumede degil, degismez",
     "icerik": "1) parantezli",
     "beklenen": "1) parantezli"
+  },
+  {
+    "ad": "BOM ile baslayan (yapistirilmis) not: BOM bosluk sayilir",
+    "icerik": "\ufeffUyku düzeni iyileşmiş",
+    "beklenen": "Uyku düzeni iyileşmiş"
+  },
+  {
+    "ad": "yalnizca BOM ve bosluk olan satir bos satirdir",
+    "icerik": "\ufeff\n \ufeff \nİkinci satır",
+    "beklenen": "İkinci satır"
+  },
+  {
+    "ad": "NEL (U+0085) iki tarafta da bosluk sayilir",
+    "icerik": "\u0085Plan: haftaya\u0085",
+    "beklenen": "Plan: haftaya"
   }
 ]

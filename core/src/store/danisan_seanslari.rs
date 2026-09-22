@@ -54,7 +54,7 @@
 //! örnek dosyasıyla korunuyor (`core/src/store/onizleme_ornekleri.json`) —
 //! bu modülün testi o dosyayı `include_str!` ile okur, TS testi de aynısını.
 //!
-//! `""` YALNIZCA içerik `trim()` sonrası tamamen boşsa döner. Yalnızca
+//! `""` YALNIZCA içerik kırpıldıktan sonra (boşluk kümesi: `store::bosluk_mu`) tamamen boşsa döner. Yalnızca
 //! şablon başlıklarından oluşan bir not (şablon eklenmiş, hiçbir şey
 //! yazılmamış) boş SAYILMAZ: ilk başlık ("Veri:") döner — ekranda gerçekten
 //! duran şey odur ve "henüz boş" demek içerik varken boş demek olurdu.
@@ -534,7 +534,8 @@ fn onizleme(metin: &str, baslik_satirlari: &[String]) -> String {
     // basligi -- `""` yalnizca TAMAMEN bos icerik icin).
     let mut ilk_baslik: Option<String> = None;
     for satir in normal.lines() {
-        let s = satir.trim();
+        // `trim()` DEĞİL: U+FEFF'i de boşluk say (bkz. `store::bosluk_mu`).
+        let s = satir.trim_matches(super::bosluk_mu);
         if s.is_empty() {
             continue;
         }

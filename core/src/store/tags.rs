@@ -162,11 +162,15 @@ impl std::fmt::Debug for EtiketliSeans {
 }
 
 /// Ad dizgisini normalleştirir: baş/son boşluk atılır, iç boşluklar tek
-/// boşluğa indirilir (`split_whitespace` ikisini birden yapar). Doğrulamadan
+/// boşluğa indirilir (`split(bosluk_mu)` ikisini birden yapar). Doğrulamadan
 /// ÖNCE çağrılır ki `"kaygı "` ile `"kaygı"` aynı ada normalleşsin ve aynı
 /// satır veritabanına yazılsın.
+///
+/// Boşluk kümesi `store::bosluk_mu` (son inceleme M5): `split_whitespace`
+/// U+FEFF'i boşluk saymaz, arayüzün `etiketAdiNormallestir`'i sayardı —
+/// BOM'lu yapıştırılmış bir ad iki tarafta farklı kimliğe normalleşirdi.
 fn normallesmis_ad(ad: &str) -> String {
-    ad.split_whitespace().collect::<Vec<_>>().join(" ")
+    ad.split(super::bosluk_mu).filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" ")
 }
 
 /// Etiket KİMLİĞİ için Türkçe'ye duyarlı küçük harfe çevirme.

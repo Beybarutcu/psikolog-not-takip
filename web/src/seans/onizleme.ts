@@ -1,3 +1,4 @@
+import { boslukKirp } from '../bosluk'
 import { SABLONLAR } from './sablon'
 
 /**
@@ -65,7 +66,9 @@ export function notOnizlemesi(icerik: string): string {
 
   let ilkBaslik: string | null = null
   for (const hamSatir of normal.split('\n')) {
-    const satir = hamSatir.trim()
+    // `trim()` DEĞİL: sunucuyla AYNI boşluk kümesi (U+0085 dahil, bkz.
+    // `bosluk.ts`, son inceleme M5).
+    const satir = boslukKirp(hamSatir)
     if (satir === '') continue
     const baslikAdi = sablonBasligiEslesmesi(satir)
     if (baslikAdi !== null) {

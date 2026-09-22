@@ -1,3 +1,5 @@
+import { bosluklaBol } from '../bosluk'
+
 /**
  * Etiket adının istemci tarafı kuralları — sunucudaki `store::tags` ile
  * BİREBİR aynı tutulan küçük saf fonksiyonlar (Plan 6 Görev 6).
@@ -16,10 +18,12 @@ export const ETIKET_AZAMI_KARAKTER = 40
 
 /**
  * Baş/son boşluğu atar, iç boşlukları teke indirir — sunucudaki
- * `normallesmis_ad` (`split_whitespace().join(" ")`) ile aynı.
+ * `normallesmis_ad` ile aynı. Boşluk kümesi iki tarafta AÇIK ve aynı
+ * (`bosluk.ts`, son inceleme M5): `\s` U+0085'i kapsamıyor, Rust'ın
+ * `split_whitespace`'i U+FEFF'i kapsamıyordu.
  */
 export function etiketAdiNormallestir(ad: string): string {
-  return ad.trim().split(/\s+/u).filter(Boolean).join(' ')
+  return bosluklaBol(ad).join(' ')
 }
 
 /**

@@ -7,6 +7,7 @@ import {
   danisanApi,
   ekIndir,
   ekIndirmeYolu,
+  etiketApi,
   notApi,
   ozelNotApi,
   ozetApi,
@@ -173,6 +174,83 @@ describe('not uç noktalarında 401', () => {
     await expect(ozelNotApi.kaydet(7, 'gizli')).rejects.toBeInstanceOf(YetkisizHata)
     expect(dinleyici).toHaveBeenCalledTimes(1)
     birak()
+  })
+})
+
+// --- Plan 5 Görev 5: etiketler ---------------------------------------------
+//
+// Etiket adı URL'ye GİRMEZ (sunucudaki `routes::tags` kararıyla aynı):
+// ekleme gövdede, kaldırma ve arama yalnızca sayısal kimlikle. Aşağıdaki
+// testler bunu YOL/METOT/GÖVDE üzerinde tam eşitlikle ölçer, yalnızca "bir
+// istek gitti" demek yanlış uca giden bir istemciyi de geçirirdi.
+describe('etiketApi — etiket uçları', () => {
+  it('etiketleriGetir tam olarak /api/etiketler adresine gider', async () => {
+    await etiketApi.etiketleriGetir()
+    expect(cagrilar).toEqual([{ yol: '/api/etiketler', method: 'GET', govde: null }])
+  })
+
+  it('seansEtiketleri tam olarak /api/randevular/{id}/etiketler adresine gider', async () => {
+    await etiketApi.seansEtiketleri(7)
+    expect(cagrilar).toEqual([
+      { yol: '/api/randevular/7/etiketler', method: 'GET', govde: null },
+    ])
+  })
+
+  it('etiketEkle POST ile YALNIZCA {ad} gönderir, etiket adı URLye girmez', async () => {
+    await etiketApi.etiketEkle(7, 'kaygı')
+    expect(cagrilar).toEqual([
+      { yol: '/api/randevular/7/etiketler', method: 'POST', govde: { ad: 'kaygı' } },
+    ])
+    expect(cagrilar[0].yol).not.toContain('kaygı')
+  })
+
+  it('etiketKaldir DELETE ile /api/randevular/{id}/etiketler/{tag_id} adresine gider, gövde YOK', async () => {
+    await etiketApi.etiketKaldir(7, 3)
+    expect(cagrilar).toEqual([
+      { yol: '/api/randevular/7/etiketler/3', method: 'DELETE', govde: null },
+    ])
+  })
+
+  it('etiketKaldir 204 (gövdesiz) yanıtı başarı sayar ve undefined döner', async () => {
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
+      cagrilar.push({ yol: String(girdi), method: secenekler?.method ?? 'GET', govde: null })
+      return {
+        ok: true,
+        status: 204,
+        json: async () => {
+          throw new SyntaxError('Unexpected end of JSON input')
+        },
+      } as unknown as Response
+    }) as unknown as typeof fetch
+    await expect(etiketApi.etiketKaldir(7, 3)).resolves.toBeUndefined()
+  })
+
+  it('etiketliSeanslar tam olarak /api/etiketler/{id}/seanslar adresine gider', async () => {
+    await etiketApi.etiketliSeanslar(3)
+    expect(cagrilar).toEqual([{ yol: '/api/etiketler/3/seanslar', method: 'GET', govde: null }])
+  })
+
+  it('401de dinleyiciyi throwdan ÖNCE tetikler ve YetkisizHata fırlatır (etiketEkle)', async () => {
+    sunucu(() => ({ ok: false, status: 401, govde: { hata: 'Oturum kilitli.' } }))
+    const sira: string[] = []
+    const birak = yetkisizOlunca(() => sira.push('dinleyici'))
+
+    await expect(
+      etiketApi.etiketEkle(7, 'aile').catch((e) => {
+        sira.push('throw')
+        throw e
+      }),
+    ).rejects.toBeInstanceOf(YetkisizHata)
+
+    expect(sira).toEqual(['dinleyici', 'throw'])
+    birak()
+  })
+
+  it('400 sunucunun mesajıyla fırlatır (uzunluk mesajı, ad değil)', async () => {
+    sunucu(() => ({ ok: false, status: 400, govde: { hata: 'etiket adi 1-40 karakter olmali' } }))
+    await expect(etiketApi.etiketEkle(7, 'x'.repeat(41))).rejects.toThrow(
+      'etiket adi 1-40 karakter olmali',
+    )
   })
 })
 

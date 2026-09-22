@@ -729,6 +729,70 @@ export const danisanApi = {
 }
 
 /**
+ * Sözlükteki tek bir etiket (`GET /api/etiketler` / `.../etiketler` yanıtındaki
+ * bir satır; sunucudaki `store::tags::Etiket`).
+ *
+ * `kullanim`, o etiketin kaç seansa bağlı olduğudur (otomatik tamamlama
+ * listesini kullanım sıklığına göre sıralamak için).
+ */
+export type Etiket = { id: number; ad: string; kullanim: number }
+
+/**
+ * Bir etiketi taşıyan tek bir seans (`GET /api/etiketler/{id}/seanslar`
+ * yanıtındaki bir satır; sunucudaki `store::tags::EtiketliSeans`).
+ */
+export type EtiketliSeans = {
+  appointment_id: number
+  client_id: number
+  danisan_adi: string
+  /** Randevunun duvar saati başlangıcı — `DanisanSeansi.baslangic` ile aynı biçim. */
+  baslangic: string
+}
+
+/**
+ * Etiket istemcisi (`store::tags`'in HTTP karşılığı, Plan 5 Görev 5).
+ *
+ * # Etiket adı URL'ye GİRMEZ
+ *
+ * Ekleme adı **gövdede** gönderir (`etiketEkle`); kaldırma ve arama yalnızca
+ * sayısal kimlikle çalışır (`etiketKaldir`, `etiketliSeanslar`). Sunucudaki
+ * `routes::tags` modül başlığıyla aynı gerekçe: etiket adı da not içeriği
+ * kadar hassas bir sınıflandırmadır, URL'ler sunucu günlüklerine ve
+ * tarayıcı geçmişine düşer.
+ */
+export const etiketApi = {
+  /** Sözlükteki tüm etiketler, en çok kullanılandan aza (`GET /api/etiketler`). */
+  etiketleriGetir: () => istek<Etiket[]>('/api/etiketler'),
+  /** Bir seansın etiketleri (`GET /api/randevular/{id}/etiketler`). */
+  seansEtiketleri: (randevuId: number) =>
+    istek<Etiket[]>(`/api/randevular/${randevuId}/etiketler`),
+  /**
+   * Seansa etiket koyar (`POST /api/randevular/{id}/etiketler {ad}`).
+   * Aynı ad başka bir yazımla (büyük/küçük harf, baş/son boşluk) zaten
+   * varsa sunucu var olan etikete bağlar -- idempotenttir.
+   */
+  etiketEkle: (randevuId: number, ad: string) =>
+    istek<Etiket>(`/api/randevular/${randevuId}/etiketler`, {
+      method: 'POST',
+      body: JSON.stringify({ ad }),
+    }),
+  /**
+   * Seanstan etiketi kaldırır (`DELETE /api/randevular/{id}/etiketler/{tag_id}`,
+   * yanıt 204 -- gövde yok, `takvimApi.odemeGuncelle` ile aynı desen).
+   */
+  etiketKaldir: (randevuId: number, tagId: number): Promise<void> =>
+    istek<unknown>(`/api/randevular/${randevuId}/etiketler/${tagId}`, {
+      method: 'DELETE',
+    }).then(() => undefined),
+  /**
+   * Bir etiketi taşıyan seanslar (`GET /api/etiketler/{id}/seanslar`,
+   * etiket dosyası ekranı için).
+   */
+  etiketliSeanslar: (tagId: number) =>
+    istek<EtiketliSeans[]>(`/api/etiketler/${tagId}/seanslar`),
+}
+
+/**
  * Hızlı arama istemcisi (`GET /api/ara`).
  *
  * Tek fonksiyonlu: sunucudaki `store::search` `private_notes` tablosunu hiç

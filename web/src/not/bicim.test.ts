@@ -70,4 +70,57 @@ describe('bicimUygula', () => {
     const s = bicimUygula({ metin: '- bir\niki', bas: 0, son: 9 }, 'madde')
     expect(s.metin).toBe('- bir\n- iki')
   })
+
+  // -------------------------------------------------------------------
+  // İnceleme bulgusu IMPORTANT-1: madde/numaralı liste/onay kutusu üstüste
+  // binen önekler üretiyordu çünkü aynı ailenin türleri arasındaki geçiş
+  // "değiştir" değil "ekle" olarak ele alınıyordu (ve onay deseni madde
+  // deseninden SONRA sınanıyordu). Aşağıdaki üç test incelemecinin bulduğu
+  // TAM durumları sabitler; devamındakiler ek geçişleri ve karışık seçimi.
+  // -------------------------------------------------------------------
+  describe('liste ailesi (madde/numara/onay) birbirinin yerine geçer', () => {
+    it('onay kutusuna madde uygulanınca işaret KAYBOLMAZ, önek DEĞİŞİR (önceden: "[ ] Odev ver")', () => {
+      const s = bicimUygula({ metin: '- [ ] Odev ver', bas: 0, son: 14 }, 'madde')
+      expect(s.metin).toBe('- Odev ver')
+    })
+
+    it('madde satırına onay uygulanınca önek İKİLEMEZ (önceden: "- [ ] - bir")', () => {
+      const s = bicimUygula({ metin: '- bir', bas: 0, son: 5 }, 'onay')
+      expect(s.metin).toBe('- [ ] bir')
+    })
+
+    it('numaralı satıra madde uygulanınca önek İKİLEMEZ (önceden: "- 1. bir")', () => {
+      const s = bicimUygula({ metin: '1. bir', bas: 0, son: 6 }, 'madde')
+      expect(s.metin).toBe('- bir')
+    })
+
+    it('onay -> numara: işaret kaybolur, sıra numarası eklenir', () => {
+      const s = bicimUygula({ metin: '- [x] tamam', bas: 0, son: 11 }, 'numara')
+      expect(s.metin).toBe('1. tamam')
+    })
+
+    it('numara -> onay: numara kaybolur, işaretsiz kutu eklenir', () => {
+      const s = bicimUygula({ metin: '2. iki', bas: 0, son: 6 }, 'onay')
+      expect(s.metin).toBe('- [ ] iki')
+    })
+
+    it('[x] işaretli onay -> madde: işaret kaybı KABUL EDİLEN davranış (madde kavramında işaret yok)', () => {
+      const s = bicimUygula({ metin: '- [x] tamam', bas: 0, son: 11 }, 'madde')
+      expect(s.metin).toBe('- tamam')
+    })
+
+    it('karışık seçim (bir satır madde, bir satır numaralı) madde uygulanınca ikisi de madde olur', () => {
+      const s = bicimUygula({ metin: '- bir\n1. iki', bas: 0, son: 12 }, 'madde')
+      expect(s.metin).toBe('- bir\n- iki')
+    })
+
+    it('alıntı liste ailesinden AYRI: alıntı satırına madde uygulanınca `> ` SİLİNMEZ, önüne eklenir', () => {
+      // Bilinçli tasarım kararı (bkz. `alintiSatirlariDegistir` yorumu):
+      // alıntı işareti hiçbir liste önekiyle karakter paylaşmıyor, bu
+      // yüzden aileye katılmadı — sessiz veri kaybı riski üstüste binen
+      // önekten daha ciddi olurdu.
+      const s = bicimUygula({ metin: '> söylenen söz', bas: 0, son: 14 }, 'madde')
+      expect(s.metin).toBe('- > söylenen söz')
+    })
+  })
 })

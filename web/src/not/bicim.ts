@@ -185,51 +185,109 @@ function baslikSatirlariDegistir(
   })
 }
 
+type ListeAilesiTuru = 'madde' | 'numara' | 'onay'
+type ListeSatirBilgisi = { tur: ListeAilesiTuru; icerik: string } | null
+
+/**
+ * Bir satırın liste ailesi (madde/numaralı liste/onay kutusu) önekini
+ * algılar. ONAY deseni MUTLAKA madde deseninden ÖNCE sınanır: `- [ ] metin`
+ * madde deseniyle de eşleşir (`MADDE_DUZENLI` içeriği `[ ] metin` olarak
+ * yakalardı) — sıra ters olsaydı bir onay satırına `madde` uygulamak onay
+ * işaretini SESSİZCE BOZARDI (inceleme bulgusu IMPORTANT-1, birinci durum:
+ * `- [ ] Odev ver` + madde → `[ ] Odev ver`).
+ */
+function listeSatiriAlgila(satir: string): ListeSatirBilgisi {
+  const onay = ONAY_KUTUSU_DUZENLI.exec(satir)
+  if (onay !== null) return { tur: 'onay', icerik: onay[2] }
+  const numarali = NUMARALI_DUZENLI.exec(satir)
+  if (numarali !== null) return { tur: 'numara', icerik: numarali[1] }
+  const madde = MADDE_DUZENLI.exec(satir)
+  if (madde !== null) return { tur: 'madde', icerik: madde[1] }
+  return null
+}
+
 function listeSatirlariDegistir(
   satirlar: string[],
   dokunanlar: boolean[],
   tur: 'madde' | 'numara' | 'alinti' | 'onay',
 ): SatirIslemi[] {
-  const desen =
-    tur === 'madde'
-      ? MADDE_DUZENLI
-      : tur === 'numara'
-        ? NUMARALI_DUZENLI
-        : tur === 'alinti'
-          ? ALINTI_DUZENLI
-          : ONAY_KUTUSU_DUZENLI
+  if (tur === 'alinti') {
+    return alintiSatirlariDegistir(satirlar, dokunanlar)
+  }
+  return listeAilesiSatirlariDegistir(satirlar, dokunanlar, tur)
+}
 
+/**
+ * Alıntı, liste ailesinden (madde/numaralı/onay) BİLEREK AYRI tutuluyor.
+ *
+ * Blockquote bir liste ÖĞESİ işareti değil, farklı bir blok kavramı ve
+ * öneki (`> `) liste önekleriyle (`- `, rakam) hiçbir karakteri PAYLAŞMIYOR
+ * — IMPORTANT-1'in bozduğu üç durumun (Odev ver, `- bir`+onay, `1. bir`+
+ * madde) hiçbiri alıntıyı içermiyordu, üçü de madde/numara/onay arasındaki
+ * PAYLAŞILAN önek karakterlerinden ('- ' hem madde hem onayın başı,
+ * rakam+'. ' numaranın) kaynaklanıyordu. Alıntıyı aileye katıp "farklı
+ * türse DEĞİŞTİR" kuralını ona da uygulamak, bir alıntı satırına `madde`
+ * uygulandığında `> ` işaretini SESSİZCE SİLERDİ — terapistin bilerek
+ * danışanın kendi cümlesi olarak işaretlediği bir alıntının kaybolması,
+ * üstüste binen önekten (kozmetik) daha ciddi bir veri kaybı olurdu.
+ * Dolayısıyla alıntı burada eskisi gibi BAĞIMSIZ kalıyor: yalnızca kendi
+ * deseniyle aç/kapa yapılır, başka bir liste türüyle etkileşmez.
+ */
+function alintiSatirlariDegistir(satirlar: string[], dokunanlar: boolean[]): SatirIslemi[] {
   const dokunanIndeksler = dokunanlar.flatMap((d, i) => (d ? [i] : []))
-  const hepsindeVar = dokunanIndeksler.length > 0 && dokunanIndeksler.every((i) => desen.test(satirlar[i]))
+  const hepsindeVar = dokunanIndeksler.length > 0 && dokunanIndeksler.every((i) => ALINTI_DUZENLI.test(satirlar[i]))
+
+  return satirlar.map((s, i) => {
+    if (!dokunanlar[i]) return { orijinal: s, yeni: s }
+    if (hepsindeVar) {
+      const m = ALINTI_DUZENLI.exec(s)
+      return { orijinal: s, yeni: m !== null ? m[1] : s }
+    }
+    if (ALINTI_DUZENLI.test(s)) return { orijinal: s, yeni: s }
+    return { orijinal: s, yeni: '> ' + s }
+  })
+}
+
+/**
+ * Madde/numaralı liste/onay kutusu AYNI AİLE: bir satırda bu üçünden BİRİ
+ * zaten varsa ve hedef FARKLIYSA önek KALDIRILMAZ, DEĞİŞTİRİLİR (başlık
+ * düzeylerinin birbirinin yerine geçmesiyle aynı mantık, `baslikSatirlariDegistir`
+ * ile karşılaştır). Üstüste binen önekler (`- [ ] - bir`, `- 1. bir` —
+ * IMPORTANT-1'in ikinci ve üçüncü durumu) bu yüzden artık oluşmuyor.
+ *
+ * Onay → madde/numara dönüşümünde işaret durumu (`[x]`/`[ ]`) KAYBOLUR:
+ * kabul edilen, bilinçli davranış — hedef tür zaten bir "işaretli/işaretsiz"
+ * kavramı taşımıyor, taşınacak bir yer yok (`bicim.test.ts` bunu
+ * `[x] işaretli onay -> madde` testiyle sabitliyor).
+ */
+function listeAilesiSatirlariDegistir(
+  satirlar: string[],
+  dokunanlar: boolean[],
+  hedefTur: ListeAilesiTuru,
+): SatirIslemi[] {
+  const dokunanIndeksler = dokunanlar.flatMap((d, i) => (d ? [i] : []))
+  const hepsiHedefTurde =
+    dokunanIndeksler.length > 0 &&
+    dokunanIndeksler.every((i) => {
+      const bilgi = listeSatiriAlgila(satirlar[i])
+      return bilgi !== null && bilgi.tur === hedefTur
+    })
 
   let numaraSayaci = 1
 
   return satirlar.map((s, i) => {
     if (!dokunanlar[i]) return { orijinal: s, yeni: s }
+    const bilgi = listeSatiriAlgila(s)
 
-    if (hepsindeVar) {
-      // Aç/kapa: hepsinde zaten var — önek kaldırılır. Yakalama grupları
-      // sırasıyla [tam eşleşme, ...ara gruplar, içerik] biçiminde; içerik
-      // her desende SON gruptur (onayda ikinci, ötekilerde ilk).
-      const m = desen.exec(s)
-      return { orijinal: s, yeni: m !== null ? m[m.length - 1] : s }
+    if (hepsiHedefTurde) {
+      // Aç/kapa: hepsi zaten hedef türde — önek kaldırılır.
+      return { orijinal: s, yeni: bilgi !== null ? bilgi.icerik : s }
     }
 
-    if (desen.test(s)) {
-      // Bu satırda zaten var ama SEÇİMDEKİ HEPSİNDE değil — dokunma.
-      // Karışık seçimde var olanı bozmadan eksik olanlara eklemek, mevcut
-      // bir madde/alıntı/onay satırının önekini ikiletmemek için.
-      return { orijinal: s, yeni: s }
-    }
-
-    const onEk =
-      tur === 'madde'
-        ? '- '
-        : tur === 'numara'
-          ? `${numaraSayaci++}. `
-          : tur === 'alinti'
-            ? '> '
-            : '- [ ] '
-    return { orijinal: s, yeni: onEk + s }
+    // Ya önek hiç yok (ekle) ya da AİLEDEN BAŞKA bir türde (değiştir) —
+    // ikisi de aynı işlem: mevcut İÇERİĞİN önüne hedef türün önekini koy.
+    const icerik = bilgi !== null ? bilgi.icerik : s
+    const onEk = hedefTur === 'madde' ? '- ' : hedefTur === 'onay' ? '- [ ] ' : `${numaraSayaci++}. `
+    return { orijinal: s, yeni: onEk + icerik }
   })
 }

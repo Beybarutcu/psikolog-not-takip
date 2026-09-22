@@ -116,10 +116,24 @@ import { yerelGun } from './anaEkranKancalari/yerelGun'
  *   |                                       | harita, iki ekran aynı girdiyi okur     |
  *   | dosyanın seans listesindeki satır     | `seanslar.yamala({ etiketler })`        |
  *   |                                       | (+ o kancanın `yazmaSaati`'ı)           |
- *   | sözlük                                | `eklendi/kaldirildi` içinde (+ uçuştaki |
- *   |                                       | okumaya karşı işlem kaydı)              |
+ *   | sözlük                                | `eklendi/kaldirildi` içinde: istendiyse |
+ *   |                                       | yazmadan SONRA sunucudan yeniden okunur |
+ *   |                                       | (yalnızca en son okuma yazar)           |
  *   | açık etiketli seanslar paneli         | kaldırmada satır düşer; eklemede panel  |
  *   |                                       | tek istekle tazelenir                   |
+ *
+ * ## Takvimin randevu yazmaları da etiket paneline yayılır (son inceleme I1)
+ *
+ * Etiketli seanslar panelinin satırları (danışan adı, saat) RANDEVUDAN
+ * geliyor. Takvimdeki üç randevu yazması (`randevuKaydet`, `randevuSil`,
+ * `randevuSeriSil` — kaydet/düzenle, sil, seriyi sil) BAŞARILI olunca
+ * `etiketler.randevularDegisti()` çağrılır: panel AÇIKSA tek istekle yeniden
+ * okunur (kapalıysa istek yok), sözlük istendiyse tazelenir (silinen randevu
+ * bir etiketin son kullanımı olabilir). Bu olmasaydı panel taşınan seansı
+ * eski danışanın adıyla, silineni hâlâ listede gösterir ve silinen satıra
+ * tıklamak dosyada başka bir seansı açardı. Takvim bu yazmaları
+ * `takvim.kaydet/sil/seriSil`'e doğrudan değil BURAYA bağlı prop'larla
+ * yapar (`durumDegis`/`odemeDegis` ile aynı desen).
  *
  * Seansın etiketleri için İKİ önbellek YOK: takvim paneli ve dosya aynı
  * `useEtiketler` girdisini okuyor — notta C1'i üreten "iki kopyadan biri
@@ -389,6 +403,26 @@ export function AnaEkran({
   }
 
   /**
+   * Takvimin üç randevu yazması (bkz. modül başlığı "Takvimin randevu
+   * yazmaları"). Yayılım yalnızca BAŞARIDA: ret `await`ten fırlar, panel
+   * (`RandevuPaneli`) hatayı gösterir, etiket paneli yeniden okunmaz.
+   */
+  async function randevuKaydet(kayit: Parameters<typeof takvim.kaydet>[0]) {
+    await takvim.kaydet(kayit)
+    etiketler.randevularDegisti()
+  }
+
+  async function randevuSil(id: number) {
+    await takvim.sil(id)
+    etiketler.randevularDegisti()
+  }
+
+  async function randevuSeriSil(seriId: string, buTarihtenItibaren: string) {
+    await takvim.seriSil(seriId, buTarihtenItibaren)
+    etiketler.randevularDegisti()
+  }
+
+  /**
    * Bir seansın `EtiketSatiri` bağlamı. İki ekran da BUNU çağırıyor: aynı
    * önbellek girdisi (`seansDurumu`), aynı yazma yolu.
    */
@@ -496,6 +530,9 @@ export function AnaEkran({
             onDanisanAc={danisanaGit}
             onDurumDegis={durumDegis}
             onOdemeDegis={odemeDegis}
+            onRandevuKaydet={randevuKaydet}
+            onRandevuSil={randevuSil}
+            onSeriSil={randevuSeriSil}
             etiketBaglami={etiketBaglami}
             onEtiketAc={etiketler.etiketAc}
           />

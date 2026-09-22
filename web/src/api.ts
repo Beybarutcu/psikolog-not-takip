@@ -28,6 +28,26 @@ export class VeritabaniBozukHata extends Error {
   }
 }
 
+/**
+ * 401 ve "veritabanı bozuk" DIŞINDAKİ başarısız yanıtlar. `Error`'ın alt
+ * sınıfı — mesajı okuyan bütün çağıranlar aynen çalışır; HTTP durumunu da
+ * taşır ki çağıran "kayıt yok" (404) ile gerçek bir hatayı ayırabilsin.
+ *
+ * Tek kullanıcısı bugün etiketli seanslar paneli (son inceleme I1): takvimde
+ * bir randevu silinince panel yeniden okunur ve o randevu etiketin SON
+ * seansıysa etiket sunucuda tetikleyiciyle silinmiştir — yanıt 404'tür.
+ * Bu bir hata değil, "bu etiketi taşıyan seans kalmadı"nın kendisidir;
+ * panel onu boş liste olarak gösterir (bkz. `useEtiketler.acikYukle`).
+ */
+export class IstekHatasi extends Error {
+  readonly durum: number
+  constructor(mesaj: string, durum: number) {
+    super(mesaj)
+    this.name = 'IstekHatasi'
+    this.durum = durum
+  }
+}
+
 type YetkisizDinleyici = () => void
 const yetkisizDinleyiciler = new Set<YetkisizDinleyici>()
 const bozukDinleyiciler = new Set<YetkisizDinleyici>()
@@ -90,7 +110,7 @@ async function basarisizYanitiFirlat(yanit: Response): Promise<never> {
     for (const dinleyici of bozukDinleyiciler) dinleyici()
     throw new VeritabaniBozukHata(mesaj)
   }
-  throw new Error(mesaj)
+  throw new IstekHatasi(mesaj, yanit.status)
 }
 
 async function istek<T>(yol: string, secenekler?: RequestInit): Promise<T> {

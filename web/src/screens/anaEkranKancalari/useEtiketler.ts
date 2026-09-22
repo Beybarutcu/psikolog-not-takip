@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { etiketApi, YetkisizHata, type Etiket, type EtiketliSeans } from '../../api'
-import { ayniEtiket, etiketSirasi } from '../../etiket/etiketAdi'
+import { etiketApi, IstekHatasi, YetkisizHata, type Etiket, type EtiketliSeans } from '../../api'
+import { ayniEtiket, etiketAnahtari, etiketSirasi } from '../../etiket/etiketAdi'
 
 /** Bir seansın etiket listesinin önbellekteki hâli. `liste === null && hata === null` = yükleniyor. */
 export type SeansEtiketleri = { liste: Etiket[] | null; hata: string | null }
@@ -96,6 +96,42 @@ function adaGoreSirala(liste: Etiket[]): Etiket[] {
  * etiketin kaldırıldığı seanslar (`acikKaldirilanlar`) her yanıttan süzülür;
  * aynı seansa etiket yeniden eklenirse kayıttan çıkar ve panel yeniden
  * okunur.
+ *
+ * # Takvimin randevu yazmaları paneli tazeler (son inceleme I1)
+ *
+ * Panelin satırları (danışan adı, saat) etiket bağından değil RANDEVUDAN
+ * geliyor: takvimde bir randevunun saati değişir, başka danışana taşınır ya
+ * da silinirse (tekil ya da seri) açık panel eski saati / eski danışanı /
+ * artık olmayan seansı gösterirdi — ve silinmiş satıra tıklanınca
+ * `danisanaGit` o seansı bulamaz, dosyada varsayılan seansı seçerdi. Yazma
+ * sonucunun hangi satırları etkilediği yerelde bilinmiyor (seri silme
+ * görünen haftanın ötesine uzanır), bu yüzden `AnaEkran` her BAŞARILI
+ * randevu yazmasından sonra `randevularDegisti`'yi çağırır:
+ *
+ *   - panel AÇIKSA tek istekle yeniden okunur (panel ekranda, yani terapistin
+ *     baktığı şey — silinemez görüntüleme satırı bir bakışa karşılık gelir),
+ *     panel KAPALIYSA hiçbir istek atılmaz;
+ *   - sözlük bu oturumda istendiyse yeniden okunur (silinen randevu bir
+ *     etiketin son kullanımıysa etiket sunucuda silinmiştir; sözlük hiç
+ *     istenmediyse istek yok).
+ *
+ * Panelin etiketi silinmişse (son seansı silindi) yeniden okuma 404 döner:
+ * bu hata değil, "bu etiketi taşıyan seans kalmadı"nın ta kendisi — boş
+ * liste olarak gösterilir.
+ *
+ * # Aynı ADLA yeniden doğan etiket paneli taşır (son inceleme I1 yan durumu)
+ *
+ * Panelin etiketinin son bağı kaldırılır (sunucu etiketi siler) ve AYNI ad
+ * yeniden eklenirse etiket YENİ bir kimlik alır (`AUTOINCREMENT`).
+ * `ayniEtiket` kimlik VE ad ister — bu kural kimliğin yeniden kullanıldığı
+ * durumda ("kriz"in eski kimliğini alan "öfke") paneli yanlış etikete
+ * kaydırmamak içindi ve bozulmadı. Burada durum tersi: kimlik farklı, ad
+ * anahtarı AYNI. Ad anahtarı sunucuda benzersiz (`tags.ad_anahtar UNIQUE`),
+ * yani aynı anahtarlı iki etiket aynı anda var olamaz; farklı kimlikle
+ * gelen aynı anahtar ancak "panelin etiketi silinip yeniden doğdu"
+ * demektir ve aynı ad terapist için aynı anlamdır. Panel yeni kimliğe
+ * taşınır ve yeniden okunur; yoksa "Bu etiketi taşıyan seans kalmadı"
+ * demeye devam ederdi.
  *
  * # Yazma hataları seansa bağlı tutulur (inceleme M6)
  *
@@ -261,22 +297,27 @@ export function useEtiketler({
           ? simdiki
           : null
       }
-      etiketApi.etiketliSeanslar(etiket.id).then(
-        (liste) => {
-          const simdiki = ayniPanel()
-          if (simdiki === null) return
-          // M2: okuma sunucuda kaldırmadan ÖNCE yapılmış olabilir.
-          const kaldirilanlar = acikKaldirilanlarRef.current
-          acikYaz({
-            ...simdiki,
-            liste: liste.filter((s) => !kaldirilanlar.has(s.appointment_id)),
-            hata: null,
-          })
-        },
-        (e: unknown) => {
+      const listeYaz = (liste: EtiketliSeans[]) => {
+        const simdiki = ayniPanel()
+        if (simdiki === null) return
+        // M2: okuma sunucuda kaldırmadan ÖNCE yapılmış olabilir.
+        const kaldirilanlar = acikKaldirilanlarRef.current
+        acikYaz({
+          ...simdiki,
+          liste: liste.filter((s) => !kaldirilanlar.has(s.appointment_id)),
+          hata: null,
+        })
+      }
+      etiketApi.etiketliSeanslar(etiket.id).then(listeYaz, (e: unknown) => {
           if (nesil !== nesilRef.current || istek !== acikIstekRef.current) return
           if (e instanceof YetkisizHata) {
             yetkisiz()
+            return
+          }
+          // 404: etiket sunucuda yok — son seansı silindi (bkz. modül
+          // başlığı "Takvimin randevu yazmaları"). Seans kalmadı demektir.
+          if (e instanceof IstekHatasi && e.durum === 404) {
+            listeYaz([])
             return
           }
           const simdiki = ayniPanel()
@@ -285,8 +326,7 @@ export function useEtiketler({
             ...simdiki,
             hata: e instanceof Error ? e.message : 'Seanslar yüklenemedi.',
           })
-        },
-      )
+        })
     },
     [acikYaz, yetkisiz],
   )
@@ -313,6 +353,19 @@ export function useEtiketler({
     acikYaz({ ...simdiki, liste: null, hata: null })
     acikYukle(simdiki.etiket)
   }, [acikYaz, acikYukle])
+
+  /**
+   * Takvimde bir randevu yazması (kaydet, sil, seri sil) BAŞARILI oldu (bkz.
+   * modül başlığı "Takvimin randevu yazmaları"): açık panel tek istekle
+   * yeniden okunur — liste boşaltılmadan, eski satırlar yanıt gelene kadar
+   * durur; panel kapalıysa istek YOK. Sözlük istendiyse tazelenir.
+   */
+  const randevularDegisti = useCallback(() => {
+    sozlukTazele()
+    const simdiki = acikRef.current
+    if (simdiki === null) return
+    acikYukle(simdiki.etiket)
+  }, [sozlukTazele, acikYukle])
 
   const yazmaHatasiKaydet = useCallback((appointmentId: number, mesaj: string | null) => {
     setYazmaHatalari((onceki) => {
@@ -351,6 +404,18 @@ export function useEtiketler({
       if (simdiki !== null && ayniEtiket(simdiki.etiket, etiket)) {
         acikKaldirilanlarRef.current.delete(appointmentId)
         acikYukle(simdiki.etiket)
+      } else if (
+        simdiki !== null &&
+        simdiki.etiket.id !== etiket.id &&
+        etiketAnahtari(simdiki.etiket.ad) === etiketAnahtari(etiket.ad)
+      ) {
+        // Panelin etiketi silinip AYNI adla yeniden doğdu (bkz. modül
+        // başlığı): kimlik yeni kimliğe taşınır. Eski kimliğin kaldırma
+        // kaydı yeni etikete ait değil — yeni etiketin bağları ancak
+        // doğduktan sonra kuruldu.
+        acikKaldirilanlarRef.current = new Set()
+        acikYaz({ ...simdiki, etiket })
+        acikYukle(etiket)
       }
       return yeniListe.map((e) => e.ad)
     },
@@ -409,6 +474,7 @@ export function useEtiketler({
     etiketAc,
     etiketKapat,
     acikYenidenDene,
+    randevularDegisti,
     eklendi,
     kaldirildi,
     yazmaHatasi,

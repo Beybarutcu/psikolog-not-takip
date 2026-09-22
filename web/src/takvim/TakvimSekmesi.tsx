@@ -95,6 +95,15 @@ type Props = {
   onDurumDegis: (id: number, durum: string) => Promise<void>
   onOdemeDegis: (id: number, odendi: boolean) => Promise<void>
   /**
+   * Randevu paneli yazmaları (`AnaEkran.randevuKaydet/randevuSil/
+   * randevuSeriSil`). `onDurumDegis` ile aynı gerekçe: başarılı yazma takvim
+   * listesinin yanında açık etiketli seanslar panelini de tazelemeli (son
+   * inceleme I1) ve o panel bu bileşenin görmediği `useEtiketler`'de.
+   */
+  onRandevuKaydet: ReturnType<typeof useTakvimAkisi>['kaydet']
+  onRandevuSil: (id: number) => Promise<void>
+  onSeriSil: (seriId: string, buTarihtenItibaren: string) => Promise<void>
+  /**
    * Açık seansın etiketleri (`AnaEkran.etiketBaglami`, Plan 6 Görev 6). Veri
    * ve yazmalar `AnaEkran`'da — danışan dosyası AYNI önbellekten okuyor (bkz.
    * `useEtiketler` modül başlığı). Bu bileşen yalnızca kimliği bağlıyor.
@@ -117,6 +126,9 @@ export function TakvimSekmesi({
   onDanisanAc,
   onDurumDegis,
   onOdemeDegis,
+  onRandevuKaydet,
+  onRandevuSil,
+  onSeriSil,
   etiketBaglami,
   onEtiketAc,
 }: Props) {
@@ -174,9 +186,9 @@ export function TakvimSekmesi({
             zaman={seciliBosSaat ?? seciliRandevu?.baslangic ?? ''}
             randevu={seciliRandevu}
             danisanlar={danisanlar}
-            onKaydet={takvim.kaydet}
-            onSil={takvim.sil}
-            onSeriSil={takvim.seriSil}
+            onKaydet={onRandevuKaydet}
+            onSil={onRandevuSil}
+            onSeriSil={onSeriSil}
             seriSayisiAl={takvimApi.seriSayisi}
             silinecekNotSayisiAl={takvimApi.silinecekNotSayisi}
             onKapat={takvim.panelKapat}

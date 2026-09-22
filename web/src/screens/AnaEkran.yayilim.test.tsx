@@ -59,6 +59,7 @@ const R203 = {
   durum: 'planlandi', ucret: null as number | null, odendi: false, seri_id: null,
 }
 const TUMU = [R201, R202, R203]
+type RandevuKaydi = Omit<(typeof TUMU)[number], 'seri_id'> & { seri_id: string | null }
 
 const dosyalar: Record<number, unknown> = {
   1: {
@@ -100,6 +101,34 @@ let yetkisiz: boolean
 let idYenidenKullan: boolean
 /** Kurulursa `POST .../etiketler` 500 döner. */
 let etiketEklemeHatasi: boolean
+/**
+ * Randevu yazmaları (son inceleme I1): sunucu PUT/DELETE'i GERÇEKTEN
+ * uygular, her okuma `tumu()` üzerinden o anki hâli görür.
+ */
+let randevuDegisiklikleri: Record<number, Partial<RandevuKaydi>>
+let silinenRandevular: Set<number>
+/**
+ * Randevu paneli bugün başlangıcı DÜZENLEMİYOR (yalnızca danışan, süre,
+ * ücret); "saati değişen randevu" bu yüzden PUT'un sunucuda yeni bir
+ * başlangıçla sonuçlandığı taklitle kuruluyor. Ölçülen şey başarılı bir
+ * randevu yazmasından sonra açık panelin SUNUCUNUN o anki hâlini göstermesi.
+ */
+let putBaslangici: Record<number, string>
+
+/** Sunucunun o anki randevuları: silinenler yok, yazmalar uygulanmış. */
+function tumu(): RandevuKaydi[] {
+  return TUMU.filter((r) => !silinenRandevular.has(r.id)).map((r) => ({
+    ...r,
+    ...randevuDegisiklikleri[r.id],
+  }))
+}
+
+/** Randevu silinince bağları gider; kullanımı sıfıra düşen etiket de (tetikleyici). */
+function randevuyuSil(id: number) {
+  silinenRandevular.add(id)
+  delete baglar[id]
+  for (const tid of [...etiketDeposu.keys()]) if (kullanim(tid) === 0) etiketDeposu.delete(tid)
+}
 
 /** Kurulum kolaylığı: seansa adıyla etiket bağlar, etiketin kimliğini döner. */
 function etiketBagla(randevuId: number, ad: string): number {
@@ -138,12 +167,12 @@ function json(govde: unknown, status = 200): Response {
   return { ok: status < 400, status, json: async () => govde } as unknown as Response
 }
 
-function randevuAnlik(r: (typeof TUMU)[number]) {
+function randevuAnlik(r: RandevuKaydi) {
   return { ...r, odendi: odemeler[r.id] ?? r.odendi, durum: durumlar[r.id] ?? r.durum }
 }
 
 function notYaniti(id: number) {
-  const r = TUMU.find((x) => x.id === id)!
+  const r = tumu().find((x) => x.id === id)!
   const k = notlar[id] ?? { sablon: 'serbest', icerik: '' }
   return {
     appointment_id: id, client_id: r.client_id, seans_zamani: r.baslangic,
@@ -164,8 +193,10 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
   const etiketliSeanslar = /^\/api\/etiketler\/(\d+)\/seanslar$/.exec(yol)
   if (etiketliSeanslar) {
     const tid = Number(etiketliSeanslar[1])
+    // Sunucudaki `tags::etiketli_seanslar`: olmayan etiket 404.
+    if (!etiketDeposu.has(tid)) return json({ hata: 'Kayıt bulunamadı.' }, 404)
     return json(
-      TUMU.filter((r) => (baglar[r.id] ?? []).includes(tid))
+      tumu().filter((r) => (baglar[r.id] ?? []).includes(tid))
         .sort((a, b) => (a.baslangic < b.baslangic ? 1 : -1))
         .map((r) => ({
           appointment_id: r.id, client_id: r.client_id,
@@ -228,7 +259,36 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
     odemeler[Number(odeme[1])] = (govde as { odendi: boolean }).odendi
     return json({}, 204)
   }
+  const seri = /^\/api\/randevular\/seri\/([^?]+)\?bu_tarihten_itibaren=(.+)$/.exec(yol)
+  if (seri) {
+    const seriId = decodeURIComponent(seri[1])
+    const itibaren = decodeURIComponent(seri[2])
+    const kapsam = tumu().filter((r) => r.seri_id === seriId && r.baslangic >= itibaren)
+    if (method === 'DELETE') {
+      for (const r of kapsam) randevuyuSil(r.id)
+      return json({ silinen: kapsam.length })
+    }
+    return json({ adet: kapsam.length, not_adedi: 0 })
+  }
+  if (/^\/api\/randevular\/\d+\/silinecekler$/.test(yol)) return json({ not_adedi: 0 })
   const durum = /^\/api\/randevular\/(\d+)$/.exec(yol)
+  if (durum && method === 'PUT') {
+    const id = Number(durum[1])
+    const g = govde as { client_id: number; baslangic: string; bitis: string; ucret: number | null }
+    randevuDegisiklikleri[id] = {
+      ...randevuDegisiklikleri[id],
+      client_id: g.client_id,
+      danisan_adi: danisanlar.find((d) => d.id === g.client_id)!.ad_soyad,
+      baslangic: putBaslangici[id] ?? g.baslangic,
+      bitis: g.bitis,
+      ucret: g.ucret,
+    }
+    return json(randevuAnlik(tumu().find((r) => r.id === id)!))
+  }
+  if (durum && method === 'DELETE') {
+    randevuyuSil(Number(durum[1]))
+    return json({})
+  }
   if (durum && method === 'PATCH') {
     durumlar[Number(durum[1])] = (govde as { durum: string }).durum
     return json({})
@@ -237,13 +297,13 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
   if (aralik) {
     const bas = decodeURIComponent(aralik[1])
     const bit = decodeURIComponent(aralik[2])
-    return json(TUMU.filter((r) => r.baslangic >= bas && r.baslangic < bit).map(randevuAnlik))
+    return json(tumu().filter((r) => r.baslangic >= bas && r.baslangic < bit).map(randevuAnlik))
   }
   const gecmis = /^\/api\/danisanlar\/(\d+)\/notlar/.exec(yol)
   if (gecmis) {
     const once = new URL(yol, 'http://x').searchParams.get('once') ?? '9999'
     return json(
-      TUMU.filter((r) => r.client_id === Number(gecmis[1]) && notlar[r.id] && r.baslangic < once)
+      tumu().filter((r) => r.client_id === Number(gecmis[1]) && notlar[r.id] && r.baslangic < once)
         .sort((a, b) => (a.baslangic < b.baslangic ? 1 : -1))
         .map((r) => notYaniti(r.id)),
     )
@@ -252,7 +312,7 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
   if (seanslar) {
     if (seanslarHatasi) return json({ hata: 'Veritabanı okunamadı.' }, 500)
     return json(
-      TUMU.filter((r) => r.client_id === Number(seanslar[1]))
+      tumu().filter((r) => r.client_id === Number(seanslar[1]))
         .sort((a, b) => (a.baslangic < b.baslangic ? 1 : -1))
         .map((r) => {
           const a = randevuAnlik(r)
@@ -291,6 +351,9 @@ beforeEach(() => {
   yetkisiz = false
   idYenidenKullan = false
   etiketEklemeHatasi = false
+  randevuDegisiklikleri = {}
+  silinenRandevular = new Set()
+  putBaslangici = {}
   kilitle = vi.fn<() => void>()
   taslaklariUnut()
   globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
@@ -1292,5 +1355,144 @@ describe('Etiketler — inceleme düzeltmeleri', () => {
     expect((await screen.findByRole('alert')).textContent).toBe(
       '"kaygı" etiketi eklenemedi. Veritabanı okunamadı.',
     )
+  })
+})
+
+// =============================================================================
+// Son inceleme I1 — takvimin randevu yazmaları etiketli seanslar paneline
+// =============================================================================
+
+const etiketliSeansIstekleri = () =>
+  istekler.filter((i) => /^\/api\/etiketler\/\d+\/seanslar$/.test(i.yol))
+
+/** 203'ü (Mehmet, bu hafta) takvimde seçer ve "kriz" panelini açar. */
+async function krizPaneliAc() {
+  await userEvent.click(await screen.findByRole('button', { name: 'Mehmet Demir' }))
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'kriz etiketli seansları göster' }),
+  )
+  const bolge = await screen.findByRole('region', { name: 'kriz etiketli seanslar' })
+  await within(bolge).findByRole('button', { name: 'Mehmet Demir — 8 Eylül 2026, 13:00' })
+  return bolge
+}
+
+describe('Son inceleme I1 — randevu yazmaları açık etiketli seanslar panelini tazeler', () => {
+  it('(1) panelde listelenen randevunun saati değişince panel YENİ saati gösterir', async () => {
+    etiketBagla(202, 'kriz')
+    etiketBagla(203, 'kriz')
+    ciz()
+    const bolge = await krizPaneliAc()
+    putBaslangici[203] = '2026-09-08T15:00'
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    await within(bolge).findByRole('button', { name: 'Mehmet Demir — 8 Eylül 2026, 15:00' })
+    expect(panelSatiri(bolge, /13:00/)).toHaveLength(0)
+    expect(etiketliSeansIstekleri()).toHaveLength(2)
+  })
+
+  it('(2) randevu başka danışana taşınınca panel YENİ danışanın adını gösterir', async () => {
+    etiketBagla(202, 'kriz')
+    etiketBagla(203, 'kriz')
+    ciz()
+    const bolge = await krizPaneliAc()
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    await within(bolge).findByRole('button', { name: 'Ayşe Yılmaz — 8 Eylül 2026, 13:00' })
+    expect(panelSatiri(bolge, /Mehmet Demir —/)).toHaveLength(0)
+  })
+
+  it('(3) randevu silinince satır panelden kalkar; diğer satır kalır', async () => {
+    etiketBagla(202, 'kriz')
+    etiketBagla(203, 'kriz')
+    ciz()
+    const bolge = await krizPaneliAc()
+    await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
+    await waitFor(() => expect(silinenRandevular.has(203)).toBe(true))
+    await waitFor(() => expect(panelSatiri(bolge, /Mehmet Demir —/)).toHaveLength(0))
+    expect(
+      within(bolge).getByRole('button', { name: 'Ayşe Yılmaz — 14 Eylül 2026, 10:00' }),
+    ).toBeDefined()
+  })
+
+  it('(3b) etiketin SON seansı silinince panel "seans kalmadı" der (404 hata değil); sözlük yüklüyse tazelenir', async () => {
+    etiketBagla(203, 'kriz')
+    ciz()
+    const bolge = await krizPaneliAc()
+    // Sözlük bu oturumda istendi (etiket kutusuna odak).
+    await userEvent.click(screen.getByLabelText('Etiket ekle'))
+    await waitFor(() => expect(sozlukGetleri()).toHaveLength(1))
+    await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
+    await within(bolge).findByText('Bu etiketi taşıyan seans kalmadı.')
+    expect(etiketDeposu.size).toBe(0)
+    expect(within(bolge).queryByRole('alert')).toBeNull()
+    await waitFor(() => expect(sozlukGetleri()).toHaveLength(2))
+  })
+
+  it('(3c) seri silinince silinen seans panelden kalkar', async () => {
+    randevuDegisiklikleri[203] = { seri_id: 's1' }
+    etiketBagla(202, 'kriz')
+    etiketBagla(203, 'kriz')
+    ciz()
+    const bolge = await krizPaneliAc()
+    await userEvent.click(screen.getByRole('button', { name: 'Bu ve sonraki tüm tekrarları sil' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Evet, tekrarları sil' }))
+    await waitFor(() => expect(silinenRandevular.has(203)).toBe(true))
+    await waitFor(() => expect(panelSatiri(bolge, /Mehmet Demir —/)).toHaveLength(0))
+    expect(
+      within(bolge).getByRole('button', { name: 'Ayşe Yılmaz — 14 Eylül 2026, 10:00' }),
+    ).toBeDefined()
+  })
+
+  it('(4) son bağ kaldırılıp AYNI ad yeniden eklenince (yeni kimlik) panel yeni seansı gösterir', async () => {
+    const eskiKriz = etiketBagla(203, 'kriz')
+    ciz()
+    const bolge = await krizPaneliAc()
+    await userEvent.click(screen.getByRole('button', { name: 'kriz etiketini kaldır' }))
+    await within(bolge).findByText('Bu etiketi taşıyan seans kalmadı.')
+    expect(etiketDeposu.has(eskiKriz)).toBe(false)
+
+    await userEvent.type(screen.getByLabelText('Etiket ekle'), 'kriz{Enter}')
+    await waitFor(() => expect(kaldirDugmesi('kriz')).not.toBeNull())
+    const yeniKriz = [...etiketDeposu].find(([, ad]) => ad === 'kriz')![0]
+    // Kurulumun ön koşulu: etiket YENİ kimlikle doğdu.
+    expect(yeniKriz).not.toBe(eskiKriz)
+    const yeniBolge = await screen.findByRole('region', { name: 'kriz etiketli seanslar' })
+    await within(yeniBolge).findByRole('button', { name: 'Mehmet Demir — 8 Eylül 2026, 13:00' })
+    expect(istekler.filter((i) => i.yol === `/api/etiketler/${yeniKriz}/seanslar`)).toHaveLength(1)
+  })
+
+  it('panel KAPALIYKEN (hiç açılmamış ya da kapatılmış) randevu yazmaları etiket isteği ATMAZ', async () => {
+    etiketBagla(202, 'kriz')
+    etiketBagla(203, 'kriz')
+    ciz()
+    // Hiç açılmamış panel, hiç istenmemiş sözlük: düzenle + sil.
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByLabelText('Etiket ekle')
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    // BARİYER: PUT yapıldı ve takvim yeniden yüklendi (panel kapandı).
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Güncelle' })).toBeNull())
+    expect(istekler.some((i) => i.method === 'PUT' && i.yol === '/api/randevular/201')).toBe(true)
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Sil' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
+    await waitFor(() => expect(silinenRandevular.has(201)).toBe(true))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+    expect(etiketliSeansIstekleri()).toHaveLength(0)
+    expect(sozlukGetleri()).toHaveLength(0)
+
+    // Açılıp KAPATILMIŞ panel: yazma yeni istek atmaz.
+    const bolge = await krizPaneliAc()
+    await userEvent.click(within(bolge).getByRole('button', { name: 'Kapat' }))
+    expect(screen.queryByRole('region', { name: 'kriz etiketli seanslar' })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Güncelle' })).toBeNull())
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30))
+    })
+    expect(etiketliSeansIstekleri()).toHaveLength(1)
+    expect(sozlukGetleri()).toHaveLength(0)
   })
 })

@@ -1,0 +1,41 @@
+{
+  "ayni_anahtar": [
+    {
+      "ad": "buyuk/kucuk harf ve bas/son bosluk ayni etiket",
+      "girdiler": ["Kaygı", "KAYGI", "kaygı ", "  kaygı"],
+      "anahtar": "kaygı"
+    },
+    {
+      "ad": "noktasiz buyuk I noktasiz kucuk ı olur, isaret uydurulmaz",
+      "girdiler": ["ISIK", "Isık"],
+      "anahtar": "ısık"
+    },
+    {
+      "ad": "noktali buyuk İ noktali kucuk i olur",
+      "girdiler": ["İlaç", "İLAÇ", "ilaç"],
+      "anahtar": "ilaç"
+    },
+    {
+      "ad": "ic bosluklar tek bosluga iner",
+      "girdiler": ["aile   içi", "aile\tiçi", " Aile \n İçi "],
+      "anahtar": "aile içi"
+    },
+    {
+      "ad": "Turkce harfler isaretini koruyarak kuculur",
+      "girdiler": ["ŞİDDET", "Şiddet", "şiddet"],
+      "anahtar": "şiddet"
+    }
+  ],
+  "farkli_anahtar": [
+    {
+      "ad": "harf isareti kimligin parcasi: yas (matem) ve yas-i-isaretli farkli",
+      "a": "yas",
+      "b": "yaş"
+    },
+    {
+      "ad": "ı ve i farkli harfler",
+      "a": "ılık",
+      "b": "ilik"
+    }
+  ]
+}

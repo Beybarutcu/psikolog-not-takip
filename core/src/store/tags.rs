@@ -193,6 +193,10 @@ fn normallesmis_ad(ad: &str) -> String {
 /// büyük harfte harf işareti bilgisi zaten kaybolmuştur (`I` hem `ı`'nın hem
 /// -yanlış yazılmış- `ı`'nın büyüğü olabilir), bu fonksiyon var olmayan bir
 /// işareti UYDURMAZ; yalnızca büyük/küçük dönüşümü yapar.
+///
+/// Arayüzdeki eşi (`web/src/etiket/etiketAdi.ts::etiketAnahtari`) ile ORTAK
+/// örnek dosyasına bağlı (son inceleme M3): `etiket_kimlik_ornekleri.json`,
+/// ölçen test `kimlik_ortak_ornekleri_saglar`.
 fn ad_anahtar_uret(normal_ad: &str) -> String {
     normal_ad
         .chars()
@@ -1230,6 +1234,42 @@ mod testler {
             assert_ne!(girdi, beklenen, "ornek zaten sirali -- hicbir sey olcmez: {}", o["ad"]);
             girdi.sort_by(|a, b| etiket_sirasi(a, b));
             assert_eq!(girdi, beklenen, "ornek: {}", o["ad"]);
+        }
+    }
+
+    /// Etiket KIMLIGI (son inceleme M3): `normallesmis_ad` + `ad_anahtar_uret`
+    /// kurali arayuzdeki `etiketAdiNormallestir` + `etiketAnahtari` ile ORTAK
+    /// ornek dosyasina bagli (`web/src/etiket/etiketAdi.test.ts` ayni
+    /// dosyayi okur). Istemci ayni etiketi kimlik+ad anahtariyla taniyor
+    /// (`ayniEtiket`, acik panelin yeniden dogmasi); iki kural ayrisirsa
+    /// sunucunun tek etiket saydigini istemci iki etiket sayardi.
+    #[test]
+    fn kimlik_ortak_ornekleri_saglar() {
+        let ornekler: serde_json::Value =
+            serde_json::from_str(include_str!("etiket_kimlik_ornekleri.json")).unwrap();
+        let anahtar = |ad: &str| ad_anahtar_uret(&normallesmis_ad(ad));
+        let ayni = ornekler["ayni_anahtar"].as_array().unwrap();
+        let farkli = ornekler["farkli_anahtar"].as_array().unwrap();
+        // Bos bir ornek dosyasi bu testi TOTOLOJIK yapardi (birinci bicim).
+        assert!(ayni.len() >= 4 && farkli.len() >= 1, "ornek dosyasi beklenenden kucuk");
+        let (_d, c) = kurulum();
+        let cid = danisan(&c, "Ayse");
+        for o in ayni {
+            let beklenen = o["anahtar"].as_str().unwrap();
+            let girdiler: Vec<String> = serde_json::from_value(o["girdiler"].clone()).unwrap();
+            let mut kimlikler = Vec::new();
+            for g in &girdiler {
+                assert_eq!(anahtar(g), beklenen, "ornek: {} / girdi {g:?}", o["ad"]);
+                // Veritabani yolu da AYNI etiketi verir (UNIQUE ad_anahtar).
+                let rid = randevu(&c, cid, "2026-09-07T10:00");
+                kimlikler.push(etiket_ekle(&c, rid, g, Cihaz::Masaustu).unwrap().id);
+            }
+            kimlikler.dedup();
+            assert_eq!(kimlikler.len(), 1, "ornek: {}", o["ad"]);
+        }
+        for o in farkli {
+            let (a, b) = (o["a"].as_str().unwrap(), o["b"].as_str().unwrap());
+            assert_ne!(anahtar(a), anahtar(b), "ornek: {}", o["ad"]);
         }
     }
 

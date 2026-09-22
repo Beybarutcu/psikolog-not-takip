@@ -37,6 +37,10 @@ export function etiketAdiUzunlugu(ad: string): number {
  * `I`/`İ` önce elle çevrilir: `toLowerCase()` Türkçe'ye duyarlı değildir ve
  * `I`'yı `i` yapardı (`toLocaleLowerCase('tr')` ise çalışma ortamının yerel
  * ayar verisine bağlı — sunucu kuralı sabit, bu da sabit olmalı).
+ *
+ * Kimlik kuralı (`etiketAdiNormallestir` + bu fonksiyon) sunucuyla ORTAK
+ * örnek dosyasına bağlı (son inceleme M3):
+ * `core/src/store/etiket_kimlik_ornekleri.json`.
  */
 export function etiketAnahtari(ad: string): string {
   return ad.replace(/I/g, 'ı').replace(/İ/g, 'i').toLowerCase()

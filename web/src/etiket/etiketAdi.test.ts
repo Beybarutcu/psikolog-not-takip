@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import kimlikOrnekleri from '../../../core/src/store/etiket_kimlik_ornekleri.json'
 import ornekler from '../../../core/src/store/etiket_siralama_ornekleri.json'
 import {
   etiketAdiNormallestir,
@@ -26,6 +27,22 @@ describe('etiketAdi', () => {
     expect(etiketAnahtari('KAYGI')).toBe('kaygı')
     expect(etiketAnahtari('İlaç')).toBe('ilaç')
     expect(etiketAnahtari('yas')).not.toBe(etiketAnahtari('yaş'))
+  })
+
+  // Son inceleme M3: etiket KİMLİĞİ (normalleştirme + Türkçe küçük harf)
+  // sunucuyla ORTAK örneklere bağlı (`core/src/store/tags.rs::
+  // kimlik_ortak_ornekleri_saglar` aynı dosyayı okur).
+  it('kimlik ortak örnekleri sağlar (sunucunun ad_anahtar kuralıyla aynı)', () => {
+    const anahtar = (ad: string) => etiketAnahtari(etiketAdiNormallestir(ad))
+    // Boş bir örnek dosyası bu testi TOTOLOJİK yapardı (birinci biçim).
+    expect(kimlikOrnekleri.ayni_anahtar.length).toBeGreaterThanOrEqual(4)
+    expect(kimlikOrnekleri.farkli_anahtar.length).toBeGreaterThanOrEqual(1)
+    for (const o of kimlikOrnekleri.ayni_anahtar) {
+      for (const g of o.girdiler) expect(anahtar(g), `${o.ad} / ${JSON.stringify(g)}`).toBe(o.anahtar)
+    }
+    for (const o of kimlikOrnekleri.farkli_anahtar) {
+      expect(anahtar(o.a), o.ad).not.toBe(anahtar(o.b))
+    }
   })
 
   // Sunucuyla ORTAK örnekler (`core/src/store/tags.rs::

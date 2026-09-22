@@ -370,16 +370,26 @@ export function NotEditoru({
     icerikDegistir(sonuc.metin)
   }
 
+  // FİZİKSEL tuş koduyla (`event.code`) eşler, KARAKTERLE (`event.key`)
+  // DEĞİL — inceleme bulgusu CRITICAL-1/IMPORTANT-2: kullanıcı Türkçe Q
+  // klavye kullanıyor ve hedef platform macOS. Türkçe Q'da fiziksel I tuşu
+  // Shift'siz `key === 'ı'` (U+0131, noktasız i) üretir, `key === 'i'`
+  // hiçbir kombinasyonda eşleşmez — Ctrl+I hiç çalışmazdı. Aynı klavyede
+  // Shift+8 `key === '('` üretir (ABD düzeninde `'*'`), asla `'8'` değil —
+  // Ctrl+Shift+8 de hiçbir düzende çalışmazdı. `event.code` klavye
+  // düzeninden bağımsızdır: fiziksel B/I/1/2/3/8 tuşu hangi dilde
+  // yazılıyor olursa olsun sırasıyla `'KeyB'`/`'KeyI'`/`'Digit1'`/
+  // `'Digit2'`/`'Digit3'`/`'Digit8'` üretir.
   function kisayolTusu(olay: React.KeyboardEvent<HTMLTextAreaElement>) {
     const komutTusu = olay.ctrlKey || olay.metaKey // macOS'ta Cmd, hedef platform macOS
     if (!komutTusu) return
     let tur: BicimTuru | null = null
-    if (!olay.shiftKey && (olay.key === 'b' || olay.key === 'B')) tur = 'kalin'
-    else if (!olay.shiftKey && (olay.key === 'i' || olay.key === 'I')) tur = 'italik'
-    else if (!olay.shiftKey && olay.key === '1') tur = 'baslik1'
-    else if (!olay.shiftKey && olay.key === '2') tur = 'baslik2'
-    else if (!olay.shiftKey && olay.key === '3') tur = 'baslik3'
-    else if (olay.shiftKey && olay.key === '8') tur = 'madde' // Ctrl+Shift+8
+    if (!olay.shiftKey && olay.code === 'KeyB') tur = 'kalin'
+    else if (!olay.shiftKey && olay.code === 'KeyI') tur = 'italik'
+    else if (!olay.shiftKey && olay.code === 'Digit1') tur = 'baslik1'
+    else if (!olay.shiftKey && olay.code === 'Digit2') tur = 'baslik2'
+    else if (!olay.shiftKey && olay.code === 'Digit3') tur = 'baslik3'
+    else if (olay.shiftKey && olay.code === 'Digit8') tur = 'madde' // Ctrl+Shift+8
     if (tur === null) return
     olay.preventDefault()
     bicimUygulaVeYaz(tur)

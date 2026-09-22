@@ -791,7 +791,10 @@ describe('NotEditoru — bicim cubugu, kisayollar ve onizleme (Görev 2)', () =>
     kur({ baslangicIcerik: 'yorgun' })
     const alanEl = alan()
     alanEl.setSelectionRange(0, 6)
-    fireEvent.keyDown(alanEl, { key: 'b', ctrlKey: true })
+    // `code` FİZİKSEL tuşu taşır (kısayol eşlemesi buna bakıyor), `key` de
+    // ABD düzeninde gerçek bir tarayıcının üreteceği karakterle birlikte
+    // veriliyor — test hem düzeni hem kodu yansıtsın diye.
+    fireEvent.keyDown(alanEl, { key: 'b', code: 'KeyB', ctrlKey: true })
     expect(alanEl.value).toBe('**yorgun**')
   })
 
@@ -799,8 +802,60 @@ describe('NotEditoru — bicim cubugu, kisayollar ve onizleme (Görev 2)', () =>
     kur({ baslangicIcerik: 'yorgun' })
     const alanEl = alan()
     alanEl.setSelectionRange(0, 6)
-    fireEvent.keyDown(alanEl, { key: 'b', metaKey: true })
+    fireEvent.keyDown(alanEl, { key: 'b', code: 'KeyB', metaKey: true })
     expect(alanEl.value).toBe('**yorgun**')
+  })
+
+  // -------------------------------------------------------------------
+  // İnceleme bulgusu CRITICAL-1: kullanıcı Türkçe Q klavye kullanıyor.
+  // Türkçe Q'da fiziksel I tuşu Shift'siz `key === 'ı'` (U+0131, noktasız
+  // i) üretir — eski `event.key === 'i'` eşlemesiyle Ctrl+I HİÇBİR
+  // kombinasyonda çalışmıyordu. `code` klavye düzeninden bağımsız olduğu
+  // için hem Türkçe hem ABD düzeninde aynı sonucu vermeli.
+  // -------------------------------------------------------------------
+  it('Ctrl+I Türkçe Q klavyede (fiziksel I tuşu, key "ı") italik uygular', () => {
+    kur({ baslangicIcerik: 'yorgun' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 6)
+    fireEvent.keyDown(alanEl, { key: 'ı', code: 'KeyI', ctrlKey: true })
+    expect(alanEl.value).toBe('*yorgun*')
+  })
+
+  it('Cmd+I Türkçe Q klavyede de italik uygular', () => {
+    kur({ baslangicIcerik: 'yorgun' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 6)
+    fireEvent.keyDown(alanEl, { key: 'ı', code: 'KeyI', metaKey: true })
+    expect(alanEl.value).toBe('*yorgun*')
+  })
+
+  it('Ctrl+I ABD düzeninde (key "i") de italik uygular', () => {
+    kur({ baslangicIcerik: 'yorgun' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 6)
+    fireEvent.keyDown(alanEl, { key: 'i', code: 'KeyI', ctrlKey: true })
+    expect(alanEl.value).toBe('*yorgun*')
+  })
+
+  // -------------------------------------------------------------------
+  // İnceleme bulgusu IMPORTANT-2: Shift+8 Türkçe Q'da `key === '('`, ABD
+  // düzeninde `key === '*'` üretir — `event.key === '8'` hiçbir düzende
+  // eşleşmiyordu, Ctrl+Shift+8 hiç çalışmıyordu.
+  // -------------------------------------------------------------------
+  it('Ctrl+Shift+8 Türkçe Q klavyede (key "(") madde listesi uygular', () => {
+    kur({ baslangicIcerik: 'bir\niki' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 7)
+    fireEvent.keyDown(alanEl, { key: '(', code: 'Digit8', ctrlKey: true, shiftKey: true })
+    expect(alanEl.value).toBe('- bir\n- iki')
+  })
+
+  it('Ctrl+Shift+8 ABD düzeninde (key "*") de madde listesi uygular', () => {
+    kur({ baslangicIcerik: 'bir\niki' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 7)
+    fireEvent.keyDown(alanEl, { key: '*', code: 'Digit8', ctrlKey: true, shiftKey: true })
+    expect(alanEl.value).toBe('- bir\n- iki')
   })
 
   it("Önizle'ye geçince <strong> görünür, textarea görünmez; Yaz'a dönünce textarea aynı metinle geri gelir", () => {

@@ -29,9 +29,15 @@ export type RandevuYamasi = Partial<Pick<Randevu, 'durum' | 'odendi'>>
  *   1. takvim listesi (`useTakvimAkisi`)             — durum/ödeme
  *   2. açık danışan kartının randevuları (`useDanisanDosyasi`) — durum/ödeme
  *   3. danışan dosyasının seans listesi (`useDanisanSeanslari`) — durum/
- *      ödeme/not önizlemesi
+ *      ödeme/not önizlemesi/etiket adları (Plan 6 Görev 6)
  *   4. takvimdeki açık seansın resmî notu (`useSeansNotlari`) — not
  *   5. danışan dosyasındaki seçili seansın notu (`useDosyaNotu`) — not
+ *
+ * Seansın etiketleri bu listede YOK ve bilerek: iki ekran onları TEK bir
+ * önbellekten okuyor (`useEtiketler`), yazma-okuma yarışı kutu yalnızca
+ * liste yüklüyken çizildiği için kurulamıyor. Etiket SÖZLÜĞÜ ise aynı
+ * mantıksal saatin işlem kaydı hâlini kullanıyor (ekleme satır doğurur,
+ * satır yaması yetmez) — bkz. `useEtiketler` modül başlığı.
  *
  * Her kanca kendi örneğini tutar — okumalar kancanın içinde, yazmalar ise
  * kancanın dışa açtığı yama fonksiyonunda (`randevuYamala`, `yamala`,

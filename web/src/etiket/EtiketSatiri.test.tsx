@@ -117,6 +117,14 @@ describe('EtiketSatiri', () => {
     expect(onYenidenDene).toHaveBeenCalledTimes(1)
   })
 
+  it('son inceleme I2: etiketlerin veri raporunda göründüğü nötr bir bilgi satırıyla söylenir (alert DEĞİL)', () => {
+    kur({ etiketler: [{ id: 5, ad: 'kaygı', kullanim: 1 }] })
+    const bilgi = screen.getByText('Etiketler danışan veri raporunda görünür.')
+    expect(bilgi.getAttribute('role')).toBeNull()
+    expect(bilgi.closest('[role="alert"]')).toBeNull()
+    expect(screen.queryAllByRole('alert')).toHaveLength(0)
+  })
+
   it('etiket adı HTML olarak değil METİN olarak basılır', () => {
     const { container } = kur({ etiketler: [{ id: 5, ad: '<b>kalın</b>', kullanim: 1 }] })
     expect(container.querySelector('b')).toBeNull()

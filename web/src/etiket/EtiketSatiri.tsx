@@ -47,6 +47,9 @@ type Props = EtiketBaglami & {
   kimlik: string
 }
 
+/** Etiket satırının altındaki bilgi (son inceleme I2); testler de bunu okur. */
+export const RAPOR_BILGISI = 'Etiketler danışan veri raporunda görünür.'
+
 /**
  * Seansın etiket çipleri + ekleme kutusu (Plan 6 Görev 6).
  *
@@ -223,6 +226,12 @@ export function EtiketSatiri({
           {gorunenHata}
         </p>
       )}
+      {/* Son inceleme I2 (kontrol kararı): etiketler danışan veri raporuna
+          girer ve terapist bunu etiketi YAZDIĞI yerde bilmeli — kural
+          yalnızca kod yorumlarında duruyordu. Danışanın görmesi istenmeyen
+          bir sınıflandırma özel nota yazılır. Nötr, tek satır bilgi: uyarı
+          değil, `role="alert"` YOK (KVKK metinleri öne çıkarılmıyor). */}
+      <p className="mt-1 text-xs text-slate-500">{RAPOR_BILGISI}</p>
     </div>
   )
 }

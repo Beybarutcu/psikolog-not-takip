@@ -93,6 +93,13 @@ function kur(ozel: Partial<React.ComponentProps<typeof DosyaBilgileri>> = {}) {
 }
 
 describe('DosyaBilgileri — kimlik ve bağlam', () => {
+  it('son inceleme I2: veri raporu açıklaması etiketlerin rapora GİRDİĞİNİ ve özel notların girmediğini söyler (alert DEĞİL)', () => {
+    kur()
+    const aciklama = screen.getByText(/Seans etiketleri rapora dahil edilir/)
+    expect(aciklama.textContent).toContain('terapistin özel notları dahil edilmez')
+    expect(aciklama.closest('[role="alert"]')).toBeNull()
+  })
+
   it('iletisim, basvuru nedeni ve bakiye gorunur', () => {
     kur()
     // Ad artık `DanisanDosyasi` başlığında (son inceleme I2); bu bölüm adı İKİNCİ kez basmaz.

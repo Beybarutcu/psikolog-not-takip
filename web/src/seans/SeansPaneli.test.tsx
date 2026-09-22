@@ -477,9 +477,11 @@ describe('SeansPaneli — yeni notun şablon başlıkları', () => {
     // açılır.
     kur({ not: { ...resmiNot, icerik: '' } })
     const alan = screen.getByLabelText('Seans notu') as HTMLTextAreaElement
-    expect(alan.value).toContain('Veri:')
-    expect(alan.value).toContain('Değerlendirme:')
-    expect(alan.value).toContain('Plan:')
+    // Görev 2: başlıklar artık Markdown ikinci düzey başlık biçiminde
+    // (`sablon.ts::sablonMetni`) — adlar aynı, yalnızca biçim değişti.
+    expect(alan.value).toContain('## Veri')
+    expect(alan.value).toContain('## Değerlendirme')
+    expect(alan.value).toContain('## Plan')
   })
 
   it('basliklar acilista HICBIR kayit uretmez', async () => {

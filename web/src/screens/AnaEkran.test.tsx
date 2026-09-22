@@ -1750,8 +1750,10 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
   it('bos notta sablon basliklari gorunur ama HICBIR yazma uretilmez', async () => {
     await seansAc()
     const alan = screen.getByLabelText('Seans notu') as HTMLTextAreaElement
-    expect(alan.value).toContain('Veri:')
-    expect(alan.value).toContain('Plan:')
+    // Görev 2: başlıklar artık Markdown ikinci düzey başlık biçiminde
+    // (`sablon.ts::sablonMetni`) — adlar aynı, yalnızca biçim değişti.
+    expect(alan.value).toContain('## Veri')
+    expect(alan.value).toContain('## Plan')
 
     await userEvent.click(screen.getByRole('button', { name: 'Seansı kapat' }))
     // BARİYER: panel gerçekten kapandı, yani editörün unmount tahliyesi

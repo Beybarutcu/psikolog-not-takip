@@ -769,3 +769,94 @@ describe('NotEditoru — sunucuHali: editör monte olduktan sonra başka yoldan 
     expect(screen.getByText(/geri yüklendi/i)).toBeDefined()
   })
 })
+
+// Görev 2: biçim çubuğu, kısayollar, Yaz/Önizle anahtarı, şablon başlıkları.
+// Tek kısıt: bunların HİÇBİRİ metni ayrı bir yoldan yazmaz — hepsi mevcut
+// `onChange` yolundan (`icerikDegistir` → `setIcerik`) geçer; bu yüzden
+// aşağıdaki testler biçim uyguladıktan SONRA otomatik kaydın ve 401
+// korumasının hâlâ çalıştığını da ölçüyor (yalnızca metni değil).
+describe('NotEditoru — bicim cubugu, kisayollar ve onizleme (Görev 2)', () => {
+  it('secim varken Kalın düğmesine basınca metin isaretlenir VE otomatik kayıt bu metni gönderir', async () => {
+    const props = kur({ gecikmeMs: 20, baslangicIcerik: 'cok kaygili' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 3)
+    fireEvent.click(screen.getByRole('button', { name: 'Kalın (Ctrl+B)' }))
+    expect(alanEl.value).toBe('**cok** kaygili')
+    await ilerle(20)
+    expect(props.onKaydet).toHaveBeenCalledTimes(1)
+    expect(props.onKaydet).toHaveBeenCalledWith({ sablon: 'dap', icerik: '**cok** kaygili' })
+  })
+
+  it('Ctrl+B kalın uygular', () => {
+    kur({ baslangicIcerik: 'yorgun' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 6)
+    fireEvent.keyDown(alanEl, { key: 'b', ctrlKey: true })
+    expect(alanEl.value).toBe('**yorgun**')
+  })
+
+  it('Cmd+B (metaKey) de aynı sonucu verir — hedef platform macOS', () => {
+    kur({ baslangicIcerik: 'yorgun' })
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 6)
+    fireEvent.keyDown(alanEl, { key: 'b', metaKey: true })
+    expect(alanEl.value).toBe('**yorgun**')
+  })
+
+  it("Önizle'ye geçince <strong> görünür, textarea görünmez; Yaz'a dönünce textarea aynı metinle geri gelir", () => {
+    kur({ baslangicIcerik: '**kalin** metin' })
+    expect(screen.getByLabelText('Seans notu')).toBeDefined()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Önizle' }))
+    expect(screen.queryByLabelText('Seans notu')).toBeNull()
+    expect(screen.getByText('kalin').tagName).toBe('STRONG')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Yaz' }))
+    expect(alan().value).toBe('**kalin** metin')
+  })
+
+  it('biçim uygulandıktan sonra 401 gelirse taslak KAYBOLMAZ, kilit açılınca geri yüklenir', async () => {
+    const kilitli = vi.fn().mockRejectedValue(new YetkisizHata('Oturum kilitli.'))
+    const { unmount } = render(
+      <NotEditoru
+        baslangicIcerik="onemli"
+        baslangicSablon="dap"
+        onKaydet={kilitli}
+        gecikmeMs={20}
+        taslakAnahtari="not-60"
+      />,
+    )
+    const alanEl = alan()
+    alanEl.setSelectionRange(0, 6)
+    fireEvent.click(screen.getByRole('button', { name: 'Kalın (Ctrl+B)' }))
+    expect(alanEl.value).toBe('**onemli**')
+
+    await ilerle(20)
+    expect(kilitli).toHaveBeenCalled()
+    unmount()
+    // Kilit açılması zaman alır: unmount tahliyesinin 401 reddi bu arada
+    // yerleşir (bkz. üstteki "401 sirasinda yazilmamis icerik" bloğu).
+    await ilerle(0)
+
+    const acik = vi.fn().mockResolvedValue(undefined)
+    render(
+      <NotEditoru
+        baslangicIcerik="onemli"
+        baslangicSablon="dap"
+        onKaydet={acik}
+        gecikmeMs={20}
+        taslakAnahtari="not-60"
+      />,
+    )
+    expect(alan().value).toBe('**onemli**')
+    expect(screen.getByText(/geri yüklendi/i)).toBeDefined()
+    await ilerle(20)
+    expect(acik).toHaveBeenCalledWith({ sablon: 'dap', icerik: '**onemli**' })
+  })
+
+  it('DAP şablonu seçilince boş editöre "## Veri" eklenir', () => {
+    kur({ baslangicSablon: 'serbest' })
+    sablonSec('dap')
+    expect(alan().value).toContain('## Veri')
+  })
+})

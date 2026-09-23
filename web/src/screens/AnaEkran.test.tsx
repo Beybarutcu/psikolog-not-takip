@@ -1,6 +1,7 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { DenetimKaydi } from '../api'
 import { taslakOku, taslaklariUnut } from '../seans/taslak'
 import { AnaEkran } from './AnaEkran'
 
@@ -62,13 +63,14 @@ function jsonYanit(govde: unknown): Response {
 //
 // `AnaEkran` artik mount'ta `GET /api/saklama-suresi-dolanlar` ve
 // `GET /api/depolama-durumu` de cagiriyor (HTTP -> arayuz taramasinin
-// bagladigi uclar). Bu dosyadaki ON taklidin hepsi bilinmeyen yolda
-// FIRLATIYOR; ortak yardimci her taklide ayri dal eklemek yerine tek
-// yerde cevap veriyor.
+// bagladigi uclar). Ayarlar sekmesi gorunur oldugunda `GET
+// /api/denetim-kayitlari` de eklendi (Gorev 7 Plan 7, `useDenetimKayitlari`).
+// Bu dosyadaki ON UC taklidin hepsi bilinmeyen yolda FIRLATIYOR; ortak
+// yardimci her taklide ayri dal eklemek yerine tek yerde cevap veriyor.
 //
-// VARSAYILAN NOTR: hicbir dosyanin suresi dolmamis, esik asilmamis --
-// yani iki yeni bolum de gorunmez ve mevcut testlerin ekran iddialari
-// degismez. Onlari goren testler degerleri kendileri kuruyor.
+// VARSAYILAN NOTR: hicbir dosyanin suresi dolmamis, esik asilmamis, denetim
+// listesi bos -- yani ucu de gorunmez/bos ve mevcut testlerin ekran
+// iddialari degismez. Onlari goren testler degerleri kendileri kuruyor.
 let sunucuSaklamaDolanlar: typeof danisanlar = []
 let sunucuDepolama = { toplam_boyut: 0, esik: 500 * 1024 * 1024, uyari: false }
 
@@ -137,6 +139,12 @@ function ekUcYaniti(yol: string, secenekler?: RequestInit): Response | null {
   if (yol === '/api/etiketler') return jsonYanit([])
   if (yol.startsWith('/api/saklama-suresi-dolanlar')) return jsonYanit(sunucuSaklamaDolanlar)
   if (yol.startsWith('/api/depolama-durumu')) return jsonYanit(sunucuDepolama)
+  // Denetim kaydı (Görev 7 Plan 7): Ayarlar sekmesi görünür olunca bir kez
+  // çekilir (`useDenetimKayitlari`). Bu dosyanın testleri onu ÖLÇMÜYOR (bkz.
+  // `AyarlarSekmesi.test.tsx`teki kendi davranış testleri); sabit boş yanıt.
+  if (yol.startsWith('/api/denetim-kayitlari')) {
+    return jsonYanit({ kayitlar: [], sayfa: 0, sonraki_sayfa_var: false })
+  }
   // `/api/yedekler` ONCE: `/api/yedek` onun oneki.
   if (yol.startsWith('/api/yedekler')) {
     if (yedekListeHatasi) return hataYaniti(400, yedekListeHatasi)
@@ -2406,7 +2414,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   }
 
   async function aramayiAc() {
-    await userEvent.click(screen.getByRole('button', { name: 'Hızlı arama (Ctrl+K)' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Hızlı arama (⌘K)' }))
   }
 
   describe('ay sonu ozeti (Plan 4 Görev 4)', () => {
@@ -2911,11 +2919,11 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   // appointmentId)`) — takvimin gösterdiği hafta HİÇ değişmez. Bu test o
   // yeni davranışı ölçüyor; eskisi yerini bu testin ve aşağıdaki "kart
   // BAŞKA danışanda açıkken..." testinin almasıyla kaldırıldı.
-  it('Ctrl+K ile acilan aramadan NOT secilince danisan dosyasina O SEANS SECILI gidilir; takvim haftasi DEGISMEZ', async () => {
+  it('Cmd+K ile acilan aramadan NOT secilince danisan dosyasina O SEANS SECILI gidilir; takvim haftasi DEGISMEZ', async () => {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await listeYuklenmesiniBekleVeTakvimeDon()
 
-    await userEvent.keyboard('{Control>}k{/Control}')
+    await userEvent.keyboard('{Meta>}k{/Meta}')
     await userEvent.type(
       screen.getByRole('searchbox', { name: 'Danışan adı veya not içeriği' }),
       'kaygi',
@@ -2949,7 +2957,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     expect(document.body.textContent).not.toContain('ARAMA-PARCASI-KANARYA')
   })
 
-  it('Ctrl+K ile acilan aramadan ETIKET secilince etiketli seanslar paneli acilir', async () => {
+  it('Cmd+K ile acilan aramadan ETIKET secilince etiketli seanslar paneli acilir', async () => {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await listeYuklenmesiniBekleVeTakvimeDon()
 
@@ -3632,6 +3640,183 @@ describe('AnaEkran — yedekleme (tasarim §7)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Şimdi yedek al' }))
     await waitFor(() => expect(yedekIstekleri.length).toBe(1))
     expect(yedekIstekleri[0].damga).toBe(BUGUN)
+  })
+})
+
+// =====================================================================
+// DENETIM KAYDI (Görev 7 Plan 7, KVKK 2018/10)
+// =====================================================================
+//
+// IMPORTANT-1 düzeltmesi (Görev 7 incelemesi): `AyarlarSekmesi.test.tsx`
+// bu bileşeni yalnızca STATİK bir stub'la (`sabitDenetim()`, `kayitlar: []`)
+// render ediyordu -- ne gerçek veriyle satır render edildiği, ne istek
+// zamanlaması (`ayarlarGorunur` + `cekildiRef`), ne de süzgeç/sayfalama
+// davranışsal olarak ÖLÇÜLÜYORDU. Aşağıdaki üç test bunları
+// `AnaEkran — yedekleme`/saklama testleriyle AYNI desende (gerçek `AnaEkran`
+// render edilir, gerçek `useDenetimKayitlari` kancası çalışır, yalnızca
+// `fetch` sahtedir) kilitler.
+describe('AnaEkran — denetim kaydı (Görev 7)', () => {
+  const gercekFetch = globalThis.fetch
+  let istekYollari: string[]
+
+  // Mock'un KENDİ sayfa boyutu -- sunucunun gerçek `SAYFA_BOYUTU`suyla (50)
+  // AYNI OLMAK ZORUNDA DEĞİL, sözleşme (`{kayitlar, sayfa,
+  // sonraki_sayfa_var}`) aynı olduğu sürece istemci farkı görmez. 2 seçildi
+  // ki sayfalama testi 51+ satır üretmeden çalışsın.
+  const SAYFA_BOYUTU_SAHTE = 2
+
+  let sunucuDenetimKayitlari: DenetimKaydi[]
+
+  beforeEach(() => {
+    istekYollari = []
+    // En yeniden eskiye (sunucunun `id DESC` sırasıyla aynı sözleşme).
+    sunucuDenetimKayitlari = [
+      {
+        olay_zamani: '2026-09-07T12:00:00Z',
+        eylem: 'goruntuleme',
+        varlik: 'client',
+        varlik_id: '1',
+        cihaz: 'masaustu',
+        ayrinti: null,
+      },
+      {
+        olay_zamani: '2026-09-07T11:00:00Z',
+        eylem: 'duzenleme',
+        varlik: 'progress_note',
+        varlik_id: '5',
+        cihaz: 'masaustu',
+        ayrinti: null,
+      },
+      {
+        olay_zamani: '2026-09-06T10:00:00Z',
+        eylem: 'ekleme',
+        varlik: 'client',
+        varlik_id: '2',
+        cihaz: 'telefon',
+        ayrinti: null,
+      },
+    ]
+
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
+      const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      const method = secenekler?.method ?? 'GET'
+      istekYollari.push(`${method} ${yol}`)
+
+      if (yol.startsWith('/api/denetim-kayitlari')) {
+        const p = new URL(yol, 'http://x').searchParams
+        // MUTASYON (iii) buraya bakar: `sayfa` isteğe eklenmezse bu satır
+        // hep `0` okur ve "Sonraki sayfa" testi kırmızı olur.
+        const sayfa = Number(p.get('sayfa') ?? '0')
+        const varlik = p.get('varlik')
+        const suzulmus = varlik
+          ? sunucuDenetimKayitlari.filter((k) => k.varlik === varlik)
+          : sunucuDenetimKayitlari
+        const bas = sayfa * SAYFA_BOYUTU_SAHTE
+        const kayitlar = suzulmus.slice(bas, bas + SAYFA_BOYUTU_SAHTE)
+        return jsonYanit({
+          kayitlar,
+          sayfa,
+          sonraki_sayfa_var: bas + SAYFA_BOYUTU_SAHTE < suzulmus.length,
+        })
+      }
+      const ekUc = ekUcYaniti(yol, secenekler)
+      if (ekUc) return ekUc
+      if (yol.startsWith('/api/danisanlar')) return jsonYanit(danisanlar)
+      if (yol.startsWith('/api/randevular')) return jsonYanit([])
+      throw new Error(`beklenmeyen istek: ${yol}`)
+    }) as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    globalThis.fetch = gercekFetch
+  })
+
+  it('gercek veriyle satir render edilir: tarih, eylem, varlik turu, varlik kimligi, cihaz dogru sutunlarda', async () => {
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await ayarlarSekmesineGec()
+
+    const bolum = await screen.findByRole('region', { name: 'Denetim kaydı' })
+    // ÖN KOŞUL: birden fazla satır render edildi -- yoksa aşağıdaki
+    // sütun iddiaları boş bir tabloyla da sağlanırdı (totoloji).
+    const satirlar = await waitFor(() => {
+      const s = within(bolum).getAllByRole('row')
+      expect(s.length).toBeGreaterThanOrEqual(3) // başlık + 2 veri satırı
+      return s
+    })
+
+    // MUTASYON (ii) buraya bakar: bir sütun yanlış alandan basarsa (ör.
+    // `varlik_id` yerine `eylem` ikinci kez basılırsa) bu satır kırmızı olur.
+    const ilkSatir = satirlar[1]
+    expect(within(ilkSatir).getByText('2026-09-07T12:00:00Z')).toBeDefined()
+    expect(within(ilkSatir).getByText('goruntuleme')).toBeDefined()
+    expect(within(ilkSatir).getByText('client')).toBeDefined()
+    expect(within(ilkSatir).getByText('1')).toBeDefined()
+    expect(within(ilkSatir).getByText('masaustu')).toBeDefined()
+  })
+
+  // IMPORTANT-3 (saklama hatırlatması) ile AYNI ilke, farklı gerekçe: bu ucu
+  // okumak silinemez bir satır YAZMIYOR (bkz. `useDenetimKayitlari` modül
+  // başlığı) ama "terapistin bakmadığı şey için istek atılmaz" ilkesi hâlâ
+  // geçerli. MUTASYON (i) buraya bakar: `ayarlarGorunur`/`cekildiRef`
+  // guard'ı kaldırılırsa açılışta (Takvim'de) istek atılır ve ilk iddia
+  // kırmızı olur.
+  it('istek Takvimde acilista ATILMAZ, Ayarlara gecince atilir; Ayarlar -> Takvim -> Ayarlar TEKRAR istemez', async () => {
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await waitFor(() =>
+      expect(istekYollari.some((y) => y.startsWith('GET /api/randevular'))).toBe(true),
+    )
+    expect(istekYollari.filter((y) => y.startsWith('GET /api/denetim-kayitlari'))).toEqual([])
+
+    await ayarlarSekmesineGec()
+    await waitFor(() =>
+      expect(
+        istekYollari.filter((y) => y.startsWith('GET /api/denetim-kayitlari')),
+      ).toHaveLength(1),
+    )
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
+    await userEvent.click(screen.getByRole('tab', { name: /^Ayarlar/ }))
+    await screen.findByRole('region', { name: 'Denetim kaydı' })
+    expect(istekYollari.filter((y) => y.startsWith('GET /api/denetim-kayitlari'))).toHaveLength(1)
+  })
+
+  it('suzgec uygulaninca dogru parametrelerle istek gider; Sonraki/Onceki sayfa calisir', async () => {
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await ayarlarSekmesineGec()
+    const bolum = await screen.findByRole('region', { name: 'Denetim kaydı' })
+    await waitFor(() => expect(within(bolum).getByText('goruntuleme')).toBeDefined())
+
+    fireEvent.change(within(bolum).getByLabelText('Başlangıç tarihi'), {
+      target: { value: '2026-09-01' },
+    })
+    fireEvent.change(within(bolum).getByLabelText('Bitiş tarihi'), {
+      target: { value: '2026-09-30' },
+    })
+    await userEvent.selectOptions(within(bolum).getByLabelText('Varlık türü'), 'progress_note')
+    await userEvent.click(within(bolum).getByRole('button', { name: 'Süzgeci uygula' }))
+
+    await waitFor(() => {
+      const son = istekYollari.filter((y) => y.startsWith('GET /api/denetim-kayitlari')).at(-1)
+      expect(son).toBeDefined()
+      expect(son).toContain('baslangic=2026-09-01')
+      expect(son).toContain('bitis=2026-09-30')
+      expect(son).toContain('varlik=progress_note')
+    })
+    // Süzgeçten SONRA yalnızca `progress_note` satırı görünmeli.
+    await waitFor(() => expect(within(bolum).getByText('5')).toBeDefined())
+    expect(within(bolum).queryByText('goruntuleme')).toBeNull()
+
+    // Süzgeci temizleyip sayfalamayı ölç (3 satır, sahte sayfa boyutu 2).
+    await userEvent.selectOptions(within(bolum).getByLabelText('Varlık türü'), '')
+    await userEvent.click(within(bolum).getByRole('button', { name: 'Süzgeci uygula' }))
+    await waitFor(() => expect(within(bolum).getByText('2026-09-07T12:00:00Z')).toBeDefined())
+
+    await userEvent.click(within(bolum).getByRole('button', { name: 'Sonraki sayfa' }))
+    await waitFor(() => expect(within(bolum).getByText('2026-09-06T10:00:00Z')).toBeDefined())
+    expect(within(bolum).queryByText('2026-09-07T12:00:00Z')).toBeNull()
+
+    await userEvent.click(within(bolum).getByRole('button', { name: 'Önceki sayfa' }))
+    await waitFor(() => expect(within(bolum).getByText('2026-09-07T12:00:00Z')).toBeDefined())
   })
 })
 

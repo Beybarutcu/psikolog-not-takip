@@ -207,6 +207,16 @@ use serde::Serialize;
 /// Bir aramanın çalışması için gereken en az karakter sayısı (kırpılmış ve
 /// katlanmış sorgu üzerinden). Tek karakterlik bir sorgu neredeyse her notu
 /// eşleştirir; sonuç listesi değil, veritabanı dökümü olur.
+///
+/// # İstemcide de AYNI sayı var, derleyici bunu KONTROL ETMEZ (Görev 6d)
+///
+/// `web/src/arama/HizliArama.tsx` kendi `ASGARI_SORGU` sabitini tutar (bkz.
+/// o dosyadaki yorum -- kontrol yalnızca sunucuda olsaydı her tek harfte
+/// gereksiz bir istek giderdi). İki sabit yalnızca YORUMLA eşleşiyor;
+/// biri değişip diğeri unutulursa (istemci "en az 2 karakter" derken
+/// sunucu 3'ten aşağısını reddeder, ya da tersi) kullanıcı "yazmaya devam
+/// edin" ile "sonuç yok" arasında yanlış bir mesaj görür. Çapraz kontrol
+/// testi bunu sabitler: `tests::asgari_sorgu_istemciyle_ayni`.
 const ASGARI_SORGU: usize = 2;
 
 /// Tek bir aramanın döndürebileceği en fazla sonuç. Bkz. modül başlığı —
@@ -277,6 +287,35 @@ const SORGU_NOT: &str = "SELECT p.appointment_id, a.client_id, c.ad_soyad, a.bas
 /// `kullanim`: kaç seansa bağlı olduğu (`tags::etiketleri_listele` ile aynı
 /// `LEFT JOIN ... COUNT` deseni) — sonuç listesinde gösterilir, sıralamayı da
 /// besler (bkz. `ara` içindeki Rust-tarafı sıralama).
+///
+/// # SINIR: buradaki `ORDER BY` GÖSTERİM sırası DEĞİLDİR (dal incelemesi M3)
+///
+/// Bu `ORDER BY` yalnızca **hangi satırların getirileceğini** belirler:
+/// `LIMIT` sorgunun içinde olduğu için sıra, kesimin nereden yapılacağına
+/// karar verir. Kullanıcının gördüğü sıra ise her zaman Rust tarafında
+/// yeniden kurulur (`ara` içindeki `sort_by`: kullanım azalan, eşitlikte
+/// `tags::etiket_sirasi` — Türk alfabesi).
+///
+/// İkisi **farklı harmanlamalar** kullanır ve bu bilerek böyledir: SQLite'ın
+/// `COLLATE NOCASE`'i ASCII'dir ve Türkçe harfleri kod noktasına göre dizer
+/// ('ç' U+00E7, 'z' U+007A'dan sonra gelir), `etiket_sirasi` ise Türk
+/// alfabesine göre dizer. Sonuç: **eşit kullanımlı 51 ve üzeri etiket**
+/// olduğunda hangi etiketlerin sınıra sığıp hangilerinin düşeceği Türk
+/// alfabesi sırasına göre değil, `COLLATE NOCASE` sırasına göre belirlenir.
+/// Gösterilen listenin kendi sırası yine doğrudur; **kesim** noktası
+/// ayrışır.
+///
+/// Bu bir **kusur değil, kabul edilmiş bir sınırdır**: SQLite'a Türkçe
+/// harmanlama öğretmek ya yeni bir bağımlılık ya da 12 `replace()` zincirinin
+/// `ORDER BY`'a da taşınması demek olurdu; pratik etkisi ise yalnızca
+/// "aynı kullanım sayısına sahip 50'den fazla etiket" durumunda, yalnızca
+/// listenin kuyruğunda görülür ve `kirpildi` bayrağı kullanıcıyı zaten
+/// aramayı daraltmaya yönlendirir.
+///
+/// **Bu yorum bir koruma değildir** (10. biçim): tarif ettiği durumu
+/// yakalayan bir test YOKTUR ve davranış bilerek değiştirilmemiştir. Sınır
+/// burada yalnızca **yazılıdır** ki bir sonraki okuyan onu kusur sanıp
+/// "düzeltmesin" ya da farkında olmadan ona güvenmesin.
 const SORGU_ETIKET: &str = "SELECT t.id, t.ad, COUNT(pt.appointment_id) AS kullanim
  FROM tags t
  LEFT JOIN progress_note_tags pt ON pt.tag_id = t.id
@@ -886,6 +925,135 @@ mod tests {
         );
         assert!(yanit.sonuclar.iter().all(|s| s.tur == "etiket"));
         assert!(yanit.kirpildi, "60 etiketten 10'u dusuyor: kirpilma isaretlenmeli");
+    }
+
+    // --- Etiket siralamasi bir sozlesmedir (Gorev 5, IMPORTANT-5) ---------
+    //
+    // `SORGU_ETIKET`in `ORDER BY kullanim DESC, t.ad COLLATE NOCASE` satiri
+    // hicbir testle korunmuyordu: bir denetim `kullanim DESC` -> `ASC`
+    // yapip asagidaki Rust-tarafi `sort_by`yi (L564) de tersine cevirince
+    // 44/44 test YESIL kaldi. Sebep: butceyi olcen tek kapsamli test
+    // (yukaridaki `etiket_ozel_not_gibi_...`) 60 etiketin HEPSINI birer
+    // seansa bagliyor -- hepsinin kullanimi 1, yani BIRINCIL siralama
+    // anahtari o kurulumda hic gorunmuyor. `LIMIT` sorgunun ICINDE oldugu
+    // icin sira, hangi etiketlerin hayatta kalacagini da belirliyor --
+    // tipki yukaridaki `siralama_hangi_satirlarin_hayatta_kalacagini_belirler`
+    // testinin danisan/not kipleri icin kapattigi ayni tuzak, burada
+    // ucuncu kipe (etiket) yayiliyor.
+    //
+    // ONEMLI: `ara` icindeki GERCEK GOSTERIM sirasi SQL'in `ORDER BY`'i
+    // DEGIL -- SQL sirasi yalnizca "yoklama sinirina kadar hangi satirlar
+    // getirilsin" sorusuna cevap verir (bkz. L559-561 yorumu). Sonuc listesi
+    // HER ZAMAN Rust'ta `etiketler.sort_by(...)` ile yeniden dizilir
+    // (kullanim azalan, esitlikte `tags::etiket_sirasi` -- Turk alfabesi).
+    // Asagidaki testler bu GERCEKTEN UYGULANAN sirayi olcuyor.
+
+    #[test]
+    fn etiket_sonuclari_kullanim_sayisina_gore_azalan_siralanir() {
+        // Adlar BILEREK kullanim sirasinin TERSINE secildi (Turk alfabesinde
+        // A < M < Z ama kullanim 1 < 2 < 3): salt ada bakan bir siralama
+        // (COLLATE NOCASE dahil) bu testi TERS sirada gecerdi, kullanima
+        // bakan dogru siralama ise "en cok kullanilan once" verir.
+        let (_d, c, cid, rid) = kurulum();
+        let r2 = randevu_ekle(&c, cid, "2026-09-08");
+        let r3 = randevu_ekle(&c, cid, "2026-09-09");
+
+        etiket_ekle(&c, rid, "SIRAZZ uc", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, r2, "SIRAZZ uc", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, r3, "SIRAZZ uc", Cihaz::Masaustu).unwrap();
+
+        etiket_ekle(&c, rid, "SIRAMM iki", Cihaz::Masaustu).unwrap();
+        etiket_ekle(&c, r2, "SIRAMM iki", Cihaz::Masaustu).unwrap();
+
+        etiket_ekle(&c, rid, "SIRAAA bir", Cihaz::Masaustu).unwrap();
+
+        let sonuclar = sonuclar_of(&c, "SIRA", 20, Cihaz::Masaustu).unwrap();
+        let etiketler: Vec<&AramaSonucu> = sonuclar.iter().filter(|s| s.tur == "etiket").collect();
+        assert_eq!(etiketler.len(), 3);
+        let sira: Vec<(&str, Option<i64>)> =
+            etiketler.iter().map(|s| (s.etiket_adi.as_deref().unwrap(), s.kullanim)).collect();
+        assert_eq!(
+            sira,
+            vec![
+                ("SIRAZZ uc", Some(3)),
+                ("SIRAMM iki", Some(2)),
+                ("SIRAAA bir", Some(1)),
+            ],
+            "en cok kullanilan etiket once gelmeli, ada gore degil"
+        );
+    }
+
+    #[test]
+    fn etiket_siralamasinda_en_cok_kullanilan_kesilmiyor() {
+        // `LIMIT` sorgunun ICINDE: 52 etiketten (50 YUKSEK kullanim + 2
+        // DUSUK kullanim) tam olarak butceye (50) sigan sayida sonuc
+        // donmeli VE hayatta kalanlar YUKSEK kullanimli olanlar olmali.
+        // Emsal: `siralama_hangi_satirlarin_hayatta_kalacagini_belirler`
+        // (danisan/not kipleri icin ayni ilke).
+        //
+        // Ayni iki randevu TUM etiketler arasinda paylasiliyor -- birden
+        // fazla etiket AYNI randevuya baglanabilir (`progress_note_tags`
+        // PRIMARY KEY (appointment_id, tag_id)) -- bu yuzden yalnizca 2
+        // randevu yeterli.
+        let (_d, c, cid, rid) = kurulum();
+        let r2 = randevu_ekle(&c, cid, "2026-09-08");
+
+        for i in 0..50 {
+            let ad = format!("COKKESIK{i:02}");
+            etiket_ekle(&c, rid, &ad, Cihaz::Masaustu).unwrap();
+            etiket_ekle(&c, r2, &ad, Cihaz::Masaustu).unwrap();
+        }
+        for i in 0..2 {
+            let ad = format!("AZKESIK{i:02}");
+            etiket_ekle(&c, rid, &ad, Cihaz::Masaustu).unwrap();
+        }
+
+        let yanit = ara(&c, "KESIK", AZAMI_SONUC, Cihaz::Masaustu).unwrap();
+        let etiketler: Vec<&AramaSonucu> =
+            yanit.sonuclar.iter().filter(|s| s.tur == "etiket").collect();
+        assert_eq!(etiketler.len(), 50, "butce YUKSEK kullanimli 50 etiketin TAMAMINA sigmali");
+        assert!(
+            etiketler.iter().all(|s| s.kullanim == Some(2)),
+            "yalnizca YUKSEK kullanimli (2) etiketler hayatta kalmali, DUSUK (1) kesilmeli: {etiketler:?}"
+        );
+        assert!(
+            etiketler
+                .iter()
+                .all(|s| s.etiket_adi.as_deref().is_some_and(|a| a.starts_with("COKKESIK"))),
+            "DUSUK kullanimli etiketler sonuca karismamali: {etiketler:?}"
+        );
+        assert!(yanit.kirpildi, "52 etiketten 2'si dusuyor: kirpilma isaretlenmeli");
+    }
+
+    #[test]
+    fn etiket_esit_kullanimda_turk_alfabesi_sirasina_gore_siralanir() {
+        // Esitlikte ikincil anahtar Turk alfabesi (`tags::etiket_sirasi`),
+        // SQL'in `COLLATE NOCASE`'i DEGIL. `COLLATE NOCASE` Turkce harfleri
+        // KOD NOKTASINA gore sıralar: 'ç' (U+00E7) 'z'den (U+007A) SONRA
+        // gelir; oysa Turk alfabesinde 'ç' 'c'den hemen sonra, 'd', 'z' dahil
+        // cogu harften ONCE gelir (tags.rs modul basligi, MINOR-3 bulgusu).
+        // `ara` icindeki GERCEK gosterim sirasi SQL'in `ORDER BY`'i degil,
+        // sonradan calisan Rust `sort_by`dir (bkz. yukaridaki yorum) -- bu
+        // test o GERCEK sirayi olcuyor, varsayilan/SQL sirasini degil.
+        let (_d, c, _cid, rid) = kurulum();
+
+        for ad in ["ESITSIRA Zebra", "ESITSIRA Çocuk", "ESITSIRA Deniz"] {
+            etiket_ekle(&c, rid, ad, Cihaz::Masaustu).unwrap();
+        }
+
+        let sonuclar = sonuclar_of(&c, "ESITSIRA", 20, Cihaz::Masaustu).unwrap();
+        let etiketler: Vec<&str> = sonuclar
+            .iter()
+            .filter(|s| s.tur == "etiket")
+            .map(|s| s.etiket_adi.as_deref().unwrap())
+            .collect();
+        assert_eq!(
+            etiketler,
+            vec!["ESITSIRA Çocuk", "ESITSIRA Deniz", "ESITSIRA Zebra"],
+            "Turk alfabesinde 'ç' 'c'den hemen sonra gelir, 'z'den once -- \
+             COLLATE NOCASE (kod noktasi sirasi) bu sirayi 'Deniz, Zebra, \
+             Çocuk' verirdi"
+        );
     }
 
     // --- Ozel not sizintisi: iki yonlu ------------------------------------
@@ -2370,5 +2538,28 @@ mod tests {
             "panik mesaji not icerigini basmamali: {mesaj}"
         );
         assert!(!mesaj.contains("Ayse Yilmaz"), "panik mesaji danisan adini basmamali: {mesaj}");
+    }
+
+    /// `ASGARI_SORGU` ile istemcideki (`HizliArama.tsx`) karşılığı yalnızca
+    /// YORUMLA eşleşiyordu (Görev 6d). Emsal:
+    /// `server::routes::backup::tests::baglama_kararinin_kosulu_hala_gecerli_mi`
+    /// (Rust tarafından TypeScript kaynağını metin olarak okuyup sabiti
+    /// arıyor). Mutasyon: bu sabiti değiştirmek (`ASGARI_SORGU: usize = 3`)
+    /// -- test aranan dizgiyi bulamayıp kırmızıya döner.
+    #[test]
+    fn asgari_sorgu_istemciyle_ayni() {
+        let yol = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("core'un ust dizini workspace koku olmali")
+            .join("web/src/arama/HizliArama.tsx");
+        let kaynak = std::fs::read_to_string(&yol)
+            .unwrap_or_else(|e| panic!("{} okunamadi: {e}", yol.display()));
+        let beklenen = format!("const ASGARI_SORGU = {ASGARI_SORGU}");
+        assert!(
+            kaynak.contains(&beklenen),
+            "istemcideki ASGARI_SORGU (HizliArama.tsx) sunucudaki degerle \
+             ({ASGARI_SORGU}) artik eslesmiyor olabilir; ikisi ayri sabitler ve \
+             yalnizca yorumla baglaniyor (bkz. bu dosyadaki ASGARI_SORGU yorumu)."
+        );
     }
 }

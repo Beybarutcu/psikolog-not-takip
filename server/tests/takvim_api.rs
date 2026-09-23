@@ -5,7 +5,7 @@ use psikolog_core::crypto::keyring::KdfParams;
 use psikolog_server::guard::acik_baglanti_ile;
 use psikolog_server::{router, AppState};
 use serde_json::json;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tower::ServiceExt;
 
 fn test_state() -> (tempfile::TempDir, AppState) {
@@ -289,7 +289,7 @@ async fn danisan_arsivlenir_ve_listeden_dusser_ama_silinmez() {
     // Arsivleme FIZIKSEL SILME DEGILDIR: kayit duruyor, yalnizca durumu
     // degisti. Arayuz metni de bunu soyluyor -- burada dogrulanan sey o
     // metnin dogru oldugudur.
-    let conn = acik_baglanti_ile(&s, Instant::now()).unwrap();
+    let conn = acik_baglanti_ile(&s, Instant::now(), SystemTime::now()).unwrap();
     let (sayi, durum): (i64, String) = conn
         .query_row(
             "SELECT (SELECT COUNT(*) FROM clients), durum FROM clients WHERE id = ?1",
@@ -463,6 +463,50 @@ async fn durum_guncellenir() {
         "/api/randevular?baslangic=2026-09-07T00:00&bitis=2026-09-14T00:00", None,
     ).await;
     assert_eq!(hafta[0]["durum"], "geldi");
+}
+
+// Plan 7 Gorev 3: PATCH yaniti artik "geldi" isaretlemesinde guncellenen
+// `son_temas`/`saklama_bitis`i (+ `client_id`) tasiyor -- istemci kartla
+// saklama listesini bunlardan YEREL yamiyor, `clients::getir`/
+// `saklama_suresi_dolanlar`i (ikisi de `HerCagri`) yeniden CEKMIYOR. Bu test
+// olmasaydi onceki test (yalnizca haftalik listeyi kontrol eden) yanit govdesi
+// hep `{}` donse de gecerdi.
+#[tokio::test]
+async fn durum_gelince_yanit_son_temas_ve_saklama_bitisini_tasir() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let cid = d["id"].as_i64().unwrap();
+    let (_, olusan) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": cid, "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00",
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+
+    let (kod, govde) =
+        cagir(&s, "PATCH", &format!("/api/randevular/{id}"), Some(json!({"durum":"geldi"}))).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(govde["client_id"], cid);
+    assert_eq!(govde["son_temas"], "2026-09-07");
+    assert_eq!(govde["saklama_bitis"], "2033-09-07");
+}
+
+// Ters yon: "gelmedi" bir temas degil, yanit da bunu ic alanlar TASIMAYARAK
+// soylemeli (`{}` -- istemci hicbir seyi yamamamali).
+#[tokio::test]
+async fn durum_gelmedi_olunca_yanitta_son_temas_alani_yok() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let cid = d["id"].as_i64().unwrap();
+    let (_, olusan) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": cid, "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00",
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+
+    let (kod, govde) =
+        cagir(&s, "PATCH", &format!("/api/randevular/{id}"), Some(json!({"durum":"gelmedi"}))).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert!(govde.get("son_temas").is_none(), "gelmedi bir temas degil: {govde}");
+    assert!(govde.get("saklama_bitis").is_none(), "gelmedi bir temas degil: {govde}");
+    assert!(govde.get("client_id").is_none(), "gelmedi bir temas degil: {govde}");
 }
 
 // Dal incelemesi C1: mevcut bir randevunun ucretini degistirmek KOPYA
@@ -849,21 +893,28 @@ async fn basarili_istek_oturuma_dokunur_ve_sureyi_uzatir() {
     let (_d, s) = kurulu_state().await;
 
     let t = Instant::now();
+    let td = SystemTime::now();
     {
         let mut oturum = s.oturum.lock().unwrap();
-        let anahtar = oturum.anahtar(t).expect("kurulumdan sonra oturum acik olmali");
+        let anahtar =
+            oturum.anahtar(t, td).expect("kurulumdan sonra oturum acik olmali");
         oturum.kilit_suresi_ayarla(2);
-        // Bilinen bir `t` anindan yeniden ac: son_islem'i kesin olarak
-        // biliyoruz, gercek saatin akisina bagli degiliz.
-        oturum.ac(anahtar, t);
+        // Bilinen bir `t`/`td` anindan yeniden ac: son_islem'i kesin olarak
+        // biliyoruz, gercek saatin akisina bagli degiliz. Ikisi (monotonik +
+        // duvar) birlikte ayni miktarda ilerletiliyor ki bu test yalnizca
+        // "dokun cagrildi mi" kuralini olcsun (bkz. `core::session::Oturum`
+        // - uyku/duvar saati bulgusu bu testin konusu degil).
+        oturum.ac(anahtar, t, td);
     }
 
     let orta = t + Duration::from_millis(1500);
-    let sonuc1 = acik_baglanti_ile(&s, orta);
+    let orta_td = td + Duration::from_millis(1500);
+    let sonuc1 = acik_baglanti_ile(&s, orta, orta_td);
     assert!(sonuc1.is_ok(), "ilk istek kilit suresi dolmadan yapilmali");
 
     let sonra = orta + Duration::from_millis(1500);
-    let sonuc2 = acik_baglanti_ile(&s, sonra);
+    let sonra_td = orta_td + Duration::from_millis(1500);
+    let sonuc2 = acik_baglanti_ile(&s, sonra, sonra_td);
     assert!(
         sonuc2.is_ok(),
         "basarili istek oturuma dokunmadiysa toplam 3sn gecmis olur ve 2sn'lik kilit suresi asilirdi"
@@ -1199,7 +1250,7 @@ async fn ozet_icin_borclu(s: &AppState) -> i64 {
 }
 
 async fn ozet_log_satirlari(s: &AppState) -> Vec<String> {
-    let conn = acik_baglanti_ile(s, Instant::now()).expect("oturum acik olmali");
+    let conn = acik_baglanti_ile(s, Instant::now(), SystemTime::now()).expect("oturum acik olmali");
     psikolog_core::store::audit::son_kayitlar(&conn, 200)
         .unwrap()
         .into_iter()

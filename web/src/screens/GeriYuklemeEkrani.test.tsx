@@ -29,6 +29,7 @@ function kur(
     listeHatasi?: Error
     geriYukle?: GeriYukleMock
     onTamamlandi?: () => void
+    oncekileriKaldir?: (damga: string) => Promise<{ tasinan: number; damga: string }>
   } = {},
 ) {
   const yedekleriGetir = vi.fn(async () => {
@@ -37,16 +38,19 @@ function kur(
   })
   const geriYukle: GeriYukleMock =
     secenek.geriYukle ?? vi.fn(async (_g: GeriYukleGirdi) => ({ tarih: '2026-09-08' }))
+  const oncekileriKaldir =
+    secenek.oncekileriKaldir ?? vi.fn(async (_d: string) => ({ tasinan: 2, damga: _d }))
   const sonuc = render(
     <GeriYuklemeEkrani
       veriDizini={VERI_DIZINI}
       sebep={secenek.sebep ?? 'veritabani-bozuk'}
       yedekleriGetir={yedekleriGetir}
       geriYukle={geriYukle}
+      oncekileriKaldir={oncekileriKaldir}
       onTamamlandi={secenek.onTamamlandi ?? (() => {})}
     />,
   )
-  return { ...sonuc, yedekleriGetir, geriYukle }
+  return { ...sonuc, yedekleriGetir, geriYukle, oncekileriKaldir }
 }
 
 describe('GeriYuklemeEkrani — metnin taşıdığı güvenceler', () => {
@@ -208,6 +212,27 @@ describe('GeriYuklemeEkrani — davranış', () => {
     expect(geriYukle.mock.calls[0][0]).not.toHaveProperty('parola')
   })
 
+  it('kurtarma kodu alani VARSAYILAN gizli, "Goster" ile gecici gorunur olur (Gorev 6b)', async () => {
+    // Kurtarma kodu paroladan DAHA GÜÇLÜ bir sır (bkz. `KilitEkrani`'deki
+    // aynı karar): ekran görünürken danışan odada olabilir, dolayısıyla
+    // varsayılan `type=password` ile aynı korumayı almalı. "Göster" düğmesi
+    // yalnızca kurtarma modunda görünür ve geçici bir istisnadır.
+    kur()
+    await screen.findByText('2026-09-08')
+    await userEvent.click(screen.getAllByRole('radio')[0])
+    await userEvent.click(screen.getByRole('button', { name: 'Parolamı unuttum' }))
+
+    const alan = screen.getByLabelText(/kurtarma kodunuz/i) as HTMLInputElement
+    expect(alan.type).toBe('password')
+    expect(screen.queryByRole('button', { name: 'Göster' })).not.toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Göster' }))
+    expect(alan.type).toBe('text')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Gizle' }))
+    expect(alan.type).toBe('password')
+  })
+
   it('sunucunun hata mesajini OLDUGU GIBI gosterir ve ekranda kalir', async () => {
     // "Bu yedek bu parolayla acilmiyor" ile "yedek eksik" ayri sorunlar ve
     // kullanici hangisini duzeltecegini bilmeli. Genellestirmek, bu kod
@@ -255,5 +280,29 @@ describe('GeriYuklemeEkrani — davranış', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Yedekleri ara' }))
 
     await waitFor(() => expect(yedekleriGetir).toHaveBeenCalledWith('/Volumes/USB/yedek'))
+  })
+
+  it('`.onceki` kalintilarini kenara kaldirma eylemi BU EKRANDA', async () => {
+    // Inceleme (ikinci tur): geri yukleme `.onceki` kalintisina takilinca
+    // durur ve tam o anda oturum cogu zaman ACILAMAZ -- eylem yalnizca
+    // Ayarlar'da dursaydi kullanici ona hic ulasamaz, geriye Finder'da elle
+    // dosya tasimak kalirdi (ve oradaki ilk refleks SILMEK).
+    // Eylem SECIMDEN BAGIMSIZ gorunur: bu ekrana canli cift acilamadigi
+    // icin gelinmis olabilir ve yedek listesi BOS gelebilir.
+    const { oncekileriKaldir } = kur({ liste: { hedef_dizin: '/Volumes/YEDEK/terapi', yedekler: [] } })
+    await screen.findByRole('heading', { name: 'Yedekten geri yükleme' })
+
+    const dugme = screen.getByRole('button', { name: /kenara kaldır/i })
+    // Metin ne YAPMADIGINI da soyluyor.
+    expect(dugme.textContent).toMatch(/silmez/i)
+
+    await userEvent.click(dugme)
+    await waitFor(() => expect(oncekileriKaldir).toHaveBeenCalledTimes(1))
+    // Damga dosya adina giriyor: YYYYAAGG-SSDD.
+    expect((oncekileriKaldir as Mock).mock.calls[0][0]).toMatch(/^\d{8}-\d{4}$/)
+
+    const bilgi = await screen.findByRole('status')
+    expect(bilgi.textContent).toMatch(/2 eski dosya/)
+    expect(bilgi.textContent).toMatch(/hiçbiri silinmedi/i)
   })
 })

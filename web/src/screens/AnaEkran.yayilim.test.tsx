@@ -38,6 +38,9 @@ const BUGUN_SAATI = new Date(2026, 8, 9, 12, 0) // Çarşamba; hafta başı 2026
 const danisanlar = [
   { id: 1, ad_soyad: 'Ayşe Yılmaz', telefon: null, durum: 'aktif' },
   { id: 2, ad_soyad: 'Mehmet Demir', telefon: null, durum: 'aktif' },
+  // Görev 3 senaryosu: saklama süresi zaten DOLMUŞ bir danışan. `son_temas`/
+  // `saklama_bitis` bilerek 2026-09-09'dan (BUGUN_SAATI) ÖNCEYE sabitlendi.
+  { id: 3, ad_soyad: 'Zeynep Kaya', telefon: null, durum: 'aktif' },
 ]
 
 // Ayşe'nin iki seansı: 201 GEÇMİŞTE (bu hafta Pazartesi), 202 GELECEKTE
@@ -58,7 +61,25 @@ const R203 = {
   baslangic: '2026-09-08T13:00', bitis: '2026-09-08T14:00',
   durum: 'planlandi', ucret: null as number | null, odendi: false, seri_id: null,
 }
-const TUMU = [R201, R202, R203]
+// Görev 3: Zeynep'in bu haftaki (bugünkü) seansı — "Geldi" işaretlenince
+// mock sunucu `son_temas`/`saklama_bitis`i ileri taşıyacak (bkz. PATCH
+// dalındaki `sonTemasYaniti`).
+const R301 = {
+  id: 301, client_id: 3, danisan_adi: 'Zeynep Kaya',
+  baslangic: '2026-09-09T09:00', bitis: '2026-09-09T10:00',
+  durum: 'planlandi', ucret: null as number | null, odendi: false, seri_id: null,
+}
+// İnceleme IMPORTANT-1: Zeynep'in ÇOK ESKİ bir seansı — "Geldi"
+// işaretlenince mock kuralı (gün + 7 yıl) "2018-06-01" + 7 = "2025-06-01"
+// üretir; bu BUGUN_SAATI'nden (2026-09-09) ÖNCE, yani danışan yeni
+// `saklama_bitis`le de HÂLÂ süresi dolmuş sayılmalı (bkz. "IMPORTANT-1
+// düzeltme testi").
+const R302 = {
+  id: 302, client_id: 3, danisan_adi: 'Zeynep Kaya',
+  baslangic: '2018-06-01T09:00', bitis: '2018-06-01T10:00',
+  durum: 'planlandi', ucret: null as number | null, odendi: false, seri_id: null,
+}
+const TUMU = [R201, R202, R203, R301, R302]
 type RandevuKaydi = Omit<(typeof TUMU)[number], 'seri_id'> & { seri_id: string | null }
 
 const dosyalar: Record<number, unknown> = {
@@ -72,6 +93,12 @@ const dosyalar: Record<number, unknown> = {
     dogum_tarihi: null, basvuru_nedeni: null, risk_notu: null,
     riza_tarihi: null, riza_dosya_id: null, son_temas: null, saklama_bitis: null,
   },
+  // Görev 3: saklama süresi BUGUN_SAATI'nden (2026-09-09) ÖNCE dolmuş.
+  3: {
+    id: 3, ad_soyad: 'Zeynep Kaya', telefon: null, durum: 'aktif',
+    dogum_tarihi: null, basvuru_nedeni: null, risk_notu: null,
+    riza_tarihi: null, riza_dosya_id: null, son_temas: '2017-01-10', saklama_bitis: '2024-01-10',
+  },
 }
 
 type NotKaydi = { sablon: string; icerik: string }
@@ -83,6 +110,14 @@ let durumlar: Record<number, string>
 let istekler: Istek[]
 let onceBekle: Record<string, Promise<void> | undefined>
 let sonraBekle: Record<string, Promise<void> | undefined>
+/**
+ * AYNI URL'e giden BİRDEN FAZLA isteği BAĞIMSIZ bekletmek için (Görev 2
+ * inceleme CRITICAL: kartın mount okuması ile `randevularTazele`nin okuması
+ * AYNI URL'e gidiyor). `onceBekle`/`sonraBekle`'de `"METHOD yol#N"` anahtarı
+ * (N = o URL'e giden KAÇINCI istek) varsa o kullanılır, yoksa eski
+ * davranışa (URL'in HER çağrısını aynı kapıyla bekletme) düşülür.
+ */
+let cagriSayaci: Record<string, number>
 let seanslarHatasi: boolean
 /** Etiket sözlüğü (sunucudaki `tags`): kimlik → görünen ad. */
 let etiketDeposu: Map<number, string>
@@ -120,6 +155,22 @@ let putBaslangici: Record<number, string>
  */
 let eklenenler: RandevuKaydi[]
 let sonrakiId: number
+/**
+ * Görev 3: `/api/saklama-suresi-dolanlar` yanıtı — testler kimin listede
+ * olduğunu buradan kontrol eder (gerçek sunucudaki sözlüksel karşılaştırma
+ * burada TAKLİT EDİLMİYOR, mock kasıtlı sabit bir liste döndürüyor; asıl
+ * karşılaştırma mantığı `core::store::clients::saklama_suresi_dolanlar`de
+ * zaten Rust testleriyle ölçülüyor).
+ */
+let saklamaDolanlarListesi: (typeof danisanlar)[number][]
+/**
+ * Görev 3: PATCH .../{id} { durum: "geldi" } sonrası her danışan için
+ * mock'un "sunucu tarafı" son_temas/saklama_bitis durumu. `dosya` GET
+ * handler'ı bunu `dosyalar[id]`nin ÜSTÜNE uygular — istemcinin kartı
+ * YENİDEN ÇEKMEDİĞİ testlerde bu overlay hiç görünmez (ölçülen tam olarak
+ * bu); yalnızca mock'u kendi içinde tutarlı tutmak için var.
+ */
+let sonTemaslar: Record<number, { son_temas: string; saklama_bitis: string }>
 
 /** Sunucunun o anki randevuları: silinenler yok, yazmalar uygulanmış. */
 function tumu(): RandevuKaydi[] {
@@ -233,9 +284,15 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
     }
     return json(seansinEtiketleri(rid))
   }
-  if (yol.startsWith('/api/saklama-suresi-dolanlar')) return json([])
+  if (yol.startsWith('/api/saklama-suresi-dolanlar')) return json(saklamaDolanlarListesi)
   if (yol.startsWith('/api/depolama-durumu')) {
     return json({ toplam_boyut: 0, esik: 500 * 1024 * 1024, uyari: false })
+  }
+  // Denetim kaydı (Görev 7 Plan 7): Ayarlar sekmesi görünür olunca bir kez
+  // çekilir (`useDenetimKayitlari`). Bu dosyanın testleri onu ÖLÇMÜYOR; sabit
+  // boş yanıt (`saklama-suresi-dolanlar`/`depolama-durumu` ile aynı desen).
+  if (yol.startsWith('/api/denetim-kayitlari')) {
+    return json({ kayitlar: [], sayfa: 0, sonraki_sayfa_var: false })
   }
   if (yol.startsWith('/api/yedekler')) {
     return json({ hedef_dizin: '/Volumes/YEDEK', yedekler: [{ dosya_adi: 'y.db', tarih: '2026-09-09', boyut: 1 }] })
@@ -244,12 +301,22 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
     return json({ cakisanlar: [], cakisan_hafta_sayisi: 0, kontrol_edilen_hafta: 1 })
   }
   if (yol.startsWith('/api/ay-ozeti')) {
-    const borclu = (durumlar[202] ?? R202.durum) === 'geldi' && !(odemeler[202] ?? R202.odendi)
+    // Görev 2: 202 silinmişse ya da ücreti değişmişse özet bunu YANSITMALI
+    // (`tumu()` silinenleri zaten çıkarıyor, `randevuAnlik` durum/ödeme
+    // yamalarını uyguluyor — aynı anlık görüntü randevu penceresinin
+    // kullandığıyla). Sabit `45000` eskiden hem varlığı hem tutarı
+    // görmezden geliyordu; testin "silme -> bekleyen güncellenir" ve
+    // "ücret güncelleme -> özet YENİ değeri gösterir" senaryoları bu yüzden
+    // sunucuyu GERÇEKTEN sorguluyor olmalı.
+    const kayit202 = tumu().find((r) => r.id === 202)
+    const anlik202 = kayit202 ? randevuAnlik(kayit202) : null
+    const borclu = anlik202 !== null && anlik202.durum === 'geldi' && !anlik202.odendi
+    const ucret = anlik202?.ucret ?? 0
     return json({
       ay: '2026-09', seans_sayisi: 3, tahsilat_kurus: 0,
-      bekleyen_kurus: borclu ? 45000 : 0,
+      bekleyen_kurus: borclu ? ucret : 0,
       borclular: borclu
-        ? [{ client_id: 1, ad_soyad: 'Ayşe Yılmaz', borc_kurus: 45000, seans_sayisi: 1 }]
+        ? [{ client_id: 1, ad_soyad: 'Ayşe Yılmaz', borc_kurus: ucret, seans_sayisi: 1 }]
         : [],
     })
   }
@@ -295,7 +362,26 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
     return json({})
   }
   if (durum && method === 'PATCH') {
-    durumlar[Number(durum[1])] = (govde as { durum: string }).durum
+    const id = Number(durum[1])
+    const yeniDurum = (govde as { durum: string }).durum
+    durumlar[id] = yeniDurum
+    // Görev 3: gerçek sunucunun `appointments::son_temasi_isaretle`
+    // davranışını TAKLİT eder — yalnızca "geldi" GÜN'ü (`baslangic`ın ilk 10
+    // karakteri) ileri taşıyabilir. `+7` sabiti test verilerinde 29 Şubat
+    // gibi kenar durumlara denk gelmiyor, bu yüzden yıl basit string
+    // aritmetiğiyle ilerletiliyor (gerçek `yil_ekle`nin ayrıntısı zaten
+    // Rust testlerinde ölçülüyor, burada yalnızca istemci kablolaması).
+    if (yeniDurum === 'geldi') {
+      const r = tumu().find((x) => x.id === id)!
+      const gun = r.baslangic.slice(0, 10)
+      const mevcut = sonTemaslar[r.client_id]?.son_temas ??
+        (dosyalar[r.client_id] as { son_temas: string | null }).son_temas
+      if (mevcut === null || mevcut === undefined || mevcut < gun) {
+        const saklamaBitis = `${Number(gun.slice(0, 4)) + 7}${gun.slice(4)}`
+        sonTemaslar[r.client_id] = { son_temas: gun, saklama_bitis: saklamaBitis }
+        return json({ client_id: r.client_id, son_temas: gun, saklama_bitis: saklamaBitis })
+      }
+    }
     return json({})
   }
   if (yol === '/api/randevular' && method === 'POST') {
@@ -343,7 +429,11 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
   }
   if (/^\/api\/danisanlar\/\d+\/ekler$/.test(yol)) return json([])
   const dosya = /^\/api\/danisanlar\/(\d+)$/.exec(yol)
-  if (dosya) return json(dosyalar[Number(dosya[1])])
+  if (dosya) {
+    const cid = Number(dosya[1])
+    const guncel = sonTemaslar[cid]
+    return json(guncel ? { ...(dosyalar[cid] as object), ...guncel } : dosyalar[cid])
+  }
   if (yol.startsWith('/api/danisanlar')) return json(danisanlar)
   throw new Error(`beklenmeyen istek: ${method} ${yol}`)
 }
@@ -362,6 +452,7 @@ beforeEach(() => {
   istekler = []
   onceBekle = {}
   sonraBekle = {}
+  cagriSayaci = {}
   seanslarHatasi = false
   etiketDeposu = new Map()
   baglar = {}
@@ -372,6 +463,8 @@ beforeEach(() => {
   randevuDegisiklikleri = {}
   silinenRandevular = new Set()
   putBaslangici = {}
+  saklamaDolanlarListesi = []
+  sonTemaslar = {}
   kilitle = vi.fn<() => void>()
   taslaklariUnut()
   globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
@@ -380,9 +473,13 @@ beforeEach(() => {
     const govde = secenekler?.body ? JSON.parse(String(secenekler.body)) : null
     istekler.push({ method, yol, govde })
     const anahtar = `${method} ${yol}`
-    if (onceBekle[anahtar]) await onceBekle[anahtar]
+    cagriSayaci[anahtar] = (cagriSayaci[anahtar] ?? 0) + 1
+    const siraliAnahtar = `${anahtar}#${cagriSayaci[anahtar]}`
+    const once = onceBekle[siraliAnahtar] ?? onceBekle[anahtar]
+    if (once) await once
     const yanit = yanitUret(method, yol, govde)
-    if (sonraBekle[anahtar]) await sonraBekle[anahtar]
+    const sonra = sonraBekle[siraliAnahtar] ?? sonraBekle[anahtar]
+    if (sonra) await sonra
     return yanit
   }) as unknown as typeof fetch
 })
@@ -778,6 +875,165 @@ describe('C2 — durum/ödeme yazmaları iki ekranda TEK yoldan', () => {
   })
 })
 
+describe('Görev 3 — "saklama süresi doldu" bayatlığı', () => {
+  // KVKK bağlamı (brief): "saklama süresi doldu" uyarısı danışan dosyasının
+  // ELLE SİLİNMESİ kararını besleyen TEK ekran. Bu test üç yayılımı BİRLİKTE
+  // ölçüyor -- ayrı ayrı testler bunlardan birinin unutulmasını (ör. kart
+  // yamanır ama liste düşmez) yakalamazdı.
+  it('suresi dolmus danisanin seansi Geldi isaretlenince (a) Bilgiler uyarisi kalkar, (b) Ayarlar listesinden duser, (c) saklama-suresi-dolanlar YENIDEN ISTENMEZ', async () => {
+    saklamaDolanlarListesi = [danisanlar[2]]
+    ciz()
+
+    // ON KOSUL + istek sayacı: Ayarlar'a gidince liste TEK istekle gelir.
+    // `findByRole`: sekmenin erişilebilir adı yedekleme uyarısı sonuca
+    // KAVUŞANA kadar gecici olarak bir sonek tasiyabilir (bkz. `Sekmeler.tsx`
+    // "uyaran"), senkron `getByRole` bu yuzden kararsız olurdu.
+    await userEvent.click(await screen.findByRole('tab', { name: 'Ayarlar' }))
+    await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç (saklama süresi doldu)' })
+    const saklamaIstekleri = () =>
+      istekler.filter((i) => i.yol.startsWith('/api/saklama-suresi-dolanlar')).length
+    expect(saklamaIstekleri()).toBe(1)
+
+    // ON KOSUL: Zeynep'in Bilgiler sekmesi "doldu" uyarısını gösteriyor.
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Bilgiler' }))
+    expect(screen.getByRole('region', { name: 'Saklama süresi' }).textContent).toContain(
+      'Saklama süresi doldu',
+    )
+
+    // Takvimde Zeynep'in bugünkü seansını "Geldi" işaretle.
+    await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Zeynep Kaya' }))
+    await screen.findByLabelText('Seans notu')
+    await userEvent.click(screen.getByRole('button', { name: 'Geldi' }))
+    await waitFor(() => expect(durumlar[301]).toBe('geldi'))
+
+    // (a) Bilgiler'deki uyarı KALKMIŞ olmalı — kart yerelde yamalandı,
+    // dosya YENİDEN ÇEKİLMEDİ (`GET /api/danisanlar/3` sayısı sabit kalmalı).
+    const dosyaGetleri = istekler.filter(
+      (i) => i.method === 'GET' && i.yol === '/api/danisanlar/3',
+    ).length
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await waitFor(() =>
+      expect(screen.getByRole('region', { name: 'Saklama süresi' }).textContent).not.toContain(
+        'Saklama süresi doldu',
+      ),
+    )
+    expect(
+      istekler.filter((i) => i.method === 'GET' && i.yol === '/api/danisanlar/3').length,
+    ).toBe(dosyaGetleri)
+
+    // (b) Ayarlar listesinden DÜŞMÜŞ olmalı.
+    await userEvent.click(screen.getByRole('tab', { name: 'Ayarlar' }))
+    expect(
+      screen.queryByRole('button', { name: 'Zeynep Kaya dosyasını aç (saklama süresi doldu)' }),
+    ).toBeNull()
+
+    // (c) GET /api/saklama-suresi-dolanlar YENİDEN İSTENMEDİ.
+    expect(saklamaIstekleri()).toBe(1)
+  })
+
+  // Ters yön (brief M-sınıfı kısıt): "gelmedi"/"iptal" bir temas değildir,
+  // sunucu yanıtında da bu alanlar YOK -- istemci hiçbir şeyi yamamamalı ve
+  // uyarı kalmalı. `useTakvimAkisi.durumDegis`in döndürdüğü `{}` yanıtının
+  // `AnaEkran.durumDegis`teki `if` dalını hiç TETİKLEMEDİĞİNİ ölçer.
+  it('Gelmedi isaretlemek saklama uyarisini DEGISTIRMEZ (sunucu yaniti alan tasimiyor)', async () => {
+    saklamaDolanlarListesi = [danisanlar[2]]
+    ciz()
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Zeynep Kaya' }))
+    await screen.findByLabelText('Seans notu')
+    await userEvent.click(screen.getByRole('button', { name: 'Gelmedi' }))
+    await waitFor(() => expect(durumlar[301]).toBe('gelmedi'))
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Bilgiler' }))
+    expect(screen.getByRole('region', { name: 'Saklama süresi' }).textContent).toContain(
+      'Saklama süresi doldu',
+    )
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Ayarlar' }))
+    await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç (saklama süresi doldu)' })
+  })
+
+  // İnceleme IMPORTANT-1: koşulsuz düşürme, ÇOK ESKİ bir danışanın ÇOK ESKİ
+  // bir randevusu geriye dönük "Geldi" işaretlenirse (yeni `saklama_bitis`
+  // hâlâ BUGÜNDEN ÖNCE) danışanı GERÇEKTE hâlâ süresi dolmuşken listeden
+  // düşürüyordu -- görevin önlemeye çalıştığı hatanın TAM TERSİ. R302
+  // (2018-06-01) mock kuralıyla (gün + 7 yıl) "2025-06-01" üretir; bu
+  // BUGUN_SAATI'nden (2026-09-09) önce, yani hâlâ dolmuş.
+  it('IMPORTANT-1: yeni saklama_bitis HALA GECMISTEYSE danisan Ayarlar listesinden DUSMEZ', async () => {
+    saklamaDolanlarListesi = [danisanlar[2]]
+    ciz()
+
+    await userEvent.click(await screen.findByRole('tab', { name: 'Ayarlar' }))
+    await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç (saklama süresi doldu)' })
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('seans-listesi').getAttribute('data-yuklendi')).toBe('evet'),
+    )
+    await userEvent.click(listeSatiri('1 Haziran 2018, 09:00'))
+    await userEvent.click(screen.getByRole('button', { name: 'Geldi' }))
+    await waitFor(() => expect(durumlar[302]).toBe('geldi'))
+
+    // Kart hâlâ (yeni, ama hâlâ geçmiş tarihli) "doldu" uyarısını gösteriyor.
+    await userEvent.click(screen.getByRole('tab', { name: 'Bilgiler' }))
+    expect(screen.getByRole('region', { name: 'Saklama süresi' }).textContent).toContain(
+      'Saklama süresi doldu',
+    )
+
+    // Ayarlar listesinde HÂLÂ var — düşürülmedi.
+    await userEvent.click(screen.getByRole('tab', { name: 'Ayarlar' }))
+    await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç (saklama süresi doldu)' })
+  })
+
+  // İnceleme IMPORTANT-2: `dosyaSaati` yarış koruması — Görev 2'nin
+  // CRITICAL'ıyla AYNI sınıf. Kart YENİ açılmışken (mount okuması
+  // `GET /api/danisanlar/3` hâlâ uçuştayken) bir randevu "Geldi"
+  // işaretlenirse, mount'un GEÇ dönen ama ESKİ (yazmadan ÖNCEki) anlık
+  // görüntüyü taşıyan yanıtı `dosyaAlanlariniYama`nın az önce yaptığı
+  // yamanın ÜSTÜNE yazmamalı.
+  it('IMPORTANT-2: kart YUKLENIRKEN Geldi isaretlenirse gec donen kart yaniti YENI saklama tarihini EZMEZ', async () => {
+    ciz()
+    const k = kapi()
+    sonraBekle['GET /api/danisanlar/3'] = k.bekle
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç' }))
+    // BARİYER: kartın mount GET'i sunucuya ulaştı (ESKİ anlık görüntü
+    // alındı — henüz "Geldi" işaretlenmedi), yanıt yolda.
+    await waitFor(() =>
+      expect(istekler.some((i) => i.method === 'GET' && i.yol === '/api/danisanlar/3')).toBe(
+        true,
+      ),
+    )
+
+    // Takvimde Zeynep'in bugünkü seansını "Geldi" işaretle — kartın GET'i
+    // HÂLÂ uçuşta.
+    await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Zeynep Kaya' }))
+    await screen.findByLabelText('Seans notu')
+    await userEvent.click(screen.getByRole('button', { name: 'Geldi' }))
+    await waitFor(() => expect(durumlar[301]).toBe('geldi'))
+
+    // Kartın gecikmiş (ESKİ anlık görüntülü) yanıtı şimdi gelsin.
+    k.ac()
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await userEvent.click(await screen.findByRole('tab', { name: 'Bilgiler' }))
+    await waitFor(() =>
+      expect(screen.getByRole('region', { name: 'Saklama süresi' }).textContent).not.toContain(
+        'Saklama süresi doldu',
+      ),
+    )
+  })
+})
+
 describe('Bayatlık — takvimin yamanamayan yazmaları dosyanın seans listesine yayılır', () => {
   const listeGetleri = () =>
     istekler.filter((i) => i.method === 'GET' && i.yol === '/api/danisanlar/1/seanslar').length
@@ -907,6 +1163,195 @@ describe('Bayatlık — takvimin yamanamayan yazmaları dosyanın seans listesin
     await listeYuklendi()
     expect(listeMetni()).toContain('7 Eylül 2026, 10:00')
     expect(listeMetni()).not.toContain('14 Eylül 2026')
+  })
+})
+
+describe('Görev 2 — randevu yazmaları ay özetine ve kart bakiyesine yayılır', () => {
+  const kartGetleri = () =>
+    istekler.filter((i) => i.method === 'GET' && i.yol === '/api/danisanlar/1').length
+
+  async function ayOzetiniAc() {
+    await userEvent.click(screen.getByRole('button', { name: 'Ay sonu özeti' }))
+    return screen.findByRole('region', { name: 'Ay sonu özeti' })
+  }
+
+  function bekleyenTutari(bolge: HTMLElement) {
+    return within(bolge).getAllByRole('term').find((e) => e.textContent === 'Bekleyen')
+      ?.nextElementSibling?.textContent
+  }
+
+  /** Takvimde açık 202 panelinin ücretini değiştirip "Güncelle"ye basar. */
+  async function ucretiGuncelle(yeniTl: string) {
+    await userEvent.clear(screen.getByLabelText('Ücret (TL)'))
+    await userEvent.type(screen.getByLabelText('Ücret (TL)'), yeniTl)
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+  }
+
+  // İncelemecinin testle ÜRETTİĞİ senaryo (IMPORTANT-1), birebir: özet
+  // açıkken çift girilmiş bir seans siliniyor, ekran ANINDA (yeniden
+  // çekmeden değil, tek yeni `GET /api/ay-ozeti` ile) sunucuyla eşleşmeli.
+  it('(a) özet AÇIKKEN randevu silme -> bekleyen tutar güncellenir', async () => {
+    ciz()
+    const bolge = await ayOzetiniAc()
+    await waitFor(() => expect(bekleyenTutari(bolge)).toBe('450,00 TL'))
+
+    await takvimde202Ac()
+    await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
+    await waitFor(() => expect(tumu().some((r) => r.id === 202)).toBe(false))
+
+    await waitFor(() => expect(bekleyenTutari(bolge)).toBe('0,00 TL'))
+  })
+
+  // İncelemecinin testle ÜRETTİĞİ senaryo (IMPORTANT-2), birebir: dosya
+  // açıkken (Bilgiler'de 450,00 TL) takvimde ücret 450 -> 900 düzeltiliyor.
+  // Danışanlar'a dönmek `dosya.ac(aynı id)`yi çağırır ve bu bir NO-OP'tur
+  // (bkz. `AnaEkran.tsx::danisanaGit`), yani yayılım OLMAZSA bakiye asla
+  // kendiliğinden düzelmez.
+  it('(b) ücret güncelleme -> özet VE kart bakiyesi ikisi de YENİ değeri gösterir', async () => {
+    ciz()
+    await danisanlarda()
+    await userEvent.click(screen.getByRole('tab', { name: 'Bilgiler' }))
+    await waitFor(() => expect(bakiye()).toBe('450,00 TL'))
+
+    await takvimeDon()
+    await takvimde202Ac()
+    await ucretiGuncelle('900')
+    await waitFor(() => expect(tumu().find((r) => r.id === 202)!.ucret).toBe(90000))
+
+    const bolge = await ayOzetiniAc()
+    await waitFor(() => expect(bekleyenTutari(bolge)).toBe('900,00 TL'))
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Bilgiler' }))
+    await waitFor(() => expect(bakiye()).toBe('900,00 TL'))
+  })
+
+  it('(c) aynı dosyada Seanslar listesindeki tutar ile Bilgiler bakiyesi ÇELİŞMEZ', async () => {
+    ciz()
+    await danisanlarda()
+
+    await takvimeDon()
+    await takvimde202Ac()
+    await ucretiGuncelle('900')
+    await waitFor(() => expect(tumu().find((r) => r.id === 202)!.ucret).toBe(90000))
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    // Seans listesi kendi bayatlık mekanizmasıyla (önceden var, bu görevin
+    // parçası değil) yeniden çekilir ve sunucunun YENİ tutarını gösterir.
+    await waitFor(() =>
+      expect(listeSatiri('14 Eylül 2026, 10:00').textContent).toContain('900,00 TL'),
+    )
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Bilgiler' }))
+    expect(bakiye()).toBe('900,00 TL')
+  })
+
+  // En önemli kısıt: kart tazelemesi `clients::getir`i (HerCagri, silinemez
+  // satır) TETİKLEMEMELİ. Üç yazma türünü de (ücret güncelleme, silme,
+  // oluşturma) sırayla deniyor.
+  it('(d) özet ve kart tazelemesi GET /api/danisanlar/{id} isteği ATMAZ (kart HerCagri)', async () => {
+    ciz()
+    await danisanlarda()
+    const baslangic = kartGetleri()
+
+    await takvimeDon()
+    await takvimde202Ac()
+    await ucretiGuncelle('900')
+    await waitFor(() => expect(tumu().find((r) => r.id === 202)!.ucret).toBe(90000))
+    expect(kartGetleri()).toBe(baslangic)
+
+    // Silme: 201 (7 Eylül), 202 sonraki adımda gerekiyor.
+    await userEvent.click(await screen.findByRole('button', { name: 'Önceki hafta' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
+    await waitFor(() => expect(tumu().some((r) => r.id === 201)).toBe(false))
+    expect(kartGetleri()).toBe(baslangic)
+
+    // Oluşturma.
+    await userEvent.click(await screen.findByRole('button', { name: 'Sonraki hafta' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
+    const bosSaat = (await screen.findAllByLabelText(/boş$/)).find(
+      (el) => el.getAttribute('aria-label') === '21 Eylül 10:00 boş',
+    )
+    await userEvent.click(bosSaat!)
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    await waitFor(() => expect(tumu().some((r) => r.id === 300)).toBe(true))
+    expect(kartGetleri()).toBe(baslangic)
+  })
+
+  // İncelemeci bulgusu (CRITICAL): kartın İLK yükleme okuması (mount
+  // efekti) ile `randevularTazele` AYNI URL'e (randevu penceresi) gidiyor.
+  // Kart açılır açılmaz (ilk okuma hâlâ uçuştayken) bir randevu silinirse
+  // `randevularTazele` DAHA SONRA başlayıp DAHA ÖNCE dönebilir (kart o anda
+  // doğru bakiyeyi gösterir) — ama mount'un GEÇ dönen, artık BAYAT yanıtı
+  // damga korumasız bunun ÜSTÜNE eski listeyi yazardı ve bakiye KALICI
+  // olarak eskiye dönerdi. `yazmaSaati`nin "daha önce başlayan bir okumanın
+  // geç gelen yanıtı, daha sonra başlayıp önce dönmüş bir okumayı ezmez"
+  // kuralı burada da geçerli olmalı (`useDanisanSeanslari.yanitiYaz` ile
+  // aynı desen, bkz. `KartVerisi.randevularDamgasi`).
+  it('CRITICAL: kart ilk yüklemesi UÇUŞTAYKEN randevularTazele daha SONRA başlayıp daha ÖNCE dönerse, geç gelen ilk yükleme bakiyeyi eskiye DÖNDÜRMEZ', async () => {
+    ciz()
+    const tumZamanYolu = `/api/randevular?baslangic=${encodeURIComponent('2000-01-01T00:00')}&bitis=${encodeURIComponent('2100-01-01T00:00')}`
+    // Kartın İLK okuması (mount efekti — bu URL'e 1. çağrı): kapıda tutuluyor.
+    const k1 = kapi()
+    sonraBekle[`GET ${tumZamanYolu}#1`] = k1.bekle
+
+    // `danisanlarda()` KULLANILMIYOR: o yardımcı Seanslar listesinin
+    // yüklenmesini bekliyor, ama `DanisanDosyasi` (ve onun İÇİNDEKİ Seanslar
+    // listesi) yalnızca `kart.dosya !== null` iken render ediliyor — kartın
+    // mount Promise.all'ı (ve onunla birlikte bu gate) çözülmeden `kart.dosya`
+    // asla dolmaz. Bariyer bu yüzden İSTEĞİN ATILMASI (yanıtın DÖNMESİ değil).
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
+    // BARİYER: kartın ilk okuması yola çıktı (anlık görüntü: 202 hâlâ var,
+    // bekleyen 450 TL) — henüz DÖNMEDİ (`sonraBekle` onu tutuyor).
+    await waitFor(() => expect(istekler.some((i) => i.yol === tumZamanYolu)).toBe(true))
+
+    await takvimeDon()
+    await takvimde202Ac()
+    await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
+    await waitFor(() => expect(tumu().some((r) => r.id === 202)).toBe(false))
+    // `randevularTazele`nin (bu URL'e 2. çağrı, KAPISIZ) isteği çoktan gitti
+    // ve döndü — kart bu anda (gözlemlenmese de) ZATEN doğru bakiyeyi taşır.
+    await waitFor(() => expect(istekler.filter((i) => i.yol === tumZamanYolu).length).toBe(2))
+
+    // Şimdi GEÇ kalan ilk yüklemenin kapısı açılıyor — bu, sunucudan SİLME
+    // ÖNCESİ alınmış BAYAT bir anlık görüntü taşıyor (202 hâlâ orada, 450 TL).
+    await act(async () => {
+      k1.ac()
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Bilgiler' }))
+    // Kapı AÇILDIKTAN SONRA da (yalnızca ilk doğru anı yakalayıp geçmek
+    // değil) bakiye DOĞRU kalmalı — düzeltmeden ÖNCE burası sessizce
+    // "450,00 TL"ye dönerdi ve bir daha kendiliğinden düzelmezdi.
+    expect(bakiye()).toBe('0,00 TL')
+    await new Promise((r) => setTimeout(r, 50))
+    expect(bakiye()).toBe('0,00 TL')
+  })
+
+  // MINOR (inceleme): kart HİÇ açılmamışken bir randevu yazması, kart
+  // tarafında hiçbir isteğe yol açmamalı — `randevularTazele`nin erken
+  // çıkışı (`useDanisanDosyasi.ts`, `hedefDanisan === null`) bunu koruyor,
+  // ama Görev 2'nin testlerinde AMAÇLI ölçülmüyordu (inceleme: o satırı
+  // kaldıran mutasyon başka bir testin URL öneki çakışmasıyla TESADÜFEN
+  // yakalanıyordu).
+  it('(minor) kart KAPALIYKEN randevu yazması yapılınca randevu-penceresi isteği ATILMAZ', async () => {
+    ciz()
+    const tumZamanYolu = `/api/randevular?baslangic=${encodeURIComponent('2000-01-01T00:00')}&bitis=${encodeURIComponent('2100-01-01T00:00')}`
+    // Sekme hiç Danışanlar'a geçmedi — kart hiç açılmadı.
+    await takvimde202Ac()
+    await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
+    await waitFor(() => expect(tumu().some((r) => r.id === 202)).toBe(false))
+
+    expect(istekler.filter((i) => i.yol === tumZamanYolu).length).toBe(0)
   })
 })
 

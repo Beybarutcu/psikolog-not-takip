@@ -249,6 +249,62 @@ describe('App — bozuk veritabani geri yukleme ekranina duser (§8)', () => {
     expect(document.body.textContent).toMatch(/parolanız doğru/i)
   })
 
+  it('yarim kalmis geri almadan sonra: kilit ekrani -> geri yukleme ekrani -> TEMIZLEME EYLEMI', async () => {
+    // ZINCIRIN TAMAMI (inceleme KRITIK-1). Parcalar ayri ayri yesildi ama
+    // zincir KOPUKTU: `kilit_ac`'in `open_existing` hata yolu
+    // `veritabani_bozuk` bayragini TASIMIYORDU, dolayisiyla kullanici kilit
+    // ekraninda kaliyor ve ugruna kilit kapisini gevsettigimiz temizleme
+    // eylemine HIC ULASAMIYORDU. Geriye tek yorum kaliyordu: yeniden
+    // kurayim -- verisi `.onceki` dosyalarinda dururken.
+    //
+    // Senaryo: geri alma yarim kalir -> kullanici uygulamayi KAPATIR ->
+    // yeniden acar -> kilit ekrani -> dogru parola -> veritabani acilamiyor.
+    const temizlikIstekleri: string[] = []
+    sunucu(
+      { kurulum_gerekli: false, kilitli: true, keystore_bozuk: false, veri_dizini: '/veri' },
+      {
+        '/api/kilit-ac': {
+          ok: false,
+          status: 500,
+          // `open_existing`in hata metni -- butunluk kontrolu yolu DEGIL:
+          // dosya bu anahtarla hic acilamiyor.
+          json: async () => ({
+            hata: 'Kayıt dosyanız bu parolayla açılamıyor.',
+            veritabani_bozuk: true,
+          }),
+        } as unknown as Response,
+        '/api/onceki-dosyalari-kaldir': {
+          ok: true,
+          json: async () => {
+            temizlikIstekleri.push('cagrildi')
+            return { tasinan: 2, damga: '20260909-1200' }
+          },
+        } as unknown as Response,
+      },
+    )
+
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Kilitli' })
+    await userEvent.type(screen.getByLabelText('Ana parola'), 'gizliparola')
+    await userEvent.click(screen.getByRole('button', { name: 'Aç' }))
+
+    // (1) Geri yukleme ekranina DUSTU.
+    expect(await screen.findByRole('heading', { name: 'Yedekten geri yükleme' })).toBeDefined()
+    expect(screen.queryByRole('heading', { name: 'Kilitli' })).toBeNull()
+
+    // (2) Temizleme eylemi GORUNUR ve CALISTIRILABILIR.
+    const dugme = await screen.findByRole('button', { name: /kenara kaldır/i })
+    expect(dugme.textContent).toMatch(/silmez/i)
+    await userEvent.click(dugme)
+
+    await screen.findByText(/2 eski dosya/i)
+    expect(temizlikIstekleri).toHaveLength(1)
+    // Yeni adin SONEKI soyleniyor: bu dosyalari baska hicbir sey
+    // temizlemiyor (inceleme M-2).
+    expect(document.body.textContent).toMatch(/…onceki-20260909-1200/)
+    expect(document.body.textContent).toMatch(/hiçbiri silinmedi/i)
+  })
+
   it('siradan bir 500 geri yukleme ekranini ACMAZ', async () => {
     // EKSI YON: bayrak olmadan ekran degismemeli. Bu olmadan "her hatada
     // geri yukleme ekranina git" mutasyonu yukaridaki testi gecerdi ve

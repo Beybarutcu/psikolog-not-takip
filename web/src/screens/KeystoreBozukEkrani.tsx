@@ -1,3 +1,5 @@
+import { OncekiDosyalarEylemi } from './OncekiDosyalarEylemi'
+
 /**
  * Anahtar dosyası okunamadığında gösterilen ekran.
  *
@@ -23,10 +25,17 @@
 export function KeystoreBozukEkrani({
   veriDizini,
   onGeriYukle,
+  oncekileriKaldir,
 }: {
   veriDizini: string
   /** Uygulamanın kendi geri yükleme ekranını açar. */
   onGeriYukle: () => void
+  /**
+   * `.onceki` kalıntılarını damgalı bir ada TAŞIR (hiçbir şey silmez).
+   * Bu ekranda oturum tanım gereği açılamaz; eylem kilit kapısının
+   * dışında olduğu için buradan da çalışır (bkz. `OncekiDosyalarEylemi`).
+   */
+  oncekileriKaldir: (damga: string) => Promise<{ tasinan: number; damga: string }>
 }) {
   return (
     <div className="mx-auto max-w-lg p-8">
@@ -76,6 +85,11 @@ export function KeystoreBozukEkrani({
         Uygulamanın kendi geri yükleme ekranı çifti birlikte yerleştirir ve aşağıdaki elle
         yapılacak adımların hepsini sizin için yapar. Çalışmazsa elle de yapabilirsiniz:
       </p>
+      {/* Geri yukleme, veri klasorunde bir `.onceki` kalintisi varken
+          BASLAMAZ -- ve tam o anda oturum acilamadigi icin Ayarlar'daki
+          esine ulasilamaz. Eylem bu yuzden bu ekranda da duruyor
+          (bkz. `OncekiDosyalarEylemi`). */}
+      <OncekiDosyalarEylemi kaldir={oncekileriKaldir} />
       <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-600">
         <li>
           Uygulamayı kapatın ve yedek klasörünüzü açın. En yeni tarihli, <strong>ikisi de</strong>{' '}

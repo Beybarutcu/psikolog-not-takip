@@ -10,7 +10,7 @@ use psikolog_core::store::appointments::{
     aralik_getir, cakisanlari_bul, durum_guncelle, guncelle as depo_guncelle,
     odeme_guncelle, olustur as tekil_olustur, seri_cakisanlari_bul, seri_olustur, seri_sayisi,
     seri_silinecek_not_sayisi, seriyi_sil, sil, silinecek_not_sayisi, Randevu, RandevuGuncelleme,
-    SeriCakismasi, YeniRandevu,
+    SeriCakismasi, SonTemasSonucu, YeniRandevu,
 };
 use psikolog_core::store::audit::Cihaz;
 use serde::Deserialize;
@@ -97,6 +97,23 @@ pub async fn olustur(
     Ok((StatusCode::CREATED, Json(sonuc)))
 }
 
+/// Bir randevunun durumunu değiştirir (`PATCH /randevular/{id} {durum}`).
+///
+/// # Yanıt: `son_temas`/`saklama_bitis` -- yalnızca GERÇEKTEN değiştiyse
+/// Plan 7 Görev 3: "geldi" işaretlemesi `appointments::durum_guncelle`
+/// içinde danışanın `son_temas`/`saklama_bitis`ini ileri taşıyabilir
+/// (`clients::son_temasi_tazele`). Bu iki alan istemciye HİÇ yayılmıyordu:
+/// Bilgiler sekmesindeki saklama kutusu ve Ayarlar'daki "saklama süresi
+/// dolan dosyalar" listesi bayat kalıyordu -- süresi dolmuş bir danışan
+/// terapiye dönüp "Geldi" işaretlense bile ekran hâlâ eski tarihi/listeyi
+/// gösteriyordu. İkisi de sunucuda `LogHacmi::HerCagri` (silinemez satır)
+/// olduğu için istemci onları YENİDEN ÇEKEMEZ; bu yüzden yanıt genişletildi
+/// -- yeni bir uç nokta değil, zaten dönen `{}` yanıtı `son_guncelleme`
+/// alanı `Some` olduğunda üç alanla büyüyor. `depo_guncelle`nin `None`
+/// döndürdüğü her durumda (gelmedi/iptal/planlandi, ya da geriye dönük bir
+/// "geldi") yanıt bugünkü gibi boş `{}` -- istemci de o zaman hiçbir şeyi
+/// yamamaz (bkz. `useDanisanDosyasi.dosyaAlanlariniYama` /
+/// `useDanisanListesi.saklamaDolandanDus`).
 pub async fn durum(
     State(s): State<AppState>,
     Path(id): Path<i64>,
@@ -104,8 +121,15 @@ pub async fn durum(
 ) -> Result<Json<Value>, ApiHata> {
     let conn = acik_baglanti(&s)?;
     let istek = govde_coz(istek)?;
-    durum_guncelle(&conn, id, &istek.durum, Cihaz::Masaustu).map_err(depo_hatasi)?;
-    Ok(Json(json!({})))
+    let sonuc = durum_guncelle(&conn, id, &istek.durum, Cihaz::Masaustu).map_err(depo_hatasi)?;
+    Ok(Json(match sonuc {
+        Some(SonTemasSonucu { client_id, son_temas, saklama_bitis }) => json!({
+            "client_id": client_id,
+            "son_temas": son_temas,
+            "saklama_bitis": saklama_bitis,
+        }),
+        None => json!({}),
+    }))
 }
 
 /// Randevunun "ödendi" işaretini koyar/geri alır

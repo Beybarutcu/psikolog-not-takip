@@ -496,14 +496,46 @@ pub fn guncelle(
 
 /// Tek bir danışanı kimliğiyle okur; bu bir "goruntuleme" olayı olarak loglanır.
 ///
-/// # Neden burada birleştirme YOK (Plan 3 Görev 2)
+/// # Neden burada birleştirme YOK (Plan 3 Görev 2, Görev 6h'de YENİDEN ONAYLANDI)
 /// "Belirli bir danışanın dosyasına erişim" hacim politikasının **loglanır**
 /// tarafındadır (bkz. `store::audit` modül başlığı): KVKK'nın sorduğu asıl
 /// soru budur ve her çağrı gerçek bir kullanıcı eylemine (bir danışan
 /// dosyasını açmak) karşılık gelir -- `listele` gibi gezinmenin yan etkisi
-/// olarak tekrar tekrar çalışan bir yol değildir. Plan 3'te danışan dosyası
-/// ekranı kendi kendini yenileyen bir yola dönüşürse bu karar o görevde
-/// yeniden verilmeli; mekanizma (`LogHacmi::OturumBasi`) hazır.
+/// olarak tekrar tekrar çalışan bir yol değildir.
+///
+/// Bu belgenin eski hâli "danışan dosyası ekranı kendi kendini yenileyen bir
+/// yola dönüşürse bu karar yeniden verilmeli" diyordu -- KOŞUL GERÇEKLEŞTİ:
+/// `web/src/screens/anaEkranKancalari/useDanisanDosyasi.ts`'teki `rizaKaydet`,
+/// `ekYukle`, `ekSil` üçü de başarıdan sonra `kartTazeleme` sayacını artırır
+/// ve bu, kartın mount efektini (`dosyaGetir` dâhil) yeniden çalıştırır; yani
+/// bu fonksiyon artık o üç yoldan da (kullanıcının bilinçli bir "dosyayı aç"
+/// tıklaması OLMADAN) çağrılıyor.
+///
+/// Karar YENİDEN VERİLDİ ve **aynı kaldı** (birleştirmeye GEÇİLMEDİ):
+/// - Bu üç tazeleme kendiliğinden değil, kullanıcının O ANDA bu danışanın
+///   dosyası ÜZERİNDE yaptığı bilinçli bir mutasyonun (rıza kaydı, ek
+///   yükleme, ek silme) DOĞRUDAN sonucu -- `listele`/takvim gibi arka planda
+///   sürekli tekrar eden bir gezinme yan etkisi değil. Her tazeleme zaten
+///   KENDİ audit satırını (`Duzenleme`/ek işlemi) üretmiş bir eylemin hemen
+///   ardından, aynı dosya üzerinde gelir.
+/// - Birleştirme (`OturumBasi`) burada uygulansaydı, AYNI danışanın dosyasına
+///   bir çalışma oturumu içinde birden fazla BAĞIMSIZ, bilinçli açılışı da
+///   (ör. "sabah açtım, öğleden sonra danışan geldiğinde tekrar açtım") aynı
+///   pencerede tek satıra indirirdi -- KVKK'nın asıl sorduğu "kim, ne zaman
+///   açtı" sorusunun çözünürlüğünü tam da yanlış yerde (gerçek erişimlerde)
+///   düşürürdü.
+/// - Fazladan satırların hacmi ölçülüp kabul edilebilir bulundu: üç yol da
+///   seyrek kullanıcı eylemleri (günde birkaç kez), yani günde ~3-6 fazladan
+///   `goruntuleme` satırı -- `not` editörünün 2 saniyelik otomatik kaydı
+///   sınıfından bir gürültü değil.
+///
+/// Kısacası: yol (tazeleme kendiliğinden mi, bilinçli mi) değişmedi, yalnızca
+/// TETİKLEYİCİSİ değişti (düğme tıklaması yerine bir önceki isteğin başarı
+/// geri çağrısı) -- ve o tetikleyici hâlâ "kullanıcı bu dosyayla bir şey
+/// yaptı" anlamına geliyor. `randevuYamala` (bkz. `useDanisanDosyasi.ts`)
+/// bilerek bu üç yoldan FARKLI: o hiçbir mutasyonun DOĞRUDAN sonucu değil
+/// (başka bir seansın durumu), bu yüzden tazeleme yapmaz -- aynı muhakeme,
+/// ters yönde.
 pub fn getir(conn: &Connection, id: i64, cihaz: Cihaz) -> Result<Danisan, DepoHatasi> {
     let danisan = conn
         .query_row(&format!("SELECT {SUTUNLAR} FROM clients WHERE id = ?1"), [id], satirdan)
@@ -598,12 +630,19 @@ pub fn arsivle(conn: &Connection, id: i64, cihaz: Cihaz) -> Result<(), DepoHatas
 /// içinden çağrılabilir -- `durum_guncelle` "randevu durumu + son temas + log"
 /// üçlüsünü TEK transaction'da yazabilsin diye. Kendi transaction'ını açsaydı
 /// SQLite "cannot start a transaction within a transaction" derdi.
+///
+/// # Dönüş değeri: hesaplanan `saklama_bitis`
+/// Plan 7 Görev 3'ten beri hesaplanan bitiş tarihini de döndürür.
+/// `appointments::son_temasi_isaretle` bunu ikinci bir `SELECT` atmadan
+/// yanıtına taşıyabilsin diye -- çağıran zaten aynı transaction içinde ve
+/// değer burada TEK sorguyla (`yil_ekle`) zaten hesaplanmış durumda; onu bir
+/// daha okumak silinemez bir maliyet olmasa da gereksiz bir sorgu olurdu.
 pub fn son_temasi_tazele(
     conn: &Connection,
     client_id: i64,
     tarih: &str,
     saklama_yili: i64,
-) -> Result<(), DepoHatasi> {
+) -> Result<String, DepoHatasi> {
     // 29 Subat + N yil gibi var olmayan tarihler icin gunu ayin son gunune cek.
     let bitis = yil_ekle(tarih, saklama_yili)?;
     let etkilenen = conn.execute(
@@ -613,7 +652,7 @@ pub fn son_temasi_tazele(
     if etkilenen == 0 {
         return Err(DepoHatasi::Bulunamadi);
     }
-    Ok(())
+    Ok(bitis)
 }
 
 /// `YYYY-AA-GG` tarihine `yil` yıl ekler.
@@ -831,6 +870,111 @@ mod tests {
             )
             .unwrap();
         assert_eq!(sayi, 3, "danisan dosyasina her erisim ayri satir yazmali");
+    }
+
+    #[test]
+    fn saklama_listesine_erisim_birlestirilmez() {
+        // `saklama_suresi_dolanlar` `getir` ile AYNI sinifta: uyum/denetim
+        // ekrani, gezinmenin yan etkisi degil (bkz. fonksiyonun kendi
+        // yorumu). MUTASYONLA KANITLANDI (Gorev 6f incelemesi): bu satir
+        // testsizdi ve iki mutasyon da hayatta kaliyordu -- (i) `HerCagri`
+        // -> `OturumBasi`, (ii) `kaydet` cagrisini tumden silmek --
+        // `cargo test -p psikolog-core` VE `-p psikolog-server` tam yesil
+        // kaliyordu. Emsal: `danisan_dosyasina_erisim_birlestirilmez`
+        // (yukarida) -- ayni SQL sorgusu, ayni iddia bicimi.
+        //
+        // Tek `assert_eq!(sayi, 3)` HER IKI mutasyonu da yakalar: satir hic
+        // yazilmazsa 0, ayni pencerede birlesirse 1 cikar -- ikisi de 3'e
+        // esit degildir.
+        let (_d, c) = baglanti();
+
+        for _ in 0..3 {
+            saklama_suresi_dolanlar(&c, "2026-09-07", Cihaz::Masaustu).unwrap();
+        }
+
+        let sayi: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM audit_log
+                  WHERE eylem='goruntuleme' AND varlik='client' AND varlik_id='saklama_listesi'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sayi, 3, "saklama listesine her erisim ayri satir yazmali (birlesmemeli)");
+    }
+
+    #[test]
+    fn getir_mutasyon_sonrasi_tazelemede_de_ayri_satir_yazar() {
+        // Gorev 6h: `useDanisanDosyasi.ts`teki `rizaKaydet`/`ekYukle`/`ekSil`
+        // BASARIDAN SONRA karti (dosyaGetir -> `clients::getir` dahil)
+        // yeniden ceker. `clients.rs:497` (getir'in doc yorumu) bu kosulun
+        // GERCEKLESTIGINI ve kararin YENIDEN VERILIP AYNI KALDIGINI
+        // (HerCagri, birlesmeye GECILMEDI) anlatiyor -- bu test o karari
+        // GERCEK tetikleyici desenle davranissal olarak kanitlar: kart ACMA
+        // (getir #1) -> mutasyon (`rizaKaydet`in gercek sunucu yolu:
+        // `guncelle_uc` -> `clients::guncelle`, Duzenleme logluyor) -> kart
+        // KENDI KENDINI TAZELER (getir #2). Ayni pencerede IKI Goruntuleme
+        // olayi var; `son_kayit_yakin_mi` eslesmeyi yalnizca AYNI
+        // (eylem, varlik, varlik_id) uzerinden aradigindan (bkz.
+        // `audit.rs::son_kayit_yakin_mi`), aradaki farkli turden bir
+        // Duzenleme satiri bu testi ATLATAMAZ -- `HerCagri` ->
+        // `OturumBasi`ye donulseydi bu iki Goruntuleme satiri BIRLESIRDI.
+        let (_d, c) = baglanti();
+        let d = ekle(&c, &yeni("Ayse"), Cihaz::Masaustu).unwrap();
+
+        getir(&c, d.id, Cihaz::Masaustu).unwrap(); // kart ACILDI
+        let alan = DanisanGuncelleme { riza_tarihi: Some("2026-09-07".into()), ..Default::default() };
+        guncelle(&c, d.id, &alan, Cihaz::Masaustu).unwrap(); // rizaKaydet
+        getir(&c, d.id, Cihaz::Masaustu).unwrap(); // kart KENDI KENDINI TAZELEDI
+
+        let duzenleme: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM audit_log
+                  WHERE eylem='duzenleme' AND varlik='client' AND varlik_id=?1",
+                [d.id.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let goruntuleme: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM audit_log
+                  WHERE eylem='goruntuleme' AND varlik='client' AND varlik_id=?1",
+                [d.id.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(duzenleme, 1, "mutasyon kendi satirini yazmali");
+        assert_eq!(
+            goruntuleme, 2,
+            "kart acma VE mutasyon sonrasi kendi kendini tazeleme AYRI goruntuleme \
+             satirlari yazmali (birlesmemeli) -- bkz. getir'in guncel doc yorumu"
+        );
+    }
+
+    /// Görev 6h'nin karar metni (`getir`'in doc yorumu) hâlâ güncel mi?
+    /// Mekanizma testi (yukarıdaki) HerCagri'nin fiilen çalıştığını
+    /// kanıtlar; bu test de metnin kararı YENİDEN VERİLMİŞ ve
+    /// SESSİZCE BIRAKILMAMIŞ olarak anlattığını sabitler -- eski hâli
+    /// "gelecekte yeniden verilmeli" diyordu, o gelecek artık burada.
+    #[test]
+    fn getir_karari_sessizce_birakilmamis() {
+        let yol = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/store/clients.rs");
+        let kaynak = std::fs::read_to_string(&yol)
+            .unwrap_or_else(|e| panic!("{} okunamadi: {e}", yol.display()));
+        // YALNIZCA `#[cfg(test)]`den ÖNCEKİ (üretim/doküman) kısım aranır:
+        // aranan dizginin kendisi bu test bloğunun İÇİNDE de geçiyor
+        // (panik mesajında), tüm dosyada arasaydık test kendi metnini
+        // bulup HER ZAMAN yeşil kalırdı -- dördüncü biçim ("test kendi
+        // iddiasını sınamıyor").
+        let uretim_kismi = kaynak
+            .split("#[cfg(test)]")
+            .next()
+            .expect("dosyada en az bir parca olmali");
+        assert!(
+            uretim_kismi.contains("birleştirmeye GEÇİLMEDİ"),
+            "getir'in doc yorumu Görev 6h kararının SONUCUNU (HerCagri korundu mu, \
+             birleştirmeye mi geçildi) artık açıkça söylemiyor olabilir."
+        );
     }
 
     fn clients_satir_sayisi(c: &rusqlite::Connection) -> i64 {

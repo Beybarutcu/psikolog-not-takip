@@ -309,3 +309,64 @@ testi üçüncü kipe yayılmamış.
 `npm --prefix web run build` · `npm --prefix web run test` ·
 `cargo test --workspace` · `cargo clippy --workspace --all-targets -- -D warnings` ·
 `npx playwright test` — hepsi yeşil olmalı.
+
+---
+
+### Görev 7: Denetim kaydı okunabilir olsun
+
+**Dosyalar:**
+- Değiştir: `server/src/routes/` (yeni salt okunur uç), `server/src/lib.rs`,
+  `web/src/api.ts`, `web/src/ayarlar/AyarlarSekmesi.tsx`
+- Test: `server/tests/notlar_api.rs`, `web/src/ayarlar/AyarlarSekmesi.test.tsx`
+
+**Sorun (denetim kaydı alt incelemesi, Important):** `audit::son_kayitlar`
+(`core/src/store/audit.rs:416`) üretimde **hiçbir yerden** çağrılmıyor — ne
+HTTP rotası, ne Tauri komutu, ne ekran; bütün çağrı yerleri `#[cfg(test)]`.
+Modülün kendi ilkesi: *"denetlenebilir olmayan bir denetim kaydı, olmayan
+denetim kaydıyla aynı şeydir"* (`audit.rs:36-37`). Hacim politikasının bütün
+gerekçesi logun **okunabilirliği**, ama okuyan yok. KVKK 2018/10 açısından:
+terapistten "şu tarihte bu dosyaya kim, hangi cihazdan erişti" istendiğinde
+yanıt yalnızca SQLCipher veritabanını elle açarak verilebilir.
+
+**Kapsam (küçük tutun):** Ayarlar sekmesinde salt okunur bir liste — tarih,
+eylem, varlık türü, varlık kimliği, cihaz, (varsa) `ayrinti` metni. Süzgeç:
+tarih aralığı ve varlık türü yeterli. **Yeni bir denetim satırı üretmeyin**:
+denetim kaydını okumak bir `Goruntuleme` satırı yazmamalı (aksi hâlde log
+kendini besler); bunu yorumda gerekçelendirin ve testle sabitleyin.
+Liste sayfalanmalı (`son_kayitlar` zaten `LIMIT` alıyor); 10 yılda ~190k satır
+bekleniyor, hepsini tek seferde çekmeyin.
+
+- [ ] **Adım 1:** kilitli oturumda 401 (kapı ilk satır), `Sorgu<T>` ile
+  süzgeç, rota modülü `audit::kaydet` çağırmaz; kilitli-401 tablosuna satır.
+- [ ] **Adım 2:** Ayarlar'da liste; hassas veri yok (içerik/ad yok, yalnızca
+  kimlik ve tür) — bunu testle sabitleyin.
+- [ ] **Adım 3: Mutasyon** — ucu okurken `kaydet` çağıran bir mutasyon ekle →
+  "denetim okumak log yazmaz" testi kırmızı.
+- [ ] **Adım 4: Commit**
+
+---
+
+### Görev 6'ya ek maddeler (denetim kaydı alt incelemesinden)
+
+- [ ] **6f — `saklama_suresi_dolanlar`'ın denetim satırı testsiz
+  (MUTASYONLA KANITLANDI).** `core/src/store/clients.rs:688`. İki mutasyon da
+  hayatta kaldı: (i) `HerCagri` → `OturumBasi`, (ii) `kaydet` çağrısını
+  tamamen silmek — her ikisinde de `cargo test -p psikolog-core` 524/524 ve
+  `cargo test -p psikolog-server` 179/179 yeşil. Bu, kod tabanındaki **tek
+  testsiz audit yazma yolu**. Emsal test: `clients.rs::danisan_dosyasina_
+  erisim_birlestirilmez`. Yazılacak test: satır yazıldığını VE aynı pencerede
+  iki çağrının **iki** satır ürettiğini (birleşmediğini) iddia etsin.
+- [ ] **6g — Yazılı değişmez koddan güçlü.** `audit.rs:64-66` ve
+  `notes.rs:36-38` "not başına, **düzenleme oturumu başına** bir satır" diyor;
+  mekanizma ise `OturumBasi(5 dk)`, yani 25 dakikalık bir yazım ~5 satır
+  üretir. Metni gerçeğe göre düzeltin ("5 dakikalık pencere başına bir satır")
+  — hacim yine kabul edilebilir, yanlış olan iddianın kendisi.
+- [ ] **6h — `clients::getir` `HerCagri` iken kart kendi kendini tazeliyor.**
+  `clients.rs:506-513` yazılı koşul: *"danışan dosyası ekranı kendi kendini
+  yenileyen bir yola dönüşürse bu karar yeniden verilmeli."* O koşul
+  gerçekleşti: `useDanisanDosyasi.ts:131` efektinin bağımlılığı `kartTazeleme`
+  ve sayaç üç yerde artıyor (`rizaKaydet`, `ekYukle`, `ekSil`) — her biri
+  kendi mutasyon satırının yanında ikinci bir `goruntuleme|client|<id>` satırı
+  düşürüyor (günde ~3-6). Ya bu üç yolu birleştirmeye alın, ya da kararı
+  yeniden verip yorumu gerçeğe göre güncelleyin. (`randevuYamala` bu yüzden
+  bilerek tazeleme yapmıyor — aynı muhakeme buraya da uygulanabilir.)

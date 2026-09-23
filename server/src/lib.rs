@@ -175,6 +175,11 @@ fn api_router() -> Router<AppState> {
             axum::routing::delete(routes::tags::kaldir),
         )
         .route("/etiketler/{id}/seanslar", get(routes::tags::seanslar))
+        // Denetim kaydini OKUMA ucu (Gorev 7 Plan 7, KVKK 2018/10): kapinin
+        // icinde, 38. veri handler'i, salt okur. Tarih araligi + varlik
+        // turu suzgeci ve sayfalama sorgu dizesinde -- gerekce icin bkz.
+        // `routes::audit` modul basligi.
+        .route("/denetim-kayitlari", get(routes::audit::liste))
         // --- Yedekleme ve geri yukleme (tasarim §7 ve §8) -----------------
         //
         // Yedek ALMA kapinin ICINDE (`routes::backup`, 27. veri handler'i):
@@ -194,6 +199,19 @@ fn api_router() -> Router<AppState> {
         .route("/yedek", post(routes::backup::al))
         .route("/yedekler", post(routes::restore::listele))
         .route("/geri-yukleme", post(routes::restore::uygula))
+        // `.onceki` kalintisini damgali bir ada TASIYAN bakim ucu -- geri
+        // yuklemenin KENDISIYLE ayni erisilebilirlikte (inceleme, ikinci
+        // tur). Kapinin icinde olsaydi bir CIKMAZ uretirdi: yarim kalmis
+        // bir geri almadan sonra canli cift eslesmez, oturum acilamaz ve
+        // `.onceki` durdugu icin geri yukleme de 409 alir -- kullanicinin
+        // tek cikisi Finder'da elle dosya tasimak olurdu; kapinin onlemek
+        // istedigi sey tam olarak budur.
+        //
+        // Guvenlik: uc hicbir veri OKUMAZ (yanit yalnizca bir SAYI) ve
+        // hicbir sey SILMEZ; yalnizca veri dizinindeki `.onceki` yan
+        // dosyalarini yeniden adlandirir. Gerekce `routes::restore`
+        // handler'inin uzerinde.
+        .route("/onceki-dosyalari-kaldir", post(routes::restore::onceki_dosyalari_kaldir))
         .fallback(api_bulunamadi)
 }
 

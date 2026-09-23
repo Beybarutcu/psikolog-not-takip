@@ -5,7 +5,7 @@ import { tarihBicimle } from '../danisan/bicim'
 import { zamanMetni } from '../tarih'
 
 /**
- * Hızlı arama (Ctrl+K / Cmd+K): danışan adı, **resmî** seans notu içeriği ve
+ * Hızlı arama (Cmd+K): danışan adı, **resmî** seans notu içeriği ve
  * etiket adı (Görev 7).
  *
  * # Üç sonuç türü, üç ayrı geçiş
@@ -125,7 +125,7 @@ export function HizliArama({ ara, onDanisanSec, onEtiketSec, gecikmeMs = GECIKME
   const panelRef = useRef<HTMLDivElement>(null)
   const acButonRef = useRef<HTMLButtonElement>(null)
   // Katman açılmadan HEMEN ÖNCE odakta olan öğe. Kapanışta odak buraya
-  // döner. Ctrl+K sayfanın herhangi bir yerinden basılabilir, dolayısıyla
+  // döner. Cmd+K sayfanın herhangi bir yerinden basılabilir, dolayısıyla
   // "tetikleyen öğe" her zaman açma düğmesi değildir.
   const tetikleyiciRef = useRef<HTMLElement | null>(null)
   // Portal kabı. Katman `document.body`ye taşınıyor çünkü "arkadaki her
@@ -141,7 +141,9 @@ export function HizliArama({ ara, onDanisanSec, onEtiketSec, gecikmeMs = GECIKME
   const ilkRenderRef = useRef(true)
 
   // Kapanış TEK yerde: sorgu ve yanıtlar birlikte silinir. İki ayrı çağrı
-  // yeri olsaydı biri sonuçları temizlemeyi unutabilirdi.
+  // yeri olsaydı biri sonuçları temizlemeyi unutabilirdi. (Not: aşağıdaki
+  // klavye dinleyicisi Cmd+K başka bir yerden basıldığında da çalışır; bkz.
+  // o dinleyicinin yorumu.)
   function kapat() {
     setAcik(false)
     setSorgu('')
@@ -157,10 +159,26 @@ export function HizliArama({ ara, onDanisanSec, onEtiketSec, gecikmeMs = GECIKME
     setAcik(true)
   }
 
+  // YALNIZCA `metaKey` (Cmd+K) — `ctrlKey` DEĞİL (inceleme bulgusu Görev 6a).
+  //
+  // Eskiden `ctrlKey || metaKey` kabul ediliyordu, gerekçe "tarayıcının
+  // adres çubuğu aramasını engelle" idi. Bu ürünün adres çubuğu YOK (Tauri,
+  // `WebviewUrl::External` — bkz. `server::routes::backup` modül başlığı),
+  // yani o gerekçe hiç geçerli olmamış. Hedef platform macOS ve orada
+  // Ctrl+K, metin alanlarında (textarea/input) sistemin kendi Emacs-stili
+  // kısayolu: "imleçten satır sonuna kadar sil". Koşulsuz dinleyici bunu
+  // odak `NotEditoru`'nun textarea'sındayken de yutuyordu — terapist seans
+  // notu yazarken satırını silmek isteyip yerine hızlı arama katmanının
+  // açıldığını görüyordu. Cmd+K'nin macOS'ta böyle bir varsayılan anlamı
+  // yok, dolayısıyla yalnızca onu kabul etmek çakışmayı olay hedefine
+  // bakmadan çözer.
+  //
+  // `event.code` kullanılıyor, `event.key` DEĞİL — aynı gerekçe
+  // `NotEditoru::kisayolTusu` ile birebir aynı: Türkçe Q klavyede fiziksel K
+  // tuşu her zaman `code === 'KeyK'` üretir, `key` düzene göre değişebilir.
   useEffect(() => {
     function tus(olay: KeyboardEvent) {
-      if ((olay.ctrlKey || olay.metaKey) && olay.key.toLowerCase() === 'k') {
-        // Tarayıcının kendi kısayolunu (adres çubuğu araması) engelle.
+      if (olay.metaKey && olay.code === 'KeyK') {
         olay.preventDefault()
         ac()
         return
@@ -307,7 +325,7 @@ export function HizliArama({ ara, onDanisanSec, onEtiketSec, gecikmeMs = GECIKME
       className="rounded border px-3 py-1 text-sm"
       onClick={ac}
     >
-      Hızlı arama (Ctrl+K)
+      Hızlı arama (⌘K)
     </button>
   )
 
@@ -466,7 +484,7 @@ export function HizliArama({ ara, onDanisanSec, onEtiketSec, gecikmeMs = GECIKME
   return (
     <>
       {/* Açma düğmesi katman AÇIKKEN de monte kalır: odağın geri döneceği
-          öğe budur (Ctrl+K başka bir yerden basıldıysa yedek hat).
+          öğe budur (Cmd+K başka bir yerden basıldıysa yedek hat).
           Kapanışta unmount edilmiş bir düğmeye `focus()` çağrılamazdı. */}
       {acmaDugmesi}
       {createPortal(katman, kapsayiciRef.current)}

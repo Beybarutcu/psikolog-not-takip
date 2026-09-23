@@ -363,6 +363,18 @@ export async function ekIndir(ek: { id: number; dosya_adi: string }): Promise<vo
   }
 }
 
+/**
+ * `takvimApi.randevuDurumu`'nun yanıtı (sunucudaki `SonTemasSonucu`,
+ * Görev 3). Üç alan BİRLİKTE gelir ya da hiç gelmez — `durum_guncelle`
+ * yalnızca "geldi" işaretlemesi danışanın son temasını GERÇEKTEN ileri
+ * taşıdıysa doldurur (bkz. çağırma yeri).
+ */
+export type DurumYaniti = {
+  client_id?: number
+  son_temas?: string
+  saklama_bitis?: string
+}
+
 export const takvimApi = {
   danisanlariGetir: () => istek<Danisan[]>('/api/danisanlar'),
   danisanEkle: (ad_soyad: string, telefon?: string) =>
@@ -400,8 +412,22 @@ export const takvimApi = {
       method: 'PUT',
       body: JSON.stringify(govde),
     }),
+  /**
+   * `PATCH /api/randevular/{id} {durum}`.
+   *
+   * # Yanıt: `DurumYaniti` (Görev 3 — "saklama süresi doldu" bayatlığı)
+   *
+   * "Geldi" işaretlemek sunucuda danışanın `son_temas`/`saklama_bitis`ini
+   * ileri taşıyabilir (`appointments::son_temasi_isaretle`) ve bu GERÇEKTEN
+   * değiştiyse yanıt artık `client_id`/`son_temas`/`saklama_bitis`i de
+   * taşıyor — üçü BİRLİKTE ya var ya yok (bkz. sunucudaki `SonTemasSonucu`).
+   * Diğer her durumda (`gelmedi`/`iptal`/`planlandi`, ya da geçmişe dönük bir
+   * "geldi") yanıt eskisi gibi `{}`. Çağıran (`AnaEkran.durumDegis`) bu
+   * alanları görünce kartı ve saklama listesini YEREL yamalar — ikisi de
+   * sunucuda `LogHacmi::HerCagri` olduğu için yeniden ÇEKİLMEZ.
+   */
   randevuDurumu: (id: number, durum: string) =>
-    istek<Record<string, never>>(`/api/randevular/${id}`, {
+    istek<DurumYaniti>(`/api/randevular/${id}`, {
       method: 'PATCH',
       body: JSON.stringify({ durum }),
     }),
@@ -971,6 +997,82 @@ export const yedekApi = {
       method: 'POST',
       body: JSON.stringify(girdi),
     }),
+  /**
+   * Veri klasöründe duran `.onceki` kalıntılarını damgalı bir ada **taşır**
+   * (`POST /api/onceki-dosyalari-kaldir`).
+   *
+   * **Hiçbir şey silmez.** Bu uç, geri yüklemenin `.onceki` kapısına
+   * takıldığı durumdan çıkış yoludur (sunucudaki `OncekiDosyaDuruyor`
+   * mesajı bu eylemi adıyla söyler): kalıntı başarısız bir geri almadan da
+   * kalabilir, BAŞARILI bir geri yüklemenin temizlik adımı başarısız
+   * olduğunda da. İkinci durumda kullanıcının tek alternatifi macOS'ta
+   * gizli olan `~/Library` altında elle dosya taşımak olurdu.
+   *
+   * `damga` istemcinin yerel saatidir (`yerelDamga`) — duvar saati
+   * sözleşmesi: kullanıcı bu adı dosya listesinde okuyacak.
+   */
+  oncekiDosyalariKaldir: (damga: string) =>
+    istek<{ tasinan: number; damga: string }>('/api/onceki-dosyalari-kaldir', {
+      method: 'POST',
+      body: JSON.stringify({ damga }),
+    }),
+}
+
+/**
+ * Tek bir denetim kaydı satırı (`GET /api/denetim-kayitlari` yanıtı,
+ * sunucudaki `AuditKaydi`, Görev 7 Plan 7).
+ *
+ * Yalnızca kimlik ve tür taşır -- not içeriği, dosya adı, arama terimi,
+ * etiket adı **hiçbir zaman** buraya girmez: `store::audit::Ayrinti` kapalı
+ * bir enumdur ve doğrulanmamış serbest metin taşıyan bir varyantı yoktur
+ * (bkz. sunucudaki `store::audit` modül başlığı). `varlik_id` ham bir
+ * kimliktir (ör. bir danışan kimliği) -- bu ekran onu bir isme ÇEVİRMEZ,
+ * çevirmek hem hassas veri (danışan adı) eklerdi hem de her satır için
+ * yeni bir `HerCagri` `goruntuleme` satırı üretirdi (bkz.
+ * `useDenetimKayitlari` modül başlığı).
+ */
+export type DenetimKaydi = {
+  olay_zamani: string
+  eylem: string
+  varlik: string
+  varlik_id: string
+  cihaz: string
+  ayrinti: string | null
+}
+
+/** `GET /api/denetim-kayitlari` yanıtı. */
+export type DenetimSayfasi = {
+  kayitlar: DenetimKaydi[]
+  sayfa: number
+  /** `true` ise `sayfa + 1` ile bir sonraki sayfa çekilebilir. */
+  sonraki_sayfa_var: boolean
+}
+
+/**
+ * Denetim kaydı (audit log) OKUMA istemcisi (Görev 7 Plan 7, KVKK 2018/10).
+ *
+ * # Bu ucu çağırmak yeni bir denetim satırı YAZMAZ
+ *
+ * Sunucudaki `routes::audit::liste` salt okur, `audit::kaydet`i hiç
+ * çağırmaz (bkz. o modülün başlığı) -- yani bu fonksiyonu çağırmak "bir
+ * denetim satırı daha yazılsın" riski TAŞIMIYOR. Yine de gereksiz çağrı
+ * boşuna sunucu/DB yüküdür; çağıran taraf (`useDenetimKayitlari`) yine de
+ * yalnızca Ayarlar sekmesi görünürken ve kullanıcı açıkça istediğinde çağırır.
+ */
+export const denetimApi = {
+  kayitlar: (suzgec: {
+    sayfa?: number
+    baslangic?: string
+    bitis?: string
+    varlik?: string
+  }): Promise<DenetimSayfasi> => {
+    const p = new URLSearchParams()
+    if (suzgec.sayfa !== undefined) p.set('sayfa', String(suzgec.sayfa))
+    if (suzgec.baslangic) p.set('baslangic', suzgec.baslangic)
+    if (suzgec.bitis) p.set('bitis', suzgec.bitis)
+    if (suzgec.varlik) p.set('varlik', suzgec.varlik)
+    return istek<DenetimSayfasi>(`/api/denetim-kayitlari?${p}`)
+  },
 }
 
 export const api = {

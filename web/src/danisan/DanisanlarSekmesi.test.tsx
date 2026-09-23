@@ -80,6 +80,7 @@ function sahteKart(seciliDanisanId: number | null): KartVerisi {
     ekler: [],
     randevular: [],
     hata: null,
+    randevularDamgasi: 0,
   }
 }
 
@@ -95,6 +96,8 @@ function sahteDosya(seciliDanisanId: number | null): ReturnType<typeof useDanisa
     ekYukle: async () => {},
     ekSil: async () => {},
     randevuYamala: () => {},
+    randevularTazele: () => {},
+    dosyaAlanlariniYama: () => {},
   }
 }
 
@@ -114,6 +117,7 @@ function sahteListe(danisanlar: Danisan[] = []): ReturnType<typeof useDanisanLis
     setArsivBilgisi: () => {},
     arsivSuruyor: false,
     saklamaDolanlar: [],
+    saklamaDolandanDus: () => {},
     ekle: async () => {},
     arsivle: async () => {},
   }

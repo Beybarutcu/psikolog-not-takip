@@ -151,6 +151,47 @@ impl std::fmt::Debug for Randevu {
     }
 }
 
+/// `durum_guncelle` çağrısının "geldi" işaretlemesi danışanın `son_temas`/
+/// `saklama_bitis` alanlarını GERÇEKTEN ileri taşıdığında döndürdüğü sonuç
+/// (bkz. `son_temasi_isaretle`).
+///
+/// # Neden var (Plan 7 Görev 3)
+/// Sunucu bu iki alanı tazeliyordu ama istemciye hiç yayılmıyordu: Bilgiler
+/// sekmesindeki saklama kutusu ve Ayarlar'daki "saklama süresi dolan
+/// dosyalar" listesi bayat kalıyordu (bkz. `server::routes::appointments::
+/// durum` ve `web/src/screens/anaEkranKancalari/useDanisanDosyasi.ts`/
+/// `useDanisanListesi.ts`). Yeniden çekmek ikisi de `LogHacmi::HerCagri`
+/// olduğu için (silinemez satır) yasak; çözüm durum yazmasının yanıtına bu
+/// iki alanı eklemek -- transaction zaten hesaplıyor, ek sorgu yok.
+///
+/// # Neden `Option` değil `durum_guncelle`nin dönüş tipinde
+/// `son_temasi_isaretle` yalnızca GERÇEKTEN ileri taşındığında (`ileri_mi`)
+/// bir değer üretir -- "gelmedi"/"iptal" işaretlemesi ya da geriye dönük bir
+/// "geldi" (son temas zaten daha ileriyse) hiçbir şeyi değiştirmez, o zaman
+/// `None`. İstemci yalnızca GERÇEKTEN değişen alanları alır (brief kısıtı).
+///
+/// `Debug` elle yazılır (`derive` YOK): `client_id`/`son_temas`/
+/// `saklama_bitis` `clients::Danisan` ile aynı sınıftan KVKK verisidir (bkz.
+/// o tipin elle yazılmış `Debug`'ı) -- `Result::unwrap_err` gibi standart
+/// kütüphane çağrıları `Debug` istediği için (bkz. bu modüldeki
+/// `..._unwrap_err()` testleri) türetmemek seçenek değil, üçü de gizlenir.
+#[derive(Clone, Serialize)]
+pub struct SonTemasSonucu {
+    pub client_id: i64,
+    pub son_temas: String,
+    pub saklama_bitis: String,
+}
+
+impl std::fmt::Debug for SonTemasSonucu {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SonTemasSonucu")
+            .field("client_id", &"<gizli>")
+            .field("son_temas", &"<gizli>")
+            .field("saklama_bitis", &"<gizli>")
+            .finish()
+    }
+}
+
 #[derive(Clone, Deserialize)]
 pub struct YeniRandevu {
     pub client_id: i64,
@@ -304,6 +345,15 @@ pub fn aralik_getir(
 /// Bir randevunun durumunu günceller. Güncelleme ve erişim logu tek
 /// transaction'da yazılır.
 ///
+/// # Dönüş değeri: `Some` yalnızca son temas GERÇEKTEN ileri taşındıysa
+/// Plan 7 Görev 3: "geldi" işaretlemesi danışanın `son_temas`/
+/// `saklama_bitis`ini ileri taşıdıysa (`son_temasi_isaretle`) bu iki alan
+/// burada döner -- çağıran (rota katmanı) onu yanıta ekler, istemci de
+/// kartı ve saklama listesini YENİDEN ÇEKMEDEN yerelde yamar (bkz.
+/// `SonTemasSonucu`). Diğer tüm durumlarda (`gelmedi`/`iptal`/`planlandi`,
+/// ya da geriye dönük bir "geldi") `None` -- test:
+/// `gelmedi_iptal_son_temasi_degistirmez`.
+///
 /// UYARI: Kendi `unchecked_transaction()`'ını içeride açar -- bunu zaten
 /// açık bir transaction'ın içinden çağırmayın (SQLite iç içe transaction
 /// desteklemez, bkz. modül başlığındaki uyarı).
@@ -312,7 +362,7 @@ pub fn durum_guncelle(
     id: i64,
     durum: &str,
     cihaz: Cihaz,
-) -> Result<(), DepoHatasi> {
+) -> Result<Option<SonTemasSonucu>, DepoHatasi> {
     // GECERLI_DURUMLAR icindeki eslesen &'static str referansi kullanilir
     // (cagirandan gelen `durum: &str` degil): boylece `Ayrinti::Durum`'a
     // yalnizca sabit, bilinen degerler gecer, kullanicidan gelen rastgele
@@ -342,12 +392,10 @@ pub fn durum_guncelle(
         LogHacmi::HerCagri,
     )?;
 
-    if sabit_durum == "geldi" {
-        son_temasi_isaretle(&tx, id)?;
-    }
+    let sonuc = if sabit_durum == "geldi" { son_temasi_isaretle(&tx, id)? } else { None };
 
     tx.commit()?;
-    Ok(())
+    Ok(sonuc)
 }
 
 /// Bir randevunun "ödendi" işaretini koyar (`true`) ya da geri alır
@@ -425,7 +473,17 @@ pub fn odeme_guncelle(
 /// Ayrı bir log satırı YAZMAZ: bunu tetikleyen kullanıcı eylemi (durum
 /// değişikliği) hemen yukarıda zaten loglandı; ikinci satır aynı tek eylem
 /// için ikinci bir silinemez kayıt olurdu (bkz. hacim politikası).
-fn son_temasi_isaretle(tx: &Connection, randevu_id: i64) -> Result<(), DepoHatasi> {
+///
+/// # Dönüş değeri (Plan 7 Görev 3)
+/// Yalnızca `ileri_mi` doğruysa (yani `son_temas`/`saklama_bitis` GERÇEKTEN
+/// değiştiyse) `Some(SonTemasSonucu)` döner -- `son_temasi_tazele` zaten
+/// `saklama_bitis`i hesaplayıp döndürüyor, burada ikinci bir sorguya gerek
+/// yok. Geriye gitmeyen (`ileri_mi == false`) ya da hiç temas kaydı
+/// olmayacak bir çağrı olamaz -- ama "değişmedi" hâli her ihtimalde `None`.
+fn son_temasi_isaretle(
+    tx: &Connection,
+    randevu_id: i64,
+) -> Result<Option<SonTemasSonucu>, DepoHatasi> {
     let (client_id, baslangic) = tx.query_row(
         "SELECT client_id, baslangic FROM appointments WHERE id = ?1",
         [randevu_id],
@@ -445,10 +503,11 @@ fn son_temasi_isaretle(tx: &Connection, randevu_id: i64) -> Result<(), DepoHatas
         None => true,
         Some(m) => m.as_str() < gun,
     };
-    if ileri_mi {
-        son_temasi_tazele(tx, client_id, gun, VARSAYILAN_SAKLAMA_YILI)?;
+    if !ileri_mi {
+        return Ok(None);
     }
-    Ok(())
+    let saklama_bitis = son_temasi_tazele(tx, client_id, gun, VARSAYILAN_SAKLAMA_YILI)?;
+    Ok(Some(SonTemasSonucu { client_id, son_temas: gun.to_string(), saklama_bitis }))
 }
 
 /// Mevcut bir randevunun alanlarını (danışan, başlangıç, bitiş, ücret)
@@ -2120,6 +2179,28 @@ mod tests {
         );
     }
 
+    /// Plan 7 Gorev 3: `durum_guncelle`nin DONUS DEGERI de guncellenmis
+    /// alanlari tasimali -- istemci kartla saklama listesini bu yaniti
+    /// kullanarak YEREL yamalar (yeniden cekmez, ikisi de `HerCagri`).
+    /// Ustteki test yalnizca VERITABANINI dogruluyordu; bu test onu SUNUCUNUN
+    /// CAGIRANA verdigi degerle dogrular -- ikisi ayri sey: donus degeri
+    /// yanlis olsa da veritabani dogru olabilirdi (rota o zaman `{}` donerdi
+    /// ve istemci hicbir zaman ogrenmezdi).
+    #[test]
+    fn durum_guncelle_gelince_sonuc_degisen_alanlari_tasir() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu)
+            .unwrap();
+
+        let sonuc = durum_guncelle(&c, r.id, "geldi", Cihaz::Masaustu).unwrap();
+
+        let SonTemasSonucu { client_id, son_temas, saklama_bitis } =
+            sonuc.expect("geldi isaretlemesi ilk temasta HER ZAMAN ileri tasir");
+        assert_eq!(client_id, cid);
+        assert_eq!(son_temas, "2026-09-07");
+        assert_eq!(saklama_bitis, "2033-09-07");
+    }
+
     #[test]
     fn gelmedi_ve_iptal_son_temasi_degistirmez() {
         // Ters yon: her durum degisikligi temas SAYILMAMALI. Bu test
@@ -2134,7 +2215,8 @@ mod tests {
                 Cihaz::Masaustu,
             )
             .unwrap();
-            durum_guncelle(&c, r.id, durum, Cihaz::Masaustu).unwrap();
+            let sonuc = durum_guncelle(&c, r.id, durum, Cihaz::Masaustu).unwrap();
+            assert!(sonuc.is_none(), "{durum} donus degerinde de son temas tasimamali");
             assert_eq!(
                 danisanin_son_temasi(&c, cid),
                 (None, None),
@@ -2153,8 +2235,13 @@ mod tests {
 
         durum_guncelle(&c, yeni_r.id, "geldi", Cihaz::Masaustu).unwrap();
         // Kullanici gecmis bir randevuyu SONRADAN "geldi" isaretliyor.
-        durum_guncelle(&c, eski_r.id, "geldi", Cihaz::Masaustu).unwrap();
+        let geriye_donuk = durum_guncelle(&c, eski_r.id, "geldi", Cihaz::Masaustu).unwrap();
 
+        assert!(
+            geriye_donuk.is_none(),
+            "geriye giden bir isaretleme donus degerinde de None olmali -- \
+             istemci degismeyen bir alani yamayacak yanlis sinyali almamali"
+        );
         assert_eq!(
             danisanin_son_temasi(&c, cid).0.as_deref(),
             Some("2026-09-14"),

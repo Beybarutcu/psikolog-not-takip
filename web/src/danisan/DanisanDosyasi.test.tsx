@@ -35,7 +35,14 @@ const danisanFixture: DanisanKaydi = {
 }
 
 function sahteKart(dosya: DanisanKaydi | null = danisanFixture): KartVerisi {
-  return { id: dosya?.id ?? null, dosya, ekler: [], randevular: [], hata: null }
+  return {
+    id: dosya?.id ?? null,
+    dosya,
+    ekler: [],
+    randevular: [],
+    hata: null,
+    randevularDamgasi: 0,
+  }
 }
 
 function seans(oz: Partial<DanisanSeansi> = {}): DanisanSeansi {
@@ -256,6 +263,67 @@ describe('DanisanDosyasi', () => {
     expect(screen.queryByLabelText('Seans notu')).toBeNull()
     await userEvent.click(within(alarm).getByRole('button', { name: 'Yeniden dene' }))
     expect(onNotYenidenDene).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('DanisanDosyasi — bos not, takvimdeki SeansPaneli ile AYNI acilir (Gorev 6e)', () => {
+  // Eskiden bu ekran bos icerigi HAM ('') aciyordu; SeansPaneli.tsx (takvim)
+  // aynı seansı şablon başlıklarıyla açıyordu. Aynı seans, hangi ekrandan
+  // bakıldığına göre farklı görünüyordu -- "iki ekran aynı seansı aynı
+  // gösterir" kuralının dışındaydı. Karar: dosya ekranı da SeansPaneli'nin
+  // davranışını benimser (bkz. `DanisanDosyasi.tsx`'teki NotEditoru yorumu).
+  it('sunucudaki not BOSSA sablon basliklari acilista gorunur', () => {
+    render(
+      <DanisanDosyasi
+        {...proplar({
+          seanslar: [seans({ appointment_id: 7 })],
+          seciliSeansId: 7,
+          not: not({ appointment_id: 7, sablon: 'dap', icerik: '' }),
+        })}
+      />,
+    )
+    const alan = screen.getByLabelText('Seans notu') as HTMLTextAreaElement
+    expect(alan.value).toContain('## Veri')
+    expect(alan.value).toContain('## Değerlendirme')
+    expect(alan.value).toContain('## Plan')
+  })
+
+  it('basliklar acilista HICBIR kayit uretmez', async () => {
+    vi.useFakeTimers()
+    try {
+      const onNotKaydet = vi.fn(async () => {})
+      const { unmount } = render(
+        <DanisanDosyasi
+          {...proplar({
+            seanslar: [seans({ appointment_id: 7 })],
+            seciliSeansId: 7,
+            not: not({ appointment_id: 7, sablon: 'dap', icerik: '' }),
+            onNotKaydet,
+          })}
+        />,
+      )
+      await act(() => vi.advanceTimersByTimeAsync(10_000))
+      expect(onNotKaydet).not.toHaveBeenCalled()
+      unmount()
+      expect(onNotKaydet).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('DOLU notun basina baslik EKLENMEZ', () => {
+    render(
+      <DanisanDosyasi
+        {...proplar({
+          seanslar: [seans({ appointment_id: 7 })],
+          seciliSeansId: 7,
+          not: not({ appointment_id: 7, sablon: 'dap', icerik: 'zaten yazilmis metin' }),
+        })}
+      />,
+    )
+    expect((screen.getByLabelText('Seans notu') as HTMLTextAreaElement).value).toBe(
+      'zaten yazilmis metin',
+    )
   })
 })
 

@@ -56,14 +56,15 @@ use crate::routes::backup::yedek_hatasi;
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, Json};
 use psikolog_core::backup::{
-    ayarlari_oku, geri_yukle, keystore_yedek_yolu, yedekleri_listele, YedekHatasi, VARLIK,
+    ayarlari_oku, geri_yukle, keystore_yedek_yolu, onceki_dosyalari_kenara_kaldir,
+    yedekleri_listele, YedekHatasi, VARLIK,
 };
 use psikolog_core::crypto::keyring::CryptoError;
 use psikolog_core::store::{
     audit::{kaydet, Cihaz, Eylem, LogHacmi},
     db::open_existing,
     keystore,
-    schema::migrate,
+    schema::MigrateHatasi,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -108,6 +109,57 @@ pub struct GeriYuklemeIstegi {
 
 fn istek_hatasi(kod: StatusCode, mesaj: &str) -> ApiHata {
     (kod, Json(json!({ "hata": mesaj })))
+}
+
+/// Bir `YedekHatasi`'nin içindeki göç hatasını çıkarır (varsa).
+///
+/// Göç hatası `GeriAlmaYarimKaldi` tarafından sarılmış olabilir; log,
+/// sarmalama yüzünden kaybolmamalı.
+fn goc_hatasi(e: &YedekHatasi) -> Option<&MigrateHatasi> {
+    match e {
+        YedekHatasi::YedekHazirlanamadi(goc) => Some(goc),
+        YedekHatasi::GeriAlmaYarimKaldi(ic) => goc_hatasi(ic),
+        _ => None,
+    }
+}
+
+/// `YedekHatasi::YedekHazirlanamadi`'yi HTTP yanıtına çevirir (Görev 6c).
+///
+/// # Neden `SurumDusuk` burada AYRI
+///
+/// `yedek_hatasi` (bkz. `routes::backup`) `YedekHazirlanamadi`'nin TÜM
+/// `MigrateHatasi` varyantlarını tek bir "veritabanı bu uygulama
+/// sürümüyle hazırlanamadı" metnine düzleştirir -- bilerek: göç hatasının
+/// DETAYI (SQLite dizgileri, `app_meta` içeriği) hassas bir kaynaktan
+/// gelebilir ve gövdeye giremez (bkz. `backup::YedekHatasi::
+/// YedekHazirlanamadi` dokümantasyonu).
+///
+/// Ama bu modülün kendi ilkesi "eksik ≠ bozuk ≠ yanlış anahtar" ve
+/// `SurumDusuk`'un mesajı HİÇBİR hassas veri taşımaz -- yalnızca iki tam
+/// sayı (şema sürümü). `SurumDusuk` ayrıca `YedekIleriSurumlu`'yla AYNI
+/// sınıf bir durumdur ("yedeğinizde sorun yok, uygulamayı güncelleyin")
+/// ve o varyant zaten kendi yol gösteren mesajını alıyor (bkz.
+/// `backup::yerlestir` 3b) -- `SurumDusuk`'u genel "hazırlanamadı"
+/// metnine gömmek aynı durumu iki farklı, tutarsız cümleyle anlatırdı.
+///
+/// Bu, ikinci bir savunma hattı: `backup::yerlestir`'deki `SurumDusuk`
+/// kontrolü (Görev 1) normal akışta yedeği yerleştirmeden ÖNCE zaten
+/// yakalar. Burası yalnızca o kontrolün atlandığı bir kenar durum için.
+fn migrate_hatasina_gore_yanit(e: YedekHatasi) -> ApiHata {
+    if let YedekHatasi::YedekHazirlanamadi(MigrateHatasi::SurumDusuk { veritabani, uygulama }) = &e
+    {
+        return istek_hatasi(
+            StatusCode::CONFLICT,
+            &format!(
+                "Bu yedek geri yüklenemedi: veritabanı, uygulamanın desteklediğinden daha \
+                 yeni bir şema sürümüyle hazırlanmış (veritabanı: sürüm {veritabani}, \
+                 uygulama: sürüm {uygulama}). Yedeğinizde bir sorun YOK; onu geri \
+                 yükleyebilmek için uygulamayı güncelleyin. Mevcut veritabanınız ve anahtar \
+                 dosyanız yerine geri kondu; hiçbir veriniz kaybolmadı."
+            ),
+        );
+    }
+    yedek_hatasi(e)
 }
 
 /// İsteğin klasörünü çözer: verilen yol ya da kayıtlı ayar.
@@ -259,15 +311,39 @@ pub async fn uygula(
         }
     };
 
-    // 3) Asıl geri yükleme. Doğrulama bitene kadar mevcut `veri.db` ve
-    //    `keystore.json` dosyalarına dokunulmaz; yerleştirme yarıda
-    //    kalırsa geri alınır ve `veri.db-wal`/`-shm` silinir.
-    geri_yukle(&yedek_yolu, &s.db_yolu(), &s.keystore_yolu(), &anahtar)
-        .map_err(yedek_hatasi)?;
+    // 3) Asıl geri yükleme -- **şema göçü dâhil**. Doğrulama bitene kadar
+    //    mevcut `veri.db` ve `keystore.json` dosyalarına dokunulmaz;
+    //    yerleştirmenin herhangi bir adımı (göç de bir adım) yarıda kalırsa
+    //    hepsi geri alınır.
+    //
+    //    # Göç neden ARTIK burada çağrılmıyor
+    //    Eskiden bu satırdan sonra ayrıca `migrate` çağrılıyordu ve tam da
+    //    o sıra veri kaybının sebebiydi: `geri_yukle` dönmüş, yani
+    //    `veri.db.onceki` silinmiş oluyordu; göç orada patlayınca (ileri
+    //    sürümlü yedek, eksi ücretli randevu taşıyan eski yedek, ...)
+    //    kullanıcının o gün girdiği, henüz yedeklenmemiş notları kalıcı
+    //    olarak yok oluyordu. Göç, geri alma mekanizmasıyla aynı yerde --
+    //    `core::backup::yerlestir`'de -- yaşamak zorunda; buradan ikinci
+    //    kez çağırmak o garantiyi VERMEZ, yalnızca tekrar eder.
+    geri_yukle(&yedek_yolu, &s.db_yolu(), &s.keystore_yolu(), &anahtar).map_err(|e| {
+        // Göç hatasının DETAYI yanıt gövdesine girmiyor (gerekçe:
+        // `YedekHatasi::YedekHazirlanamadi`), ama sunucu loguna düşmeli.
+        // Kardeş çağrı yerleri -- `session::kilit_ac` ve `setup::kurulum` --
+        // aynı `MigrateHatasi`'yi logluyor; geri yükleme, göçün log
+        // bırakmayan tek çağrı yeri olmamalı. Aksi hâlde `UcretKisitiIhlali`
+        // gibi tam olarak ne yapılacağını söyleyen bir varyant hiçbir yerde
+        // görünmezdi.
+        if let Some(goc) = goc_hatasi(&e) {
+            eprintln!("geri-yukleme: göç başarısız: {goc}");
+        }
+        // `SurumDusuk` genel metne düzleştirilmez, yol gösteren kendi
+        // mesajını alır (Görev 6c, bkz. `migrate_hatasina_gore_yanit`).
+        migrate_hatasina_gore_yanit(e)
+    })?;
 
     // 4) Denetim kaydı geri yüklenen veritabanına yazılır -- başka bir yere
-    //    yazılamaz da: eski veritabanı artık yerinde değil. `migrate` önce
-    //    çalışır çünkü eski bir yedek eski bir şemayla gelmiş olabilir.
+    //    yazılamaz da: eski veritabanı artık yerinde değil. Şema `geri_yukle`
+    //    içinde güncellendiği için bağlantı doğrudan kullanılabilir.
     //
     //    Bu satırı çekirdek DEĞİL, rota yazıyor. `routes::backup`'ta tersi
     //    yapıldı (`yedek_al_ve_kaydet`) ve fark gerçek: yedek alırken elde
@@ -276,13 +352,6 @@ pub async fn uygula(
     //    `giris`/`kurulum` satırlarını kendilerinin yazmasıyla aynı sınıf:
     //    satırın kaynağı burasıdır.
     let conn = open_existing(&s.db_yolu(), &anahtar).map_err(crate::guard::veritabani_hatasi)?;
-    if let Err(e) = migrate(&conn) {
-        eprintln!("geri-yukleme: göç başarısız: {e}");
-        return Err(istek_hatasi(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Geri yükleme tamamlandı ama veritabanı hazırlanamadı.",
-        ));
-    }
     kaydet(&conn, Eylem::GeriYukleme, VARLIK, &tarih, Cihaz::Masaustu, None, LogHacmi::HerCagri)
         .map_err(|_| {
             yedek_hatasi(YedekHatasi::KayitYazilamadi(
@@ -296,4 +365,134 @@ pub async fn uygula(
     s.oturum.lock().unwrap_or_else(|e| e.into_inner()).kilitle();
 
     Ok(Json(json!({ "tarih": tarih })))
+}
+
+#[derive(Deserialize)]
+pub struct OncekiIstegi {
+    /// Taşınan dosyaların adına eklenecek zaman damgası — **istemcinin
+    /// yerel saati** (`YYYYAAGG-SSDD`).
+    ///
+    /// Sunucu kendi saatinden türetmiyor: duvar saati sözleşmesi
+    /// (`backup::YedekIstegi::damga` ile aynı gerekçe). Kullanıcı bu adı
+    /// dosya listesinde okuyacak.
+    ///
+    /// Biçim doğrulaması çekirdekte (`GecersizDamga`) ve bir **güvenlik**
+    /// kapısıdır: damga doğrudan bir dosya adına giriyor.
+    pub damga: String,
+}
+
+/// Veri klasöründe duran `.onceki` kalıntılarını damgalı bir ada taşır
+/// (`POST /api/onceki-dosyalari-kaldir`) — **bilerek kilit kapısının
+/// dışında**, tıpkı geri yüklemenin kendisi gibi.
+///
+/// # Neden kapısız (inceleme, ikinci tur)
+///
+/// Bu uç önce `routes::backup`'ta, kapının **içinde** duruyordu ve tam da
+/// korumanın gerektiği anda bir ÇIKMAZ üretiyordu:
+///
+/// 1. Geri yükleme denenir, göç patlar, geri alma yarım kalır -> canlı
+///    çift eşleşmez ve oturum **hiç açılamaz**.
+/// 2. Kullanıcı yeniden geri yüklemeyi dener -> `.onceki` durduğu için
+///    `kenara_al`'ın kapısı `409` ile reddeder.
+/// 3. Kilidi açamadığı için temizleme eylemine de ulaşamaz.
+///
+/// Sonuç: Finder'a elle inmeden hiçbir çıkış yok -- kapının önlemek
+/// istediği şeyin ta kendisi (`.onceki` dosyalarını silmek). Kurtarma yolu
+/// tutarlı olmak zorunda: temizleme, geri yüklemenin **kendisiyle aynı
+/// erişilebilirlikte**.
+///
+/// # Güvenlik gerekçesi
+///
+/// Bu, kapıyı gevşetmek değil. Uç:
+/// - hiçbir veri **okumaz**: yanıt yalnızca kaç dosyanın taşındığını söyler
+///   (`{"tasinan": N}`) -- dosya adı, yol, danışan verisi yok;
+/// - hiçbir şey **silmez**: `core::backup::onceki_dosyalari_kenara_kaldir`
+///   yalnızca yeniden adlandırır ve hiçbir hedefin üzerine yazmaz;
+/// - yalnızca veri dizinindeki `.onceki` **yan dosyalarına** dokunur, canlı
+///   çifte değil;
+/// - sunucu yalnızca `127.0.0.1` dinliyor ve geri yükleme ucu zaten kilit
+///   açılmadan çalışıyor -- aynı sınıf.
+///
+/// # Denetim kaydı ve `.ok()`'in DÜRÜST tarifi (inceleme M-3)
+///
+/// Bağlantı koşullu açılıyor ve `.ok()` **iki farklı durumu tek kefeye**
+/// koyuyor: (a) oturum kilitli -- anahtar yok, (b) oturum açık ama
+/// `open_existing` başarısız. İkisinde de satır yazılmaz ve işlem yapılır.
+///
+/// Bu **bilinçli**, ama doküman önce fail-loud ima ediyordu; değil. (b)'yi
+/// ayırıp hata döndürmek, tam da bu ucun var olma sebebi olan durumda
+/// (veritabanı açılamıyor) kurtarma yolunu kapatırdı -- yani düzeltilen
+/// çıkmazı geri getirirdi. Çekirdek tarafında ise ayrım korunuyor:
+/// `Some(conn)` verilip yazma **başarısız olursa** `KayitYazilamadi`
+/// döner (fail-loud). Sessiz olan yalnızca "yazılacak bir veritabanı yok"
+/// hâlidir.
+///
+/// Bkz. çekirdek fonksiyonun `conn: Option<&Connection>` belgesi ve
+/// `routes::session::kilitle`'nin aynı sınıf kararı.
+pub async fn onceki_dosyalari_kaldir(
+    State(s): State<AppState>,
+    Json(istek): Json<OncekiIstegi>,
+) -> Result<Json<Value>, ApiHata> {
+    // `guard::acik_baglanti` BILEREK kullanilmiyor (bkz. modul basligi ve
+    // `notlar_api.rs::VERI_DISI_ROTALAR`): bu ucun calismasi gereken durum
+    // tam da oturumun acilamadigi durumdur. Bunun yerine acik bir oturum
+    // VARSA denetim satirini yazabilmek icin baglanti KOSULLU aciliyor.
+    let kayit_baglantisi =
+        s.acik_anahtar().and_then(|anahtar| open_existing(&s.db_yolu(), &anahtar).ok());
+    let tasinan = onceki_dosyalari_kenara_kaldir(
+        kayit_baglantisi.as_ref(),
+        &s.db_yolu(),
+        &s.keystore_yolu(),
+        &istek.damga,
+        Cihaz::Masaustu,
+    )
+    .map_err(yedek_hatasi)?;
+    // Yanit sayi + ISTEMCININ KENDI gonderdigi damga tasir; dosya adi ya da
+    // YOL donmez (kapisiz bir uctan kullanicinin ev dizinini sizdirmak
+    // olurdu -- `YedekBilgisi`nin `Serialize` turetmeme karariyla ayni
+    // sinif). Damga geri veriliyor cunku kullanici bu dosyalari sonradan
+    // kendisi bulmak zorunda: onlari baska HICBIR SEY temizlemiyor ve
+    // arayuz "...-<damga> ile biten adlara tasindi" diyebilmeli
+    // (inceleme M-2).
+    Ok(Json(json!({ "tasinan": tasinan, "damga": istek.damga })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `SurumDusuk` genel "hazırlanamadı" metnine düzleşmemeli: kendi yol
+    /// gösteren cümlesini almalı (Görev 6c). Mutasyon: bu özel durumu
+    /// silip doğrudan `yedek_hatasi(e)` çağırmak -- test 409 yerine 500,
+    /// "güncelleyin" yerine genel "hazırlanamadı" metniyle kırmızıya döner.
+    #[test]
+    fn surum_dusuk_yol_gosteren_kendi_mesajini_alir() {
+        let e = YedekHatasi::YedekHazirlanamadi(MigrateHatasi::SurumDusuk {
+            veritabani: 9,
+            uygulama: 5,
+        });
+        let (kod, govde) = migrate_hatasina_gore_yanit(e);
+        assert_eq!(kod, StatusCode::CONFLICT);
+        let mesaj = govde.0["hata"].as_str().unwrap().to_string();
+        assert!(mesaj.contains("güncelleyin"), "mesaj: {mesaj}");
+        assert!(mesaj.contains("sürüm 9"), "mesaj: {mesaj}");
+        assert!(mesaj.contains("sürüm 5"), "mesaj: {mesaj}");
+        // Genel "hazırlanamadı" düzleştirme metniyle KARIŞMAMALI -- bu ikisi
+        // farklı, birbirine karıştırılmaması gereken durumlardır.
+        assert!(!mesaj.contains("hazırlanamadı"), "mesaj: {mesaj}");
+    }
+
+    /// `SurumDusuk` DIŞINDAKİ varyantlar hâlâ genel `yedek_hatasi`
+    /// düzleştirmesinden geçer -- bu modülün "hata gövdesi hassas veri
+    /// taşımaz" kuralı yalnızca `SurumDusuk` için gevşetildi, diğerleri
+    /// için değil.
+    #[test]
+    fn ucret_kisiti_ihlali_genel_metne_duzlesir() {
+        let e = YedekHatasi::YedekHazirlanamadi(MigrateHatasi::UcretKisitiIhlali { adet: 3 });
+        let (kod, govde) = migrate_hatasina_gore_yanit(e);
+        assert_eq!(kod, StatusCode::CONFLICT);
+        let mesaj = govde.0["hata"].as_str().unwrap().to_string();
+        assert!(mesaj.contains("hazırlanamadı"), "mesaj: {mesaj}");
+        assert!(!mesaj.contains("güncelleyin"), "mesaj: {mesaj}");
+    }
 }

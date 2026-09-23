@@ -348,6 +348,233 @@ async fn kilitliyken_yedek_alinamaz_ve_dosya_olusmaz() {
     );
 }
 
+/// (a) + (b): `.onceki` kenara kaldırma ucu **kilit açılmadan** çalışır ve
+/// yanıtı hiçbir danışan verisi taşımaz (inceleme, ikinci tur).
+///
+/// Kapının içinde olsaydı bir çıkmaz üretirdi: yarım kalmış bir geri
+/// almadan sonra canlı çift eşleşmez, oturum açılamaz ve `.onceki` durduğu
+/// için geri yükleme de `409` alır -- kullanıcının tek çıkışı Finder'da
+/// elle dosya taşımak olurdu; kapının önlemek istediği şey tam olarak budur.
+#[tokio::test]
+async fn kilitliyken_onceki_dosyalar_kaldirilabilir_ve_yanit_veri_tasimaz() {
+    const TEK_KOPYA: &[u8] = b"KULLANICININ-TEK-KOPYASI";
+    let o = ortam();
+    kur(&o).await;
+    danisan_ekle(&o, "Ayse Yilmaz").await;
+    let onceki = o.s.db_yolu().with_extension("db.onceki");
+    let ks_onceki = o.s.keystore_yolu().with_extension("json.onceki");
+    std::fs::write(&onceki, TEK_KOPYA).unwrap();
+    std::fs::write(&ks_onceki, b"ANAHTAR-KOPYASI").unwrap();
+    cagir(&o.s, "POST", "/api/kilitle", None).await;
+
+    let (kod, json) = cagir(
+        &o.s,
+        "POST",
+        "/api/onceki-dosyalari-kaldir",
+        Some(serde_json::json!({ "damga": "20260923-1430" })),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::OK, "bakim ucu kilit ACILMADAN calismali: {json}");
+    assert_eq!(json["tasinan"], 2);
+
+    // (b) Yanit YALNIZCA bir sayi: dosya adi, yol ya da danisan verisi yok.
+    let metin = json.to_string();
+    for sizinti in ["Ayse", "onceki", "veri.db", "keystore", o.s.veri_dizini.to_str().unwrap()] {
+        assert!(!metin.contains(sizinti), "kapisiz uc `{sizinti}` sizdirdi: {metin}");
+    }
+    // Yanit YALNIZCA sayi + istemcinin KENDI gonderdigi damga (inceleme
+    // M-2). Ucuncu bir alan eklenirse burasi kirilir ve karar bilincli
+    // olarak verilir.
+    assert_eq!(json["damga"], "20260923-1430");
+    assert_eq!(
+        json.as_object().map(|m| m.len()),
+        Some(2),
+        "yanitta `tasinan`+`damga` disinda alan olmamali: {metin}"
+    );
+
+    // Dosyalar TASINDI, silinmedi.
+    assert_eq!(
+        std::fs::read(o.s.db_yolu().with_extension("db.onceki-20260923-1430")).unwrap(),
+        TEK_KOPYA
+    );
+    assert!(!onceki.exists() && !ks_onceki.exists());
+}
+
+/// (c) Çıkmaz senaryosu uçtan uca: canlı çift BOZUK (oturum açılamıyor) +
+/// `.onceki` duruyor -> temizleme eylemi çalışır -> geri yükleme BAŞARILI.
+///
+/// Bu test kapıyı geri koyan mutasyonun asıl hedefi: kapı geri gelirse
+/// temizleme `401` alır ve senaryo çıkmaza döner.
+#[tokio::test]
+async fn bozuk_cift_ve_kalinti_varken_bile_kurtarma_yolu_acik() {
+    const TEK_KOPYA: &[u8] = b"KULLANICININ-TEK-KOPYASI";
+    let o = ortam();
+    kur(&o).await;
+    danisan_ekle(&o, "Ayse Yilmaz").await;
+    assert_eq!(yedek_al(&o, DAMGA).await.0, StatusCode::OK, "on kosul: yedek alinmali");
+
+    // Yarim kalmis bir geri almanin ardindan kalan durum: kullanicinin
+    // verisi `.onceki`de, canli veritabani ise ACILAMIYOR.
+    std::fs::write(o.s.db_yolu().with_extension("db.onceki"), TEK_KOPYA).unwrap();
+    std::fs::write(o.s.db_yolu(), b"bu bir SQLCipher veritabani degil").unwrap();
+    cagir(&o.s, "POST", "/api/kilitle", None).await;
+    let (kod, json) = kilit_ac(&o, PAROLA).await;
+    assert_ne!(kod, StatusCode::OK, "on kosul: oturum ACILAMAMALI");
+    // ZINCIRIN KOPTUGU HALKA (inceleme KRITIK-1): arayuz geri yukleme
+    // ekranina YALNIZCA bu bayrakla duser. Bayrak gelmezse kullanici kilit
+    // ekraninda kalir ve temizleme eylemine -- ugruna kapiyi gevsettigimiz
+    // eyleme -- hic ulasamaz.
+    assert_eq!(
+        json["veritabani_bozuk"], true,
+        "acilamayan veritabani arayuzu geri yukleme ekranina dusurmeli: {json}"
+    );
+
+    let geri_yukle = || {
+        cagir(
+            &o.s,
+            "POST",
+            "/api/geri-yukleme",
+            Some(serde_json::json!({
+                "dizin": o.yedek_dizini,
+                "dosya_adi": format!("yedek-{DAMGA}.db"),
+                "parola": PAROLA,
+            })),
+        )
+    };
+
+    // Cikmazin ilk halkasi: kalinti geri yuklemeyi durduruyor.
+    let (kod, json) = geri_yukle().await;
+    assert_eq!(kod, StatusCode::CONFLICT, "kalinti varken geri yukleme durmali");
+    assert!(json["hata"].as_str().unwrap_or_default().contains("kenara kaldır"), "{json}");
+
+    // Cikis yolu: oturum ACILAMIYORKEN de calisiyor.
+    let (kod, json) = cagir(
+        &o.s,
+        "POST",
+        "/api/onceki-dosyalari-kaldir",
+        Some(serde_json::json!({ "damga": "20260923-1430" })),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::OK, "kurtarma yolu kilitliyken de acik olmali: {json}");
+    assert_eq!(json["tasinan"], 1);
+    assert_eq!(
+        std::fs::read(o.s.db_yolu().with_extension("db.onceki-20260923-1430")).unwrap(),
+        TEK_KOPYA,
+        "eylem SILMEZ; kullanicinin kopyasi birebir durmali"
+    );
+
+    // Ve artik geri yukleme BASARILI.
+    let (kod, json) = geri_yukle().await;
+    assert_eq!(kod, StatusCode::OK, "cikmaz acilmis olmali: {json}");
+    assert_eq!(kilit_ac(&o, PAROLA).await.0, StatusCode::OK, "oturum yeniden acilabilmeli");
+}
+
+/// Uçtan uca çıkış yolu (inceleme IMPORTANT-A): kalıntı yüzünden
+/// kilitlenen geri yükleme, **uygulama içinden** açılıyor ve hiçbir dosya
+/// silinmiyor.
+#[tokio::test]
+async fn kalinti_geri_yuklemeyi_kilitler_ve_bakim_ucu_acar() {
+    const TEK_KOPYA: &[u8] = b"KULLANICININ-TEK-KOPYASI";
+    let o = ortam();
+    kur(&o).await;
+    danisan_ekle(&o, "Ayse Yilmaz").await;
+    assert_eq!(yedek_al(&o, DAMGA).await.0, StatusCode::OK, "on kosul: yedek alinmali");
+
+    // Temizligi patlamis bir geri yuklemeden artan kalinti.
+    let onceki = o.s.db_yolu().with_extension("db.onceki");
+    std::fs::write(&onceki, TEK_KOPYA).unwrap();
+
+    let geri_yukle = || {
+        cagir(
+            &o.s,
+            "POST",
+            "/api/geri-yukleme",
+            Some(serde_json::json!({
+                "dizin": o.yedek_dizini,
+                "dosya_adi": format!("yedek-{DAMGA}.db"),
+                "parola": PAROLA,
+            })),
+        )
+    };
+
+    let (kod, json) = geri_yukle().await;
+    assert_eq!(kod, StatusCode::CONFLICT, "kalinti varken geri yukleme 409 ile durmali");
+    let mesaj = json["hata"].as_str().unwrap_or_default();
+    assert!(mesaj.contains("kenara kaldır"), "govde cikis yolunu ADIYLA soylemeli: {mesaj}");
+    assert!(mesaj.contains("SİLMEYİN"), "govde silmeyi yasaklamali: {mesaj}");
+
+    let (kod, json) = cagir(
+        &o.s,
+        "POST",
+        "/api/onceki-dosyalari-kaldir",
+        Some(serde_json::json!({ "damga": "20260923-1430" })),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::OK, "{json}");
+    assert_eq!(json["tasinan"], 1);
+    assert_eq!(
+        std::fs::read(o.s.db_yolu().with_extension("db.onceki-20260923-1430")).unwrap(),
+        TEK_KOPYA,
+        "bakim ucu SILMEZ; icerik birebir korunmali"
+    );
+
+    assert_eq!(geri_yukle().await.0, StatusCode::OK, "kilit acilmis olmali");
+}
+
+/// Canlı çift EŞLEŞMİYORKEN (yarım kalmış bir geri almanın tam karşılığı)
+/// `kilit-ac` `veritabani_bozuk` bayrağını taşımalı (inceleme KRİTİK-1).
+///
+/// Bütünlük kontrolü yolu (`bozuk_veritabani_yedekten_geri_yuklenerek_kurtarilir`)
+/// bayrağı zaten taşıyordu; **`open_existing`'in patladığı** yol
+/// taşımıyordu ve fark kullanıcı için ölümcül: dosya hiç açılamadığında
+/// bütünlük kontrolüne sıra bile gelmez.
+#[tokio::test]
+async fn eslesmeyen_cift_kilit_acmada_veritabani_bozuk_bayragi_tasir() {
+    let o = ortam();
+    kur(&o).await;
+    danisan_ekle(&o, "Ayse Yilmaz").await;
+    cagir(&o.s, "POST", "/api/kilitle", None).await;
+
+    // Anahtar dosyasi SAGLAM (parola dogrulanacak) ama veritabani bu
+    // anahtarla acilamiyor: yarim kalmis bir geri almanin biraktigi durum.
+    std::fs::write(o.s.db_yolu(), b"bu bir SQLCipher veritabani degil").unwrap();
+
+    let (kod, json) = kilit_ac(&o, PAROLA).await;
+    assert_eq!(kod, StatusCode::INTERNAL_SERVER_ERROR, "{json}");
+    assert_eq!(json["veritabani_bozuk"], true, "{json}");
+    // `/api/durum` bu bilgiyi TASIYAMAZ (butunluk kontrolu anahtar ister,
+    // o uc ise kilitliyken de yanit verir) -- bayragin kilit acma
+    // yanitinda olmasinin sebebi tam olarak budur.
+    let (_, durum) = cagir(&o.s, "GET", "/api/durum", None).await;
+    assert_eq!(durum["kilitli"], true);
+    assert_eq!(durum["keystore_bozuk"], false);
+}
+
+/// **EKSI YON**: yanlış parola "veritabanı bozuk" DEĞİLDİR.
+///
+/// Bayrağı genişletirken en kolay hata bu olurdu: her hata yolunu
+/// `veritabani_bozuk: true` yapmak, parolasını yanlış yazan kullanıcıyı
+/// geri yükleme ekranına -- yani "kayıtlarınızı geri yükleyin" diyen bir
+/// ekrana -- düşürürdü. Bu iddia olmadan "her şeye bayrak koy" mutasyonu
+/// da yukarıdaki testi geçerdi (7. biçim).
+#[tokio::test]
+async fn yanlis_parola_veritabani_bozuk_bayragi_tasimaz() {
+    let o = ortam();
+    kur(&o).await;
+    cagir(&o.s, "POST", "/api/kilitle", None).await;
+
+    let (kod, json) = kilit_ac(&o, "yanlis-parola").await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED, "yanlis parola 401 olmali: {json}");
+    assert!(
+        json.get("veritabani_bozuk").is_none(),
+        "yanlis parola kullaniciyi geri yukleme ekranina DUSURMEMELI: {json}"
+    );
+
+    // ARTI YON: dogru parola hala aciyor -- "her seye 401 don" mutasyonu
+    // yukaridaki iddiayi da gecerdi.
+    assert_eq!(kilit_ac(&o, PAROLA).await.0, StatusCode::OK);
+}
+
 #[tokio::test]
 async fn hedef_klasor_secilmeden_yedek_alinamaz() {
     let o = ortam();
@@ -418,6 +645,156 @@ async fn yanlis_parolayla_geri_yukleme_reddedilir_ve_mevcut_veri_korunur() {
         std::fs::read(o.s.keystore_yolu()).unwrap(),
         ks_once,
         "mevcut anahtar dosyasi degismemeli"
+    );
+}
+
+/// Bir yedek dosyasinin `schema_version` damgasini degistirir.
+///
+/// "Daha yeni bir surumle alinmis yedek" durumunu uretmenin tek yolu bu:
+/// dosya sapasaglamdir, yalnizca bu kurulum onu okuyamaz.
+fn yedek_surumunu_ayarla(o: &Ortam, damga: &str, deger: i64) {
+    let key = anahtar(o, PAROLA);
+    let yol = std::path::Path::new(&o.yedek_dizini).join(format!("yedek-{damga}.db"));
+    {
+        let c = open_encrypted(&yol, &key).unwrap();
+        c.execute(
+            "INSERT INTO app_meta (anahtar, deger) VALUES ('schema_version', ?1)
+             ON CONFLICT(anahtar) DO UPDATE SET deger = excluded.deger",
+            [deger.to_string()],
+        )
+        .unwrap();
+    }
+    for ek in ["db-wal", "db-shm"] {
+        let _ = std::fs::remove_file(yol.with_extension(ek));
+    }
+}
+
+#[tokio::test]
+async fn ileri_surumlu_yedek_reddedilir_ve_o_gunun_kayitlari_durur() {
+    // URUNUN EN CIDDI HATASININ HTTP KARSILIGI: veri kaybini onlemek icin
+    // var olan ozellik, veri kaybinin sebebi oluyordu. Terapist yeni surumle
+    // yedek almis, sonra eski kuruluma donuyor; parola dogru, dosya saglam
+    // -- eski davranista mevcut `veri.db` siliniyor, `migrate` patliyor ve o
+    // gun girilen, henuz yedeklenmemis kayitlar YOK oluyordu.
+    let o = ortam();
+    kur(&o).await;
+    danisan_ekle(&o, "Ayse Yilmaz").await;
+    let (kod, _) = yedek_al(&o, DAMGA).await;
+    assert_eq!(kod, StatusCode::OK, "on kosul: yedek alinabilmeli");
+
+    // Yedek, bu kurulumun bildiginden daha yeni bir semayla alinmis.
+    yedek_surumunu_ayarla(&o, DAMGA, psikolog_core::store::schema::CURRENT_VERSION + 1);
+
+    // YEDEKTEN SONRA girilen kayit: geri yukleme yapilsaydi KAYBOLURDU.
+    // Bu satir olmadan asagidaki "veri duruyor" iddiasi, yedekle canli
+    // veritabani ayni oldugu icin hicbir sey olcmezdi
+    // (docs/test-yesil-ama-korumuyor.md, 6. bicim).
+    danisan_ekle(&o, "Bugun Gelen").await;
+
+    let db_once = std::fs::read(o.s.db_yolu()).unwrap();
+    let ks_once = std::fs::read(o.s.keystore_yolu()).unwrap();
+
+    let (kod, json) = cagir(
+        &o.s,
+        "POST",
+        "/api/geri-yukleme",
+        Some(serde_json::json!({ "dosya_adi": format!("yedek-{DAMGA}.db"), "parola": PAROLA })),
+    )
+    .await;
+
+    // 409: sunucu arizasi degil, bu yedekle bu kurulum bagdasmiyor.
+    assert_eq!(kod, StatusCode::CONFLICT, "govde: {json}");
+    let mesaj = json["hata"].as_str().unwrap();
+    assert!(
+        !mesaj.to_lowercase().contains("bozuk"),
+        "saglam bir yedek 'bozuk' diye anlatilmamali: {mesaj}"
+    );
+    assert!(mesaj.contains("güncelle"), "mesaj ne yapilacagini soylemeli: {mesaj}");
+    // Hassas veri yok: dosya adi, klasor yolu, parola gecmemeli.
+    assert!(!mesaj.contains("yedek-"), "dosya adi hata govdesine girmemeli: {mesaj}");
+    assert!(!mesaj.contains(&o.yedek_dizini), "klasor yolu hata govdesine girmemeli: {mesaj}");
+    assert!(!mesaj.contains(PAROLA), "parola hata govdesine girmemeli: {mesaj}");
+
+    // Mevcut cift ICERIK olarak degismedi.
+    assert_eq!(std::fs::read(o.s.db_yolu()).unwrap(), db_once, "mevcut veritabani degismemeli");
+    assert_eq!(
+        std::fs::read(o.s.keystore_yolu()).unwrap(),
+        ks_once,
+        "mevcut anahtar dosyasi degismemeli"
+    );
+
+    // KANIT: uygulama calismaya devam ediyor ve o gunun kaydi YERINDE.
+    let (kod, danisanlar) = cagir(&o.s, "GET", "/api/danisanlar", None).await;
+    assert_eq!(kod, StatusCode::OK, "reddedilen geri yukleme oturumu bozmamali");
+    let adlar: Vec<&str> =
+        danisanlar.as_array().unwrap().iter().map(|d| d["ad_soyad"].as_str().unwrap()).collect();
+    assert!(
+        adlar.contains(&"Bugun Gelen"),
+        "yedeklenmemis kayit yok olmamali -- {adlar:?}"
+    );
+}
+
+#[tokio::test]
+async fn eski_semali_yedek_geri_yuklenince_goc_kosar() {
+    // "Geri yukleme gocten gecer" degismezinin HTTP karsiligi: eski semali
+    // bir yedek sessizce yerine konsaydi uygulama guncel semanin tablolarini
+    // arar ve kullanici bunu kendi hatasi sanardi.
+    let o = ortam();
+    kur(&o).await;
+    danisan_ekle(&o, "Ayse Yilmaz").await;
+    yedek_al(&o, DAMGA).await;
+    // YEDEKTEN SONRA eklenen kayit: canli veritabanini yedekten
+    // farklilastirir. Bu olmadan asagidaki "liste yedektekiyle ayni" iddiasi
+    // yerlestirme HIC olmasa da gecerdi
+    // (docs/test-yesil-ama-korumuyor.md, 6. bicim).
+    danisan_ekle(&o, "Yedekten Sonra").await;
+
+    // Yedegi V4 semasina dondur: V5'in urettigi nesneler gider, damga 4 olur.
+    let key = anahtar(&o, PAROLA);
+    let yedek_yolu = std::path::Path::new(&o.yedek_dizini).join(format!("yedek-{DAMGA}.db"));
+    {
+        let c = open_encrypted(&yedek_yolu, &key).unwrap();
+        c.execute_batch(
+            "DROP TRIGGER progress_note_tags_temizle_kullanilmayan;
+             DROP TABLE progress_note_tags;
+             DROP TABLE tags;
+             UPDATE app_meta SET deger='4' WHERE anahtar='schema_version';",
+        )
+        .unwrap();
+    }
+    for ek in ["db-wal", "db-shm"] {
+        let _ = std::fs::remove_file(yedek_yolu.with_extension(ek));
+    }
+
+    let (kod, json) = cagir(
+        &o.s,
+        "POST",
+        "/api/geri-yukleme",
+        Some(serde_json::json!({ "dosya_adi": format!("yedek-{DAMGA}.db"), "parola": PAROLA })),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::OK, "eski semali yedek geri yuklenebilmeli: {json}");
+
+    // KANIT: sema yukseltildi ve veri yerinde.
+    let c = open_encrypted(&o.s.db_yolu(), &key).unwrap();
+    assert_eq!(
+        psikolog_core::store::schema::okunan_surum(&c).unwrap(),
+        psikolog_core::store::schema::CURRENT_VERSION,
+        "geri yuklenen veritabani guncel semaya yukseltilmis olmali"
+    );
+    drop(c);
+
+    let (kod, _) = kilit_ac(&o, PAROLA).await;
+    assert_eq!(kod, StatusCode::OK, "geri yuklemeden sonra kilit acilmali");
+    let (kod, danisanlar) = cagir(&o.s, "GET", "/api/danisanlar", None).await;
+    assert_eq!(kod, StatusCode::OK);
+    let adlar: Vec<&str> =
+        danisanlar.as_array().unwrap().iter().map(|d| d["ad_soyad"].as_str().unwrap()).collect();
+    assert_eq!(
+        adlar,
+        vec!["Ayse Yilmaz"],
+        "yedekteki liste birebir gelmeli: goc hicbir kaydi degistirmemeli ve \
+         yedekten SONRA eklenen kayit yerlestirmeyle birlikte gitmeli"
     );
 }
 

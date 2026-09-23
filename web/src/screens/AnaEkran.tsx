@@ -12,6 +12,7 @@ import { TakvimSekmesi } from '../takvim/TakvimSekmesi'
 import { useDanisanDosyasi } from './anaEkranKancalari/useDanisanDosyasi'
 import { useDanisanListesi } from './anaEkranKancalari/useDanisanListesi'
 import { useDanisanSeanslari } from './anaEkranKancalari/useDanisanSeanslari'
+import { useDenetimKayitlari } from './anaEkranKancalari/useDenetimKayitlari'
 import { useDosyaNotu } from './anaEkranKancalari/useDosyaNotu'
 import { useEtiketler } from './anaEkranKancalari/useEtiketler'
 import { useParolaFormu } from './anaEkranKancalari/useParolaFormu'
@@ -37,6 +38,8 @@ import { yerelGun } from './anaEkranKancalari/yerelGun'
  *   - `useSeansNotlari`    — açık seansın resmî notu, geçmişi ve özel notu
  *   - `useDanisanDosyasi`  — açık danışan kartı, ekleri ve depolama durumu
  *   - `useDanisanListesi`  — danışan listesi, ekleme, arşivleme, saklama uyarısı
+ *   - `useDenetimKayitlari`— Ayarlar > Denetim kaydı: salt okunur liste, süzgeç,
+ *                            sayfalama (Görev 7 Plan 7)
  *   - `useDanisanSeanslari`— açık danışanın Seanslar alt sekmesindeki listesi,
  *                            seçili seansı ve yamaları
  *   - `useDosyaNotu`       — danışan dosyasında seçili seansın resmî notu
@@ -156,6 +159,21 @@ import { yerelGun } from './anaEkranKancalari/yerelGun'
  * `useDanisanSeanslari` "Bayatlık"). Taşımada eski danışan da bildirilir ve
  * bu yüzden ESKİ danışan `await`ten ÖNCE okunur: yazma başarılı olunca
  * `takvim.seciliRandevu` artık yeni danışanı taşır.
+ *
+ * ## Aynı üç yazma AY ÖZETİNE ve açık kartın BAKİYESİNE de yayılır (Görev 2)
+ *
+ * Üçüncü ve dördüncü alıcı, seans listesiyle AYNI gerekçeyle: özet açıkken
+ * ya da kart açıkken görünmez kalan bir randevu oluşturma/silme/seri iptali/
+ * ücret değişimi terapiste YANLIŞ bir borç söyletebilir (`AyOzeti`nin
+ * saydığı rakamlar ve `DosyaBilgileri`'ndeki bakiye ikisi de bu üç yazmadan
+ * etkileniyor). `setOzetTazeleme` özeti (açıksa) TEK bir `GET /api/ay-ozeti`
+ * ile tazeler; `dosya.randevularTazele` kartın randevu penceresini YENİDEN
+ * ÇEKER — kartın TAMAMINI DEĞİL (`clients::getir` `HerCagri`'dir, bkz.
+ * `useDanisanDosyasi.randevularTazele` gerekçesi), yalnızca
+ * `takvimApi.randevulariGetir` (`OturumBasi`, ek denetim maliyeti yok).
+ * Seans listesindeki bayatlık deseninden FARKI: kartın kendi `gorunur`
+ * kısıtı yok, dolayısıyla erteleme değil, yazma başarılı olur olmaz hemen
+ * tazeleniyor (bkz. o fonksiyonun gerekçesi).
  */
 /** Etiket yazma hatasının ekrandaki metni: ne denendi + sunucunun mesajı. */
 function yazmaHataMetni(ne: string, e: unknown): string {
@@ -198,6 +216,11 @@ export function AnaEkran({
   // Ayarlar sekmesinde gösterildiği için terapist Ayarlar'ı hiç açmasa bile
   // mount'ta atılan bir istek kalıcı, hiç görülmeyecek bir kayıt bırakırdı.
   const liste = useDanisanListesi({ ayarlarGorunur: sekme === 'ayarlar' })
+  // Denetim kaydı (Görev 7 Plan 7): AYNI `ayarlarGorunur` deseni, ama farklı
+  // gerekçeyle -- bkz. `useDenetimKayitlari` modül başlığı ("okumak yeni bir
+  // satır yazmaz" ama "terapistin bakmadığı şey için istek atılmaz" hâlâ
+  // geçerli).
+  const denetim = useDenetimKayitlari({ ayarlarGorunur: sekme === 'ayarlar' })
   const dosya = useDanisanDosyasi({ onYetkisiz: () => oturumKapandi() })
   // Danışan dosyasının alt sekmesi (Seanslar/Bilgiler). BURADA, bileşende
   // değil (son inceleme M1): `DanisanDosyasi` sekme gidip gelince yeniden
@@ -271,6 +294,11 @@ export function AnaEkran({
   // (bkz. `TakvimSekmesi.tsx`'teki "neden PROP" gerekçesi). Özet kapalıyken
   // sayaç artsa da istek GİTMEZ: `AyOzeti` monte değil, açıldığında zaten tek
   // bir taze istek atar.
+  //
+  // Görev 2 inceleme IMPORTANT-1: yalnızca durum/ödeme DEĞİL, takvimin üç
+  // randevu yazması da (`randevuKaydet`/`randevuSil`/`randevuSeriSil`) bu
+  // sayacı artırır — oluşturma, silme ve seri iptali de `AyOzeti`nin saydığı
+  // rakamları değiştiriyor (bkz. o fonksiyonların yorumu).
   const [ozetTazeleme, setOzetTazeleme] = useState(0)
 
   /**
@@ -333,6 +361,11 @@ export function AnaEkran({
    * Ölçen testler: `AnaEkran.test.tsx` > "ozet ACIKKEN ... TEK yeni istekle
    * tazelenir", "ozet KAPALIYKEN ... ozet istegi YOK", "odeme yazmasi
    * REDDEDILIRSE ...".
+   *
+   * `durumDegis` ayrıca "Geldi" yazmasının yanıtındaki `son_temas`/
+   * `saklama_bitis`i (varsa) kartın dosyasına ve saklama hatırlatması
+   * listesine yayar (Görev 3, bkz. fonksiyon içindeki gerekçe ve
+   * `AnaEkran.yayilim.test.tsx`).
    */
   //
   // Son inceleme C2: danışan dosyasının alt satırı da BU iki fonksiyonu
@@ -341,10 +374,32 @@ export function AnaEkran({
   // çağrıdan besleniyor — hangi ekrandan işaretlenirse işaretlensin takvim,
   // kart, ay özeti ve dosya listesi aynı değeri gösterir.
   async function durumDegis(id: number, durum: string) {
-    await takvim.durumDegis(id, durum)
+    const yanit = await takvim.durumDegis(id, durum)
     dosya.randevuYamala(id, { durum })
     seanslar.yamala(id, { durum })
     setOzetTazeleme((n) => n + 1)
+    // Görev 3: "Geldi" işaretlemesi sunucuda danışanın `son_temas`/
+    // `saklama_bitis`ini ileri taşımışsa (`appointments::son_temasi_
+    // isaretle`) yanıt bu iki alanı (+ `client_id`) taşır -- üçü BİRLİKTE
+    // gelir ya da hiç gelmez (bkz. `api.ts::DurumYaniti`). Kart da saklama
+    // listesi de YENİDEN ÇEKİLMEZ (`clients::getir` ve `clients::
+    // saklama_suresi_dolanlar` ikisi de `LogHacmi::HerCagri` -- silinemez
+    // satır): sonuç zaten kesin biliniyor, ikisi de YERELDE yamanır. Bu
+    // olmasaydı süresi dolmuş bir danışan terapiye dönüp "Geldi"
+    // işaretlense bile Bilgiler sekmesi "süresi doldu" demeye devam eder,
+    // Ayarlar'daki liste de danışanı taşımaya devam ederdi -- imha kararını
+    // besleyen TEK ekran bayat kalırdı (bkz. KVKK notu, brief).
+    if (
+      yanit.client_id !== undefined &&
+      yanit.son_temas !== undefined &&
+      yanit.saklama_bitis !== undefined
+    ) {
+      dosya.dosyaAlanlariniYama(yanit.client_id, {
+        son_temas: yanit.son_temas,
+        saklama_bitis: yanit.saklama_bitis,
+      })
+      liste.saklamaDolandanDus(yanit.client_id, yanit.saklama_bitis)
+    }
   }
 
   async function odemeDegis(id: number, odendi: boolean) {
@@ -422,6 +477,18 @@ export function AnaEkran({
    * Takvimin üç randevu yazması (bkz. modül başlığı "Takvimin randevu
    * yazmaları"). Yayılım yalnızca BAŞARIDA: ret `await`ten fırlar, panel
    * (`RandevuPaneli`) hatayı gösterir, etiket paneli yeniden okunmaz.
+   *
+   * Görev 2 inceleme IMPORTANT-1/IMPORTANT-2: üçü de `AyOzeti`'nin saydığı
+   * rakamları (gelinen seans, tahsilat, bekleyen) ve açık danışan kartının
+   * bakiyesini değiştirebilir — oluşturma/güncelleme (ücret/danışan/saat
+   * dahil), silme ve seri iptali. `setOzetTazeleme` özeti (açıksa, TEK
+   * `GET /api/ay-ozeti` ile) tazeler; `dosya.randevularTazele` kartın
+   * randevu penceresini (`clients::getir` DEĞİL, yalnızca
+   * `takvimApi.randevulariGetir`) — bkz. `useDanisanDosyasi.randevularTazele`
+   * gerekçesi. `durumDegis`/`odemeDegis`teki TEK ALAN yamasından farklı:
+   * burada satır ekleniyor/çıkıyor/taşınıyor ya da ücret gibi henüz kartın
+   * yama tipinde OLMAYAN bir alan değişiyor, bu yüzden yama değil yeniden
+   * çekme.
    */
   async function randevuKaydet(kayit: Parameters<typeof takvim.kaydet>[0]) {
     // Düzenleme kipinde ESKİ danışan (taşıma iki dosyayı birden değiştirir);
@@ -430,6 +497,8 @@ export function AnaEkran({
     await takvim.kaydet(kayit)
     etiketler.randevularDegisti()
     seanslar.yapiDegisti([kayit.client_id, eskiDanisan])
+    dosya.randevularTazele([kayit.client_id, eskiDanisan])
+    setOzetTazeleme((n) => n + 1)
   }
 
   async function randevuSil(id: number) {
@@ -440,6 +509,8 @@ export function AnaEkran({
     await takvim.sil(id)
     etiketler.randevularDegisti()
     seanslar.yapiDegisti([danisan])
+    dosya.randevularTazele([danisan])
+    setOzetTazeleme((n) => n + 1)
   }
 
   async function randevuSeriSil(seriId: string, buTarihtenItibaren: string) {
@@ -449,6 +520,8 @@ export function AnaEkran({
     await takvim.seriSil(seriId, buTarihtenItibaren)
     etiketler.randevularDegisti()
     seanslar.yapiDegisti([danisan])
+    dosya.randevularTazele([danisan])
+    setOzetTazeleme((n) => n + 1)
   }
 
   /**
@@ -610,6 +683,7 @@ export function AnaEkran({
             saklama={{ dolanlar: liste.saklamaDolanlar, onAc: (id) => danisanaGit(id) }}
             depolama={dosya.depolama}
             onGeriYukle={onGeriYukle}
+            denetim={denetim}
           />
         </div>
       )}

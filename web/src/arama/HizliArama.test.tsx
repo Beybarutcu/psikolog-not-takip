@@ -60,8 +60,10 @@ function kur(ozel: Partial<React.ComponentProps<typeof HizliArama>> = {}) {
   return { ...props, ...render(<HizliArama {...props} />) }
 }
 
+// Yalnızca Cmd+K (Görev 6a): `ctrlKey` artık aramayı AÇMAZ, bkz.
+// `HizliArama.tsx`'teki klavye dinleyicisinin yorumu.
 async function ac() {
-  await userEvent.keyboard('{Control>}k{/Control}')
+  await userEvent.keyboard('{Meta>}k{/Meta}')
 }
 
 const kutu = () => screen.getByRole('searchbox', { name: 'Danışan adı veya not içeriği' })
@@ -93,7 +95,7 @@ afterEach(() => {
 })
 
 describe('HizliArama — açılış ve kapanış', () => {
-  it('Ctrl+K ile acilir', async () => {
+  it('Cmd+K ile acilir', async () => {
     kur()
     expect(screen.queryByRole('dialog')).toBeNull()
     await ac()
@@ -112,12 +114,6 @@ describe('HizliArama — açılış ve kapanış', () => {
     expect(kutucuk.getAttribute('aria-modal')).toBe('true')
   })
 
-  it('Cmd+K ile de acilir (macOS)', async () => {
-    kur()
-    await userEvent.keyboard('{Meta>}k{/Meta}')
-    expect(screen.getByRole('dialog', { name: 'Hızlı arama' })).toBeDefined()
-  })
-
   it('yalin K aramayi ACMAZ', async () => {
     // Ters yön: "her tuşta açılan" bir arayüz de üstteki testleri geçerdi ve
     // not yazarken önüne bir katman açardı.
@@ -126,16 +122,41 @@ describe('HizliArama — açılış ve kapanış', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('Ctrl+K tarayicinin kendi davranisini engeller', async () => {
+  it('Cmd+K varsayilan davranisi engeller', async () => {
     kur()
     const olay = new KeyboardEvent('keydown', {
-      key: 'k',
-      ctrlKey: true,
+      code: 'KeyK',
+      metaKey: true,
       bubbles: true,
       cancelable: true,
     })
     document.dispatchEvent(olay)
     expect(olay.defaultPrevented).toBe(true)
+  })
+
+  // Görev 6a inceleme bulgusu: eskiden `ctrlKey` de aramayı açıyordu ve
+  // `preventDefault()` çağırıyordu -- macOS'ta Ctrl+K, textarea/input
+  // içinde sistemin kendi "imleçten satır sonuna kadar sil" kısayolu.
+  // Odak `NotEditoru`'nun textarea'sındayken bu global dinleyici o
+  // kısayolu yutuyordu. Artık yalnızca `metaKey` (Cmd+K) kabul ediliyor.
+  it('Ctrl+K (Cmd olmadan) metin alani odaktayken aramayi ACMAZ, varsayilan davranisi BOZMAZ', () => {
+    kur()
+    const alan = document.createElement('textarea')
+    document.body.appendChild(alan)
+    alan.focus()
+    try {
+      const olay = new KeyboardEvent('keydown', {
+        code: 'KeyK',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+      document.dispatchEvent(olay)
+      expect(olay.defaultPrevented).toBe(false)
+      expect(screen.queryByRole('dialog')).toBeNull()
+    } finally {
+      document.body.removeChild(alan)
+    }
   })
 
   it('Escape ile kapanir ve sorgu temizlenir', async () => {
@@ -238,7 +259,7 @@ describe('HizliArama — gerçek modal davranışı', () => {
   })
 
   it('kapaninca odak TETIKLEYEN ogeye geri doner', async () => {
-    // Ctrl+K sayfanın herhangi bir yerinden basılabilir; odak açma
+    // Cmd+K sayfanın herhangi bir yerinden basılabilir; odak açma
     // düğmesine değil, kullanıcının BULUNDUĞU yere dönmeli. Aksi hâlde
     // klavye kullanıcısı her aramadan sonra sayfanın başına atılır.
     const { disarisi } = arkaPlanli()
@@ -253,7 +274,7 @@ describe('HizliArama — gerçek modal davranışı', () => {
   })
 
   it('odak yakalanacak bir oge yoksa ACMA DUGMESINE doner', async () => {
-    // Ctrl+K odak `body`deyken basıldığında yedek hat: `body.focus()`
+    // Cmd+K odak `body`deyken basıldığında yedek hat: `body.focus()`
     // hiçbir şey yapmaz ve kullanıcı odağı KAYBEDERDİ.
     kur()
     ;(document.activeElement as HTMLElement | null)?.blur()
@@ -261,7 +282,7 @@ describe('HizliArama — gerçek modal davranışı', () => {
     await ac()
     await userEvent.keyboard('{Escape}')
     expect(document.activeElement).toBe(
-      screen.getByRole('button', { name: 'Hızlı arama (Ctrl+K)' }),
+      screen.getByRole('button', { name: 'Hızlı arama (⌘K)' }),
     )
   })
 

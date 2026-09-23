@@ -141,7 +141,7 @@ export function TakvimSekmesi({
   return (
     <div data-testid="takvim-sekmesi">
       <div className="mb-4 flex items-center justify-end gap-2">
-        {/* Hızlı arama her zaman monte: Ctrl+K dinleyicisi bileşenin kendi
+        {/* Hızlı arama her zaman monte: Cmd+K dinleyicisi bileşenin kendi
             içinde. Kapalıyken yalnızca kısayolu duyuran bir düğme basar;
             hiçbir istek atmaz. */}
         <HizliArama

@@ -305,6 +305,16 @@ async fn kilitliyken_govde_ve_sorgu_alan_her_uc_once_401_doner() {
             None,
         ),
         ("appointments.rs", "cakisma", "GET", format!("/api/cakisma?x={KANARYA}"), None),
+        (
+            "audit.rs",
+            "liste",
+            "GET",
+            // `sayfa: Option<i64>` -- alan opsiyonel ama tipi sayisal; harf
+            // gonderilince ayristirma coker (`notes.rs::danisan_listesi`nin
+            // `limit={KANARYA}`iyle AYNI mekanizma).
+            format!("/api/denetim-kayitlari?sayfa={KANARYA}"),
+            None,
+        ),
         ("backup.rs", "al", "POST", "/api/yedek".into(), bozuk_govde.clone()),
         ("clients.rs", "olustur", "POST", "/api/danisanlar".into(), bozuk_govde.clone()),
         ("clients.rs", "guncelle_uc", "PATCH", format!("/api/danisanlar/{cid}"), bozuk_govde.clone()),
@@ -1809,6 +1819,150 @@ async fn eksik_sorgu_parametresi_turkce_json_hata_dondurur() {
 }
 
 // =====================================================================
+// 9b. DENETIM KAYITLARI -- Gorev 7 Plan 7 (KVKK 2018/10)
+// =====================================================================
+
+/// Bu görevin EN KRİTİK kuralı: denetim kaydını OKUMAK yeni bir silinemez
+/// satır YAZMAMALI (bkz. `routes::audit` ve
+/// `store::audit::son_kayitlar_sayfali` modül başlıkları -- "log kendini
+/// besler, okundukça büyür"). Ucu ÜST ÜSTE ve FARKLI sayfalarla defalarca
+/// çağırıp `audit_log`'un TAMAMEN değişmediğini doğrular.
+///
+/// Mutasyonla kanıtlandı: `routes::audit::liste`'nin gövdesine bir
+/// `audit::kaydet(...)` çağrısı eklemek bu testi kırmızıya döndürür (bkz.
+/// Görev 7 raporu).
+#[tokio::test]
+async fn denetim_ucu_okuma_ikinci_bir_satir_uretmez() {
+    let (_d, s, cid, rid) = dolu_state().await;
+    // Bilinen bir miktar GERCEK etkinlik uret ki asagidaki karsilastirma bos
+    // bir listeyi bos bir listeyle kiyaslayip totolojiye dusmesin.
+    cagir(&s, "GET", &format!("/api/danisanlar/{cid}"), None).await;
+    cagir(
+        &s,
+        "PUT",
+        &format!("/api/randevular/{rid}/not"),
+        Some(json!({"sablon":"dap","icerik":"x"})),
+    )
+    .await;
+
+    let once = log_satirlari(&s).await;
+    assert!(!once.is_empty(), "on kosul: log bos olmamali");
+
+    for sayfa in 0..5 {
+        let (kod, _yanit) =
+            cagir(&s, "GET", &format!("/api/denetim-kayitlari?sayfa={sayfa}"), None).await;
+        assert_eq!(kod, StatusCode::OK);
+    }
+    let sonra = log_satirlari(&s).await;
+    assert_eq!(once, sonra, "denetim kaydini OKUMAK yeni bir satir birakmamali");
+}
+
+/// Arti yon: liste gercekten dolu, en yeniden eskiye sirali, varlik/tarih
+/// suzgecleri calisiyor -- VE gövdede hassas veri (not icerigi, danisan
+/// adi) yok. Gizlilik iddiasi once VERININ GERCEKTEN DONDUGUNU (on kosul)
+/// dogrular, yoksa bos bir yanitla da saglanirdi (bkz. dosya basligi).
+#[tokio::test]
+async fn denetim_kayitlari_listelenir_siralanir_ve_hassas_veri_tasimaz() {
+    let (_d, s, cid, rid) = dolu_state().await;
+    cagir(
+        &s,
+        "PUT",
+        &format!("/api/randevular/{rid}/not"),
+        Some(json!({"sablon":"dap","icerik":"COK_GIZLI_ICERIK"})),
+    )
+    .await;
+    // EN SON eylem: danisan dosyasini acmak (client|goruntuleme, HerCagri).
+    cagir(&s, "GET", &format!("/api/danisanlar/{cid}"), None).await;
+
+    let (kod, sayfa) = cagir(&s, "GET", "/api/denetim-kayitlari", None).await;
+    assert_eq!(kod, StatusCode::OK);
+    let metin = sayfa.to_string();
+    assert!(
+        !metin.contains("COK_GIZLI_ICERIK"),
+        "not icerigi denetim listesine sizmamali: {metin}"
+    );
+    assert!(!metin.contains("Ayse Yilmaz"), "danisan adi denetim listesine sizmamali: {metin}");
+
+    let kayitlar = sayfa["kayitlar"].as_array().unwrap();
+    assert!(!kayitlar.is_empty(), "on kosul: liste bos olmamali");
+    // id DESC: en son yazilan satir ilk sirada olmali.
+    assert_eq!(kayitlar[0]["varlik"], "client");
+    assert_eq!(kayitlar[0]["varlik_id"], cid.to_string());
+    assert_eq!(kayitlar[0]["eylem"], "goruntuleme");
+    assert_eq!(kayitlar[0]["cihaz"], "masaustu");
+
+    // Varlik suzgeci: yalnizca "progress_note".
+    let (_, filtreli) =
+        cagir(&s, "GET", "/api/denetim-kayitlari?varlik=progress_note", None).await;
+    let filtreli_kayitlar = filtreli["kayitlar"].as_array().unwrap();
+    assert!(!filtreli_kayitlar.is_empty(), "on kosul: filtreli liste bos olmamali");
+    assert!(filtreli_kayitlar.iter().all(|k| k["varlik"] == "progress_note"));
+
+    // Tarih araligi: uzak GELECEK bir baslangic hicbir gercek satiri kapsamaz.
+    let (_, bos) = cagir(&s, "GET", "/api/denetim-kayitlari?baslangic=2099-01-01", None).await;
+    assert_eq!(bos["kayitlar"].as_array().unwrap().len(), 0);
+
+    // Uzak GECMIS bir bitis de ayni sekilde bos donmeli.
+    let (_, bos2) = cagir(&s, "GET", "/api/denetim-kayitlari?bitis=2000-01-01", None).await;
+    assert_eq!(bos2["kayitlar"].as_array().unwrap().len(), 0);
+}
+
+/// `son_kayitlar`'in zaten sahip oldugu `LIMIT`, bu ucta sayfalamaya
+/// donusuyor: 190 bin satirlik bir gunlukte hepsini tek seferde cekmek
+/// yasak (bkz. dosya basligi).
+#[tokio::test]
+async fn denetim_kayitlari_sayfalanir() {
+    let (_d, s, _cid, _rid) = dolu_state().await;
+    // ONCE 60 FARKLI danisan olustur, SONRA her birini bir kez GET et.
+    //
+    // Neden AYNI danisani 60 kez GET etmek YETMEZ: `AuditKaydi` satir `id`si
+    // TASIMAZ (bkz. tip -- kimlik bilgisi disinda gosterim alanlari) ve
+    // `olay_zamani` saniye cozunurlugunde. HerCagri 60 cagriyi de birlestir-
+    // meden ayri ayri yazar (`clients::getir_uc` -> `clients::getir`), ama
+    // aynı danisana (ayni varlik_id) ayni saniye icinde atilan 60 GET, id'siz
+    // JSON gorunumde BIRBIRINDEN AYIRT EDILEMEZ satirlar uretir -- asagidaki
+    // "sayfalar cakismamali" iddiasi (kesin farkli SATIRLAR ama kesin AYNI
+    // ICERIK) o zaman ortama/zamanlamaya bagli olarak kirmiziya donerdi
+    // (goreve bagli mutasyon dogrulamasi sirasinda gozlemlendi). Farkli
+    // danisanlar varlik_id'yi de ayirir, bu yuzden karsilastirma her kosulda
+    // deterministik.
+    let mut idler = Vec::with_capacity(60);
+    for i in 0..60 {
+        idler.push(danisan_ekle(&s, &format!("Sayfalama Testi {i}")).await);
+    }
+    for id in &idler {
+        cagir(&s, "GET", &format!("/api/danisanlar/{id}"), None).await;
+    }
+
+    let (kod, sayfa0) = cagir(&s, "GET", "/api/denetim-kayitlari?varlik=client", None).await;
+    assert_eq!(kod, StatusCode::OK);
+    let kayitlar0 = sayfa0["kayitlar"].as_array().unwrap();
+    assert_eq!(kayitlar0.len(), 50, "sayfa boyutu 50 olmali");
+    assert_eq!(sayfa0["sayfa"], 0);
+    assert_eq!(sayfa0["sonraki_sayfa_var"], true);
+
+    let (_, sayfa1) =
+        cagir(&s, "GET", "/api/denetim-kayitlari?varlik=client&sayfa=1", None).await;
+    let kayitlar1 = sayfa1["kayitlar"].as_array().unwrap();
+    assert!(!kayitlar1.is_empty(), "ikinci sayfa bos olmamali");
+    assert_eq!(sayfa1["sayfa"], 1);
+    // Sayfalar CAKISMAMALI -- varlik_id farkli danisanlardan geldigi icin bu
+    // karsilastirma zamana bagli DEGIL.
+    assert_ne!(kayitlar0[0], kayitlar1[0]);
+}
+
+#[tokio::test]
+async fn denetim_kayitlari_gecersiz_tarihi_400_ile_reddeder() {
+    let (_d, s, _cid, _rid) = dolu_state().await;
+    for (alan, deger) in [("baslangic", "2026-9-7"), ("bitis", "yarin")] {
+        let (kod, json) =
+            cagir(&s, "GET", &format!("/api/denetim-kayitlari?{alan}={deger}"), None).await;
+        assert_eq!(kod, StatusCode::BAD_REQUEST, "'{alan}={deger}' reddedilmeli");
+        assert!(json["hata"].as_str().unwrap().contains("YYYY-AA-GG"), "{json}");
+    }
+}
+
+// =====================================================================
 // YAPISAL GUVENCELERIN DOSYA KUMESI -- DIZINDEN TURETILIR
 // =====================================================================
 //
@@ -2196,7 +2350,9 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
     // 32. veri handler'i olarak eklendi; kapiyi kullanan tek handler'i var.
     // Plan 5 Gorev 5: `routes::tags` bes yeni veri handler'i ekledi (listele,
     // seans_listesi, ekle, kaldir, seanslar) -- toplam 32 -> 37.
-    assert_eq!(toplam, 37, "toplam veri handler'i sayisi 37 olmali");
+    // Gorev 7 Plan 7: `routes::audit::liste` (denetim kaydini OKUMA ucu)
+    // eklendi -- toplam 37 -> 38.
+    assert_eq!(toplam, 38, "toplam veri handler'i sayisi 38 olmali");
 }
 
 /// Kapıyı ilk satırda VE uzun bir üretimden sonra ikinci kez çağırmasına izin
@@ -2487,7 +2643,7 @@ fn indirme_koku_tarayicisi_yardimci_zincirini_izler() {
 /// uclusunu dondurur (en yeni once). Testler dogrudan veriye bakar.
 async fn log_satirlari(s: &AppState) -> Vec<String> {
     use psikolog_server::guard::acik_baglanti_ile;
-    let conn = acik_baglanti_ile(s, std::time::Instant::now())
+    let conn = acik_baglanti_ile(s, std::time::Instant::now(), std::time::SystemTime::now())
         .expect("log okumak icin oturum acik olmali");
     psikolog_core::store::audit::son_kayitlar(&conn, 100_000)
         .unwrap()
@@ -2500,7 +2656,7 @@ async fn log_satirlari(s: &AppState) -> Vec<String> {
 /// ayrinti) tek metin olarak -- sizinti taramasi icin. En yeni satir once.
 async fn audit_dokumu(s: &AppState) -> String {
     use psikolog_server::guard::acik_baglanti_ile;
-    let conn = acik_baglanti_ile(s, std::time::Instant::now()).expect("oturum acik olmali");
+    let conn = acik_baglanti_ile(s, std::time::Instant::now(), std::time::SystemTime::now()).expect("oturum acik olmali");
     psikolog_core::store::audit::son_kayitlar(&conn, 100_000)
         .unwrap()
         .into_iter()
@@ -2862,7 +3018,7 @@ async fn kayit_yazilamazsa_500_doner_ve_pdf_verilmez() {
 
     {
         use psikolog_server::guard::acik_baglanti_ile;
-        let conn = acik_baglanti_ile(&s, std::time::Instant::now()).unwrap();
+        let conn = acik_baglanti_ile(&s, std::time::Instant::now(), std::time::SystemTime::now()).unwrap();
         conn.execute_batch("DROP TABLE audit_log").unwrap();
     }
 
@@ -3360,6 +3516,151 @@ fn istemci_cagrilari() -> Vec<(String, String)> {
 /// aksi hâlde bu test artık gerçek bir bağlantı eksikliğini sessizce
 /// gizlerdi.
 const ISTEMCISIZ_UCLAR: [(&str, &str); 0] = [];
+
+/// Kilit kapısının **dışında** olması BİLİNÇLİ olan uçlar — adı konmuş
+/// istisna (inceleme, ikinci tur).
+///
+/// Her satırın gerekçesi burada; sessizce kapısız kalan bir uç ile bilinçli
+/// olarak kapısız bırakılan bir uç arasındaki fark tam olarak budur
+/// (`ISTEMCISIZ_UCLAR` / `VERI_DISI_ROTALAR` ile aynı kalıp).
+///
+/// - `POST /api/kurulum`, `/api/kilit-ac`, `/api/kilitle`, `GET /api/durum`:
+///   oturumun **kendisini** kuran/yöneten uçlar; kilitliyken çalışmazlarsa
+///   kilit hiç açılamaz.
+/// - `POST /api/yedekler`, `/api/geri-yukleme`: geri yüklemenin var oluş
+///   sebebi oturumun **açılamadığı** durumdur (bkz. `routes::restore` modül
+///   başlığı). Yetkisiz değil: çağıran yedeğin kendi anahtar dosyasını
+///   açabilen parolayı vermek zorunda.
+/// - `POST /api/onceki-dosyalari-kaldir`: geri yüklemenin **kendisiyle aynı
+///   erişilebilirlikte** olmak zorunda. Kapının içindeyken bir ÇIKMAZ
+///   üretiyordu: yarım kalmış bir geri almadan sonra canlı çift eşleşmez,
+///   oturum açılamaz, `.onceki` durduğu için geri yükleme de `409` alır ve
+///   kullanıcının tek çıkışı Finder'da elle dosya taşımak olurdu -- kapının
+///   önlemek istediği şeyin ta kendisi. Uç hiçbir veri OKUMAZ (yanıt
+///   yalnızca bir sayı) ve hiçbir şey SİLMEZ.
+///
+/// Üçüncü alan, kilitliyken **beklenen durum kodudur** (aşağıdaki testteki
+/// birleşik geçerli gövdeyle). "`401` değil" demek yetmiyor; bkz. testin
+/// içindeki gerekçe (inceleme ÖNEMLİ-1).
+const KILITSIZ_UCLAR: [(&str, &str, StatusCode); 7] = [
+    ("GET", "/api/durum", StatusCode::OK),
+    // Kurulum zaten yapılmış: `409`. Uç çalışıyor ve kendi kararını
+    // veriyor -- kapıya takılmıyor.
+    ("POST", "/api/kurulum", StatusCode::CONFLICT),
+    ("POST", "/api/kilit-ac", StatusCode::OK),
+    ("POST", "/api/kilitle", StatusCode::OK),
+    // Yedek klasörü ayarı yok: `400` ("klasörün yolunu yazın"). Kapı
+    // değil, uç noktanın kendi doğrulaması.
+    ("POST", "/api/yedekler", StatusCode::BAD_REQUEST),
+    ("POST", "/api/geri-yukleme", StatusCode::BAD_REQUEST),
+    // Taşınacak `.onceki` yok: `200 {"tasinan": 0}`.
+    ("POST", "/api/onceki-dosyalari-kaldir", StatusCode::OK),
+];
+
+/// İstisna listesinin **iki yönlü** kontrolü.
+///
+/// (1) Listedeki her uç GERÇEKTEN kilitsiz olmalı: biri kapının arkasına
+///     alınırsa (`401`) bu test kırılır ve karar yeniden verilmeye zorlanır.
+/// (2) Listede OLMAYAN her uç kilitliyken `401` dönmeli: yarın eklenecek
+///     kapısız bir uç, listeye yazılmadan sessizce geçemez.
+///
+/// Tek yönlü bir istisna listesi (yalnızca (2)) bayatlardı: kapıya geri
+/// alınan bir uç listede kalır ve kimse fark etmezdi.
+#[tokio::test]
+async fn kilitsiz_uclar_bilincli_digerlerinin_hepsi_401() {
+    let (_d, s, cid, rid) = dolu_state().await;
+    kilitle(&s).await;
+
+    // Yol kaliplarindaki `{}` yerine var olan kimlikler konur; `401`
+    // kararinin kimlikten BAGIMSIZ oldugunu da gosterir.
+    let somutlastir = |yol: &str| -> String {
+        let mut cikti = String::new();
+        let mut kalan = yol;
+        let mut sira = 0;
+        while let Some(bas) = kalan.find("{}") {
+            cikti.push_str(&kalan[..bas]);
+            // Ilk yer tutucu danisan/randevu kimligi, ikincisi etiket.
+            cikti.push_str(&if yol.starts_with("/api/danisanlar") && sira == 0 {
+                cid.to_string()
+            } else if sira == 0 {
+                rid.to_string()
+            } else {
+                "1".to_string()
+            });
+            kalan = &kalan[bas + 2..];
+            sira += 1;
+        }
+        cikti.push_str(kalan);
+        cikti
+    };
+
+    let rotalar = sunucu_rotalari();
+    // ON KOSUL: istisna listesi bayat olmasin -- adi yazili her uc
+    // GERCEKTEN bir rota olmali.
+    for (metot, yol, _) in KILITSIZ_UCLAR {
+        assert!(
+            rotalar.contains(&(metot.to_string(), yol.to_string())),
+            "istisna listesi bayat: {metot} {yol} artik bir rota degil"
+        );
+    }
+
+    for (metot, yol) in &rotalar {
+        let somut = somutlastir(yol);
+        // Her cagridan ONCE yeniden kilitlenir: listedeki `/api/kilit-ac`
+        // basariyla acar ve sonraki uclar artik kilitli bir oturum
+        // olcmezdi.
+        kilitle(&s).await;
+        // GOVDE: istisna listesindeki uclarin extractor'i BASARIYLA
+        // cozulmeli. Serde bilinmeyen alanlari yok saydigi icin tek bir
+        // birlesik govde hepsine yetiyor.
+        let govde = json!({
+            "parola": "gizliparola",
+            "damga": "20260101-0000",
+            "dosya_adi": "yedek-2026-01-01.db",
+            "ad_soyad": "X",
+        });
+        let (kod, _) = cagir(&s, metot, &somut, Some(govde)).await;
+        if let Some((_, _, beklenen)) =
+            KILITSIZ_UCLAR.iter().find(|(m, y, _)| m == metot && y == yol)
+        {
+            // (1) Istisna GEREKLI **ve** uc GERCEKTEN CALISIYOR.
+            //
+            // # Neden `assert_ne!(kod, 401)` YETMIYOR (inceleme ONEMLI-1)
+            //
+            // O iddia, handler'a hic GIRILMEDEN de saglanabiliyordu: govde
+            // sozlesmesi degisip extractor `400/422` dondururse "401 degil"
+            // dogru olur ve test yesil kalir (`docs/test-yesil-ama-
+            // korumuyor.md` 6. bicim). Inceleme bunu olcerek gosterdi --
+            // `OncekiIstegi`'ye zorunlu bir alan eklenip AYNI ANDA uc
+            // kapinin arkasina alininca test YESIL kalmisti: kapiya geri
+            // alinmis bir KURTARMA ucu sessizce gecti.
+            //
+            // Cozum: her istisnanin BEKLENEN durum kodu listede yazili ve
+            // birebir karsilastiriliyor. Govde sozlesmesi degisirse test,
+            // kurtarma yolu kirilmadan ONCE kirilir.
+            assert_eq!(
+                kod, *beklenen,
+                "{metot} {yol} KILITSIZ_UCLAR'da ama kilitliyken {kod} donuyor (beklenen \
+                 {beklenen}). Ya kapinin arkasina alindi (kurtarma yolu kirilmis olabilir), \
+                 ya govde sozlesmesi degisti ve uc artik CALISMIYOR, ya da istisna gereksiz."
+            );
+            assert_ne!(
+                kod,
+                StatusCode::UNAUTHORIZED,
+                "{metot} {yol}: bir istisnanin beklenen kodu 401 OLAMAZ -- o zaman istisna \
+                 degildir"
+            );
+        } else {
+            // (2) Kapisiz kalan yeni bir uc sessizce gecemez.
+            assert_eq!(
+                kod,
+                StatusCode::UNAUTHORIZED,
+                "{metot} {yol} kilitliyken 401 donmeli; bilerek kapisizsa KILITSIZ_UCLAR'a \
+                 GEREKCESIYLE yazilmali"
+            );
+        }
+    }
+}
 
 #[test]
 fn her_http_ucunun_bir_istemci_cagri_yeri_var() {

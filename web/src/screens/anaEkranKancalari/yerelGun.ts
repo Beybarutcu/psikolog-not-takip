@@ -24,3 +24,26 @@ export function yerelGun(tarih: Date): string {
   const iki = (n: number) => String(n).padStart(2, '0')
   return `${tarih.getFullYear()}-${iki(tarih.getMonth() + 1)}-${iki(tarih.getDate())}`
 }
+
+/**
+ * Yerel gün + saat, **dosya adına girmeye uygun** biçimde:
+ * `YYYYAAGG-SSDD` (örn. `20260923-1430`).
+ *
+ * `.onceki` kalıntılarını kenara kaldıran eylem taşıdığı dosyalara bu
+ * damgayı ekler (`yedekApi.oncekiDosyalariKaldir`). Sunucu damgayı kendi
+ * saatinden türetmiyor: `yerelGun` ile **aynı** duvar saati gerekçesi —
+ * kullanıcı bu adı dosya listesinde okuyup "hangisi dünkü" diye soracak ve
+ * UTC'den türetilen bir ad Istanbul'da 00:00–03:00 arasında bir gün geriye
+ * yazardı.
+ *
+ * Saat de var çünkü aynı gün içinde birden fazla kalıntı birikebilir ve
+ * sunucu hiçbir hedefin üzerine yazmaz — çakışan bir ad işlemi reddettirir.
+ *
+ * Biçim sunucuda **doğrulanıyor** (`GecersizDamga`) ve bu bir güvenlik
+ * kapısıdır: damga doğrudan bir dosya adına giriyor.
+ */
+export function yerelDamga(tarih: Date): string {
+  const iki = (n: number) => String(n).padStart(2, '0')
+  const gun = `${tarih.getFullYear()}${iki(tarih.getMonth() + 1)}${iki(tarih.getDate())}`
+  return `${gun}-${iki(tarih.getHours())}${iki(tarih.getMinutes())}`
+}

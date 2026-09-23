@@ -7,7 +7,7 @@ import { kurulumYap } from './yardimcilar'
  * tarayıcıda, GERÇEK bir sunucuyla birbirine bağlı çalıştığı — birim
  * testler her parçayı kendi izolasyonunda (jsdom, sahte `fetch`) doğruluyor;
  * parçaların ZİNCİRİ (biçim çubuğu → textarea → otomatik kayıt → sunucu →
- * yeniden yükleme, etiket ekle → Ctrl+K → etiketli seanslar → danışan
+ * yeniden yükleme, etiket ekle → Cmd+K → etiketli seanslar → danışan
  * dosyası, not içeriğinde ara → danışan dosyası) yalnızca burada ölçülebilir.
  *
  * # Ctrl+Z testi neden burada ve neden ÖZEL
@@ -153,7 +153,7 @@ test('bicim cubugu: secili kelime kalinlasir, Onizle gosterir, sayfa yenilenince
   await expect(yenidenAlan).toHaveValue(cumle.replace(kelime, `**${kelime}**`))
 })
 
-test('etiket: seansa eklenir, Ctrl+K etiketi bulur, etiketli seanslardan danisan dosyasina gecilir', async ({
+test('etiket: seansa eklenir, Cmd+K etiketi bulur, etiketli seanslardan danisan dosyasina gecilir', async ({
   page,
 }) => {
   await kurulumYap(page)
@@ -176,7 +176,7 @@ test('etiket: seansa eklenir, Ctrl+K etiketi bulur, etiketli seanslardan danisan
   const cip = panel.getByRole('button', { name: `${etiketAdi} etiketli seansları göster` })
   await expect(cip).toBeVisible()
 
-  await page.getByRole('button', { name: 'Hızlı arama (Ctrl+K)' }).click()
+  await page.getByRole('button', { name: 'Hızlı arama (⌘K)' }).click()
   const dialog = page.getByRole('dialog', { name: 'Hızlı arama' })
   // ASKANSIZ BÜYÜK HARF: `katla` Türkçe harf katlamasını ASCII'ye indirger,
   // yani "KAYGI" da "kaygı" etiketini bulmalı (bkz. `search.rs` modül
@@ -218,7 +218,7 @@ test('arama: not iceriginden danisan dosyasina gecilir', async ({ page }) => {
   await alan.fill(`Seans notu: ${notTerimi} uzerine calisildi.`)
   await kaydedildiBekle(page)
 
-  await page.getByRole('button', { name: 'Hızlı arama (Ctrl+K)' }).click()
+  await page.getByRole('button', { name: 'Hızlı arama (⌘K)' }).click()
   const dialog = page.getByRole('dialog', { name: 'Hızlı arama' })
   await dialog.getByLabel('Danışan adı veya not içeriği').fill(notTerimi)
 

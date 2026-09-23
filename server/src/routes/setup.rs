@@ -8,7 +8,7 @@ use psikolog_core::store::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 #[derive(Deserialize)]
 pub struct KurulumIstegi {
@@ -111,6 +111,9 @@ pub async fn kurulum(
         );
     }
 
-    s.oturum.lock().unwrap_or_else(|e| e.into_inner()).ac(kurulum.data_key, Instant::now());
+    s.oturum
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .ac(kurulum.data_key, Instant::now(), SystemTime::now());
     (StatusCode::CREATED, Json(json!({ "kurtarma_kodu": kurulum.recovery_code })))
 }

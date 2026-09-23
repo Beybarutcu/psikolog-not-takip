@@ -2724,6 +2724,17 @@ mod tests {
         use std::error::Error;
         assert!(eksiksiz.source().is_some(), "teshis icin asil IO hatasi kaynakta durmali");
 
+        // `Db` de AYNI kapidan gecmeli (inceleme MINOR): yerlestirmenin son
+        // adimi `open_existing` ve "veritabani hatasi: ..." da akibeti
+        // soylemiyordu. Bu iddia olmadan sarmalamayi yalnizca `Io`ya
+        // daraltan bir mutasyon gorunmez kalirdi.
+        let vt = yerlestirme_hatasi(
+            YedekHatasi::Db(DbError::Sqlite(rusqlite::Error::InvalidQuery)),
+            true,
+        );
+        assert!(matches!(vt, YedekHatasi::YerlestirmeBasarisiz(_)), "gelen: {vt:?}");
+        assert!(vt.to_string().contains("kaybolmadı"), "{vt}");
+
         // EKSI YON: ayni hata, geri alma YARIM kaldiysa akibet vaadi
         // verilmemeli -- iki yol birbirine karismamali.
         let yarim = yerlestirme_hatasi(YedekHatasi::Io(io_hatasi()), false);

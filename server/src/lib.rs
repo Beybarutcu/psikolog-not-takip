@@ -197,6 +197,16 @@ fn api_router() -> Router<AppState> {
         // adini icerebilir ve URL'ler tarayici gecmisine/gunluklere duser
         // (`routes::attachments`'in dosya adi karariyla ayni sinif).
         .route("/yedek", post(routes::backup::al))
+        // Inceleme IMPORTANT-A: `.onceki` kalintisini damgali bir ada tasiyan
+        // bakim ucu (39. veri handler'i). Kapinin ICINDE: tasinan dosyalar
+        // danisan verisinin KENDISI. HICBIR SEY SILMEZ.
+        //
+        // Var olus sebebi: `kenara_al`'in kapisi, BASARILI bir geri
+        // yuklemeden artan (silinemeyen) bir `.onceki` yuzunden de kapanir
+        // ve o noktada kullanicinin tek cikisi `~/Library` altinda elle
+        // dosya tasimak olurdu -- macOS'ta gizli bir klasor, ve oradaki ilk
+        // refleks silmek.
+        .route("/onceki-dosyalari-kaldir", post(routes::backup::onceki_dosyalari_kaldir))
         .route("/yedekler", post(routes::restore::listele))
         .route("/geri-yukleme", post(routes::restore::uygula))
         .fallback(api_bulunamadi)

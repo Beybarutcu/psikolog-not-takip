@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { yedekApi, YetkisizHata, type YedekListesi } from '../../api'
-import { yerelGun } from './yerelGun'
+import { yerelDamga, yerelGun } from './yerelGun'
 
 /**
  * Yedekleme akışı: açılıştaki otomatik günlük yedek, elle yedek alma,
@@ -16,6 +16,9 @@ export function useYedekleme() {
   const [klasorFormuAcik, setKlasorFormuAcik] = useState(false)
   const [klasorGirdisi, setKlasorGirdisi] = useState('')
   const [suruyor, setSuruyor] = useState(false)
+  // `.onceki` kenara kaldirma eyleminin sonucu -- `uyari`dan AYRI (bkz.
+  // `oncekileriKaldir`).
+  const [temizlikBilgisi, setTemizlikBilgisi] = useState<string | null>(null)
 
   /**
    * Bugünün yedeğini alır ve listeyi tazeler.
@@ -40,6 +43,40 @@ export function useYedekleme() {
       // ayrı sorunlar ve kullanıcı hangisini düzelteceğini bilmeli
       // (`danisanEkle` ile aynı gerekçe).
       setUyari(e instanceof Error ? e.message : 'Yedek alınamadı.')
+      return false
+    } finally {
+      setSuruyor(false)
+    }
+  }, [])
+
+  /**
+   * Veri klasöründeki `.onceki` kalıntılarını damgalı bir ada **taşır**
+   * (inceleme IMPORTANT-A). Hiçbir şey silmez.
+   *
+   * Geri yükleme `.onceki` kapısına takıldığında (sunucu: "Ayarlar >
+   * Yedekleme bölümündeki 'Eski dosyaları kenara kaldır' eylemini
+   * çalıştırın") kullanıcının uygulama İÇİNDEKİ çıkış yolu budur. Sonuç
+   * `uyari` alanına DEĞİL, kendi `temizlikBilgisi` alanına yazılıyor:
+   * `uyari` "yedek alınamıyor" KALICI uyarısıdır ve onu buradan
+   * temizlemek/doldurmak iki ayrı sorunu tek kutuda birleştirirdi.
+   */
+  const oncekileriKaldir = useCallback(async () => {
+    setSuruyor(true)
+    setTemizlikBilgisi(null)
+    try {
+      const { tasinan } = await yedekApi.oncekiDosyalariKaldir(yerelDamga(new Date()))
+      setTemizlikBilgisi(
+        tasinan === 0
+          ? 'Kenara kaldırılacak eski dosya bulunamadı.'
+          : `${tasinan} eski dosya yeniden adlandırıldı; hiçbiri silinmedi.`,
+      )
+      return true
+    } catch (e) {
+      if (e instanceof YetkisizHata) return false
+      // Sunucudan gelen mesaj OLDUĞU GİBİ gösteriliyor (`al` ile aynı
+      // gerekçe): "dosyalar taşınamadı" ile "geçersiz zaman damgası"
+      // birbirinden ayrı sorunlar.
+      setTemizlikBilgisi(e instanceof Error ? e.message : 'Eski dosyalar taşınamadı.')
       return false
     } finally {
       setSuruyor(false)
@@ -94,5 +131,7 @@ export function useYedekleme() {
     setKlasorGirdisi,
     suruyor,
     al,
+    temizlikBilgisi,
+    oncekileriKaldir,
   }
 }

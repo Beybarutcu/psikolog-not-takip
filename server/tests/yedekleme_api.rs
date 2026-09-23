@@ -348,6 +348,84 @@ async fn kilitliyken_yedek_alinamaz_ve_dosya_olusmaz() {
     );
 }
 
+/// `.onceki` kenara kaldırma ucu da kapının **içinde** (inceleme
+/// IMPORTANT-A): taşınan dosyalar danışan verisinin kendisidir.
+#[tokio::test]
+async fn kilitliyken_onceki_dosyalar_kaldirilamaz_ve_dosya_oynamaz() {
+    let o = ortam();
+    kur(&o).await;
+    let onceki = o.s.db_yolu().with_extension("db.onceki");
+    std::fs::write(&onceki, b"KULLANICININ-TEK-KOPYASI").unwrap();
+    cagir(&o.s, "POST", "/api/kilitle", None).await;
+
+    let (kod, json) = cagir(
+        &o.s,
+        "POST",
+        "/api/onceki-dosyalari-kaldir",
+        Some(serde_json::json!({ "damga": "20260923-1430" })),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED, "bakim ucu kilit kapisindan gecmeli");
+    assert!(json.get("tasinan").is_none(), "kilitliyken sonuc dondurmemeli");
+    assert_eq!(
+        std::fs::read(&onceki).unwrap(),
+        b"KULLANICININ-TEK-KOPYASI",
+        "kilitliyken atilan istek diskte hicbir sey oynatmamali"
+    );
+}
+
+/// Uçtan uca çıkış yolu (inceleme IMPORTANT-A): kalıntı yüzünden
+/// kilitlenen geri yükleme, **uygulama içinden** açılıyor ve hiçbir dosya
+/// silinmiyor.
+#[tokio::test]
+async fn kalinti_geri_yuklemeyi_kilitler_ve_bakim_ucu_acar() {
+    const TEK_KOPYA: &[u8] = b"KULLANICININ-TEK-KOPYASI";
+    let o = ortam();
+    kur(&o).await;
+    danisan_ekle(&o, "Ayse Yilmaz").await;
+    assert_eq!(yedek_al(&o, DAMGA).await.0, StatusCode::OK, "on kosul: yedek alinmali");
+
+    // Temizligi patlamis bir geri yuklemeden artan kalinti.
+    let onceki = o.s.db_yolu().with_extension("db.onceki");
+    std::fs::write(&onceki, TEK_KOPYA).unwrap();
+
+    let geri_yukle = || {
+        cagir(
+            &o.s,
+            "POST",
+            "/api/geri-yukleme",
+            Some(serde_json::json!({
+                "dizin": o.yedek_dizini,
+                "dosya_adi": format!("yedek-{DAMGA}.db"),
+                "parola": PAROLA,
+            })),
+        )
+    };
+
+    let (kod, json) = geri_yukle().await;
+    assert_eq!(kod, StatusCode::CONFLICT, "kalinti varken geri yukleme 409 ile durmali");
+    let mesaj = json["hata"].as_str().unwrap_or_default();
+    assert!(mesaj.contains("kenara kaldır"), "govde cikis yolunu ADIYLA soylemeli: {mesaj}");
+    assert!(mesaj.contains("SİLMEYİN"), "govde silmeyi yasaklamali: {mesaj}");
+
+    let (kod, json) = cagir(
+        &o.s,
+        "POST",
+        "/api/onceki-dosyalari-kaldir",
+        Some(serde_json::json!({ "damga": "20260923-1430" })),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::OK, "{json}");
+    assert_eq!(json["tasinan"], 1);
+    assert_eq!(
+        std::fs::read(o.s.db_yolu().with_extension("db.onceki-20260923-1430")).unwrap(),
+        TEK_KOPYA,
+        "bakim ucu SILMEZ; icerik birebir korunmali"
+    );
+
+    assert_eq!(geri_yukle().await.0, StatusCode::OK, "kilit acilmis olmali");
+}
+
 #[tokio::test]
 async fn hedef_klasor_secilmeden_yedek_alinamaz() {
     let o = ortam();

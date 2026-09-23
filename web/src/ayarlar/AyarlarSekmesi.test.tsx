@@ -216,6 +216,9 @@ describe('AyarlarSekmesi — davranış (AnaEkran.test.tsx içinden taşındı)'
   let sunucuYedekDizini: string | undefined
   let sunucuYedekleri: { dosya_adi: string; tarih: string; boyut: number }[]
   let yedekListeHatasi: string | null
+  let temizlikIstekleri: string[]
+  let temizlikTasinan: number
+  let temizlikHatasi: string | null
 
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] })
@@ -225,9 +228,19 @@ describe('AyarlarSekmesi — davranış (AnaEkran.test.tsx içinden taşındı)'
     sunucuYedekDizini = undefined
     sunucuYedekleri = []
     yedekListeHatasi = null
+    temizlikIstekleri = []
+    temizlikTasinan = 2
+    temizlikHatasi = null
 
     globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
       const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      if (yol.startsWith('/api/onceki-dosyalari-kaldir')) {
+        temizlikIstekleri.push(
+          (JSON.parse((secenekler?.body as string) ?? '{}') as { damga: string }).damga,
+        )
+        if (temizlikHatasi) return hataYaniti(500, temizlikHatasi)
+        return jsonYanit({ tasinan: temizlikTasinan })
+      }
       // `/api/yedekler` ÖNCE: `/api/yedek` onun öneki.
       if (yol.startsWith('/api/yedekler')) {
         if (yedekListeHatasi) return hataYaniti(400, yedekListeHatasi)
@@ -288,6 +301,51 @@ describe('AyarlarSekmesi — davranış (AnaEkran.test.tsx içinden taşındı)'
     expect(screen.getByRole('region', { name: 'Yedekleme' }).textContent).toContain(
       '/Volumes/USB/yedek',
     )
+  })
+
+  it('eski dosyalari kenara kaldirma: damga yerel SAATI tasir ve sonuc gosterilir', async () => {
+    // Inceleme IMPORTANT-A: geri yukleme `.onceki` kalintisina takildiginda
+    // kullanicinin uygulama ICINDEKI cikis yolu bu dugme. Alternatifi
+    // macOS'ta GIZLI olan `~/Library` altinda elle dosya tasimak -- ve
+    // oradaki ilk refleks silmek.
+    sunucuYedekleri = [{ dosya_adi: `yedek-${BUGUN}.db`, tarih: BUGUN, boyut: 4096 }]
+    render(<Kabuk />)
+    const bolum = await screen.findByRole('region', { name: 'Yedekleme' })
+
+    // Dugme metni ne YAPMADIGINI da soyluyor: kullaniciya "sil" fiili
+    // hicbir yerde gosterilmiyor (inceleme IMPORTANT-B ile ayni gerekce).
+    const dugme = within(bolum).getByRole('button', { name: /kenara kaldır/i })
+    expect(dugme.textContent).toMatch(/silmez/i)
+
+    await userEvent.click(dugme)
+
+    // Damga YEREL saatten turetilir (duvar saati sozlesmesi): sabit saat
+    // 2026-09-09 12:00 -> `20260909-1200`. UTC'den turetilseydi Istanbul'da
+    // gece yarisindan sonra bir gun geriye yazardi -- ve kullanici bu adi
+    // dosya listesinde okuyor.
+    await waitFor(() => expect(temizlikIstekleri).toEqual(['20260909-1200']))
+
+    // Sonuc KENDI alaninda: `uyari` "verileriniz yedeklenmiyor" KALICI
+    // uyarisidir ve iki ayri sorunu tek kutuda birlestirmek yanlis olurdu.
+    const bilgi = await within(bolum).findByRole('status')
+    expect(bilgi.textContent).toMatch(/2 eski dosya/)
+    expect(bilgi.textContent).toMatch(/hiçbiri silinmedi/i)
+    expect(within(bolum).queryByRole('alert')).toBeNull()
+  })
+
+  it('kenara kaldirma basarisiz olursa sunucunun mesaji OLDUGU GIBI gosterilir', async () => {
+    // "Dosyalar tasinamadi" ile "gecersiz zaman damgasi" ayri sorunlar;
+    // genel bir mesaj kullanicinin hangisini duzeltecegini gizlerdi
+    // (`al`'daki kararla ayni).
+    sunucuYedekleri = [{ dosya_adi: `yedek-${BUGUN}.db`, tarih: BUGUN, boyut: 4096 }]
+    temizlikHatasi = 'Eski dosyalar taşınamadı: HİÇBİR DOSYA SİLİNMEDİ, verileriniz duruyor.'
+    render(<Kabuk />)
+    const bolum = await screen.findByRole('region', { name: 'Yedekleme' })
+
+    await userEvent.click(within(bolum).getByRole('button', { name: /kenara kaldır/i }))
+
+    const bilgi = await within(bolum).findByRole('status')
+    expect(bilgi.textContent).toBe(temizlikHatasi)
   })
 
   it('form kapaninca girilen parolalar STATE ten silinir', async () => {

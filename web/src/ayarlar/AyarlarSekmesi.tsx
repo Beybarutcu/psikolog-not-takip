@@ -17,6 +17,10 @@ type YedeklemeDurumu = {
   setKlasorGirdisi: Dispatch<SetStateAction<string>>
   suruyor: boolean
   al: (hedefDizin?: string) => Promise<boolean>
+  /** `.onceki` kenara kaldırma eyleminin sonucu (inceleme IMPORTANT-A). */
+  temizlikBilgisi: string | null
+  /** `.onceki` kalıntılarını damgalı bir ada **taşır**; hiçbir şey silmez. */
+  oncekileriKaldir: () => Promise<boolean>
 }
 
 /** `useParolaFormu()`'nin dönüşüyle birebir aynı alanlar. */
@@ -276,7 +280,36 @@ export function AyarlarSekmesi({
           >
             Yedekten geri yükle
           </button>
+          {/* ESKI DOSYALARI KENARA KALDIR (inceleme IMPORTANT-A).
+
+              Geri yukleme, veri klasorunde bir `.onceki` kalintisi varken
+              BASLAMAZ -- o dosya kullanicinin tek kopyasi olabilir ve
+              uzerine yazmak (POSIX'te rename sessizce yazar) tam da bu
+              modulun onledigi seydir. Kalinti BASARILI bir geri yuklemeden
+              de kalabilir: temizlik adimi salt okunur bir birimde, `uchg`
+              bayraginda ya da dosyayi tutan bir esitleme istemcisinde
+              basarisiz olabiliyor. O noktada kullanicinin tek cikisi
+              macOS'ta GIZLI olan `~/Library` altinda elle dosya tasimak
+              olurdu -- ve oradaki ilk refleks silmek.
+
+              Dugme metni ne YAPMADIGINI da soyluyor: "silmez, yeniden
+              adlandirir". Kullaniciya "sil" fiilini hicbir yerde
+              gostermiyoruz. */}
+          <button
+            type="button"
+            className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+            disabled={yedekleme.suruyor}
+            onClick={() => void yedekleme.oncekileriKaldir()}
+          >
+            Eski dosyaları kenara kaldır (silmez, yeniden adlandırır)
+          </button>
         </div>
+
+        {yedekleme.temizlikBilgisi && (
+          <p role="status" className="mt-2 text-xs">
+            {yedekleme.temizlikBilgisi}
+          </p>
+        )}
 
         {yedekleme.yedek !== null && (
           <p className="mt-1 break-all font-mono text-xs">{yedekleme.yedek.hedef_dizin}</p>

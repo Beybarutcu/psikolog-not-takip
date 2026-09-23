@@ -997,6 +997,25 @@ export const yedekApi = {
       method: 'POST',
       body: JSON.stringify(girdi),
     }),
+  /**
+   * Veri klasöründe duran `.onceki` kalıntılarını damgalı bir ada **taşır**
+   * (`POST /api/onceki-dosyalari-kaldir`).
+   *
+   * **Hiçbir şey silmez.** Bu uç, geri yüklemenin `.onceki` kapısına
+   * takıldığı durumdan çıkış yoludur (sunucudaki `OncekiDosyaDuruyor`
+   * mesajı bu eylemi adıyla söyler): kalıntı başarısız bir geri almadan da
+   * kalabilir, BAŞARILI bir geri yüklemenin temizlik adımı başarısız
+   * olduğunda da. İkinci durumda kullanıcının tek alternatifi macOS'ta
+   * gizli olan `~/Library` altında elle dosya taşımak olurdu.
+   *
+   * `damga` istemcinin yerel saatidir (`yerelDamga`) — duvar saati
+   * sözleşmesi: kullanıcı bu adı dosya listesinde okuyacak.
+   */
+  oncekiDosyalariKaldir: (damga: string) =>
+    istek<{ tasinan: number }>('/api/onceki-dosyalari-kaldir', {
+      method: 'POST',
+      body: JSON.stringify({ damga }),
+    }),
 }
 
 /**

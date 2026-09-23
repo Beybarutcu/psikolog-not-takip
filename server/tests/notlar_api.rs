@@ -316,6 +316,15 @@ async fn kilitliyken_govde_ve_sorgu_alan_her_uc_once_401_doner() {
             None,
         ),
         ("backup.rs", "al", "POST", "/api/yedek".into(), bozuk_govde.clone()),
+        // Inceleme IMPORTANT-A: `.onceki` kalintilarini damgali bir ada
+        // TASIYAN bakim ucu (hicbir sey silmez). Kapinin icinde.
+        (
+            "backup.rs",
+            "onceki_dosyalari_kaldir",
+            "POST",
+            "/api/onceki-dosyalari-kaldir".into(),
+            bozuk_govde.clone(),
+        ),
         ("clients.rs", "olustur", "POST", "/api/danisanlar".into(), bozuk_govde.clone()),
         ("clients.rs", "guncelle_uc", "PATCH", format!("/api/danisanlar/{cid}"), bozuk_govde.clone()),
         (
@@ -2352,7 +2361,8 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
     // seans_listesi, ekle, kaldir, seanslar) -- toplam 32 -> 37.
     // Gorev 7 Plan 7: `routes::audit::liste` (denetim kaydini OKUMA ucu)
     // eklendi -- toplam 37 -> 38.
-    assert_eq!(toplam, 38, "toplam veri handler'i sayisi 38 olmali");
+    // Inceleme IMPORTANT-A: `backup::onceki_dosyalari_kaldir` eklendi -- 38 -> 39.
+    assert_eq!(toplam, 39, "toplam veri handler'i sayisi 39 olmali");
 }
 
 /// Kapıyı ilk satırda VE uzun bir üretimden sonra ikinci kez çağırmasına izin

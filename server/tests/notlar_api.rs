@@ -1912,25 +1912,42 @@ async fn denetim_kayitlari_listelenir_siralanir_ve_hassas_veri_tasimaz() {
 /// yasak (bkz. dosya basligi).
 #[tokio::test]
 async fn denetim_kayitlari_sayfalanir() {
-    let (_d, s, cid, _rid) = dolu_state().await;
-    // HerCagri: ayni id icin bile her cagri AYRI bir satir yazar (birlestirme
-    // yok), bkz. `clients::getir_uc` -> `clients::getir`.
-    for _ in 0..60 {
-        cagir(&s, "GET", &format!("/api/danisanlar/{cid}"), None).await;
+    let (_d, s, _cid, _rid) = dolu_state().await;
+    // ONCE 60 FARKLI danisan olustur, SONRA her birini bir kez GET et.
+    //
+    // Neden AYNI danisani 60 kez GET etmek YETMEZ: `AuditKaydi` satir `id`si
+    // TASIMAZ (bkz. tip -- kimlik bilgisi disinda gosterim alanlari) ve
+    // `olay_zamani` saniye cozunurlugunde. HerCagri 60 cagriyi de birlestir-
+    // meden ayri ayri yazar (`clients::getir_uc` -> `clients::getir`), ama
+    // aynı danisana (ayni varlik_id) ayni saniye icinde atilan 60 GET, id'siz
+    // JSON gorunumde BIRBIRINDEN AYIRT EDILEMEZ satirlar uretir -- asagidaki
+    // "sayfalar cakismamali" iddiasi (kesin farkli SATIRLAR ama kesin AYNI
+    // ICERIK) o zaman ortama/zamanlamaya bagli olarak kirmiziya donerdi
+    // (goreve bagli mutasyon dogrulamasi sirasinda gozlemlendi). Farkli
+    // danisanlar varlik_id'yi de ayirir, bu yuzden karsilastirma her kosulda
+    // deterministik.
+    let mut idler = Vec::with_capacity(60);
+    for i in 0..60 {
+        idler.push(danisan_ekle(&s, &format!("Sayfalama Testi {i}")).await);
+    }
+    for id in &idler {
+        cagir(&s, "GET", &format!("/api/danisanlar/{id}"), None).await;
     }
 
-    let (kod, sayfa0) = cagir(&s, "GET", "/api/denetim-kayitlari", None).await;
+    let (kod, sayfa0) = cagir(&s, "GET", "/api/denetim-kayitlari?varlik=client", None).await;
     assert_eq!(kod, StatusCode::OK);
     let kayitlar0 = sayfa0["kayitlar"].as_array().unwrap();
     assert_eq!(kayitlar0.len(), 50, "sayfa boyutu 50 olmali");
     assert_eq!(sayfa0["sayfa"], 0);
     assert_eq!(sayfa0["sonraki_sayfa_var"], true);
 
-    let (_, sayfa1) = cagir(&s, "GET", "/api/denetim-kayitlari?sayfa=1", None).await;
+    let (_, sayfa1) =
+        cagir(&s, "GET", "/api/denetim-kayitlari?varlik=client&sayfa=1", None).await;
     let kayitlar1 = sayfa1["kayitlar"].as_array().unwrap();
     assert!(!kayitlar1.is_empty(), "ikinci sayfa bos olmamali");
     assert_eq!(sayfa1["sayfa"], 1);
-    // Sayfalar CAKISMAMALI.
+    // Sayfalar CAKISMAMALI -- varlik_id farkli danisanlardan geldigi icin bu
+    // karsilastirma zamana bagli DEGIL.
     assert_ne!(kayitlar0[0], kayitlar1[0]);
 }
 

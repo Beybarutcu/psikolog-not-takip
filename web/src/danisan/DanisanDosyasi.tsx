@@ -5,6 +5,7 @@ import { etiketSirasi } from '../etiket/etiketAdi'
 import type { KartVerisi } from '../screens/anaEkranKancalari/useDanisanDosyasi'
 import type { Randevu } from '../takvim/HaftalikTakvim'
 import { NotEditoru } from '../seans/NotEditoru'
+import { sablonMetni } from '../seans/sablon'
 import { SeansAltSatiri } from '../seans/SeansAltSatiri'
 import { DosyaBilgileri } from './DosyaBilgileri'
 import { SeansListesi } from './SeansListesi'
@@ -287,13 +288,28 @@ export function DanisanDosyasi({
                     ) : (
                       <NotEditoru
                         key={`dosya-not-${seciliSeans.appointment_id}`}
-                        baslangicIcerik={notGorunen.icerik}
+                        // Boş içerik şablon başlıklarıyla açılır -- takvimdeki
+                        // `SeansPaneli` ile AYNI dönüşüm, AYNI ölçüt (Görev
+                        // 6e). Eskiden burası ham (`''`) açıyordu: aynı seans
+                        // takvimde şablon başlıklarıyla, dosyada bomboş
+                        // görünüyordu ve bu "iki ekran aynı seansı aynı
+                        // gösterir" kuralının dışındaydı. Veri kaybı yok
+                        // (imza kontrolü boş şablonla yazma üretmez, bkz.
+                        // `NotEditoru`), yalnızca İLK GÖRÜNÜM tutarlı hâle
+                        // geldi.
+                        baslangicIcerik={notGorunen.icerik === '' ? sablonMetni(notGorunen.sablon) : notGorunen.icerik}
                         baslangicSablon={notGorunen.sablon}
                         // Başka bir yoldan (takvim editörünün unmount
                         // tahliyesi) gelen kayıt bu editör monte olduktan
                         // SONRA biterse, editör temizse onu benimser (son
-                        // inceleme C1 — bkz. `NotEditoru::sunucuHali`).
-                        sunucuHali={{ sablon: notGorunen.sablon, icerik: notGorunen.icerik }}
+                        // inceleme C1 — bkz. `NotEditoru::sunucuHali`). Açılış
+                        // içeriğiyle AYNI dönüşüm uygulanır (yoksa boş not
+                        // için başlıklar ile `''` farklı sayılır ve editör
+                        // başlıkları silerdi -- `SeansPaneli` ile aynı gerekçe).
+                        sunucuHali={{
+                          sablon: notGorunen.sablon,
+                          icerik: notGorunen.icerik === '' ? sablonMetni(notGorunen.sablon) : notGorunen.icerik,
+                        }}
                         // Taslak anahtarı takvimdekiyle AYNI (`not-<id>`):
                         // aynı resmî not, aynı taslak. Ayrı anahtarlar (eski
                         // `danisan-not-<id>`) iki ekranda iki ayrı taslak

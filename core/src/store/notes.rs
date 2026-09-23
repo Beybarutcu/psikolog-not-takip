@@ -63,6 +63,14 @@
 //! yine açtım" ayrımı korunur; kaybolan şey yalnızca aynı oturumdaki
 //! tekrarlı okumadır.
 //!
+//! O koşul Görev 6h'de gerçekten gerçekleşti (danışan dosyası ekranı da
+//! `rizaKaydet`/`ekYukle`/`ekSil` sonrası kendini tazeliyor) ve karar orada
+//! YENİDEN VERİLDİ: `clients::getir` yine `HerCagri` kaldı, birleştirmeye
+//! GEÇİLMEDİ (bkz. `clients::getir`'in güncel doküman yorumu) -- buradaki
+//! (not editörü) ve oradaki (danışan dosyası) tazeleme farklı sınıflardan:
+//! biri zamanlayıcı tabanlı otomatik kayıt, diğeri seyrek, bilinçli bir
+//! mutasyonun doğrudan sonucu.
+//!
 //! Birleştirme **asla** var olan bir satırı silmez veya güncellemez: bu
 //! modülde `audit_log` üzerinde `UPDATE`/`DELETE` içeren tek bir SQL ifadesi
 //! yoktur (davranışsal kanıt:

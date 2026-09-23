@@ -447,7 +447,7 @@ export function AyarlarSekmesi({
       <section aria-label="Denetim kaydı" className="mb-4 rounded border p-4 text-sm">
         <h3 className="font-medium">Denetim kaydı</h3>
         <p className="mt-1 text-xs text-slate-600">
-          Bu kayıtları hangi tarihte, hangi cihazdan, hangi dosyaya erişildiğini
+          Bu kayıtlar hangi tarihte, hangi cihazdan, hangi dosyaya erişildiğini
           gösterir; silinemez. Bu listeyi görüntülemek yeni bir kayıt oluşturmaz.
         </p>
 

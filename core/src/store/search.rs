@@ -287,6 +287,35 @@ const SORGU_NOT: &str = "SELECT p.appointment_id, a.client_id, c.ad_soyad, a.bas
 /// `kullanim`: kaç seansa bağlı olduğu (`tags::etiketleri_listele` ile aynı
 /// `LEFT JOIN ... COUNT` deseni) — sonuç listesinde gösterilir, sıralamayı da
 /// besler (bkz. `ara` içindeki Rust-tarafı sıralama).
+///
+/// # SINIR: buradaki `ORDER BY` GÖSTERİM sırası DEĞİLDİR (dal incelemesi M3)
+///
+/// Bu `ORDER BY` yalnızca **hangi satırların getirileceğini** belirler:
+/// `LIMIT` sorgunun içinde olduğu için sıra, kesimin nereden yapılacağına
+/// karar verir. Kullanıcının gördüğü sıra ise her zaman Rust tarafında
+/// yeniden kurulur (`ara` içindeki `sort_by`: kullanım azalan, eşitlikte
+/// `tags::etiket_sirasi` — Türk alfabesi).
+///
+/// İkisi **farklı harmanlamalar** kullanır ve bu bilerek böyledir: SQLite'ın
+/// `COLLATE NOCASE`'i ASCII'dir ve Türkçe harfleri kod noktasına göre dizer
+/// ('ç' U+00E7, 'z' U+007A'dan sonra gelir), `etiket_sirasi` ise Türk
+/// alfabesine göre dizer. Sonuç: **eşit kullanımlı 51 ve üzeri etiket**
+/// olduğunda hangi etiketlerin sınıra sığıp hangilerinin düşeceği Türk
+/// alfabesi sırasına göre değil, `COLLATE NOCASE` sırasına göre belirlenir.
+/// Gösterilen listenin kendi sırası yine doğrudur; **kesim** noktası
+/// ayrışır.
+///
+/// Bu bir **kusur değil, kabul edilmiş bir sınırdır**: SQLite'a Türkçe
+/// harmanlama öğretmek ya yeni bir bağımlılık ya da 12 `replace()` zincirinin
+/// `ORDER BY`'a da taşınması demek olurdu; pratik etkisi ise yalnızca
+/// "aynı kullanım sayısına sahip 50'den fazla etiket" durumunda, yalnızca
+/// listenin kuyruğunda görülür ve `kirpildi` bayrağı kullanıcıyı zaten
+/// aramayı daraltmaya yönlendirir.
+///
+/// **Bu yorum bir koruma değildir** (10. biçim): tarif ettiği durumu
+/// yakalayan bir test YOKTUR ve davranış bilerek değiştirilmemiştir. Sınır
+/// burada yalnızca **yazılıdır** ki bir sonraki okuyan onu kusur sanıp
+/// "düzeltmesin" ya da farkında olmadan ona güvenmesin.
 const SORGU_ETIKET: &str = "SELECT t.id, t.ad, COUNT(pt.appointment_id) AS kullanim
  FROM tags t
  LEFT JOIN progress_note_tags pt ON pt.tag_id = t.id

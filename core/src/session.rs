@@ -27,11 +27,30 @@ pub const VARSAYILAN_KILIT_SURESI_SN: u64 = 300;
 /// Cozum: ikisini BIRLIKTE tutmak. `acik_mi` icin oturum "acik" sayilmasi
 /// hem monotonik HEM duvar saatinin sinirin icinde kalmasini gerektirir --
 /// yani ikisinden HANGISI sinir asarsa oturum kilitlenir, tek bir kolun
-/// basarisiz olmasi yeter: monotonik saat uykuyu yakalar, duvar saati saat
-/// oynamasini yakalar; birlesim her iki yolu da kapatir. Duvar saati GERIYE
-/// giderse (kullanici saati degistirdi, senkronizasyon sicradi) bu zaten bir
-/// uyari isaretidir -- guvenli taraf kilitlemektir, bu yuzden negatif fark da
-/// "sinir asildi" sayilir (bkz. `ZamanDamgasi::sinir_asildi_mi`).
+/// basarisiz olmasi yeter. Duvar saati GERIYE giderse (kullanici saati
+/// degistirdi, senkronizasyon sicradi) bu zaten bir uyari isaretidir --
+/// guvenli taraf kilitlemektir, bu yuzden negatif fark da "sinir asildi"
+/// sayilir (bkz. `ZamanDamgasi::sinir_asildi_mi`).
+///
+/// # Ne KAPATILIYOR, ne KAPATILMIYOR (dal incelemesi bulgusu)
+/// Saf uyku (mono donuk, duvar dogal akisiyla ilerliyor) kapatiliyor: (a)
+/// testi bunu dogrular. Saf geriye-saat (duvar geri, mono normal) kapatiliyor:
+/// (b) testi bunu dogrular. AMA su kombinasyon KAPATILMIYOR: mono donuk
+/// (makine uyudu) VE biri kapak acildiginda sistem saatini GERIYE almadan,
+/// dogru sinirin ALTINDA kalacak bir degere elle AYARLARSA (ornegin D0 + 1
+/// saniyeye) -- `mono_asildi` yanlis, `duvar_asildi` da yanlis cikar ve
+/// oturum ACIK kalir, gercekte uzerinden saatler gecmis olsa bile. Bu
+/// `mono_ve_duvar_donuk_kombinasyonunda_acik_kalir_bilinen_sinir` testiyle
+/// SABITLENMISTIR -- bir hata degil, BILINCLI KABUL EDILEN bir sinirdir:
+/// sistem saatini elle bu sekilde ayarlayabilen biri zaten bu urunun tehdit
+/// modelinin (`danisan odadan cikarken ekranda acik kalan notu koruma
+/// altina alir` -- bkz. `VARSAYILAN_KILIT_SURESI_SN` dokumantasyonu)
+/// disindadir; saate dayanan HERHANGI bir zaman asimi ilkesi, saati
+/// kontrol edebilen bir saldirgana karsi ayni sekilde atlatilabilir. Bunu
+/// platforma ozgu bir mekanizmayla (ör. `CLOCK_MONOTONIC` varyantlari,
+/// libc) kapatmak bu depoya yeni bir platform bagimliligi eklerdi; karar
+/// budur: KAPATILMIYOR, ve neden kapatilmadigi burada ve yukaridaki testte
+/// yazili duruyor.
 ///
 /// Iki alan HER ZAMAN birlikte, ayni "an"dan alinip birlikte saklanir (tek
 /// bir struct icinde) ki biri guncellenip digeri unutulamasin.
@@ -353,5 +372,48 @@ mod tests {
             "monotonik saat tek basina siniri asarsa kilitlenmeli"
         );
         assert!(o.anahtar(sonra, sonra_td).is_none());
+    }
+
+    /// **Bilinen ve kabul edilmis sinir** (dal incelemesi, "ikisi de donuk"
+    /// bulgusu) -- bu bir HATA testi DEGIL, mevcut davranisi kasitli olarak
+    /// SABITLEYEN bir testtir. "Boyle olMALI" demiyor, "bugun boyle ve nedeni
+    /// su" diyor (bkz. `docs/test-yesil-ama-korumuyor.md` 10. bicim).
+    ///
+    /// Senaryo: makine uyur, mono DONAR (8 saat gecse de ilerlemez). Kapagi
+    /// acan biri sistem saatini GERIYE almaz, ama onu dogru zamana degil,
+    /// sinirin ALTINDA kalacak bir degere (D0 + 1 saniye) elle ayarlar. Ne
+    /// `mono_asildi` ne `duvar_asildi` tetiklenir -- oturum ACIK kalir.
+    ///
+    /// Bu kapatilmiyor cunku: sistem saatini bu sekilde elle
+    /// yonlendirebilen biri zaten bu urunun tehdit modelinin DISINDADIR
+    /// (tehdit modeli: "danisan odadan cikarken ekranda acik kalan notu
+    /// koruma altina alir" -- fiziksel erisimi olan ama sistem saatini
+    /// degistiremeyen biri). Saate dayanan HERHANGI bir zaman asimi ilkesi
+    /// saati kontrol eden bir saldirgana karsi ayni sekilde atlatilabilir;
+    /// bu Gorev 4'un cozdugu sorun (macOS uykusu) degil, ayri ve daha genis
+    /// bir sinif. Platforma ozgu kod (libc/`CLOCK_MONOTONIC` varyantlari) bu
+    /// depoya yeni bir bagimlilik eklerdi -- KONTROL KARARI: eklenmiyor.
+    ///
+    /// Mekanizma ileride degisirse (ornegin platforma ozgu bir uyku
+    /// algilamasi eklenirse) bu test kirilir -- o an biri bu sinirin
+    /// KASITLI olarak asildigini gorur, sessizce degil.
+    #[test]
+    fn mono_ve_duvar_donuk_kombinasyonunda_acik_kalir_bilinen_sinir() {
+        let t = Instant::now();
+        let td = SystemTime::now();
+        let mut o = Oturum::kapali();
+        o.ac(generate_data_key(), t, td);
+
+        // Mono: AYNI an (makine uyudu, mono donuk kaldi -- (a) testiyle
+        // ayni kosul). Duvar: GERIYE degil, ama gercek zamana da degil --
+        // sinirin cok altinda kalacak bir degere elle ayarlandi.
+        let td_elle_ayarlanmis = td + Duration::from_secs(1);
+        assert!(
+            o.acik_mi(t, td_elle_ayarlanmis),
+            "bilinen sinir: mono donuk + duvar saati sinirin altina elle \
+             ayarlanmissa oturum ACIK kalir (bkz. modul basligi \"Ne \
+             KAPATILIYOR, ne KAPATILMIYOR\")"
+        );
+        assert!(o.anahtar(t, td_elle_ayarlanmis).is_some());
     }
 }

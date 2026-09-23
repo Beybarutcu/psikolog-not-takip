@@ -372,7 +372,7 @@ test('arama resmi notu bulur, ozel notu bulmaz', async ({ page, request }) => {
   expect(ozelYanit.status()).toBe(200)
   expect(JSON.stringify(await ozelYanit.json())).toContain(gizliTerim)
 
-  await page.getByRole('button', { name: 'Hızlı arama (Ctrl+K)' }).click()
+  await page.getByRole('button', { name: 'Hızlı arama (⌘K)' }).click()
   const kutu = page.getByLabel('Danışan adı veya not içeriği')
 
   // ARTI YÖN: arama resmî notu buluyor ve sonuç, notun içinden bir parça
@@ -521,7 +521,7 @@ test('randevu silme onayi, gidecek NOTLARI da soyler (dal incelemesi I2)', async
   await page.getByRole('button', { name: 'Evet, sil', exact: true }).click()
   await expect(page.getByRole('button', { name: ad, exact: true })).toHaveCount(0)
 
-  await page.getByRole('button', { name: 'Hızlı arama (Ctrl+K)' }).click()
+  await page.getByRole('button', { name: 'Hızlı arama (⌘K)' }).click()
   await page.getByLabel('Danışan adı veya not içeriği').fill('CASCADEKANARYA19')
   // "Sonuç bulunamadı." bir SENKRONİZASYON BARİYERİ (bkz. arama testi):
   // sunucu bu sorguyu yanıtladı ve sonuç boştu.

@@ -90,6 +90,9 @@ export function GeriYuklemeEkrani({
   const [secili, setSecili] = useState<YedekOzeti | null>(null)
   const [parola, setParola] = useState('')
   const [kurtarmaModu, setKurtarmaModu] = useState(false)
+  // Kurtarma kodu VARSAYILAN olarak gizli -- bkz. aşağıdaki giriş alanının
+  // yorumu (`KilitEkrani`'yle aynı karar, aynı gerekçe).
+  const [kodGorunur, setKodGorunur] = useState(false)
   const [hata, setHata] = useState<string | null>(null)
   const [suruyor, setSuruyor] = useState(false)
   const [bitti, setBitti] = useState<string | null>(null)
@@ -278,13 +281,30 @@ export function GeriYuklemeEkrani({
           <label className="mt-3 block text-sm text-amber-900" htmlFor="yedek-parolasi">
             {kurtarmaModu ? 'Kurtarma kodunuz' : `${secili.tarih} tarihindeki parolanız`}
           </label>
-          <input
-            id="yedek-parolasi"
-            type={kurtarmaModu ? 'text' : 'password'}
-            className="mt-1 w-full rounded-lg border p-2"
-            value={parola}
-            onChange={(e) => setParola(e.target.value)}
-          />
+          <div className="mt-1 flex gap-2">
+            <input
+              id="yedek-parolasi"
+              // Kurtarma kodu paroladan DAHA GÜÇLÜ bir sır (bkz.
+              // `KilitEkrani`'deki aynı karar): varsayılan her zaman
+              // GİZLİ. Kurtarma kodu genelde kağıttan kopyalanır ve kör
+              // yazmak çok daha hataya açık olduğu için yalnızca kurtarma
+              // modunda bir "Göster" düğmesiyle GEÇİCİ olarak görünür
+              // kılınabilir.
+              type={kurtarmaModu && kodGorunur ? 'text' : 'password'}
+              className="w-full rounded-lg border p-2"
+              value={parola}
+              onChange={(e) => setParola(e.target.value)}
+            />
+            {kurtarmaModu && (
+              <button
+                type="button"
+                className="shrink-0 rounded-lg border px-3 text-sm"
+                onClick={() => setKodGorunur((g) => !g)}
+              >
+                {kodGorunur ? 'Gizle' : 'Göster'}
+              </button>
+            )}
+          </div>
           <p className="mt-1 text-xs text-amber-900">
             Yedek, <strong>alındığı tarihteki</strong> parolanızla açılır. Parolanızı o
             tarihten sonra değiştirdiyseniz burada eskisini yazın; hatırlamıyorsanız kurtarma
@@ -311,6 +331,7 @@ export function GeriYuklemeEkrani({
                 setKurtarmaModu(!kurtarmaModu)
                 setParola('')
                 setHata(null)
+                setKodGorunur(false)
               }}
             >
               {kurtarmaModu ? 'Parolayla dene' : 'Parolamı unuttum'}
@@ -323,6 +344,7 @@ export function GeriYuklemeEkrani({
                 setSecili(null)
                 setParola('')
                 setHata(null)
+                setKodGorunur(false)
               }}
             >
               Vazgeç

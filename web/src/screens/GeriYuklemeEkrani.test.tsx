@@ -208,6 +208,27 @@ describe('GeriYuklemeEkrani — davranış', () => {
     expect(geriYukle.mock.calls[0][0]).not.toHaveProperty('parola')
   })
 
+  it('kurtarma kodu alani VARSAYILAN gizli, "Goster" ile gecici gorunur olur (Gorev 6b)', async () => {
+    // Kurtarma kodu paroladan DAHA GÜÇLÜ bir sır (bkz. `KilitEkrani`'deki
+    // aynı karar): ekran görünürken danışan odada olabilir, dolayısıyla
+    // varsayılan `type=password` ile aynı korumayı almalı. "Göster" düğmesi
+    // yalnızca kurtarma modunda görünür ve geçici bir istisnadır.
+    kur()
+    await screen.findByText('2026-09-08')
+    await userEvent.click(screen.getAllByRole('radio')[0])
+    await userEvent.click(screen.getByRole('button', { name: 'Parolamı unuttum' }))
+
+    const alan = screen.getByLabelText(/kurtarma kodunuz/i) as HTMLInputElement
+    expect(alan.type).toBe('password')
+    expect(screen.queryByRole('button', { name: 'Göster' })).not.toBeNull()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Göster' }))
+    expect(alan.type).toBe('text')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Gizle' }))
+    expect(alan.type).toBe('password')
+  })
+
   it('sunucunun hata mesajini OLDUGU GIBI gosterir ve ekranda kalir', async () => {
     // "Bu yedek bu parolayla acilmiyor" ile "yedek eksik" ayri sorunlar ve
     // kullanici hangisini duzeltecegini bilmeli. Genellestirmek, bu kod

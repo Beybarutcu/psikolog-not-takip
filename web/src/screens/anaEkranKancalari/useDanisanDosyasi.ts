@@ -63,6 +63,12 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
 
   const yetkisizRef = useRef(onYetkisiz)
   yetkisizRef.current = onYetkisiz
+  // `randevularTazele` bir `await`in ARDINDAN (AnaEkran'ın randevu
+  // yazmalarından) çağrılıyor; o an elindeki kanca dönüşü birkaç render
+  // eskimiş olabilir, bu yüzden AÇIK danışanı REF'ten okuyor (`seansSec`/
+  // `yapiDegisti` ile aynı gerekçe, bkz. `useDanisanSeanslari`).
+  const seciliDanisanIdRef = useRef(seciliDanisanId)
+  seciliDanisanIdRef.current = seciliDanisanId
 
   // Kart yüklenirken (istek uçuştayken) işaretlenen ödeme/durum, geç dönen
   // kart yanıtında ESKİ değere dönmesin: takvim listesiyle AYNI mantıksal
@@ -211,6 +217,68 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
     [yazmaSaati],
   )
 
+  /**
+   * Kartın randevu penceresini YENİDEN ÇEKER (Görev 2 inceleme IMPORTANT-2).
+   *
+   * `randevuYamala` yalnızca durum/ödeme gibi TEK ALANI kesin bilinen
+   * yazmalar için yeterli. Randevu oluşturma, silme ve seri iptali satır
+   * ekler/çıkarır — YAMANAMAZ; ücret değişimi (ve danışan/saat taşıması) da
+   * BURADAN geçiyor: tek bir alanı ayrı yamalamak yerine `useDanisanSeanslari.
+   * yapiDegisti` ile AYNI sınıf bayatlık kullanılıyor (bkz. o dosya
+   * "Bayatlık") — farkla ki kartın kendi `gorunur` kısıtı YOK: kanca
+   * `AnaEkran`da yaşadığı için sekme değişince UNMOUNT OLMUYOR (bkz.
+   * `AnaEkran.tsx` modül başlığı), dolayısıyla "görünür olunca TEK istekle
+   * tazele" ertelemesine gerek yok — yazma başarılı olur olmaz hemen
+   * tazelenir.
+   *
+   * Yalnızca `takvimApi.randevulariGetir` çağrılır — kartın TAMAMI DEĞİL:
+   * `clients::getir` (`dosyaGetir`) `LogHacmi::HerCagri` ile silinemez bir
+   * satır yazıyor (bkz. modül başlığı ve `useDanisanDosyasi` üstteki
+   * yorum), bu yüzden `kartTazeleme` BİLEREK artırılmıyor. Randevu penceresi
+   * `LogHacmi::OturumBasi` ile birleşiyor (bkz. yukarıdaki modül başlığı
+   * "Denetim kaydı açısından ek yük yok") — ek maliyet yok.
+   *
+   * `etkilenenler`: `null` de dahil (silinen/taşınan randevunun eski
+   * danışanı bilinmiyorsa) — açık kart o durumda da bayat sayılır, bir
+   * fazladan pencere isteği yanlış bakiyeden ucuzdur (`useDanisanSeanslari.
+   * yapiDegisti` ile aynı temkinli karar).
+   */
+  const randevularTazele = useCallback(
+    (etkilenenler: readonly (number | null)[]) => {
+      const acik = seciliDanisanIdRef.current
+      if (acik === null || !etkilenenler.some((id) => id === null || id === acik)) return
+      const okumaDamgasi = yazmaSaati.okumaBasladi()
+      void takvimApi.randevulariGetir(TUM_ZAMAN_BASI, TUM_ZAMAN_SONU).then(
+        (tumRandevular) => {
+          setKartVerisi((onceki) =>
+            onceki.id !== acik
+              ? onceki
+              : {
+                  ...onceki,
+                  randevular: yazmaSaati.uygula(
+                    tumRandevular.filter((r) => r.client_id === acik),
+                    okumaDamgasi,
+                  ),
+                },
+          )
+        },
+        (e: unknown) => {
+          if (e instanceof YetkisizHata) {
+            yetkisizRef.current()
+            setSeciliDanisanId(null)
+            setKartVerisi(BOS_KART)
+            return
+          }
+          // Diğer hatalar sessizce yutuluyor: bakiyenin bir sonraki
+          // başarılı yazmaya kadar bayat kalması, kartı bütünüyle hata
+          // durumuna düşürmekten iyi — terapist zaten dosyayı görüyor,
+          // yalnızca bakiye bir adım geride kalır.
+        },
+      )
+    },
+    [yazmaSaati],
+  )
+
   async function ekSil(ekId: number) {
     await danisanApi.ekSil(ekId)
     setKartTazeleme((n) => n + 1)
@@ -227,5 +295,6 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
     ekYukle,
     ekSil,
     randevuYamala,
+    randevularTazele,
   }
 }

@@ -244,12 +244,22 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
     return json({ cakisanlar: [], cakisan_hafta_sayisi: 0, kontrol_edilen_hafta: 1 })
   }
   if (yol.startsWith('/api/ay-ozeti')) {
-    const borclu = (durumlar[202] ?? R202.durum) === 'geldi' && !(odemeler[202] ?? R202.odendi)
+    // Görev 2: 202 silinmişse ya da ücreti değişmişse özet bunu YANSITMALI
+    // (`tumu()` silinenleri zaten çıkarıyor, `randevuAnlik` durum/ödeme
+    // yamalarını uyguluyor — aynı anlık görüntü randevu penceresinin
+    // kullandığıyla). Sabit `45000` eskiden hem varlığı hem tutarı
+    // görmezden geliyordu; testin "silme -> bekleyen güncellenir" ve
+    // "ücret güncelleme -> özet YENİ değeri gösterir" senaryoları bu yüzden
+    // sunucuyu GERÇEKTEN sorguluyor olmalı.
+    const kayit202 = tumu().find((r) => r.id === 202)
+    const anlik202 = kayit202 ? randevuAnlik(kayit202) : null
+    const borclu = anlik202 !== null && anlik202.durum === 'geldi' && !anlik202.odendi
+    const ucret = anlik202?.ucret ?? 0
     return json({
       ay: '2026-09', seans_sayisi: 3, tahsilat_kurus: 0,
-      bekleyen_kurus: borclu ? 45000 : 0,
+      bekleyen_kurus: borclu ? ucret : 0,
       borclular: borclu
-        ? [{ client_id: 1, ad_soyad: 'Ayşe Yılmaz', borc_kurus: 45000, seans_sayisi: 1 }]
+        ? [{ client_id: 1, ad_soyad: 'Ayşe Yılmaz', borc_kurus: ucret, seans_sayisi: 1 }]
         : [],
     })
   }
@@ -907,6 +917,123 @@ describe('Bayatlık — takvimin yamanamayan yazmaları dosyanın seans listesin
     await listeYuklendi()
     expect(listeMetni()).toContain('7 Eylül 2026, 10:00')
     expect(listeMetni()).not.toContain('14 Eylül 2026')
+  })
+})
+
+describe('Görev 2 — randevu yazmaları ay özetine ve kart bakiyesine yayılır', () => {
+  const kartGetleri = () =>
+    istekler.filter((i) => i.method === 'GET' && i.yol === '/api/danisanlar/1').length
+
+  async function ayOzetiniAc() {
+    await userEvent.click(screen.getByRole('button', { name: 'Ay sonu özeti' }))
+    return screen.findByRole('region', { name: 'Ay sonu özeti' })
+  }
+
+  function bekleyenTutari(bolge: HTMLElement) {
+    return within(bolge).getAllByRole('term').find((e) => e.textContent === 'Bekleyen')
+      ?.nextElementSibling?.textContent
+  }
+
+  /** Takvimde açık 202 panelinin ücretini değiştirip "Güncelle"ye basar. */
+  async function ucretiGuncelle(yeniTl: string) {
+    await userEvent.clear(screen.getByLabelText('Ücret (TL)'))
+    await userEvent.type(screen.getByLabelText('Ücret (TL)'), yeniTl)
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+  }
+
+  // İncelemecinin testle ÜRETTİĞİ senaryo (IMPORTANT-1), birebir: özet
+  // açıkken çift girilmiş bir seans siliniyor, ekran ANINDA (yeniden
+  // çekmeden değil, tek yeni `GET /api/ay-ozeti` ile) sunucuyla eşleşmeli.
+  it('(a) özet AÇIKKEN randevu silme -> bekleyen tutar güncellenir', async () => {
+    ciz()
+    const bolge = await ayOzetiniAc()
+    await waitFor(() => expect(bekleyenTutari(bolge)).toBe('450,00 TL'))
+
+    await takvimde202Ac()
+    await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
+    await waitFor(() => expect(tumu().some((r) => r.id === 202)).toBe(false))
+
+    await waitFor(() => expect(bekleyenTutari(bolge)).toBe('0,00 TL'))
+  })
+
+  // İncelemecinin testle ÜRETTİĞİ senaryo (IMPORTANT-2), birebir: dosya
+  // açıkken (Bilgiler'de 450,00 TL) takvimde ücret 450 -> 900 düzeltiliyor.
+  // Danışanlar'a dönmek `dosya.ac(aynı id)`yi çağırır ve bu bir NO-OP'tur
+  // (bkz. `AnaEkran.tsx::danisanaGit`), yani yayılım OLMAZSA bakiye asla
+  // kendiliğinden düzelmez.
+  it('(b) ücret güncelleme -> özet VE kart bakiyesi ikisi de YENİ değeri gösterir', async () => {
+    ciz()
+    await danisanlarda()
+    await userEvent.click(screen.getByRole('tab', { name: 'Bilgiler' }))
+    await waitFor(() => expect(bakiye()).toBe('450,00 TL'))
+
+    await takvimeDon()
+    await takvimde202Ac()
+    await ucretiGuncelle('900')
+    await waitFor(() => expect(tumu().find((r) => r.id === 202)!.ucret).toBe(90000))
+
+    const bolge = await ayOzetiniAc()
+    await waitFor(() => expect(bekleyenTutari(bolge)).toBe('900,00 TL'))
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Bilgiler' }))
+    await waitFor(() => expect(bakiye()).toBe('900,00 TL'))
+  })
+
+  it('(c) aynı dosyada Seanslar listesindeki tutar ile Bilgiler bakiyesi ÇELİŞMEZ', async () => {
+    ciz()
+    await danisanlarda()
+
+    await takvimeDon()
+    await takvimde202Ac()
+    await ucretiGuncelle('900')
+    await waitFor(() => expect(tumu().find((r) => r.id === 202)!.ucret).toBe(90000))
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    // Seans listesi kendi bayatlık mekanizmasıyla (önceden var, bu görevin
+    // parçası değil) yeniden çekilir ve sunucunun YENİ tutarını gösterir.
+    await waitFor(() =>
+      expect(listeSatiri('14 Eylül 2026, 10:00').textContent).toContain('900,00 TL'),
+    )
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Bilgiler' }))
+    expect(bakiye()).toBe('900,00 TL')
+  })
+
+  // En önemli kısıt: kart tazelemesi `clients::getir`i (HerCagri, silinemez
+  // satır) TETİKLEMEMELİ. Üç yazma türünü de (ücret güncelleme, silme,
+  // oluşturma) sırayla deniyor.
+  it('(d) özet ve kart tazelemesi GET /api/danisanlar/{id} isteği ATMAZ (kart HerCagri)', async () => {
+    ciz()
+    await danisanlarda()
+    const baslangic = kartGetleri()
+
+    await takvimeDon()
+    await takvimde202Ac()
+    await ucretiGuncelle('900')
+    await waitFor(() => expect(tumu().find((r) => r.id === 202)!.ucret).toBe(90000))
+    expect(kartGetleri()).toBe(baslangic)
+
+    // Silme: 201 (7 Eylül), 202 sonraki adımda gerekiyor.
+    await userEvent.click(await screen.findByRole('button', { name: 'Önceki hafta' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
+    await waitFor(() => expect(tumu().some((r) => r.id === 201)).toBe(false))
+    expect(kartGetleri()).toBe(baslangic)
+
+    // Oluşturma.
+    await userEvent.click(await screen.findByRole('button', { name: 'Sonraki hafta' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
+    const bosSaat = (await screen.findAllByLabelText(/boş$/)).find(
+      (el) => el.getAttribute('aria-label') === '21 Eylül 10:00 boş',
+    )
+    await userEvent.click(bosSaat!)
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    await waitFor(() => expect(tumu().some((r) => r.id === 300)).toBe(true))
+    expect(kartGetleri()).toBe(baslangic)
   })
 })
 

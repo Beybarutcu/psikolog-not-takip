@@ -95,6 +95,7 @@ function sahteDosya(seciliDanisanId: number | null): ReturnType<typeof useDanisa
     ekYukle: async () => {},
     ekSil: async () => {},
     randevuYamala: () => {},
+    randevularTazele: () => {},
   }
 }
 

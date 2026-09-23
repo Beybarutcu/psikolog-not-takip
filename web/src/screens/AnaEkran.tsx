@@ -156,6 +156,21 @@ import { yerelGun } from './anaEkranKancalari/yerelGun'
  * `useDanisanSeanslari` "Bayatlık"). Taşımada eski danışan da bildirilir ve
  * bu yüzden ESKİ danışan `await`ten ÖNCE okunur: yazma başarılı olunca
  * `takvim.seciliRandevu` artık yeni danışanı taşır.
+ *
+ * ## Aynı üç yazma AY ÖZETİNE ve açık kartın BAKİYESİNE de yayılır (Görev 2)
+ *
+ * Üçüncü ve dördüncü alıcı, seans listesiyle AYNI gerekçeyle: özet açıkken
+ * ya da kart açıkken görünmez kalan bir randevu oluşturma/silme/seri iptali/
+ * ücret değişimi terapiste YANLIŞ bir borç söyletebilir (`AyOzeti`nin
+ * saydığı rakamlar ve `DosyaBilgileri`'ndeki bakiye ikisi de bu üç yazmadan
+ * etkileniyor). `setOzetTazeleme` özeti (açıksa) TEK bir `GET /api/ay-ozeti`
+ * ile tazeler; `dosya.randevularTazele` kartın randevu penceresini YENİDEN
+ * ÇEKER — kartın TAMAMINI DEĞİL (`clients::getir` `HerCagri`'dir, bkz.
+ * `useDanisanDosyasi.randevularTazele` gerekçesi), yalnızca
+ * `takvimApi.randevulariGetir` (`OturumBasi`, ek denetim maliyeti yok).
+ * Seans listesindeki bayatlık deseninden FARKI: kartın kendi `gorunur`
+ * kısıtı yok, dolayısıyla erteleme değil, yazma başarılı olur olmaz hemen
+ * tazeleniyor (bkz. o fonksiyonun gerekçesi).
  */
 /** Etiket yazma hatasının ekrandaki metni: ne denendi + sunucunun mesajı. */
 function yazmaHataMetni(ne: string, e: unknown): string {
@@ -271,6 +286,11 @@ export function AnaEkran({
   // (bkz. `TakvimSekmesi.tsx`'teki "neden PROP" gerekçesi). Özet kapalıyken
   // sayaç artsa da istek GİTMEZ: `AyOzeti` monte değil, açıldığında zaten tek
   // bir taze istek atar.
+  //
+  // Görev 2 inceleme IMPORTANT-1: yalnızca durum/ödeme DEĞİL, takvimin üç
+  // randevu yazması da (`randevuKaydet`/`randevuSil`/`randevuSeriSil`) bu
+  // sayacı artırır — oluşturma, silme ve seri iptali de `AyOzeti`nin saydığı
+  // rakamları değiştiriyor (bkz. o fonksiyonların yorumu).
   const [ozetTazeleme, setOzetTazeleme] = useState(0)
 
   /**
@@ -422,6 +442,18 @@ export function AnaEkran({
    * Takvimin üç randevu yazması (bkz. modül başlığı "Takvimin randevu
    * yazmaları"). Yayılım yalnızca BAŞARIDA: ret `await`ten fırlar, panel
    * (`RandevuPaneli`) hatayı gösterir, etiket paneli yeniden okunmaz.
+   *
+   * Görev 2 inceleme IMPORTANT-1/IMPORTANT-2: üçü de `AyOzeti`'nin saydığı
+   * rakamları (gelinen seans, tahsilat, bekleyen) ve açık danışan kartının
+   * bakiyesini değiştirebilir — oluşturma/güncelleme (ücret/danışan/saat
+   * dahil), silme ve seri iptali. `setOzetTazeleme` özeti (açıksa, TEK
+   * `GET /api/ay-ozeti` ile) tazeler; `dosya.randevularTazele` kartın
+   * randevu penceresini (`clients::getir` DEĞİL, yalnızca
+   * `takvimApi.randevulariGetir`) — bkz. `useDanisanDosyasi.randevularTazele`
+   * gerekçesi. `durumDegis`/`odemeDegis`teki TEK ALAN yamasından farklı:
+   * burada satır ekleniyor/çıkıyor/taşınıyor ya da ücret gibi henüz kartın
+   * yama tipinde OLMAYAN bir alan değişiyor, bu yüzden yama değil yeniden
+   * çekme.
    */
   async function randevuKaydet(kayit: Parameters<typeof takvim.kaydet>[0]) {
     // Düzenleme kipinde ESKİ danışan (taşıma iki dosyayı birden değiştirir);
@@ -430,6 +462,8 @@ export function AnaEkran({
     await takvim.kaydet(kayit)
     etiketler.randevularDegisti()
     seanslar.yapiDegisti([kayit.client_id, eskiDanisan])
+    dosya.randevularTazele([kayit.client_id, eskiDanisan])
+    setOzetTazeleme((n) => n + 1)
   }
 
   async function randevuSil(id: number) {
@@ -440,6 +474,8 @@ export function AnaEkran({
     await takvim.sil(id)
     etiketler.randevularDegisti()
     seanslar.yapiDegisti([danisan])
+    dosya.randevularTazele([danisan])
+    setOzetTazeleme((n) => n + 1)
   }
 
   async function randevuSeriSil(seriId: string, buTarihtenItibaren: string) {
@@ -449,6 +485,8 @@ export function AnaEkran({
     await takvim.seriSil(seriId, buTarihtenItibaren)
     etiketler.randevularDegisti()
     seanslar.yapiDegisti([danisan])
+    dosya.randevularTazele([danisan])
+    setOzetTazeleme((n) => n + 1)
   }
 
   /**

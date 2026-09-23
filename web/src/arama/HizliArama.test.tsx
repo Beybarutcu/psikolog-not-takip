@@ -259,7 +259,7 @@ describe('HizliArama — gerçek modal davranışı', () => {
   })
 
   it('kapaninca odak TETIKLEYEN ogeye geri doner', async () => {
-    // Ctrl+K sayfanın herhangi bir yerinden basılabilir; odak açma
+    // Cmd+K sayfanın herhangi bir yerinden basılabilir; odak açma
     // düğmesine değil, kullanıcının BULUNDUĞU yere dönmeli. Aksi hâlde
     // klavye kullanıcısı her aramadan sonra sayfanın başına atılır.
     const { disarisi } = arkaPlanli()
@@ -274,7 +274,7 @@ describe('HizliArama — gerçek modal davranışı', () => {
   })
 
   it('odak yakalanacak bir oge yoksa ACMA DUGMESINE doner', async () => {
-    // Ctrl+K odak `body`deyken basıldığında yedek hat: `body.focus()`
+    // Cmd+K odak `body`deyken basıldığında yedek hat: `body.focus()`
     // hiçbir şey yapmaz ve kullanıcı odağı KAYBEDERDİ.
     kur()
     ;(document.activeElement as HTMLElement | null)?.blur()

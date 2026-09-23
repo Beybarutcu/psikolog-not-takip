@@ -516,6 +516,11 @@ async fn eski_semali_yedek_geri_yuklenince_goc_kosar() {
     kur(&o).await;
     danisan_ekle(&o, "Ayse Yilmaz").await;
     yedek_al(&o, DAMGA).await;
+    // YEDEKTEN SONRA eklenen kayit: canli veritabanini yedekten
+    // farklilastirir. Bu olmadan asagidaki "liste yedektekiyle ayni" iddiasi
+    // yerlestirme HIC olmasa da gecerdi
+    // (docs/test-yesil-ama-korumuyor.md, 6. bicim).
+    danisan_ekle(&o, "Yedekten Sonra").await;
 
     // Yedegi V4 semasina dondur: V5'in urettigi nesneler gider, damga 4 olur.
     let key = anahtar(&o, PAROLA);
@@ -558,7 +563,12 @@ async fn eski_semali_yedek_geri_yuklenince_goc_kosar() {
     assert_eq!(kod, StatusCode::OK);
     let adlar: Vec<&str> =
         danisanlar.as_array().unwrap().iter().map(|d| d["ad_soyad"].as_str().unwrap()).collect();
-    assert_eq!(adlar, vec!["Ayse Yilmaz"], "goc hicbir kaydi degistirmemeli");
+    assert_eq!(
+        adlar,
+        vec!["Ayse Yilmaz"],
+        "yedekteki liste birebir gelmeli: goc hicbir kaydi degistirmemeli ve \
+         yedekten SONRA eklenen kayit yerlestirmeyle birlikte gitmeli"
+    );
 }
 
 #[tokio::test]

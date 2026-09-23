@@ -208,6 +208,11 @@ pub(crate) fn yedek_hatasi(e: psikolog_core::backup::YedekHatasi) -> ApiHata {
         // ve onu yeniden kurmaya -- yani elindeki tek kopyayı geçersiz
         // kılmaya -- iter; yapması gereken şey mesajda yazıyor.
         Y::YedekIleriSurumlu { .. } | Y::YedekHazirlanamadi(_) => StatusCode::CONFLICT,
+        // 500: bu gerçekten sunucu/çevre tarafı bir sorun (dosyalar başka
+        // bir program tarafından tutuluyor) ve 409'un aksine kullanıcının
+        // hemen müdahale etmesi gerekiyor -- gövdedeki metin ne yapacağını
+        // söylüyor.
+        Y::GeriAlmaYarimKaldi(_) => StatusCode::INTERNAL_SERVER_ERROR,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     (kod, Json(json!({ "hata": e.to_string() })))

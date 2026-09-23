@@ -109,6 +109,18 @@ fn istek_hatasi(kod: StatusCode, mesaj: &str) -> ApiHata {
     (kod, Json(json!({ "hata": mesaj })))
 }
 
+/// Bir `YedekHatasi`'nin içindeki göç hatasını çıkarır (varsa).
+///
+/// Göç hatası `GeriAlmaYarimKaldi` tarafından sarılmış olabilir; log,
+/// sarmalama yüzünden kaybolmamalı.
+fn goc_hatasi(e: &YedekHatasi) -> Option<&psikolog_core::store::schema::MigrateHatasi> {
+    match e {
+        YedekHatasi::YedekHazirlanamadi(goc) => Some(goc),
+        YedekHatasi::GeriAlmaYarimKaldi(ic) => goc_hatasi(ic),
+        _ => None,
+    }
+}
+
 /// İsteğin klasörünü çözer: verilen yol ya da kayıtlı ayar.
 fn dizini_coz(s: &AppState, verilen: &Option<String>) -> Result<PathBuf, ApiHata> {
     let ham = match verilen {
@@ -272,8 +284,19 @@ pub async fn uygula(
     //    olarak yok oluyordu. Göç, geri alma mekanizmasıyla aynı yerde --
     //    `core::backup::yerlestir`'de -- yaşamak zorunda; buradan ikinci
     //    kez çağırmak o garantiyi VERMEZ, yalnızca tekrar eder.
-    geri_yukle(&yedek_yolu, &s.db_yolu(), &s.keystore_yolu(), &anahtar)
-        .map_err(yedek_hatasi)?;
+    geri_yukle(&yedek_yolu, &s.db_yolu(), &s.keystore_yolu(), &anahtar).map_err(|e| {
+        // Göç hatasının DETAYI yanıt gövdesine girmiyor (gerekçe:
+        // `YedekHatasi::YedekHazirlanamadi`), ama sunucu loguna düşmeli.
+        // Kardeş çağrı yerleri -- `session::kilit_ac` ve `setup::kurulum` --
+        // aynı `MigrateHatasi`'yi logluyor; geri yükleme, göçün log
+        // bırakmayan tek çağrı yeri olmamalı. Aksi hâlde `UcretKisitiIhlali`
+        // gibi tam olarak ne yapılacağını söyleyen bir varyant hiçbir yerde
+        // görünmezdi.
+        if let Some(goc) = goc_hatasi(&e) {
+            eprintln!("geri-yukleme: göç başarısız: {goc}");
+        }
+        yedek_hatasi(e)
+    })?;
 
     // 4) Denetim kaydı geri yüklenen veritabanına yazılır -- başka bir yere
     //    yazılamaz da: eski veritabanı artık yerinde değil. Şema `geri_yukle`

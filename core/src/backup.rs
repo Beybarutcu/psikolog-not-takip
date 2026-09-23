@@ -136,10 +136,42 @@ pub enum YedekHatasi {
          değiştirilmedi."
     )]
     YedekIleriSurumlu { yedek: i64, uygulama: i64 },
+    /// Yerleştirme başarısız oldu **ve geri alma yarım kaldı**: kenara
+    /// alınan dosyalardan en az biri eski yerine konamadı.
+    ///
+    /// # Neden ayrı bir varyant -- ve neden asıl hatanın YERİNE geçer
+    ///
+    /// Diğer yerleştirme hataları kullanıcıya "hiçbir veriniz kaybolmadı"
+    /// diyor. Geri alma her dosya işlemini `let _ = ...` ile yuttuğu sürece
+    /// bu vaat **kanıtsızdı**. En kötü durum eşleşmeyen çifttir: eski
+    /// `veri.db` geri konar ama `keystore.json` konamaz (ikisini de aynı
+    /// bulut eşitleme istemcisi ya da virüs tarayıcı tutuyor olabilir --
+    /// hatalar korelasyonludur) ve geriye bir daha asla açılamayacak bir
+    /// çift kalır. Kullanıcı "veriniz kaybolmadı" okur, sonraki açılışta
+    /// kilit açılmaz ve modül başlığındaki tuzağa -- yeniden kurulum --
+    /// düşer; oysa verisi `.onceki` dosyalarında durmaktadır.
+    ///
+    /// Bu yüzden yarım geri alma kendi hatasıdır ve asıl hatayı `#[source]`
+    /// olarak sarar: kullanıcıya gösterilen cümle artık doğru olmak
+    /// zorunda.
+    ///
+    /// Mesaj yol taşımaz; `.onceki` yalnızca sabit bir **uzantıdır**.
+    #[error(
+        "Geri yükleme başarısız oldu ve eski dosyalarınız tam olarak yerine \
+         konamadı; büyük olasılıkla başka bir program (bulut eşitleme \
+         istemcisi, virüs tarayıcı, açık bir yedekleme aracı) dosyaları \
+         tutuyor. UYGULAMAYI YENİDEN KURMAYIN -- verileriniz duruyor: veri \
+         klasörünüzde `.onceki` uzantılı dosyalardalar. Diğer programları \
+         kapatıp yeniden deneyin."
+    )]
+    GeriAlmaYarimKaldi(#[source] Box<YedekHatasi>),
     /// Yedek geri yüklenebilir görünüyordu ama şema göçü uygulanamadı.
     ///
-    /// Bu hata döndüğünde **yerleştirme geri alınmıştır**: mevcut `veri.db`
-    /// ve `keystore.json` (ve WAL yan dosyaları) geri konmuştur. Gerekçe
+    /// Bu hata döndüğünde **yerleştirme eksiksiz geri alınmıştır**: mevcut
+    /// `veri.db` ve `keystore.json` (ve WAL yan dosyaları) yerine
+    /// konmuştur. Geri alma yarım kalsaydı bu varyant değil
+    /// `GeriAlmaYarimKaldi` dönerdi -- mesajdaki "hiçbir veriniz
+    /// kaybolmadı" cümlesini doğru tutan yapı budur. Gerekçe
     /// `SurumDusuk` kapısıyla aynı sınıf ama daha geneldir -- göç, sürüm
     /// dışındaki nedenlerle de reddedebilir (ör. eksi ücretli randevu
     /// taşıyan eski bir yedek: `MigrateHatasi::UcretKisitiIhlali`).
@@ -516,9 +548,23 @@ pub fn geri_yukle(
             // `keystore_eksikse_geri_yukleme_reddedilir_ve_mevcut_veri_korunur`).
             let _ = std::fs::remove_file(&db_gecici);
             let _ = std::fs::remove_file(&keystore_gecici);
-            izle.geri_al(db_yolu);
-            Err(e)
+            Err(yerlestirme_hatasi(e, izle.geri_al(db_yolu)))
         }
+    }
+}
+
+/// Yerleştirme hatasını, **geri almanın ne kadarının başarıldığına** göre
+/// çağırana dönecek hataya çevirir.
+///
+/// Ayrı bir fonksiyon çünkü kural tek cümleyle ifade edilebilir olmalı:
+/// *geri alma yarım kaldıysa kullanıcıya gösterilen hata bunu söylemek
+/// zorundadır.* Asıl hata kaybolmaz, `GeriAlmaYarimKaldi`'nin kaynağı
+/// olarak taşınır.
+fn yerlestirme_hatasi(asil: YedekHatasi, geri_alma_eksiksiz: bool) -> YedekHatasi {
+    if geri_alma_eksiksiz {
+        asil
+    } else {
+        YedekHatasi::GeriAlmaYarimKaldi(Box::new(asil))
     }
 }
 
@@ -611,21 +657,49 @@ impl Yerlestirme {
         Ok(())
     }
 
-    /// Yerlestirmeyi tumuyle geri alir. Kendisi hata dondurmez: cagiran zaten
-    /// asil hatayi donduruyor ve burada yapilabilecek baska bir sey yok.
-    fn geri_al(&self, db_yolu: &Path) {
+    /// Yerlestirmeyi geri alir. **`true` dondurmesi, kenara alinan HER SEYIN
+    /// yerine kondugu anlamina gelir**; `false` donerse en az bir dosya
+    /// yerine konamadi ve cagiran bunu kullaniciya soylemek zorundadir
+    /// (bkz. `YedekHatasi::GeriAlmaYarimKaldi`). Eskiden `()` donuyordu ve
+    /// her hata sessizce yutuluyordu -- "hicbir veriniz kaybolmadi" vaadi
+    /// bu yuzden kanitsizdi.
+    #[must_use]
+    fn geri_al(&self, db_yolu: &Path) -> bool {
+        let mut eksiksiz = true;
         for yol in &self.yerlestirilenler {
-            let _ = std::fs::remove_file(yol);
-        }
-        // Goc denemesinden kalmis olabilecek WAL yan dosyalari YENI
-        // veritabanina aitti; eski cift geri konmadan once gitmeliler
-        // (eskinin kendi WAL'i `.onceki-wal` adiyla guvende).
-        for ek in ["db-wal", "db-shm"] {
-            let _ = std::fs::remove_file(db_yolu.with_extension(ek));
+            if !yok_et(yol) {
+                eksiksiz = false;
+            }
+            // WAL yan dosyalarini YALNIZCA yeni veritabani GERCEKTEN yerine
+            // konduysa sil.
+            //
+            // # Kosul neden kritik (gerileme, inceleme CRITICAL-1)
+            // Bu silme bir sure KOSULSUZDU ve gerekcesi "eskinin kendi WAL'i
+            // `.onceki-wal` adiyla guvende" idi. O varsayim yalnizca kenara
+            // alma adimlarina ULASILABILDIYSE dogru. Ilk `kenara_al`
+            // patlarsa (ornegin kalinti bir `veri.db.onceki` baska bir
+            // program tarafindan tutuluyor ya da bir klasor) hicbir sey
+            // tasinmaz, iki liste de BOS kalir -- ve silinen WAL CANLI
+            // olanidir: kullanicinin o gun girdigi, commit edilmis ama henuz
+            // checkpoint edilmemis notlarini tasiyan dosya. Yeni bir WAL
+            // ancak `db_yolu` yerine konduktan SONRA (goc adiminda)
+            // olusabilir; kosul tam olarak budur.
+            if yol == db_yolu {
+                for ek in ["db-wal", "db-shm"] {
+                    if !yok_et(&db_yolu.with_extension(ek)) {
+                        // Geri konan ESKI veritabaninin yaninda YENI
+                        // veritabaninin WAL'i kalirsa cift tutarsizdir.
+                        eksiksiz = false;
+                    }
+                }
+            }
         }
         for (yol, hedef) in self.kenara_alinanlar.iter().rev() {
-            let _ = std::fs::rename(hedef, yol);
+            if std::fs::rename(hedef, yol).is_err() {
+                eksiksiz = false;
+            }
         }
+        eksiksiz
     }
 
     /// Geri yukleme tamamlandi: kenara alinanlar artik gereksiz.
@@ -633,6 +707,19 @@ impl Yerlestirme {
         for (_, hedef) in &self.kenara_alinanlar {
             let _ = std::fs::remove_file(hedef);
         }
+    }
+}
+
+/// Dosyayi siler; **islem sonunda o yolda dosya kalmadiysa** `true`.
+///
+/// "Zaten yoktu" basarisizlik DEGILDIR: geri almanin sormak istedigi soru
+/// "silebildim mi" degil, "o dosya ortadan kalkti mi". Ayrim onemli, cunku
+/// donen deger kullaniciya gosterilecek cumleyi secer.
+fn yok_et(yol: &Path) -> bool {
+    match std::fs::remove_file(yol) {
+        Ok(()) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+        Err(_) => false,
     }
 }
 
@@ -1636,44 +1723,317 @@ mod tests {
         canli_cift_bozulmadi(&o, &db_once, &ks_once);
     }
 
+    /// Eksi ucretli bir randevu tasiyan, V4 ONCESI damgali bir yedek uretir
+    /// ve yolunu doner. `migrate` bunu `UcretKisitiIhlali` ile reddeder.
+    ///
+    /// # Neden bu tetikleyici (inceleme MINOR-5)
+    /// Ilk bicimde yedek "damga 4 ama `tags` tablosu zaten var" durumuna
+    /// sokuluyordu; o durum URETIMDE OLUSAMAZ -- `migrate` tek transaction,
+    /// yarim uygulanmis bir goc diske hic yazilmaz
+    /// (`docs/test-yesil-ama-korumuyor.md`, 11. bicim). Bu tetikleyici
+    /// ULASILABILIR: eksi ucret kuralı V4'e kadar yalnizca uygulama
+    /// katmanindaydi, yani V4 oncesi bir yedek gercekten eksi ucretli bir
+    /// randevu tasiyor olabilir. Ayrica `v4_uygula`'nin gercek reddetme
+    /// yolunu olcer.
+    fn eksi_ucretli_v3_yedegi(o: &Ortam, damga: &str) -> PathBuf {
+        let kaynak = o.kok.join("eksi-ucretli.db");
+        {
+            let c = open_encrypted(&kaynak, &o.key).unwrap();
+            migrate(&c).unwrap();
+
+            // V5'i ve V4'u geri sar: `appointments` V2'deki -- yani ucret
+            // CHECK'i OLMAYAN -- haline donsun, damga 3 olsun.
+            //
+            // CHECK'i `PRAGMA ignore_check_constraints` ile atlatmak
+            // YETMEZDI: `quick_check` CHECK ihlallerini de raporluyor, yani
+            // boyle bir yedek daha dogrulama adiminda `BozukYedek` olurdu.
+            // Zaten uretimdeki durum da tam olarak budur: eksi ucretli satir,
+            // kisitin HIC OLMADIGI bir semada yazilmistir.
+            //
+            // Tablo tanimi V4 oncesinin tarihsel metnidir; `schema.rs`'teki
+            // V2 ile ayrismasi bu testi sessizce etkisizlestirmez, goc zaten
+            // ucret sutununa bakiyor.
+            c.pragma_update(None, "foreign_keys", "OFF").unwrap();
+            c.execute_batch(
+                "DROP TRIGGER progress_note_tags_temizle_kullanilmayan;
+                 DROP TABLE progress_note_tags;
+                 DROP TABLE tags;
+                 DROP TABLE appointments;
+                 CREATE TABLE appointments (
+                     id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                     client_id         INTEGER NOT NULL REFERENCES clients(id),
+                     baslangic         TEXT NOT NULL,
+                     bitis             TEXT NOT NULL,
+                     durum             TEXT NOT NULL DEFAULT 'planlandi',
+                     ucret             INTEGER,
+                     odendi            INTEGER NOT NULL DEFAULT 0,
+                     seri_id           TEXT,
+                     olusturma_zamani  TEXT NOT NULL,
+                     guncelleme_zamani TEXT NOT NULL,
+                     CHECK (durum IN ('planlandi','geldi','gelmedi','iptal')),
+                     CHECK (bitis > baslangic)
+                 );
+                 CREATE INDEX ix_app_baslangic ON appointments(baslangic);
+                 CREATE INDEX ix_app_client ON appointments(client_id);
+                 CREATE INDEX ix_app_seri ON appointments(seri_id);
+                 UPDATE app_meta SET deger='3' WHERE anahtar='schema_version';",
+            )
+            .unwrap();
+            c.pragma_update(None, "foreign_keys", "ON").unwrap();
+
+            c.execute_batch(
+                "INSERT INTO clients (ad_soyad, durum, olusturma_zamani)
+                 VALUES ('Ayse Yilmaz', 'aktif', '2026-09-01 09:00');
+
+                 INSERT INTO appointments
+                     (client_id, baslangic, bitis, durum, ucret, odendi,
+                      olusturma_zamani, guncelleme_zamani)
+                 VALUES (1, '2026-09-05 10:00', '2026-09-05 10:50', 'geldi', -100, 0,
+                         '2026-09-01 09:05', '2026-09-01 09:05');",
+            )
+            .unwrap();
+        }
+        yedek_al(&kaynak, &o.keystore_yolu, &o.hedef, damga, &o.key).unwrap().yol
+    }
+
     #[test]
     fn migrate_baska_bir_nedenle_patlarsa_eski_dosyalar_geri_konur() {
-        use crate::store::schema::okunan_surum;
+        use crate::store::schema::{okunan_surum, MigrateHatasi};
 
         let o = kur("parola123");
-        let bilgi = yedek_al(&o.db, &o.keystore_yolu, &o.hedef, "2026-09-07", &o.key).unwrap();
+        let yedek = eksi_ucretli_v3_yedegi(&o, "2026-09-07");
 
-        // Yedegi "yarim uygulanmis goc" durumuna sok: surum damgasi 4, ama
-        // V5'in olusturacagi `tags` tablosu dosyada ZATEN var. Boylece surum
-        // kapisi (`yedek > CURRENT_VERSION`) GECILIR -- yani bu test birinci
-        // katmani degil, IKINCI katmani (geri alinabilir yerlestirme) olcer;
-        // `migrate` V5 adiminda "table tags already exists" ile patlar.
-        // Brief'teki `UcretKisitiIhlali` ornegiyle ayni dal: `SurumDusuk`
-        // DISINDA bir goc hatasi.
-        yedek_surumunu_ayarla(&bilgi.yol, &o.key, 4);
+        // ON KOSUL: yedek surum kapisindan GECER (3 <= CURRENT_VERSION), yani
+        // bu test birinci katmani degil IKINCI katmani (geri alinabilir
+        // yerlestirme) olcer.
         {
-            let c = open_encrypted(&bilgi.yol, &o.key).unwrap();
-            assert_eq!(okunan_surum(&c).unwrap(), 4, "on kosul: surum kapisindan gecmeli");
-            let tags_var: i64 = c
-                .query_row(
-                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='tags'",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap();
-            assert_eq!(tags_var, 1, "on kosul: V5'in kuracagi tablo zaten yerinde olmali");
+            let c = open_encrypted(&yedek, &o.key).unwrap();
+            assert_eq!(okunan_surum(&c).unwrap(), 3, "on kosul: surum kapisindan gecmeli");
         }
 
         let (db_once, ks_once) = canliyi_farklilastir_ve_oku(&o);
 
-        let hata = geri_yukle(&bilgi.yol, &o.db, &o.keystore_yolu, &o.key).unwrap_err();
-        assert!(matches!(hata, YedekHatasi::YedekHazirlanamadi(_)), "gelen: {hata:?}");
+        let hata = geri_yukle(&yedek, &o.db, &o.keystore_yolu, &o.key).unwrap_err();
+        assert!(
+            matches!(
+                hata,
+                YedekHatasi::YedekHazirlanamadi(MigrateHatasi::UcretKisitiIhlali { adet: 1 })
+            ),
+            "gelen: {hata:?}"
+        );
         assert!(
             hata.to_string().contains("kaybolmadı"),
             "mesaj veri kaybi olmadigini soylemeli: {hata}"
         );
 
         canli_cift_bozulmadi(&o, &db_once, &ks_once);
+    }
+
+    // --- WAL yan dosyalari: cokme sonrasi islenmemis kayitlar -----------
+    //
+    // Bu uc testin ortak on kosulu su: `veri.db-wal` ICINDE ana dosyaya
+    // HENUZ ISLENMEMIS, commit edilmis bir kayit var. Bu olmadan WAL'i
+    // silmekle kenara almak arasinda hicbir gozlemlenebilir fark yoktur ve
+    // "WAL korunuyor" iddiasi bos doner (inceleme IMPORTANT-3: WAL kenara
+    // almayi eski silme davranisina ceviren mutasyon 36/36 YESIL kalmisti).
+
+    /// Uygulamanin **cokerek** kapandigi durumu taklit eder: `veri.db`'nin
+    /// yaninda, icerigi ana dosyaya henuz islenmemis canli bir `-wal` birakir.
+    ///
+    /// SQLite son baglanti kapanirken checkpoint yapip WAL'i siler; bu yuzden
+    /// cift baglanti ACIKKEN kopyalanip kapanistan SONRA geri konuyor.
+    /// Sonuc: ana dosyada 'Ayse', WAL'da o gunun kaydi.
+    fn canli_wal_birak(o: &Ortam) {
+        let wal = o.db.with_extension("db-wal");
+        let (db_kopya, wal_kopya) = {
+            let c = open_encrypted(&o.db, &o.key).unwrap();
+            c.execute("UPDATE t SET ad = ?1", [BUGUNUN_NOTU]).unwrap();
+            (std::fs::read(&o.db).unwrap(), std::fs::read(&wal).unwrap())
+        };
+        std::fs::write(&o.db, &db_kopya).unwrap();
+        std::fs::write(&wal, &wal_kopya).unwrap();
+        // `-shm` yalnizca bir paylasim indeksidir; SQLite onu WAL'dan
+        // yeniden kurar. Kalintisi tutarsizlik uretmesin diye siliniyor.
+        let _ = std::fs::remove_file(o.db.with_extension("db-shm"));
+    }
+
+    /// `db` (ve verilirse `wal`) dosyalarini AYRI bir klasore kopyalayip
+    /// oradan `t.ad` degerini okur.
+    ///
+    /// Asil dosyalar ACILMAZ: onlari acmak SQLite'in checkpoint yapip WAL'i
+    /// silmesine yol acar, yani olcmek istedigimiz kurulumu olcerken bozardi.
+    fn kopyadan_oku(hedef_dizin: &Path, db: &Path, wal: Option<&Path>, key: &DataKey) -> String {
+        std::fs::create_dir_all(hedef_dizin).unwrap();
+        let k_db = hedef_dizin.join("kontrol.db");
+        std::fs::copy(db, &k_db).unwrap();
+        if let Some(w) = wal {
+            std::fs::copy(w, k_db.with_extension("db-wal")).unwrap();
+        }
+        let c = open_encrypted(&k_db, key).unwrap();
+        c.query_row("SELECT ad FROM t", [], |r| r.get(0)).unwrap()
+    }
+
+    /// ON KOSUL kaniti: WAL gercekten YUK TASIYOR.
+    ///
+    /// Cift birlikte o gunun kaydini veriyor, WAL'siz ana dosya VERMIYOR. Bu
+    /// iddia olmadan "WAL korundu" testleri, WAL bos olsa da yesil kalirdi.
+    fn wal_yuk_tasiyor(o: &Ortam, etiket: &str) {
+        let wal = o.db.with_extension("db-wal");
+        assert!(wal.exists(), "{etiket}: on kosul: canli bir WAL olmali");
+        assert_eq!(
+            kopyadan_oku(&o.kok.join(format!("k-{etiket}-cift")), &o.db, Some(&wal), &o.key),
+            BUGUNUN_NOTU,
+            "{etiket}: on kosul: cift birlikte o gunun kaydini vermeli"
+        );
+        assert_eq!(
+            kopyadan_oku(&o.kok.join(format!("k-{etiket}-tek")), &o.db, None, &o.key),
+            "Ayse",
+            "{etiket}: on kosul: kayit ANA DOSYADA degil, WAL'da olmali -- \
+             yoksa WAL'i silmenin hicbir etkisi olmaz ve test bos doner"
+        );
+    }
+
+    #[test]
+    fn migrate_patlarsa_islenmemis_wal_kaydi_da_geri_gelir() {
+        // Senaryo: terapist uygulamayi cokerterek kapatmis; o gun girdigi
+        // notlar `veri.db-wal`'da, henuz ana dosyaya islenmemis. Uyumsuz bir
+        // yedegi geri yuklemeyi deniyor.
+        let o = kur("parola123");
+        let yedek = eksi_ucretli_v3_yedegi(&o, "2026-09-07");
+        canli_wal_birak(&o);
+        wal_yuk_tasiyor(&o, "goc");
+
+        let wal = o.db.with_extension("db-wal");
+        let wal_once = std::fs::read(&wal).unwrap();
+        let db_once = std::fs::read(&o.db).unwrap();
+
+        let hata = geri_yukle(&yedek, &o.db, &o.keystore_yolu, &o.key).unwrap_err();
+        assert!(matches!(hata, YedekHatasi::YedekHazirlanamadi(_)), "gelen: {hata:?}");
+
+        assert_eq!(std::fs::read(&o.db).unwrap(), db_once, "ana dosya geri gelmeli");
+        assert!(wal.exists(), "WAL yan dosyasi geri konmali -- silinmemeli");
+        assert_eq!(std::fs::read(&wal).unwrap(), wal_once, "WAL icerigi degismemeli");
+        assert_eq!(
+            kopyadan_oku(&o.kok.join("k-goc-sonra"), &o.db, Some(&wal), &o.key),
+            BUGUNUN_NOTU,
+            "islenmemis WAL kaydi geri yuklemenin reddinden sonra da okunabilmeli"
+        );
+    }
+
+    #[test]
+    fn kenara_alma_patlarsa_canli_wal_silinmez() {
+        // INCELEME CRITICAL-1'in senaryosu. Yarida kalmis bir geri yuklemeden
+        // artakalan (ya da bir esitleme aracinin urettigi) bir
+        // `veri.db.onceki` girdisi yuzunden ILK kenara alma adimi patlar.
+        // O noktada hicbir dosya tasinmamistir; geri alma CANLI yan dosyalara
+        // DOKUNMAMALIDIR.
+        let o = kur("parola123");
+        let bilgi = yedek_al(&o.db, &o.keystore_yolu, &o.hedef, "2026-09-07", &o.key).unwrap();
+        canli_wal_birak(&o);
+        wal_yuk_tasiyor(&o, "kenara");
+
+        // Uzerine rename edilemeyecek bir engel: ayni adda bir KLASOR.
+        // (Inceleme bunu Windows'ta ERROR_ACCESS_DENIED ile ureten bir
+        // senaryoyla kanitlamisti; klasor her iki isletim sisteminde de ayni
+        // hatayi verir.)
+        std::fs::create_dir_all(o.db.with_extension("db.onceki")).unwrap();
+
+        let wal = o.db.with_extension("db-wal");
+        let wal_once = std::fs::read(&wal).unwrap();
+        let db_once = std::fs::read(&o.db).unwrap();
+
+        let hata = geri_yukle(&bilgi.yol, &o.db, &o.keystore_yolu, &o.key).unwrap_err();
+        assert!(matches!(hata, YedekHatasi::Io(_)), "gelen: {hata:?}");
+
+        assert_eq!(std::fs::read(&o.db).unwrap(), db_once, "canli veritabani degismemeli");
+        assert!(wal.exists(), "CANLI WAL SILINMEMELI -- o gunun notlari orada");
+        assert_eq!(std::fs::read(&wal).unwrap(), wal_once, "canli WAL icerigi degismemeli");
+        assert_eq!(
+            kopyadan_oku(&o.kok.join("k-kenara-sonra"), &o.db, Some(&wal), &o.key),
+            BUGUNUN_NOTU,
+            "hicbir sey tasinmadan basarisiz olan geri yukleme, o gunun \
+             kaydini yok etmemeli"
+        );
+    }
+
+    // --- Geri almanin KENDISI: tam mi, yarim mi -------------------------
+
+    #[test]
+    fn geri_alma_yarim_kalirsa_bunu_bildirir() {
+        // `geri_al`'in sozlesmesi: `true` = kenara alinan HER SEY yerine
+        // kondu. Cagiran bu degere gore kullaniciya gosterilecek cumleyi
+        // seciyor; `()` donduren eski bicimde "hicbir veriniz kaybolmadi"
+        // vaadi KANITSIZDI (inceleme IMPORTANT-2).
+        let d = tempfile::tempdir().unwrap();
+
+        // (1) Her sey yerine konabiliyor -> true.
+        let tam_dizin = d.path().join("tam");
+        std::fs::create_dir_all(&tam_dizin).unwrap();
+        let db = tam_dizin.join("veri.db");
+        let onceki = tam_dizin.join("veri.db.onceki");
+        std::fs::write(&db, b"yerlestirilen yeni dosya").unwrap();
+        std::fs::write(&onceki, b"kullanicinin eski verisi").unwrap();
+        let tam = Yerlestirme {
+            kenara_alinanlar: vec![(db.clone(), onceki.clone())],
+            yerlestirilenler: vec![db.clone()],
+        };
+        assert!(tam.geri_al(&db), "her sey yerine konabildiginde true donmeli");
+        assert_eq!(std::fs::read(&db).unwrap(), b"kullanicinin eski verisi");
+
+        // (2) Hedef baska bir sey tarafindan tutuluyor (burada: bir KLASOR;
+        //     uretimde bir bulut esitleme istemcisi ya da virus tarayici).
+        //     Ne silinebilir ne de uzerine rename edilebilir -> false.
+        let yarim_dizin = d.path().join("yarim");
+        std::fs::create_dir_all(&yarim_dizin).unwrap();
+        let tutulan = yarim_dizin.join("keystore.json");
+        std::fs::create_dir_all(&tutulan).unwrap();
+        let tutulan_onceki = yarim_dizin.join("keystore.json.onceki");
+        std::fs::write(&tutulan_onceki, b"kullanicinin anahtar dosyasi").unwrap();
+        let yarim = Yerlestirme {
+            kenara_alinanlar: vec![(tutulan.clone(), tutulan_onceki.clone())],
+            yerlestirilenler: vec![tutulan.clone()],
+        };
+        assert!(
+            !yarim.geri_al(&yarim_dizin.join("veri.db")),
+            "yerine konamayan bir dosya varsa false donmeli"
+        );
+        assert!(
+            tutulan_onceki.exists(),
+            "geri konamayan dosya DISKTE durmali -- kullanicinin verisi orada"
+        );
+    }
+
+    #[test]
+    fn yarim_geri_alma_kullaniciya_yeniden_kurdurmamali() {
+        // `yerlestirme_hatasi`'nin tek isi: geri alma yarim kaldiysa
+        // gosterilecek cumleyi degistirmek. "Hicbir veriniz kaybolmadi" diyen
+        // bir mesaj, eslesmeyen bir cift kalmisken kullaniciyi yeniden
+        // kuruluma -- yani modul basligindaki tuzaga -- iter.
+        let asil = YedekHatasi::YedekHazirlanamadi(
+            crate::store::schema::MigrateHatasi::UcretKisitiIhlali { adet: 1 },
+        );
+        let eksiksiz = yerlestirme_hatasi(asil, true);
+        assert!(matches!(eksiksiz, YedekHatasi::YedekHazirlanamadi(_)));
+        assert!(eksiksiz.to_string().contains("kaybolmadı"));
+
+        let asil2 = YedekHatasi::YedekHazirlanamadi(
+            crate::store::schema::MigrateHatasi::UcretKisitiIhlali { adet: 1 },
+        );
+        let yarim = yerlestirme_hatasi(asil2, false);
+        assert!(matches!(yarim, YedekHatasi::GeriAlmaYarimKaldi(_)), "gelen: {yarim:?}");
+        let mesaj = yarim.to_string();
+        assert!(
+            !mesaj.contains("kaybolmadı"),
+            "yarim geri almada 'hicbir veriniz kaybolmadi' DENMEMELI: {mesaj}"
+        );
+        assert!(
+            mesaj.contains("YENİDEN KURMAYIN"),
+            "mesaj en yikici hamleyi acikca yasaklamali: {mesaj}"
+        );
+        assert!(mesaj.contains(".onceki"), "mesaj verinin nerede oldugunu soylemeli: {mesaj}");
+        // Asil hata kaybolmamali: teshis `#[source]` zincirinde.
+        use std::error::Error;
+        assert!(yarim.source().is_some(), "asil hata kaynak olarak tasinmali");
     }
 
     /// V4 semali, DOLU bir veritabani kurar (danisan + randevu + resmi not +

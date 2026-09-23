@@ -2406,7 +2406,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   }
 
   async function aramayiAc() {
-    await userEvent.click(screen.getByRole('button', { name: 'Hızlı arama (Ctrl+K)' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Hızlı arama (⌘K)' }))
   }
 
   describe('ay sonu ozeti (Plan 4 Görev 4)', () => {
@@ -2911,11 +2911,11 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   // appointmentId)`) — takvimin gösterdiği hafta HİÇ değişmez. Bu test o
   // yeni davranışı ölçüyor; eskisi yerini bu testin ve aşağıdaki "kart
   // BAŞKA danışanda açıkken..." testinin almasıyla kaldırıldı.
-  it('Ctrl+K ile acilan aramadan NOT secilince danisan dosyasina O SEANS SECILI gidilir; takvim haftasi DEGISMEZ', async () => {
+  it('Cmd+K ile acilan aramadan NOT secilince danisan dosyasina O SEANS SECILI gidilir; takvim haftasi DEGISMEZ', async () => {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await listeYuklenmesiniBekleVeTakvimeDon()
 
-    await userEvent.keyboard('{Control>}k{/Control}')
+    await userEvent.keyboard('{Meta>}k{/Meta}')
     await userEvent.type(
       screen.getByRole('searchbox', { name: 'Danışan adı veya not içeriği' }),
       'kaygi',
@@ -2949,7 +2949,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     expect(document.body.textContent).not.toContain('ARAMA-PARCASI-KANARYA')
   })
 
-  it('Ctrl+K ile acilan aramadan ETIKET secilince etiketli seanslar paneli acilir', async () => {
+  it('Cmd+K ile acilan aramadan ETIKET secilince etiketli seanslar paneli acilir', async () => {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await listeYuklenmesiniBekleVeTakvimeDon()
 

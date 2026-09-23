@@ -465,6 +465,50 @@ async fn durum_guncellenir() {
     assert_eq!(hafta[0]["durum"], "geldi");
 }
 
+// Plan 7 Gorev 3: PATCH yaniti artik "geldi" isaretlemesinde guncellenen
+// `son_temas`/`saklama_bitis`i (+ `client_id`) tasiyor -- istemci kartla
+// saklama listesini bunlardan YEREL yamiyor, `clients::getir`/
+// `saklama_suresi_dolanlar`i (ikisi de `HerCagri`) yeniden CEKMIYOR. Bu test
+// olmasaydi onceki test (yalnizca haftalik listeyi kontrol eden) yanit govdesi
+// hep `{}` donse de gecerdi.
+#[tokio::test]
+async fn durum_gelince_yanit_son_temas_ve_saklama_bitisini_tasir() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let cid = d["id"].as_i64().unwrap();
+    let (_, olusan) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": cid, "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00",
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+
+    let (kod, govde) =
+        cagir(&s, "PATCH", &format!("/api/randevular/{id}"), Some(json!({"durum":"geldi"}))).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(govde["client_id"], cid);
+    assert_eq!(govde["son_temas"], "2026-09-07");
+    assert_eq!(govde["saklama_bitis"], "2033-09-07");
+}
+
+// Ters yon: "gelmedi" bir temas degil, yanit da bunu ic alanlar TASIMAYARAK
+// soylemeli (`{}` -- istemci hicbir seyi yamamamali).
+#[tokio::test]
+async fn durum_gelmedi_olunca_yanitta_son_temas_alani_yok() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let cid = d["id"].as_i64().unwrap();
+    let (_, olusan) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": cid, "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00",
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+
+    let (kod, govde) =
+        cagir(&s, "PATCH", &format!("/api/randevular/{id}"), Some(json!({"durum":"gelmedi"}))).await;
+    assert_eq!(kod, StatusCode::OK);
+    assert!(govde.get("son_temas").is_none(), "gelmedi bir temas degil: {govde}");
+    assert!(govde.get("saklama_bitis").is_none(), "gelmedi bir temas degil: {govde}");
+    assert!(govde.get("client_id").is_none(), "gelmedi bir temas degil: {govde}");
+}
+
 // Dal incelemesi C1: mevcut bir randevunun ucretini degistirmek KOPYA
 // uretmemeli. En onemli assertion "ucret 50000 oldu" degil, "hafta hala
 // TEK randevu iceriyor".

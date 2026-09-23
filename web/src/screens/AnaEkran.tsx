@@ -353,6 +353,11 @@ export function AnaEkran({
    * Ölçen testler: `AnaEkran.test.tsx` > "ozet ACIKKEN ... TEK yeni istekle
    * tazelenir", "ozet KAPALIYKEN ... ozet istegi YOK", "odeme yazmasi
    * REDDEDILIRSE ...".
+   *
+   * `durumDegis` ayrıca "Geldi" yazmasının yanıtındaki `son_temas`/
+   * `saklama_bitis`i (varsa) kartın dosyasına ve saklama hatırlatması
+   * listesine yayar (Görev 3, bkz. fonksiyon içindeki gerekçe ve
+   * `AnaEkran.yayilim.test.tsx`).
    */
   //
   // Son inceleme C2: danışan dosyasının alt satırı da BU iki fonksiyonu
@@ -361,10 +366,32 @@ export function AnaEkran({
   // çağrıdan besleniyor — hangi ekrandan işaretlenirse işaretlensin takvim,
   // kart, ay özeti ve dosya listesi aynı değeri gösterir.
   async function durumDegis(id: number, durum: string) {
-    await takvim.durumDegis(id, durum)
+    const yanit = await takvim.durumDegis(id, durum)
     dosya.randevuYamala(id, { durum })
     seanslar.yamala(id, { durum })
     setOzetTazeleme((n) => n + 1)
+    // Görev 3: "Geldi" işaretlemesi sunucuda danışanın `son_temas`/
+    // `saklama_bitis`ini ileri taşımışsa (`appointments::son_temasi_
+    // isaretle`) yanıt bu iki alanı (+ `client_id`) taşır -- üçü BİRLİKTE
+    // gelir ya da hiç gelmez (bkz. `api.ts::DurumYaniti`). Kart da saklama
+    // listesi de YENİDEN ÇEKİLMEZ (`clients::getir` ve `clients::
+    // saklama_suresi_dolanlar` ikisi de `LogHacmi::HerCagri` -- silinemez
+    // satır): sonuç zaten kesin biliniyor, ikisi de YERELDE yamanır. Bu
+    // olmasaydı süresi dolmuş bir danışan terapiye dönüp "Geldi"
+    // işaretlense bile Bilgiler sekmesi "süresi doldu" demeye devam eder,
+    // Ayarlar'daki liste de danışanı taşımaya devam ederdi -- imha kararını
+    // besleyen TEK ekran bayat kalırdı (bkz. KVKK notu, brief).
+    if (
+      yanit.client_id !== undefined &&
+      yanit.son_temas !== undefined &&
+      yanit.saklama_bitis !== undefined
+    ) {
+      dosya.dosyaAlanlariniYama(yanit.client_id, {
+        son_temas: yanit.son_temas,
+        saklama_bitis: yanit.saklama_bitis,
+      })
+      liste.saklamaDolandanDus(yanit.client_id)
+    }
   }
 
   async function odemeDegis(id: number, odendi: boolean) {

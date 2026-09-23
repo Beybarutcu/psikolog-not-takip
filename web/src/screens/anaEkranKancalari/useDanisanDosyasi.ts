@@ -8,7 +8,12 @@ import {
   type EkBilgisi,
 } from '../../api'
 import type { Randevu } from '../../takvim/HaftalikTakvim'
-import { randevuSaatiOlustur, type RandevuYamasi } from './yazmaSaati'
+import {
+  dosyaSaatiOlustur,
+  randevuSaatiOlustur,
+  type DosyaSaklamaYamasi,
+  type RandevuYamasi,
+} from './yazmaSaati'
 
 /**
  * Danışan kartındaki bakiye için randevu penceresi.
@@ -95,6 +100,11 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
   // saat (bkz. `yazmaSaati.ts`). Okuma damgası isteklerden hemen önce,
   // yazma damgası `randevuYamala`da (çağıran onu yalnızca başarıda çağırır).
   const [yazmaSaati] = useState(randevuSaatiOlustur)
+  // Kartın `dosya` alanındaki saklama bilgileri (son_temas/saklama_bitis)
+  // için AYRI bir saat (Görev 3) — `yazmaSaati` randevu kimliğiyle
+  // anahtarlanıyor, danışan kimliğiyle KARIŞTIRILAMAZ (bkz.
+  // `dosyaSaatiOlustur` gerekçesi).
+  const [dosyaSaati] = useState(dosyaSaatiOlustur)
 
   // Danışan kartı verisi. Seans verisiyle aynı desen: `id` ile eşleşmeyen
   // state boş sayılır (render sırasında), böylece bir danışandan diğerine
@@ -115,11 +125,18 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
 
     void (async () => {
       const okumaDamgasi = yazmaSaati.okumaBasladi()
+      // Görev 3: `dosya`nın saklama alanları için AYRI damga — bu okuma
+      // (`dosyaGetir`) `dosyaAlanlariniYama` ile YARIŞABİLİR: kart yeni
+      // açılmışken (bu istek uçuştayken) bir randevu "geldi" işaretlenirse
+      // ikisi de aynı anda sürüyor olabilir. Aşağıdaki `dosyaSaati.uygula`
+      // bu okumadan SONRA biten (daha büyük damgalı) bir yamayı yanıtın
+      // üstüne uygular — desen `randevularDamgasi`/`yanitiYaz` ile AYNI.
+      const dosyaOkumaDamgasi = dosyaSaati.okumaBasladi()
       try {
         // Üçü birlikte: ek listesi ayrı yakalanıp yutulsaydı, başarısızlık
         // "bu danışanın dosyası yok" diye görünürdü — dosyası olan bir
         // danışan için sessiz bir yalan (`seansVerisi` ile aynı gerekçe).
-        const [dosya, ekler, tumRandevular] = await Promise.all([
+        const [dosyaHam, ekler, tumRandevular] = await Promise.all([
           danisanApi.dosyaGetir(seciliDanisanId),
           danisanApi.ekleriGetir(seciliDanisanId),
           takvimApi.randevulariGetir(TUM_ZAMAN_BASI, TUM_ZAMAN_SONU),
@@ -129,6 +146,7 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
           tumRandevular.filter((r) => r.client_id === seciliDanisanId),
           okumaDamgasi,
         )
+        const dosya = dosyaSaati.uygula([dosyaHam], dosyaOkumaDamgasi)[0]
         setKartVerisi((onceki) => {
           // CRITICAL düzeltmesi (bkz. `KartVerisi.randevularDamgasi`):
           // `randevularTazele` bu okuma UÇUŞTAYKEN DAHA YENİ bir okuma
@@ -167,7 +185,7 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
     return () => {
       iptal = true
     }
-  }, [seciliDanisanId, kartTazeleme, yazmaSaati])
+  }, [seciliDanisanId, kartTazeleme, yazmaSaati, dosyaSaati])
 
   function ac(clientId: number) {
     setSeciliDanisanId(clientId)
@@ -248,6 +266,36 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
       )
     },
     [yazmaSaati],
+  )
+
+  /**
+   * Kartın DOSYASINDAKİ saklama alanlarını (`son_temas`/`saklama_bitis`)
+   * YERELDE yamar (Görev 3 — "saklama süresi doldu" bayatlığı).
+   *
+   * "Geldi" işaretlemek sunucuda bu iki alanı ileri taşıyabilir
+   * (`appointments::son_temasi_isaretle`); süresi dolmuş bir danışan
+   * terapiye dönüp bir seansı "Geldi" işaretlendiğinde Bilgiler sekmesindeki
+   * amber uyarı kutusu ESKİ tarihi göstermeye devam ediyordu — kart
+   * YENİDEN ÇEKİLMİYORDU (`danisanApi.dosyaGetir` = `clients::getir`,
+   * `LogHacmi::HerCagri`: her çağrı silinemez bir satır, bkz. modül başlığı
+   * ve `randevularTazele`nin gerekçesi). `randevuYamala` ile aynı karar:
+   * sonuç (iki alan) sunucunun PATCH yanıtından zaten KESİN biliniyor.
+   *
+   * Kart BAŞKA bir danışana aitse (ya da henüz `dosya` yüklenmediyse)
+   * ekranda hiçbir şey değişmez — ama yazma yine de `dosyaSaati`ye işlenir:
+   * kart o an YÜKLENİYORSA (mount efekti uçuştaysa) geç dönen yanıt bu
+   * yamayı görür (bkz. `dosyaSaati` ve mount efektindeki `uygula` çağrısı).
+   */
+  const dosyaAlanlariniYama = useCallback(
+    (clientId: number, yama: DosyaSaklamaYamasi) => {
+      dosyaSaati.yazmaBitti(clientId, yama)
+      setKartVerisi((onceki) =>
+        onceki.id === clientId && onceki.dosya !== null
+          ? { ...onceki, dosya: { ...onceki.dosya, ...yama } }
+          : onceki,
+      )
+    },
+    [dosyaSaati],
   )
 
   /**
@@ -372,5 +420,6 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
     ekSil,
     randevuYamala,
     randevularTazele,
+    dosyaAlanlariniYama,
   }
 }

@@ -38,6 +38,9 @@ const BUGUN_SAATI = new Date(2026, 8, 9, 12, 0) // Çarşamba; hafta başı 2026
 const danisanlar = [
   { id: 1, ad_soyad: 'Ayşe Yılmaz', telefon: null, durum: 'aktif' },
   { id: 2, ad_soyad: 'Mehmet Demir', telefon: null, durum: 'aktif' },
+  // Görev 3 senaryosu: saklama süresi zaten DOLMUŞ bir danışan. `son_temas`/
+  // `saklama_bitis` bilerek 2026-09-09'dan (BUGUN_SAATI) ÖNCEYE sabitlendi.
+  { id: 3, ad_soyad: 'Zeynep Kaya', telefon: null, durum: 'aktif' },
 ]
 
 // Ayşe'nin iki seansı: 201 GEÇMİŞTE (bu hafta Pazartesi), 202 GELECEKTE
@@ -58,7 +61,15 @@ const R203 = {
   baslangic: '2026-09-08T13:00', bitis: '2026-09-08T14:00',
   durum: 'planlandi', ucret: null as number | null, odendi: false, seri_id: null,
 }
-const TUMU = [R201, R202, R203]
+// Görev 3: Zeynep'in bu haftaki (bugünkü) seansı — "Geldi" işaretlenince
+// mock sunucu `son_temas`/`saklama_bitis`i ileri taşıyacak (bkz. PATCH
+// dalındaki `sonTemasYaniti`).
+const R301 = {
+  id: 301, client_id: 3, danisan_adi: 'Zeynep Kaya',
+  baslangic: '2026-09-09T09:00', bitis: '2026-09-09T10:00',
+  durum: 'planlandi', ucret: null as number | null, odendi: false, seri_id: null,
+}
+const TUMU = [R201, R202, R203, R301]
 type RandevuKaydi = Omit<(typeof TUMU)[number], 'seri_id'> & { seri_id: string | null }
 
 const dosyalar: Record<number, unknown> = {
@@ -71,6 +82,12 @@ const dosyalar: Record<number, unknown> = {
     id: 2, ad_soyad: 'Mehmet Demir', telefon: null, durum: 'aktif',
     dogum_tarihi: null, basvuru_nedeni: null, risk_notu: null,
     riza_tarihi: null, riza_dosya_id: null, son_temas: null, saklama_bitis: null,
+  },
+  // Görev 3: saklama süresi BUGUN_SAATI'nden (2026-09-09) ÖNCE dolmuş.
+  3: {
+    id: 3, ad_soyad: 'Zeynep Kaya', telefon: null, durum: 'aktif',
+    dogum_tarihi: null, basvuru_nedeni: null, risk_notu: null,
+    riza_tarihi: null, riza_dosya_id: null, son_temas: '2017-01-10', saklama_bitis: '2024-01-10',
   },
 }
 
@@ -128,6 +145,22 @@ let putBaslangici: Record<number, string>
  */
 let eklenenler: RandevuKaydi[]
 let sonrakiId: number
+/**
+ * Görev 3: `/api/saklama-suresi-dolanlar` yanıtı — testler kimin listede
+ * olduğunu buradan kontrol eder (gerçek sunucudaki sözlüksel karşılaştırma
+ * burada TAKLİT EDİLMİYOR, mock kasıtlı sabit bir liste döndürüyor; asıl
+ * karşılaştırma mantığı `core::store::clients::saklama_suresi_dolanlar`de
+ * zaten Rust testleriyle ölçülüyor).
+ */
+let saklamaDolanlarListesi: (typeof danisanlar)[number][]
+/**
+ * Görev 3: PATCH .../{id} { durum: "geldi" } sonrası her danışan için
+ * mock'un "sunucu tarafı" son_temas/saklama_bitis durumu. `dosya` GET
+ * handler'ı bunu `dosyalar[id]`nin ÜSTÜNE uygular — istemcinin kartı
+ * YENİDEN ÇEKMEDİĞİ testlerde bu overlay hiç görünmez (ölçülen tam olarak
+ * bu); yalnızca mock'u kendi içinde tutarlı tutmak için var.
+ */
+let sonTemaslar: Record<number, { son_temas: string; saklama_bitis: string }>
 
 /** Sunucunun o anki randevuları: silinenler yok, yazmalar uygulanmış. */
 function tumu(): RandevuKaydi[] {
@@ -241,7 +274,7 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
     }
     return json(seansinEtiketleri(rid))
   }
-  if (yol.startsWith('/api/saklama-suresi-dolanlar')) return json([])
+  if (yol.startsWith('/api/saklama-suresi-dolanlar')) return json(saklamaDolanlarListesi)
   if (yol.startsWith('/api/depolama-durumu')) {
     return json({ toplam_boyut: 0, esik: 500 * 1024 * 1024, uyari: false })
   }
@@ -313,7 +346,26 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
     return json({})
   }
   if (durum && method === 'PATCH') {
-    durumlar[Number(durum[1])] = (govde as { durum: string }).durum
+    const id = Number(durum[1])
+    const yeniDurum = (govde as { durum: string }).durum
+    durumlar[id] = yeniDurum
+    // Görev 3: gerçek sunucunun `appointments::son_temasi_isaretle`
+    // davranışını TAKLİT eder — yalnızca "geldi" GÜN'ü (`baslangic`ın ilk 10
+    // karakteri) ileri taşıyabilir. `+7` sabiti test verilerinde 29 Şubat
+    // gibi kenar durumlara denk gelmiyor, bu yüzden yıl basit string
+    // aritmetiğiyle ilerletiliyor (gerçek `yil_ekle`nin ayrıntısı zaten
+    // Rust testlerinde ölçülüyor, burada yalnızca istemci kablolaması).
+    if (yeniDurum === 'geldi') {
+      const r = tumu().find((x) => x.id === id)!
+      const gun = r.baslangic.slice(0, 10)
+      const mevcut = sonTemaslar[r.client_id]?.son_temas ??
+        (dosyalar[r.client_id] as { son_temas: string | null }).son_temas
+      if (mevcut === null || mevcut === undefined || mevcut < gun) {
+        const saklamaBitis = `${Number(gun.slice(0, 4)) + 7}${gun.slice(4)}`
+        sonTemaslar[r.client_id] = { son_temas: gun, saklama_bitis: saklamaBitis }
+        return json({ client_id: r.client_id, son_temas: gun, saklama_bitis: saklamaBitis })
+      }
+    }
     return json({})
   }
   if (yol === '/api/randevular' && method === 'POST') {
@@ -361,7 +413,11 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
   }
   if (/^\/api\/danisanlar\/\d+\/ekler$/.test(yol)) return json([])
   const dosya = /^\/api\/danisanlar\/(\d+)$/.exec(yol)
-  if (dosya) return json(dosyalar[Number(dosya[1])])
+  if (dosya) {
+    const cid = Number(dosya[1])
+    const guncel = sonTemaslar[cid]
+    return json(guncel ? { ...(dosyalar[cid] as object), ...guncel } : dosyalar[cid])
+  }
   if (yol.startsWith('/api/danisanlar')) return json(danisanlar)
   throw new Error(`beklenmeyen istek: ${method} ${yol}`)
 }
@@ -391,6 +447,8 @@ beforeEach(() => {
   randevuDegisiklikleri = {}
   silinenRandevular = new Set()
   putBaslangici = {}
+  saklamaDolanlarListesi = []
+  sonTemaslar = {}
   kilitle = vi.fn<() => void>()
   taslaklariUnut()
   globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
@@ -798,6 +856,91 @@ describe('C2 — durum/ödeme yazmaları iki ekranda TEK yoldan', () => {
       expect(screen.getByTestId('seans-listesi').getAttribute('data-yuklendi')).toBe('evet'),
     )
     expect(listeSatiri('14 Eylül 2026, 10:00').textContent).toContain('· Ödendi')
+  })
+})
+
+describe('Görev 3 — "saklama süresi doldu" bayatlığı', () => {
+  // KVKK bağlamı (brief): "saklama süresi doldu" uyarısı danışan dosyasının
+  // ELLE SİLİNMESİ kararını besleyen TEK ekran. Bu test üç yayılımı BİRLİKTE
+  // ölçüyor -- ayrı ayrı testler bunlardan birinin unutulmasını (ör. kart
+  // yamanır ama liste düşmez) yakalamazdı.
+  it('suresi dolmus danisanin seansi Geldi isaretlenince (a) Bilgiler uyarisi kalkar, (b) Ayarlar listesinden duser, (c) saklama-suresi-dolanlar YENIDEN ISTENMEZ', async () => {
+    saklamaDolanlarListesi = [danisanlar[2]]
+    ciz()
+
+    // ON KOSUL + istek sayacı: Ayarlar'a gidince liste TEK istekle gelir.
+    // `findByRole`: sekmenin erişilebilir adı yedekleme uyarısı sonuca
+    // KAVUŞANA kadar gecici olarak bir sonek tasiyabilir (bkz. `Sekmeler.tsx`
+    // "uyaran"), senkron `getByRole` bu yuzden kararsız olurdu.
+    await userEvent.click(await screen.findByRole('tab', { name: 'Ayarlar' }))
+    await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç (saklama süresi doldu)' })
+    const saklamaIstekleri = () =>
+      istekler.filter((i) => i.yol.startsWith('/api/saklama-suresi-dolanlar')).length
+    expect(saklamaIstekleri()).toBe(1)
+
+    // ON KOSUL: Zeynep'in Bilgiler sekmesi "doldu" uyarısını gösteriyor.
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Bilgiler' }))
+    expect(screen.getByRole('region', { name: 'Saklama süresi' }).textContent).toContain(
+      'Saklama süresi doldu',
+    )
+
+    // Takvimde Zeynep'in bugünkü seansını "Geldi" işaretle.
+    await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Zeynep Kaya' }))
+    await screen.findByLabelText('Seans notu')
+    await userEvent.click(screen.getByRole('button', { name: 'Geldi' }))
+    await waitFor(() => expect(durumlar[301]).toBe('geldi'))
+
+    // (a) Bilgiler'deki uyarı KALKMIŞ olmalı — kart yerelde yamalandı,
+    // dosya YENİDEN ÇEKİLMEDİ (`GET /api/danisanlar/3` sayısı sabit kalmalı).
+    const dosyaGetleri = istekler.filter(
+      (i) => i.method === 'GET' && i.yol === '/api/danisanlar/3',
+    ).length
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await waitFor(() =>
+      expect(screen.getByRole('region', { name: 'Saklama süresi' }).textContent).not.toContain(
+        'Saklama süresi doldu',
+      ),
+    )
+    expect(
+      istekler.filter((i) => i.method === 'GET' && i.yol === '/api/danisanlar/3').length,
+    ).toBe(dosyaGetleri)
+
+    // (b) Ayarlar listesinden DÜŞMÜŞ olmalı.
+    await userEvent.click(screen.getByRole('tab', { name: 'Ayarlar' }))
+    expect(
+      screen.queryByRole('button', { name: 'Zeynep Kaya dosyasını aç (saklama süresi doldu)' }),
+    ).toBeNull()
+
+    // (c) GET /api/saklama-suresi-dolanlar YENİDEN İSTENMEDİ.
+    expect(saklamaIstekleri()).toBe(1)
+  })
+
+  // Ters yön (brief M-sınıfı kısıt): "gelmedi"/"iptal" bir temas değildir,
+  // sunucu yanıtında da bu alanlar YOK -- istemci hiçbir şeyi yamamamalı ve
+  // uyarı kalmalı. `useTakvimAkisi.durumDegis`in döndürdüğü `{}` yanıtının
+  // `AnaEkran.durumDegis`teki `if` dalını hiç TETİKLEMEDİĞİNİ ölçer.
+  it('Gelmedi isaretlemek saklama uyarisini DEGISTIRMEZ (sunucu yaniti alan tasimiyor)', async () => {
+    saklamaDolanlarListesi = [danisanlar[2]]
+    ciz()
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Zeynep Kaya' }))
+    await screen.findByLabelText('Seans notu')
+    await userEvent.click(screen.getByRole('button', { name: 'Gelmedi' }))
+    await waitFor(() => expect(durumlar[301]).toBe('gelmedi'))
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Bilgiler' }))
+    expect(screen.getByRole('region', { name: 'Saklama süresi' }).textContent).toContain(
+      'Saklama süresi doldu',
+    )
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Ayarlar' }))
+    await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç (saklama süresi doldu)' })
   })
 })
 

@@ -1,7 +1,15 @@
+import type { DanisanDosyasi } from '../../api'
 import type { Randevu } from '../../takvim/HaftalikTakvim'
 
 /** Yerelde kesin bilinen tek-satır yazmanın alanları (durum ve ödeme). */
 export type RandevuYamasi = Partial<Pick<Randevu, 'durum' | 'odendi'>>
+
+/**
+ * Açık kartın dosya nesnesindeki saklama alanları için yama (Görev 3):
+ * yalnızca `son_temas`/`saklama_bitis` — `durum_guncelle`nin yanıtı bu
+ * ikisinden başka bir şey taşımıyor (bkz. `api.ts::DurumYaniti`).
+ */
+export type DosyaSaklamaYamasi = Partial<Pick<DanisanDosyasi, 'son_temas' | 'saklama_bitis'>>
 
 /**
  * # Uçuştaki yazma × liste okuması (Görev 2 inceleme M7)
@@ -100,4 +108,19 @@ export function yazmaSaatiOlustur<T, Y extends Partial<T>>(kimlik: (kayit: T) =>
 /** Takvim listesi ve kartın ortak örneği: `Randevu.id` ile, durum/ödeme yamasıyla. */
 export function randevuSaatiOlustur() {
   return yazmaSaatiOlustur<Randevu, RandevuYamasi>((r) => r.id)
+}
+
+/**
+ * Açık kartın dosya nesnesi için örnek: `DanisanDosyasi.id` (== danışan
+ * kimliği) ile, saklama alanları yamasıyla (Görev 3).
+ *
+ * # Neden `randevuSaati`den AYRI bir örnek
+ * Aynı saat nesnesini (anahtarı randevu kimliği olan) burada da kullanmak
+ * randevu ve danışan kimlik uzaylarını KARIŞTIRIRDI: ikisi de `i64`
+ * birincil anahtar, sayısal olarak çakışabilirler — 42 numaralı randevunun
+ * yaması, 42 numaralı danışanın dosya yamasıyla aynı anahtara düşerdi. Ayrı
+ * bir saat (ayrı sayaç, ayrı harita) bu riski yapısal olarak kapatır.
+ */
+export function dosyaSaatiOlustur() {
+  return yazmaSaatiOlustur<DanisanDosyasi, DosyaSaklamaYamasi>((d) => d.id)
 }

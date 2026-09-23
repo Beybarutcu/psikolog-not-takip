@@ -363,6 +363,18 @@ export async function ekIndir(ek: { id: number; dosya_adi: string }): Promise<vo
   }
 }
 
+/**
+ * `takvimApi.randevuDurumu`'nun yanıtı (sunucudaki `SonTemasSonucu`,
+ * Görev 3). Üç alan BİRLİKTE gelir ya da hiç gelmez — `durum_guncelle`
+ * yalnızca "geldi" işaretlemesi danışanın son temasını GERÇEKTEN ileri
+ * taşıdıysa doldurur (bkz. çağırma yeri).
+ */
+export type DurumYaniti = {
+  client_id?: number
+  son_temas?: string
+  saklama_bitis?: string
+}
+
 export const takvimApi = {
   danisanlariGetir: () => istek<Danisan[]>('/api/danisanlar'),
   danisanEkle: (ad_soyad: string, telefon?: string) =>
@@ -400,8 +412,22 @@ export const takvimApi = {
       method: 'PUT',
       body: JSON.stringify(govde),
     }),
+  /**
+   * `PATCH /api/randevular/{id} {durum}`.
+   *
+   * # Yanıt: `DurumYaniti` (Görev 3 — "saklama süresi doldu" bayatlığı)
+   *
+   * "Geldi" işaretlemek sunucuda danışanın `son_temas`/`saklama_bitis`ini
+   * ileri taşıyabilir (`appointments::son_temasi_isaretle`) ve bu GERÇEKTEN
+   * değiştiyse yanıt artık `client_id`/`son_temas`/`saklama_bitis`i de
+   * taşıyor — üçü BİRLİKTE ya var ya yok (bkz. sunucudaki `SonTemasSonucu`).
+   * Diğer her durumda (`gelmedi`/`iptal`/`planlandi`, ya da geçmişe dönük bir
+   * "geldi") yanıt eskisi gibi `{}`. Çağıran (`AnaEkran.durumDegis`) bu
+   * alanları görünce kartı ve saklama listesini YEREL yamalar — ikisi de
+   * sunucuda `LogHacmi::HerCagri` olduğu için yeniden ÇEKİLMEZ.
+   */
   randevuDurumu: (id: number, durum: string) =>
-    istek<Record<string, never>>(`/api/randevular/${id}`, {
+    istek<DurumYaniti>(`/api/randevular/${id}`, {
       method: 'PATCH',
       body: JSON.stringify({ durum }),
     }),

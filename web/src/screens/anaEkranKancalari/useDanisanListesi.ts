@@ -60,24 +60,51 @@ export function useDanisanListesi({ ayarlarGorunur }: { ayarlarGorunur: boolean 
   // çekiliyor — ne bileşen mount'unda (IMPORTANT-3, bkz. modül başlığı), ne
   // hafta değişiminde, ne her Ayarlar'a dönüşte DEĞİL: sunucudaki
   // `clients::saklama_suresi_dolanlar` her çağrıda `LogHacmi::HerCagri` ile
-  // SİLİNEMEZ bir `goruntuleme` satırı yazıyor. Liste gün içinde değişmez
-  // (girdi yerel takvim günü), dolayısıyla tekrar sormanın kazancı yok,
-  // maliyeti kalıcı. `cekildiRef`: `ayarlarGorunur` sekmeler arasında
-  // gidip gelirken tekrar `true` olabilir, ikinci (ve sonraki) her geçiş
-  // NO-OP kalmalı.
+  // SİLİNEMEZ bir `goruntuleme` satırı yazıyor. `cekildiRef`: `ayarlarGorunur`
+  // sekmeler arasında gidip gelirken tekrar `true` olabilir, ikinci (ve
+  // sonraki) her geçiş NO-OP kalmalı.
+  //
+  // DÜZELTME (Görev 3): "liste gün içinde değişmez" eskiden burada
+  // yazıyordu -- bu YANLIŞ: "geldi" işaretlemek `son_temas`/`saklama_bitis`i
+  // ileri taşıyabilir (`appointments::son_temasi_isaretle`) ve bu, GÜN
+  // İÇİNDE bir danışanı bu listeden düşürebilir (süresi dolmuş bir danışan
+  // terapiye döner, seansı "Geldi" işaretlenir). Yeniden ÇEKMEK yine de
+  // YASAK (yukarıdaki `HerCagri` maliyeti); bunun yerine düşürme YERELDE
+  // yapılıyor -- bkz. `saklamaDolandanDus`, tek çağıran `AnaEkran.durumDegis`.
   //
   // Hata YUTULUYOR: hatırlatma ikincil bir bilgi; alınamadığında ana ekranı
   // hata bandıyla kaplamak, terapistin takvimini görmesini engellerdi.
   // (Kilit hâli zaten `api.ts`'in merkezî 401 dinleyicisiyle ele alınıyor.)
   const cekildiRef = useRef(false)
+  // `saklamaDolandanDus` ile YEREL olarak düşürülmüş danışan kimlikleri.
+  // KALICI bir kayıt (yalnızca `setSaklamaDolanlar` değil): aşağıdaki fetch
+  // bu düşürmeden ÖNCE başlayıp SONRA dönebilir (terapist Ayarlar'ı açar,
+  // istek yola çıkar, sekme değiştirip bir seansı "Geldi" işaretler, sonra
+  // Ayarlar'a döner) -- geç gelen yanıt TÜM listeyi yazar ve az önce yapılan
+  // düşürmeyi KALICI olarak geri getirir (`yazmaSaati.ts`teki sınıfın aynısı,
+  // ama tek okuma olduğu için sayısal damga yerine bir kimlik kümesi yeterli).
+  const dusenlerRef = useRef<Set<number>>(new Set())
   useEffect(() => {
     if (!ayarlarGorunur || cekildiRef.current) return
     cekildiRef.current = true
     void danisanApi
       .saklamaSuresiDolanlar(yerelGun(new Date()))
-      .then(setSaklamaDolanlar)
+      .then((liste) => setSaklamaDolanlar(liste.filter((d) => !dusenlerRef.current.has(d.id))))
       .catch(() => {})
   }, [ayarlarGorunur])
+
+  /**
+   * "Geldi" işaretlemesi bir danışanın saklama süresini ileri taşıdığında
+   * (Görev 3) o danışanı Ayarlar > "Saklama süresi dolan dosyalar"
+   * listesinden YERELDE düşürür. Liste YENİDEN ÇEKİLMEZ (yukarıdaki modül
+   * başlığı) -- tek çağıran `AnaEkran.durumDegis`, yalnızca sunucunun PATCH
+   * yanıtı `son_temas`/`saklama_bitis` taşıdığında (yani GERÇEKTEN ileri
+   * taşındığında) çağırır.
+   */
+  function saklamaDolandanDus(clientId: number) {
+    dusenlerRef.current.add(clientId)
+    setSaklamaDolanlar((onceki) => onceki.filter((d) => d.id !== clientId))
+  }
 
   async function ekle() {
     if (yeniAdSoyad.trim() === '') {
@@ -149,6 +176,7 @@ export function useDanisanListesi({ ayarlarGorunur }: { ayarlarGorunur: boolean 
     setArsivBilgisi,
     arsivSuruyor,
     saklamaDolanlar,
+    saklamaDolandanDus,
     ekle,
     arsivle,
   }

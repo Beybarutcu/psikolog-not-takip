@@ -207,7 +207,14 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
   // `AnaEkran.test.tsx` > "durum hatasi YALNIZCA alt satirda, TEK KEZ
   // duyurulur" (ve "odeme ..." eşi).
   async function durumDegis(id: number, durum: string) {
-    await takvimApi.randevuDurumu(id, durum)
+    // Görev 3: yanıt "geldi" GERÇEKTEN ileri taşıdıysa `client_id`/
+    // `son_temas`/`saklama_bitis` taşır; çağıran (`AnaEkran.durumDegis`)
+    // bunlarla kartı ve saklama listesini yerelde yamalar. Bu kanca
+    // yanıtı yalnızca YUKARI iletir — dosya/saklama önbelleklerini
+    // GÖRMÜYOR (o ikisi başka kancalarda), bu yüzden kararı burada değil
+    // çağıranda vermek TEK yazma yolu ilkesiyle tutarlı (bkz. `AnaEkran.tsx`
+    // modül başlığı).
+    const yanit = await takvimApi.randevuDurumu(id, durum)
     yazmaSaati.yazmaBitti(id, { durum })
     setRandevular((onceki) => onceki.map((r) => (r.id === id ? { ...r, durum } : r)))
     // Panel açık kalır ve elindeki `randevu` nesnesi bu state'tir; o kopya
@@ -222,6 +229,7 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
     // dolayısıyla bu tazeleme yeni bir not isteği ATMAZ (ölçen test:
     // "Geldi isaretlemek not isteklerini YENIDEN ATMAZ").
     setSeciliRandevu((secili) => (secili && secili.id === id ? { ...secili, durum } : secili))
+    return yanit
   }
 
   // "Ödendi" işareti — `durumDegis` ile AYNI karar ve aynı gerekçe: sonuç

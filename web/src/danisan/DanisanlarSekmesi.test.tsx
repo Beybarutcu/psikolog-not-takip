@@ -97,6 +97,7 @@ function sahteDosya(seciliDanisanId: number | null): ReturnType<typeof useDanisa
     ekSil: async () => {},
     randevuYamala: () => {},
     randevularTazele: () => {},
+    dosyaAlanlariniYama: () => {},
   }
 }
 
@@ -116,6 +117,7 @@ function sahteListe(danisanlar: Danisan[] = []): ReturnType<typeof useDanisanLis
     setArsivBilgisi: () => {},
     arsivSuruyor: false,
     saklamaDolanlar: [],
+    saklamaDolandanDus: () => {},
     ekle: async () => {},
     arsivle: async () => {},
   }

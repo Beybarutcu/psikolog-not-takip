@@ -598,12 +598,19 @@ pub fn arsivle(conn: &Connection, id: i64, cihaz: Cihaz) -> Result<(), DepoHatas
 /// içinden çağrılabilir -- `durum_guncelle` "randevu durumu + son temas + log"
 /// üçlüsünü TEK transaction'da yazabilsin diye. Kendi transaction'ını açsaydı
 /// SQLite "cannot start a transaction within a transaction" derdi.
+///
+/// # Dönüş değeri: hesaplanan `saklama_bitis`
+/// Plan 7 Görev 3'ten beri hesaplanan bitiş tarihini de döndürür.
+/// `appointments::son_temasi_isaretle` bunu ikinci bir `SELECT` atmadan
+/// yanıtına taşıyabilsin diye -- çağıran zaten aynı transaction içinde ve
+/// değer burada TEK sorguyla (`yil_ekle`) zaten hesaplanmış durumda; onu bir
+/// daha okumak silinemez bir maliyet olmasa da gereksiz bir sorgu olurdu.
 pub fn son_temasi_tazele(
     conn: &Connection,
     client_id: i64,
     tarih: &str,
     saklama_yili: i64,
-) -> Result<(), DepoHatasi> {
+) -> Result<String, DepoHatasi> {
     // 29 Subat + N yil gibi var olmayan tarihler icin gunu ayin son gunune cek.
     let bitis = yil_ekle(tarih, saklama_yili)?;
     let etkilenen = conn.execute(
@@ -613,7 +620,7 @@ pub fn son_temasi_tazele(
     if etkilenen == 0 {
         return Err(DepoHatasi::Bulunamadi);
     }
-    Ok(())
+    Ok(bitis)
 }
 
 /// `YYYY-AA-GG` tarihine `yil` yıl ekler.

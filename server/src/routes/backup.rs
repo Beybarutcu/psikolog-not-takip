@@ -212,7 +212,16 @@ pub(crate) fn yedek_hatasi(e: psikolog_core::backup::YedekHatasi) -> ApiHata {
         // bir program tarafından tutuluyor) ve 409'un aksine kullanıcının
         // hemen müdahale etmesi gerekiyor -- gövdedeki metin ne yapacağını
         // söylüyor.
-        Y::GeriAlmaYarimKaldi(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        //
+        // Bu iki kol davranışsal olarak `_` ile aynı; **kasıtlı** olarak
+        // ayrı yazılıyorlar ki 500 kararı bu varyantlar için bilinçli
+        // görünsün. Kolların gerçekten 500 döndüğünü ölçen testler:
+        // `tests::yarim_geri_alma_500_doner` ve
+        // `tests::dosya_hatasi_500_doner_ve_govde_akibeti_soyler` -- yoksa
+        // `_`'a düşen sessiz bir değişiklik fark edilmezdi.
+        Y::GeriAlmaYarimKaldi(_) | Y::YerlestirmeBasarisiz(_) => {
+            StatusCode::INTERNAL_SERVER_ERROR
+        }
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     (kod, Json(json!({ "hata": e.to_string() })))
@@ -285,6 +294,56 @@ mod tests {
         assert!(
             bu_baslik.contains(PENCERE_KOSULU),
             "`routes::backup` modul basligi baglama kararinin kosulunu artik anlatmiyor"
+        );
+    }
+
+    /// `yedek_hatasi`'nin durum kodu + govde metnini birlikte okur.
+    fn cevir(e: psikolog_core::backup::YedekHatasi) -> (StatusCode, String) {
+        let (kod, govde) = yedek_hatasi(e);
+        let metin = govde.0["hata"].as_str().expect("govdede `hata` metni olmali").to_string();
+        (kod, metin)
+    }
+
+    /// Yarim geri almanin **durum kodu** hicbir testle olculmuyordu (dal
+    /// incelemesi I2, bedava iyilestirme): kol `_ => 500` ile ayni oldugu
+    /// icin onu silen bir mutasyon tamamen gorunmezdi. Cekirdek tarafindaki
+    /// esi `backup::tests::yarim_geri_alma_kullaniciya_yeniden_kurdurmamali`
+    /// yalnizca METNI olcuyor.
+    #[test]
+    fn yarim_geri_alma_500_doner() {
+        use psikolog_core::backup::YedekHatasi as Y;
+        let (kod, metin) = cevir(Y::GeriAlmaYarimKaldi(Box::new(Y::BozukYedek)));
+        assert_eq!(
+            kod,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "yarim geri alma cevre kaynakli bir arizadir ve kullanicinin HEMEN \
+             mudahale etmesi gerekir; 409 (\"bu yedek bu kurulumla bagdasmiyor\") \
+             yanlis sinifa sokardi"
+        );
+        assert!(metin.contains("YENİDEN KURMAYIN"), "{metin}");
+        assert!(metin.contains(".onceki"), "mesaj verinin nerede oldugunu soylemeli: {metin}");
+    }
+
+    /// Geri yuklemedeki dosya (IO) hatasi kullaniciya verisinin AKIBETINI
+    /// soylemeli (dal incelemesi I2). Eskiden ham `YedekHatasi::Io` gecerdi
+    /// ve govde yalnizca "dosya hatasi: ..." derdi.
+    #[test]
+    fn dosya_hatasi_500_doner_ve_govde_akibeti_soyler() {
+        use psikolog_core::backup::YedekHatasi as Y;
+        let (kod, metin) = cevir(Y::YerlestirmeBasarisiz(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "C:/Users/terapist/AppData/veri.db erisim reddedildi",
+        )));
+        assert_eq!(kod, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(
+            metin.contains("kaybolmadı") && metin.contains("YERİNDE"),
+            "govde verinin yerinde oldugunu soylemeli: {metin}"
+        );
+        // Hassas veri sizmasin: isletim sistemi hata metni (yol, dosya adi)
+        // `#[source]` zincirinde kalir, GOVDEYE girmez.
+        assert!(
+            !metin.contains("terapist") && !metin.contains("veri.db"),
+            "govde dosya yolu/adi tasimamali: {metin}"
         );
     }
 }

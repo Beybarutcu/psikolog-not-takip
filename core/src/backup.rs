@@ -165,6 +165,37 @@ pub enum YedekHatasi {
          kapatıp yeniden deneyin."
     )]
     GeriAlmaYarimKaldi(#[source] Box<YedekHatasi>),
+    /// Geri yükleme sırasında bir **dosya işlemi** başarısız oldu ve canlı
+    /// çift hâlâ yerinde: ya yerleştirmeye hiç başlanmadı (geçici kopyalama
+    /// adımı), ya da başlandı ve **eksiksiz** geri alındı.
+    ///
+    /// # Neden ham `Io`'dan ayrı bir varyant (dal incelemesi I2)
+    ///
+    /// Bu modülün diğer bütün hata yolları cümleyi **akıbetle** bitirir:
+    /// "Hiçbir şey değiştirilmedi.", "yerine geri kondu; hiçbir veriniz
+    /// kaybolmadı.", `GeriAlmaYarimKaldi`'nın yönlendirmesi. `Io` yolu
+    /// hiçbir şey söylemiyordu: gövde "dosya hatasi: …", kod 500 ve ekran
+    /// bunu olduğu gibi basıyordu. Oysa bu, modülün var oluş gerekçesi olan
+    /// hata sınıfının ta kendisidir (yedek klasörü bulut eşitlemede, disk
+    /// dolu): kullanıcı verisinin akıbetini bilemediği için modül
+    /// başlığındaki tuzağa -- yeniden kurulum -- düşebilir.
+    ///
+    /// Bilgi zaten elde: `yerlestirme_hatasi` geri almanın eksiksiz olup
+    /// olmadığını biliyor. Eksiksizse cümle bunu **söylemek zorundadır**.
+    ///
+    /// Asıl `io::Error` `#[source]` olarak taşınır, **mesaja girmez**:
+    /// `Display` çıktısı doğrudan HTTP gövdesine yazılıyor ve bir işletim
+    /// sistemi hata metni dosya adı/yol taşıyabilir. Teşhis için `Debug`
+    /// yeterli (aynı karar `YedekHazirlanamadi`'da da verilmişti).
+    #[error(
+        "Geri yükleme yapılamadı: bir dosya işlemi başarısız oldu (disk dolu \
+         olabilir ya da başka bir program -- bulut eşitleme istemcisi, virüs \
+         tarayıcı -- dosyaları tutuyor olabilir). Mevcut veritabanınız ve \
+         anahtar dosyanız YERİNDE duruyor; hiçbir veriniz kaybolmadı. \
+         UYGULAMAYI YENİDEN KURMAYIN -- diğer programları kapatıp (ya da \
+         diskte yer açıp) yeniden deneyin."
+    )]
+    YerlestirmeBasarisiz(#[source] std::io::Error),
     /// Yedek geri yüklenebilir görünüyordu ama şema göçü uygulanamadı.
     ///
     /// Bu hata döndüğünde **yerleştirme eksiksiz geri alınmıştır**: mevcut
@@ -523,10 +554,13 @@ pub fn geri_yukle(
     //    olduklari icin sonraki rename'ler ayni dosya sistemi icindedir.
     let db_gecici = db_yolu.with_extension("restore");
     let keystore_gecici = keystore_yolu.with_extension("json.restore");
-    std::fs::copy(yedek_yolu, &db_gecici)?;
+    //    Bu adimdaki hata CANLI CIFTE hic dokunmadan olusur; kullaniciya
+    //    gosterilen cumle bunu soylemeli (bkz. `YerlestirmeBasarisiz`), ham
+    //    `Io` ("dosya hatasi: ...") akibet hakkinda hicbir sey demiyordu.
+    std::fs::copy(yedek_yolu, &db_gecici).map_err(YedekHatasi::YerlestirmeBasarisiz)?;
     if let Err(e) = std::fs::copy(&yedek_keystore_yolu, &keystore_gecici) {
         let _ = std::fs::remove_file(&db_gecici);
-        return Err(e.into());
+        return Err(YedekHatasi::YerlestirmeBasarisiz(e));
     }
 
     // 5) Mevcut dosyalari kenara al, yenileri yerine koy ve SON ADIM olarak
@@ -562,7 +596,15 @@ pub fn geri_yukle(
 /// olarak taşınır.
 fn yerlestirme_hatasi(asil: YedekHatasi, geri_alma_eksiksiz: bool) -> YedekHatasi {
     if geri_alma_eksiksiz {
-        asil
+        // ARTI YON (dal incelemesi I2): geri alma eksiksizse cumle bunu
+        // SOYLEMELI. Diger varyantlar zaten soyluyor (`YedekHazirlanamadi`:
+        // "yerine geri kondu; hicbir veriniz kaybolmadi"); ham `Io` ise
+        // yalnizca "dosya hatasi: ..." diyordu ve kullanici verisinin
+        // yerinde olup olmadigini bilemiyordu.
+        match asil {
+            YedekHatasi::Io(e) => YedekHatasi::YerlestirmeBasarisiz(e),
+            diger => diger,
+        }
     } else {
         YedekHatasi::GeriAlmaYarimKaldi(Box::new(asil))
     }
@@ -1943,7 +1985,13 @@ mod tests {
         let db_once = std::fs::read(&o.db).unwrap();
 
         let hata = geri_yukle(&bilgi.yol, &o.db, &o.keystore_yolu, &o.key).unwrap_err();
-        assert!(matches!(hata, YedekHatasi::Io(_)), "gelen: {hata:?}");
+        // Ham `Io` DEGIL (dal incelemesi I2): hicbir sey tasinmadigi icin
+        // geri alma eksiksizdir ve cumle bunu soylemek zorundadir.
+        assert!(matches!(hata, YedekHatasi::YerlestirmeBasarisiz(_)), "gelen: {hata:?}");
+        assert!(
+            hata.to_string().contains("kaybolmadı"),
+            "mesaj verinin yerinde oldugunu soylemeli: {hata}"
+        );
 
         assert_eq!(std::fs::read(&o.db).unwrap(), db_once, "canli veritabani degismemeli");
         assert!(wal.exists(), "CANLI WAL SILINMEMELI -- o gunun notlari orada");
@@ -2034,6 +2082,86 @@ mod tests {
         // Asil hata kaybolmamali: teshis `#[source]` zincirinde.
         use std::error::Error;
         assert!(yarim.source().is_some(), "asil hata kaynak olarak tasinmali");
+    }
+
+    /// **ARTI YON** (dal incelemesi I2): yukaridaki test yalnizca "yarim
+    /// geri almada akibet vaadi VERILMEMELI" diyordu; "eksiksiz geri almada
+    /// akibet SOYLENMELI" yonu bir dosya (IO) hatasi icin olculmuyordu ve
+    /// gercekten de soylenmiyordu -- govde "dosya hatasi: ..." + 500'du.
+    #[test]
+    fn dosya_hatasi_eksiksiz_geri_almada_verinin_yerinde_oldugunu_soyler() {
+        let io_hatasi = || {
+            std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "/Users/terapist/Library/veri.db erisim reddedildi",
+            )
+        };
+
+        let eksiksiz = yerlestirme_hatasi(YedekHatasi::Io(io_hatasi()), true);
+        assert!(matches!(eksiksiz, YedekHatasi::YerlestirmeBasarisiz(_)), "gelen: {eksiksiz:?}");
+        let mesaj = eksiksiz.to_string();
+        assert!(
+            mesaj.contains("kaybolmadı") && mesaj.contains("YERİNDE"),
+            "eksiksiz geri almada mesaj verinin yerinde oldugunu SOYLEMELI: {mesaj}"
+        );
+        assert!(
+            mesaj.contains("YENİDEN KURMAYIN"),
+            "modulun var olus gerekcesi olan tuzak burada da yasaklanmali: {mesaj}"
+        );
+        // Hassas veri sizmasin: isletim sistemi metni `#[source]`'ta kalir.
+        assert!(
+            !mesaj.contains("terapist") && !mesaj.contains("veri.db"),
+            "mesaj yol/dosya adi tasimamali: {mesaj}"
+        );
+        use std::error::Error;
+        assert!(eksiksiz.source().is_some(), "teshis icin asil IO hatasi kaynakta durmali");
+
+        // EKSI YON: ayni hata, geri alma YARIM kaldiysa akibet vaadi
+        // verilmemeli -- iki yol birbirine karismamali.
+        let yarim = yerlestirme_hatasi(YedekHatasi::Io(io_hatasi()), false);
+        assert!(matches!(yarim, YedekHatasi::GeriAlmaYarimKaldi(_)), "gelen: {yarim:?}");
+        assert!(
+            !yarim.to_string().contains("kaybolmadı"),
+            "yarim geri almada akibet vaadi verilmemeli: {yarim}"
+        );
+    }
+
+    /// Davranissal es: gecici kopyalama adimi patladiginda (disk dolu, izin
+    /// hatasi, dosyayi tutan bir program) kullanici hem verisinin yerinde
+    /// oldugunu okur hem de canli cift gercekten bozulmamistir.
+    ///
+    /// Engel olarak ayni adda bir KLASOR kullaniliyor: `kenara_alma_patlarsa_
+    /// canli_wal_silinmez` ile ayni teknik -- uretimdeki gercek sebep (bulut
+    /// esitleme istemcisi, virus tarayici, dolu disk) her iki isletim
+    /// sisteminde de ayni hata sinifini uretir, klasor ise tasinabilir bir
+    /// taklittir.
+    #[test]
+    fn gecici_kopya_patlarsa_canli_cift_durur_ve_akibet_soylenir() {
+        let o = kur("parola123");
+        let bilgi = yedek_al(&o.db, &o.keystore_yolu, &o.hedef, "2026-09-07", &o.key).unwrap();
+        let (db_once, ks_once) = canliyi_farklilastir_ve_oku(&o);
+
+        // `geri_yukle` gecici kopyayi buraya yazmak istiyor.
+        let engel = o.db.with_extension("restore");
+        std::fs::create_dir_all(&engel).unwrap();
+
+        let hata = geri_yukle(&bilgi.yol, &o.db, &o.keystore_yolu, &o.key).unwrap_err();
+        assert!(matches!(hata, YedekHatasi::YerlestirmeBasarisiz(_)), "gelen: {hata:?}");
+        let mesaj = hata.to_string();
+        assert!(
+            mesaj.contains("kaybolmadı") && mesaj.contains("YERİNDE"),
+            "kullanici verisinin akibetini okuyabilmeli: {mesaj}"
+        );
+
+        assert_eq!(std::fs::read(&o.db).unwrap(), db_once, "canli veritabani degismemeli");
+        assert_eq!(
+            std::fs::read(&o.keystore_yolu).unwrap(),
+            ks_once,
+            "canli anahtar dosyasi degismemeli"
+        );
+        let c = open_encrypted(&o.db, &o.key).unwrap();
+        let ad: String = c.query_row("SELECT ad FROM t", [], |r| r.get(0)).unwrap();
+        assert_eq!(ad, BUGUNUN_NOTU, "o gun girilen kayit okunabilir kalmali");
     }
 
     /// V4 semali, DOLU bir veritabani kurar (danisan + randevu + resmi not +

@@ -63,6 +63,7 @@ use psikolog_core::store::{
     audit::{kaydet, Cihaz, Eylem, LogHacmi},
     db::open_existing,
     keystore,
+    schema::MigrateHatasi,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -113,12 +114,51 @@ fn istek_hatasi(kod: StatusCode, mesaj: &str) -> ApiHata {
 ///
 /// Göç hatası `GeriAlmaYarimKaldi` tarafından sarılmış olabilir; log,
 /// sarmalama yüzünden kaybolmamalı.
-fn goc_hatasi(e: &YedekHatasi) -> Option<&psikolog_core::store::schema::MigrateHatasi> {
+fn goc_hatasi(e: &YedekHatasi) -> Option<&MigrateHatasi> {
     match e {
         YedekHatasi::YedekHazirlanamadi(goc) => Some(goc),
         YedekHatasi::GeriAlmaYarimKaldi(ic) => goc_hatasi(ic),
         _ => None,
     }
+}
+
+/// `YedekHatasi::YedekHazirlanamadi`'yi HTTP yanıtına çevirir (Görev 6c).
+///
+/// # Neden `SurumDusuk` burada AYRI
+///
+/// `yedek_hatasi` (bkz. `routes::backup`) `YedekHazirlanamadi`'nin TÜM
+/// `MigrateHatasi` varyantlarını tek bir "veritabanı bu uygulama
+/// sürümüyle hazırlanamadı" metnine düzleştirir -- bilerek: göç hatasının
+/// DETAYI (SQLite dizgileri, `app_meta` içeriği) hassas bir kaynaktan
+/// gelebilir ve gövdeye giremez (bkz. `backup::YedekHatasi::
+/// YedekHazirlanamadi` dokümantasyonu).
+///
+/// Ama bu modülün kendi ilkesi "eksik ≠ bozuk ≠ yanlış anahtar" ve
+/// `SurumDusuk`'un mesajı HİÇBİR hassas veri taşımaz -- yalnızca iki tam
+/// sayı (şema sürümü). `SurumDusuk` ayrıca `YedekIleriSurumlu`'yla AYNI
+/// sınıf bir durumdur ("yedeğinizde sorun yok, uygulamayı güncelleyin")
+/// ve o varyant zaten kendi yol gösteren mesajını alıyor (bkz.
+/// `backup::yerlestir` 3b) -- `SurumDusuk`'u genel "hazırlanamadı"
+/// metnine gömmek aynı durumu iki farklı, tutarsız cümleyle anlatırdı.
+///
+/// Bu, ikinci bir savunma hattı: `backup::yerlestir`'deki `SurumDusuk`
+/// kontrolü (Görev 1) normal akışta yedeği yerleştirmeden ÖNCE zaten
+/// yakalar. Burası yalnızca o kontrolün atlandığı bir kenar durum için.
+fn migrate_hatasina_gore_yanit(e: YedekHatasi) -> ApiHata {
+    if let YedekHatasi::YedekHazirlanamadi(MigrateHatasi::SurumDusuk { veritabani, uygulama }) = &e
+    {
+        return istek_hatasi(
+            StatusCode::CONFLICT,
+            &format!(
+                "Bu yedek geri yüklenemedi: veritabanı, uygulamanın desteklediğinden daha \
+                 yeni bir şema sürümüyle hazırlanmış (veritabanı: sürüm {veritabani}, \
+                 uygulama: sürüm {uygulama}). Yedeğinizde bir sorun YOK; onu geri \
+                 yükleyebilmek için uygulamayı güncelleyin. Mevcut veritabanınız ve anahtar \
+                 dosyanız yerine geri kondu; hiçbir veriniz kaybolmadı."
+            ),
+        );
+    }
+    yedek_hatasi(e)
 }
 
 /// İsteğin klasörünü çözer: verilen yol ya da kayıtlı ayar.
@@ -295,7 +335,9 @@ pub async fn uygula(
         if let Some(goc) = goc_hatasi(&e) {
             eprintln!("geri-yukleme: göç başarısız: {goc}");
         }
-        yedek_hatasi(e)
+        // `SurumDusuk` genel metne düzleştirilmez, yol gösteren kendi
+        // mesajını alır (Görev 6c, bkz. `migrate_hatasina_gore_yanit`).
+        migrate_hatasina_gore_yanit(e)
     })?;
 
     // 4) Denetim kaydı geri yüklenen veritabanına yazılır -- başka bir yere
@@ -322,4 +364,44 @@ pub async fn uygula(
     s.oturum.lock().unwrap_or_else(|e| e.into_inner()).kilitle();
 
     Ok(Json(json!({ "tarih": tarih })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `SurumDusuk` genel "hazırlanamadı" metnine düzleşmemeli: kendi yol
+    /// gösteren cümlesini almalı (Görev 6c). Mutasyon: bu özel durumu
+    /// silip doğrudan `yedek_hatasi(e)` çağırmak -- test 409 yerine 500,
+    /// "güncelleyin" yerine genel "hazırlanamadı" metniyle kırmızıya döner.
+    #[test]
+    fn surum_dusuk_yol_gosteren_kendi_mesajini_alir() {
+        let e = YedekHatasi::YedekHazirlanamadi(MigrateHatasi::SurumDusuk {
+            veritabani: 9,
+            uygulama: 5,
+        });
+        let (kod, govde) = migrate_hatasina_gore_yanit(e);
+        assert_eq!(kod, StatusCode::CONFLICT);
+        let mesaj = govde.0["hata"].as_str().unwrap().to_string();
+        assert!(mesaj.contains("güncelleyin"), "mesaj: {mesaj}");
+        assert!(mesaj.contains("sürüm 9"), "mesaj: {mesaj}");
+        assert!(mesaj.contains("sürüm 5"), "mesaj: {mesaj}");
+        // Genel "hazırlanamadı" düzleştirme metniyle KARIŞMAMALI -- bu ikisi
+        // farklı, birbirine karıştırılmaması gereken durumlardır.
+        assert!(!mesaj.contains("hazırlanamadı"), "mesaj: {mesaj}");
+    }
+
+    /// `SurumDusuk` DIŞINDAKİ varyantlar hâlâ genel `yedek_hatasi`
+    /// düzleştirmesinden geçer -- bu modülün "hata gövdesi hassas veri
+    /// taşımaz" kuralı yalnızca `SurumDusuk` için gevşetildi, diğerleri
+    /// için değil.
+    #[test]
+    fn ucret_kisiti_ihlali_genel_metne_duzlesir() {
+        let e = YedekHatasi::YedekHazirlanamadi(MigrateHatasi::UcretKisitiIhlali { adet: 3 });
+        let (kod, govde) = migrate_hatasina_gore_yanit(e);
+        assert_eq!(kod, StatusCode::CONFLICT);
+        let mesaj = govde.0["hata"].as_str().unwrap().to_string();
+        assert!(mesaj.contains("hazırlanamadı"), "mesaj: {mesaj}");
+        assert!(!mesaj.contains("güncelleyin"), "mesaj: {mesaj}");
+    }
 }

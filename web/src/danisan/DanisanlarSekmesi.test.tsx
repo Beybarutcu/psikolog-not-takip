@@ -80,6 +80,7 @@ function sahteKart(seciliDanisanId: number | null): KartVerisi {
     ekler: [],
     randevular: [],
     hata: null,
+    randevularDamgasi: 0,
   }
 }
 

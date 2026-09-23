@@ -83,6 +83,14 @@ let durumlar: Record<number, string>
 let istekler: Istek[]
 let onceBekle: Record<string, Promise<void> | undefined>
 let sonraBekle: Record<string, Promise<void> | undefined>
+/**
+ * AYNI URL'e giden BİRDEN FAZLA isteği BAĞIMSIZ bekletmek için (Görev 2
+ * inceleme CRITICAL: kartın mount okuması ile `randevularTazele`nin okuması
+ * AYNI URL'e gidiyor). `onceBekle`/`sonraBekle`'de `"METHOD yol#N"` anahtarı
+ * (N = o URL'e giden KAÇINCI istek) varsa o kullanılır, yoksa eski
+ * davranışa (URL'in HER çağrısını aynı kapıyla bekletme) düşülür.
+ */
+let cagriSayaci: Record<string, number>
 let seanslarHatasi: boolean
 /** Etiket sözlüğü (sunucudaki `tags`): kimlik → görünen ad. */
 let etiketDeposu: Map<number, string>
@@ -372,6 +380,7 @@ beforeEach(() => {
   istekler = []
   onceBekle = {}
   sonraBekle = {}
+  cagriSayaci = {}
   seanslarHatasi = false
   etiketDeposu = new Map()
   baglar = {}
@@ -390,9 +399,13 @@ beforeEach(() => {
     const govde = secenekler?.body ? JSON.parse(String(secenekler.body)) : null
     istekler.push({ method, yol, govde })
     const anahtar = `${method} ${yol}`
-    if (onceBekle[anahtar]) await onceBekle[anahtar]
+    cagriSayaci[anahtar] = (cagriSayaci[anahtar] ?? 0) + 1
+    const siraliAnahtar = `${anahtar}#${cagriSayaci[anahtar]}`
+    const once = onceBekle[siraliAnahtar] ?? onceBekle[anahtar]
+    if (once) await once
     const yanit = yanitUret(method, yol, govde)
-    if (sonraBekle[anahtar]) await sonraBekle[anahtar]
+    const sonra = sonraBekle[siraliAnahtar] ?? sonraBekle[anahtar]
+    if (sonra) await sonra
     return yanit
   }) as unknown as typeof fetch
 })
@@ -1034,6 +1047,78 @@ describe('Görev 2 — randevu yazmaları ay özetine ve kart bakiyesine yayıl�
     await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
     await waitFor(() => expect(tumu().some((r) => r.id === 300)).toBe(true))
     expect(kartGetleri()).toBe(baslangic)
+  })
+
+  // İncelemeci bulgusu (CRITICAL): kartın İLK yükleme okuması (mount
+  // efekti) ile `randevularTazele` AYNI URL'e (randevu penceresi) gidiyor.
+  // Kart açılır açılmaz (ilk okuma hâlâ uçuştayken) bir randevu silinirse
+  // `randevularTazele` DAHA SONRA başlayıp DAHA ÖNCE dönebilir (kart o anda
+  // doğru bakiyeyi gösterir) — ama mount'un GEÇ dönen, artık BAYAT yanıtı
+  // damga korumasız bunun ÜSTÜNE eski listeyi yazardı ve bakiye KALICI
+  // olarak eskiye dönerdi. `yazmaSaati`nin "daha önce başlayan bir okumanın
+  // geç gelen yanıtı, daha sonra başlayıp önce dönmüş bir okumayı ezmez"
+  // kuralı burada da geçerli olmalı (`useDanisanSeanslari.yanitiYaz` ile
+  // aynı desen, bkz. `KartVerisi.randevularDamgasi`).
+  it('CRITICAL: kart ilk yüklemesi UÇUŞTAYKEN randevularTazele daha SONRA başlayıp daha ÖNCE dönerse, geç gelen ilk yükleme bakiyeyi eskiye DÖNDÜRMEZ', async () => {
+    ciz()
+    const tumZamanYolu = `/api/randevular?baslangic=${encodeURIComponent('2000-01-01T00:00')}&bitis=${encodeURIComponent('2100-01-01T00:00')}`
+    // Kartın İLK okuması (mount efekti — bu URL'e 1. çağrı): kapıda tutuluyor.
+    const k1 = kapi()
+    sonraBekle[`GET ${tumZamanYolu}#1`] = k1.bekle
+
+    // `danisanlarda()` KULLANILMIYOR: o yardımcı Seanslar listesinin
+    // yüklenmesini bekliyor, ama `DanisanDosyasi` (ve onun İÇİNDEKİ Seanslar
+    // listesi) yalnızca `kart.dosya !== null` iken render ediliyor — kartın
+    // mount Promise.all'ı (ve onunla birlikte bu gate) çözülmeden `kart.dosya`
+    // asla dolmaz. Bariyer bu yüzden İSTEĞİN ATILMASI (yanıtın DÖNMESİ değil).
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
+    // BARİYER: kartın ilk okuması yola çıktı (anlık görüntü: 202 hâlâ var,
+    // bekleyen 450 TL) — henüz DÖNMEDİ (`sonraBekle` onu tutuyor).
+    await waitFor(() => expect(istekler.some((i) => i.yol === tumZamanYolu)).toBe(true))
+
+    await takvimeDon()
+    await takvimde202Ac()
+    await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
+    await waitFor(() => expect(tumu().some((r) => r.id === 202)).toBe(false))
+    // `randevularTazele`nin (bu URL'e 2. çağrı, KAPISIZ) isteği çoktan gitti
+    // ve döndü — kart bu anda (gözlemlenmese de) ZATEN doğru bakiyeyi taşır.
+    await waitFor(() => expect(istekler.filter((i) => i.yol === tumZamanYolu).length).toBe(2))
+
+    // Şimdi GEÇ kalan ilk yüklemenin kapısı açılıyor — bu, sunucudan SİLME
+    // ÖNCESİ alınmış BAYAT bir anlık görüntü taşıyor (202 hâlâ orada, 450 TL).
+    await act(async () => {
+      k1.ac()
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Bilgiler' }))
+    // Kapı AÇILDIKTAN SONRA da (yalnızca ilk doğru anı yakalayıp geçmek
+    // değil) bakiye DOĞRU kalmalı — düzeltmeden ÖNCE burası sessizce
+    // "450,00 TL"ye dönerdi ve bir daha kendiliğinden düzelmezdi.
+    expect(bakiye()).toBe('0,00 TL')
+    await new Promise((r) => setTimeout(r, 50))
+    expect(bakiye()).toBe('0,00 TL')
+  })
+
+  // MINOR (inceleme): kart HİÇ açılmamışken bir randevu yazması, kart
+  // tarafında hiçbir isteğe yol açmamalı — `randevularTazele`nin erken
+  // çıkışı (`useDanisanDosyasi.ts`, `hedefDanisan === null`) bunu koruyor,
+  // ama Görev 2'nin testlerinde AMAÇLI ölçülmüyordu (inceleme: o satırı
+  // kaldıran mutasyon başka bir testin URL öneki çakışmasıyla TESADÜFEN
+  // yakalanıyordu).
+  it('(minor) kart KAPALIYKEN randevu yazması yapılınca randevu-penceresi isteği ATILMAZ', async () => {
+    ciz()
+    const tumZamanYolu = `/api/randevular?baslangic=${encodeURIComponent('2000-01-01T00:00')}&bitis=${encodeURIComponent('2100-01-01T00:00')}`
+    // Sekme hiç Danışanlar'a geçmedi — kart hiç açılmadı.
+    await takvimde202Ac()
+    await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
+    await waitFor(() => expect(tumu().some((r) => r.id === 202)).toBe(false))
+
+    expect(istekler.filter((i) => i.yol === tumZamanYolu).length).toBe(0)
   })
 })
 

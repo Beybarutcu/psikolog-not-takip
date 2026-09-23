@@ -34,9 +34,29 @@ export type KartVerisi = {
   ekler: EkBilgisi[]
   randevular: Randevu[]
   hata: string | null
+  /**
+   * `randevular`ı üreten okumanın `yazmaSaati` damgası (Görev 2 inceleme
+   * CRITICAL). İki BAĞIMSIZ yol aynı randevu penceresini okuyabiliyor —
+   * kartın mount efekti (`dosya+ekler+randevular` üçlüsü) ve
+   * `randevularTazele` (yalnızca randevular) — ve ikisi aynı anda
+   * uçuşta olabilir. Yalnızca `id`/`iptal` kontrolü yeterli DEĞİL: ikisi de
+   * AYNI danışan için, İKİSİ de "iptal edilmemiş" sayılır, yalnızca biri
+   * DAHA ÖNCE başlayıp DAHA SONRA dönebilir. `useDanisanSeanslari.
+   * yanitiYaz` ile AYNI desen — DAHA YENİ başlamış (damgası büyük) bir
+   * okuma zaten uygulandıysa, daha ESKİ başlamış bir okumanın geç gelen
+   * yanıtı `randevular`ı YAZMAZ.
+   */
+  randevularDamgasi: number
 }
 
-const BOS_KART: KartVerisi = { id: null, dosya: null, ekler: [], randevular: [], hata: null }
+const BOS_KART: KartVerisi = {
+  id: null,
+  dosya: null,
+  ekler: [],
+  randevular: [],
+  hata: null,
+  randevularDamgasi: 0,
+}
 
 /**
  * Açık danışan kartının akışı: dosya + ekler + (bakiye için) tüm randevular,
@@ -105,15 +125,28 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
           takvimApi.randevulariGetir(TUM_ZAMAN_BASI, TUM_ZAMAN_SONU),
         ])
         if (iptal) return
-        setKartVerisi({
-          id: seciliDanisanId,
-          dosya,
-          ekler,
-          randevular: yazmaSaati.uygula(
-            tumRandevular.filter((r) => r.client_id === seciliDanisanId),
-            okumaDamgasi,
-          ),
-          hata: null,
+        const okunanRandevular = yazmaSaati.uygula(
+          tumRandevular.filter((r) => r.client_id === seciliDanisanId),
+          okumaDamgasi,
+        )
+        setKartVerisi((onceki) => {
+          // CRITICAL düzeltmesi (bkz. `KartVerisi.randevularDamgasi`):
+          // `randevularTazele` bu okuma UÇUŞTAYKEN DAHA YENİ bir okuma
+          // başlatıp ondan ÖNCE dönmüş olabilir — o zaman kartta zaten
+          // BU okumadan DAHA TAZE bir randevu listesi var demektir; bu
+          // okumanın (geç gelen, eski) randevu listesini YAZMAK bakiyeyi
+          // KALICI olarak eskiye döndürür. `dosya`/`ekler` bu yarışa dahil
+          // DEĞİL (tek okuyucuları bu efekt, `iptal` onları zaten koruyor).
+          const dahaYeniRandevuVarMi =
+            onceki.id === seciliDanisanId && onceki.randevularDamgasi > okumaDamgasi
+          return {
+            id: seciliDanisanId,
+            dosya,
+            ekler,
+            randevular: dahaYeniRandevuVarMi ? onceki.randevular : okunanRandevular,
+            randevularDamgasi: dahaYeniRandevuVarMi ? onceki.randevularDamgasi : okumaDamgasi,
+            hata: null,
+          }
         })
       } catch (e) {
         if (iptal) return
@@ -242,25 +275,68 @@ export function useDanisanDosyasi({ onYetkisiz }: { onYetkisiz: () => void }) {
    * danışanı bilinmiyorsa) — açık kart o durumda da bayat sayılır, bir
    * fazladan pencere isteği yanlış bakiyeden ucuzdur (`useDanisanSeanslari.
    * yapiDegisti` ile aynı temkinli karar).
+   *
+   * # Mount efektiyle YARIŞ (inceleme CRITICAL, düzeltildi)
+   *
+   * Bu fonksiyon AYNI randevu penceresini kartın kendi mount efektiyle
+   * (yukarıdaki `useEffect`) PAYLAŞIYOR — kart YENİ açılmışken (ilk okuma
+   * hâlâ uçuştayken) bir yazma olursa ikisi de aynı anda uçuşta olabilir.
+   * Yalnızca "hangi danışan" kontrolü YETERSİZDİ: ikisi de AYNI danışana
+   * ait, ikisi de "iptal edilmemiş" sayılıyordu, ama DAHA ÖNCE başlayan
+   * mount okuması DAHA SONRA dönüp bu fonksiyonun (daha yeni, doğru)
+   * sonucunu KALICI olarak eskiye döndürebiliyordu. Çözüm
+   * `KartVerisi.randevularDamgasi` — desen `useDanisanSeanslari.yanitiYaz`
+   * ile AYNI: DAHA YENİ başlamış bir okuma zaten uygulandıysa, DAHA ESKİ
+   * başlamış bir okumanın geç gelen yanıtı `randevular`ı YAZMAZ.
+   *
+   * `hedefDanisan` yanıt DÖNDÜĞÜNDE de (`seciliDanisanIdRef.current` ile)
+   * yeniden okunuyor: kullanıcı bu yanıt beklenirken BAŞKA bir danışana
+   * geçmiş olabilir, o zaman yanıt hiçbir şeye uygulanmaz.
+   *
+   * `onceki.id !== hedefDanisan` durumunda (mount kendi İLK okumasını HENÜZ
+   * bitirmemiş — `kartVerisi` hâlâ `BOS_KART` ya da önceki danışana ait)
+   * `dosya`/`ekler`/`hata` KOŞULSUZ `onceki`den KOPYALANMAZ: bu üçü henüz
+   * bilinmiyor (`null`/`[]`), yalnızca `randevular` bu yanıttan geliyor —
+   * aksi hâlde (`...onceki` ile kopyalansaydı) id BU danışana ait ama
+   * dosya BAŞKA danışana ait bir "Frankenstein" durum üretilirdi. Mount
+   * sonunda döndüğünde `id`/`dosya`/`ekler`/`hata`yı KOŞULSUZ yazar (tek
+   * yazarı o); `randevularDamgasi` karşılaştırması az önce yazılan (daha
+   * büyük damgalı) bu yanıtı korur.
    */
   const randevularTazele = useCallback(
     (etkilenenler: readonly (number | null)[]) => {
-      const acik = seciliDanisanIdRef.current
-      if (acik === null || !etkilenenler.some((id) => id === null || id === acik)) return
+      const hedefDanisan = seciliDanisanIdRef.current
+      if (
+        hedefDanisan === null ||
+        !etkilenenler.some((id) => id === null || id === hedefDanisan)
+      ) {
+        return
+      }
       const okumaDamgasi = yazmaSaati.okumaBasladi()
       void takvimApi.randevulariGetir(TUM_ZAMAN_BASI, TUM_ZAMAN_SONU).then(
         (tumRandevular) => {
-          setKartVerisi((onceki) =>
-            onceki.id !== acik
-              ? onceki
-              : {
-                  ...onceki,
-                  randevular: yazmaSaati.uygula(
-                    tumRandevular.filter((r) => r.client_id === acik),
-                    okumaDamgasi,
-                  ),
-                },
-          )
+          // Kullanıcı bu yanıt dönene kadar BAŞKA bir danışana geçmiş
+          // olabilir (`ac`/`kapat`) — o zaman yanıt hiçbir şeye uygulanmaz.
+          if (seciliDanisanIdRef.current !== hedefDanisan) return
+          setKartVerisi((onceki) => {
+            const zatenBuDanisanin = onceki.id === hedefDanisan
+            // CRITICAL düzeltmesi (bkz. modül/fonksiyon başlığı ve
+            // `KartVerisi.randevularDamgasi`): bu danışan için ZATEN DAHA
+            // YENİ bir randevu okuması uygulandıysa, bu (daha eski
+            // başlamış) yanıtı YAZMA.
+            if (zatenBuDanisanin && onceki.randevularDamgasi > okumaDamgasi) return onceki
+            return {
+              id: hedefDanisan,
+              dosya: zatenBuDanisanin ? onceki.dosya : null,
+              ekler: zatenBuDanisanin ? onceki.ekler : [],
+              hata: zatenBuDanisanin ? onceki.hata : null,
+              randevular: yazmaSaati.uygula(
+                tumRandevular.filter((r) => r.client_id === hedefDanisan),
+                okumaDamgasi,
+              ),
+              randevularDamgasi: okumaDamgasi,
+            }
+          })
         },
         (e: unknown) => {
           if (e instanceof YetkisizHata) {

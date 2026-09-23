@@ -35,7 +35,14 @@ const danisanFixture: DanisanKaydi = {
 }
 
 function sahteKart(dosya: DanisanKaydi | null = danisanFixture): KartVerisi {
-  return { id: dosya?.id ?? null, dosya, ekler: [], randevular: [], hata: null }
+  return {
+    id: dosya?.id ?? null,
+    dosya,
+    ekler: [],
+    randevular: [],
+    hata: null,
+    randevularDamgasi: 0,
+  }
 }
 
 function seans(oz: Partial<DanisanSeansi> = {}): DanisanSeansi {

@@ -126,6 +126,47 @@ use crate::store::zaman::zaman_gecerli_mi;
 use rusqlite::Connection;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
+/// `audit_log.varlik` sütununun üretimde alabileceği **bütün** değerler —
+/// tek kaynak.
+///
+/// # Neden bu dizi var (dal incelemesi I1)
+///
+/// Arayüzdeki "Varlık türü" süzgeci (`web/src/ayarlar/AyarlarSekmesi.tsx`,
+/// `VARLIK_SECENEKLERI`) bu değerleri **elle** yazıyordu ve sunucu tam
+/// eşleşme yapıyor (`varlik = ?3`). İkisi ayrışınca sonuç sessizdir: süzgeç
+/// boş liste döndürür ve terapist "o dönemde böyle bir kayıt yok" sonucuna
+/// varır. Bu fiilen gerçekleşti — `appointment_seri` (seri iptali: tek
+/// işlemde N randevu + M not) ve `ozet` süzgeçte YOKTU, yani KVKK 2018/10
+/// kapsamında "bu dönemde hangi randevu kayıtları silindi" sorusu **eksik**
+/// cevaplanıyordu.
+///
+/// Bu yüzden küme iki testle bağlanır ve ikisi de **elle yazılmış dosya
+/// listesine dayanmaz** (bkz. `docs/test-yesil-ama-korumuyor.md`, 12. biçim):
+///
+/// 1. `varlik_turleri_uretimdeki_kaydet_cagrilariyla_ayni` — `core/src` ve
+///    `server/src` ağaçları **dizinden türetilerek** taranır, her `kaydet(...)`
+///    çağrısının `varlik` argümanı çözülür ve küme bu diziyle birebir
+///    karşılaştırılır. Üretime yeni bir değer girerse test kırmızı olur.
+/// 2. `varlik_suzgeci_istemcideki_secenek_listesiyle_ayni` — bu dizi ile
+///    `AyarlarSekmesi.tsx` süzgeç seçenekleri birebir karşılaştırılır.
+///
+/// Sıra önemsizdir (karşılaştırmalar küme üzerinden yapılır); okunabilirlik
+/// için ilişkili türler yan yana durur.
+pub const VARLIK_TURLERI: &[&str] = &[
+    "client",
+    "appointment",
+    "appointment_seri",
+    "progress_note",
+    "private_note",
+    "attachment",
+    "etiket",
+    "danisan_seanslari",
+    "arama",
+    "ozet",
+    "session",
+    "backup",
+];
+
 /// `audit_log.ayrinti` alanına yazılabilecek kapalı değer kümesi.
 ///
 /// Bkz. modül başlığı: hassas veri kuralı burada derleyici tarafından
@@ -1096,5 +1137,339 @@ mod tests {
             son_kayitlar_sayfali(&c, &suzgec, 100, 0).unwrap();
         }
         assert_eq!(log_sayisi(&c), once, "okuma audit_log'a satir eklememeli");
+    }
+
+    // --- `varlik` kumesi: uretim <-> cekirdek <-> arayuz -----------------
+    //
+    // Iki test de dosya listesini ELLE YAZMAZ: biri dizin agacindan turetir,
+    // digeri tek bir arayuz dosyasini okur (bkz. `VARLIK_TURLERI` dokumani ve
+    // `docs/test-yesil-ama-korumuyor.md` 12. bicim: "dosya kumesini elle
+    // yazma -- dizinden turet"). Emsal:
+    // `store::search::tests::asgari_sorgu_istemciyle_ayni`.
+
+    /// Workspace koku (`core`'un ust dizini).
+    fn workspace_koku() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("core'un ust dizini workspace koku olmali")
+            .to_path_buf()
+    }
+
+    /// `core/src` ve `server/src` altindaki butun `.rs` dosyalari --
+    /// **dizinden turetilir**, elle yazilmaz: yarin eklenecek bir depo
+    /// modulu hicbir sey yapilmadan kapsanir.
+    fn kaynak_dosyalari() -> Vec<std::path::PathBuf> {
+        fn topla(dizin: &std::path::Path, cikti: &mut Vec<std::path::PathBuf>) {
+            let girdiler = std::fs::read_dir(dizin)
+                .unwrap_or_else(|e| panic!("{} okunamadi: {e}", dizin.display()));
+            for girdi in girdiler {
+                let yol = girdi.expect("dizin girdisi okunamadi").path();
+                if yol.is_dir() {
+                    topla(&yol, cikti);
+                } else if yol.extension().is_some_and(|u| u == "rs") {
+                    cikti.push(yol);
+                }
+            }
+        }
+        let kok = workspace_koku();
+        let mut hepsi = Vec::new();
+        for alt in ["core/src", "server/src"] {
+            topla(&kok.join(alt), &mut hepsi);
+        }
+        hepsi.sort();
+        hepsi
+    }
+
+    /// Kaynagin **uretim** kismi: ilk `#[cfg(test)] mod ...` blogundan
+    /// oncesi. Testlerdeki uydurma `varlik` degerleri ("note" gibi) kumeyi
+    /// kirletmemeli -- kural URETIM kodu icin gecerli.
+    fn uretim_kismi(kaynak: &str) -> String {
+        let satirlar: Vec<&str> = kaynak.lines().collect();
+        for (i, s) in satirlar.iter().enumerate() {
+            if s.trim() == "#[cfg(test)]" {
+                let mut j = i + 1;
+                while j < satirlar.len() && satirlar[j].trim().is_empty() {
+                    j += 1;
+                }
+                if j < satirlar.len() && satirlar[j].trim_start().starts_with("mod ") {
+                    return satirlar[..i].join("\n");
+                }
+            }
+        }
+        kaynak.to_string()
+    }
+
+    /// Yorum satirlarini eler: bir dokuman satirindaki `kaydet(...)` ornegi
+    /// gercek bir cagri sayilmamali (9. bicim: yapisal iddianin, kisitladigi
+    /// yapinin DISINDAKI metinle tatmin edilmesi).
+    fn yorumsuz(kaynak: &str) -> String {
+        kaynak
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// `const AD: &str = "deger";` satirlarini toplar. Cok satirli sabitler
+    /// (SQL sorgulari) kasten disarida kalir: `varlik` argumani hicbir zaman
+    /// oyle bir sabit degildir.
+    fn str_sabitleri(kaynak: &str) -> std::collections::HashMap<String, String> {
+        let mut harita = std::collections::HashMap::new();
+        for satir in kaynak.lines() {
+            let s = satir.trim();
+            let s = s.strip_prefix("pub ").unwrap_or(s);
+            let Some(kalan) = s.strip_prefix("const ") else { continue };
+            let Some((ad, sag)) = kalan.split_once(':') else { continue };
+            let Some((tur, deger)) = sag.split_once('=') else { continue };
+            let tur = tur.trim();
+            if !tur.starts_with('&') || !tur.ends_with("str") {
+                continue;
+            }
+            let Some(d) = deger.trim().strip_prefix('"') else { continue };
+            let Some(d) = d.strip_suffix("\";") else { continue };
+            if d.contains('"') {
+                continue;
+            }
+            harita.insert(ad.trim().to_string(), d.to_string());
+        }
+        harita
+    }
+
+    /// `acilis` bir `(` konumu; `n`. argumani (0'dan sayarak) dondurur.
+    /// Dizgi icindeki parantez/virguller sayilmaz.
+    fn arguman(kaynak: &str, acilis: usize, n: usize) -> Option<String> {
+        let b = kaynak.as_bytes();
+        let mut derinlik = 0usize;
+        let mut bas = acilis + 1;
+        let mut sira = 0usize;
+        let mut metinde = false;
+        let mut i = acilis;
+        while i < b.len() {
+            let c = b[i];
+            if metinde {
+                if c == b'\\' {
+                    i += 2;
+                    continue;
+                }
+                if c == b'"' {
+                    metinde = false;
+                }
+                i += 1;
+                continue;
+            }
+            match c {
+                b'"' => metinde = true,
+                b'(' | b'[' | b'{' => {
+                    derinlik += 1;
+                    if derinlik == 1 {
+                        bas = i + 1;
+                    }
+                }
+                b')' | b']' | b'}' => {
+                    derinlik -= 1;
+                    if derinlik == 0 {
+                        return if sira == n {
+                            Some(kaynak[bas..i].trim().to_string())
+                        } else {
+                            None
+                        };
+                    }
+                }
+                b',' if derinlik == 1 => {
+                    if sira == n {
+                        return Some(kaynak[bas..i].trim().to_string());
+                    }
+                    sira += 1;
+                    bas = i + 1;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// `ad` bir `use ...` ifadesinde geciyorsa getirildigi modulun adini
+    /// dondurur (`use psikolog_core::backup::{..., VARLIK}` -> `backup`).
+    fn ice_aktarilan_modul(kaynak: &str, ad: &str) -> Option<String> {
+        let jeton = |metin: &str| {
+            metin.split(|c: char| !c.is_alphanumeric() && c != '_').any(|t| t == ad)
+        };
+        for parca in kaynak.split(';') {
+            let Some(p) = parca.find("use ") else { continue };
+            let ifade = parca[p + 4..].trim();
+            let yol = match ifade.find('{') {
+                Some(k) if jeton(&ifade[k..]) => &ifade[..k],
+                Some(_) => continue,
+                None if ifade.rsplit("::").next().map(str::trim) == Some(ad) => {
+                    ifade.strip_suffix(ad).unwrap_or(ifade)
+                }
+                None => continue,
+            };
+            let yol = yol.trim().trim_end_matches(':');
+            return yol.rsplit("::").next().map(|s| s.trim().to_string());
+        }
+        None
+    }
+
+    /// Uretimdeki butun `kaydet(...)` cagrilarindan `varlik` argumanini
+    /// (3. arguman) cozer. Cozemedigi bir sey bulursa **panikler**: sessizce
+    /// atlanan bir cagri, bu testi hicbir sey korumayan bir kabuga cevirirdi.
+    fn uretimdeki_varlik_degerleri() -> std::collections::BTreeSet<String> {
+        let dosyalar = kaynak_dosyalari();
+        assert!(!dosyalar.is_empty(), "tarama hicbir kaynak dosyasi bulamadi");
+
+        let uretim: Vec<(std::path::PathBuf, String)> = dosyalar
+            .iter()
+            .map(|y| {
+                let ham = std::fs::read_to_string(y)
+                    .unwrap_or_else(|e| panic!("{} okunamadi: {e}", y.display()));
+                (y.clone(), uretim_kismi(&ham))
+            })
+            .collect();
+        let sabitler: Vec<std::collections::HashMap<String, String>> =
+            uretim.iter().map(|(_, k)| str_sabitleri(k)).collect();
+
+        let mut bulunan = std::collections::BTreeSet::new();
+        let mut cagri_sayisi = 0usize;
+        for (i, (yol, ham_uretim)) in uretim.iter().enumerate() {
+            let kaynak = yorumsuz(ham_uretim);
+            let b = kaynak.as_bytes();
+            let mut ara = 0usize;
+            while let Some(p) = kaynak[ara..].find("kaydet") {
+                let bas = ara + p;
+                ara = bas + "kaydet".len();
+                // `not_kaydet`, `ozel_not_kaydet`, `yedek_al_ve_kaydet` ...
+                if bas > 0 && (b[bas - 1].is_ascii_alphanumeric() || b[bas - 1] == b'_') {
+                    continue;
+                }
+                // `pub fn kaydet(` -- tanim, cagri degil.
+                if kaynak[..bas].trim_end().ends_with("fn") {
+                    continue;
+                }
+                let mut j = ara;
+                while j < b.len() && b[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if j >= b.len() || b[j] != b'(' {
+                    continue;
+                }
+                cagri_sayisi += 1;
+                let arg = arguman(&kaynak, j, 2).unwrap_or_else(|| {
+                    panic!("{}: kaydet(...) argumanlari ayristirilamadi", yol.display())
+                });
+                let deger = if arg.len() >= 2 && arg.starts_with('"') && arg.ends_with('"') {
+                    arg[1..arg.len() - 1].to_string()
+                } else if arg
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+                {
+                    sabitler[i]
+                        .get(&arg)
+                        .cloned()
+                        .or_else(|| {
+                            let modul = ice_aktarilan_modul(ham_uretim, &arg)?;
+                            uretim.iter().zip(sabitler.iter()).find_map(|((y, _), s)| {
+                                let ayni = y.file_stem().is_some_and(|g| g == modul.as_str());
+                                if ayni {
+                                    s.get(&arg).cloned()
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "{}: `kaydet` cagrisindaki `{arg}` sabiti cozulemedi. Sessizce \
+                                 atlanan bir deger bu testi bos birakir; cozucuyu genislet.",
+                                yol.display()
+                            )
+                        })
+                } else {
+                    panic!(
+                        "{}: `kaydet` cagrisinin `varlik` argumani ne dizgi sabiti ne de bir \
+                         `const`: `{arg}`. Ya cagriyi sabite cevir ya da bu taramayi genislet.",
+                        yol.display()
+                    )
+                };
+                bulunan.insert(deger);
+            }
+        }
+        assert!(
+            cagri_sayisi >= VARLIK_TURLERI.len(),
+            "tarama yalnizca {cagri_sayisi} `kaydet` cagrisi buldu; bu sayi kume \
+             buyuklugunden ({}) kucuk olamaz -- tarama bozulmus olmali",
+            VARLIK_TURLERI.len()
+        );
+        bulunan
+    }
+
+    /// **Capraz kontrol 1:** `VARLIK_TURLERI`, uretimdeki `kaydet` cagri
+    /// yerlerinin yazdigi kumeyle birebir ayni olmali.
+    ///
+    /// Mutasyon: uretime yeni bir `varlik` degeri sokmak (ya da diziden
+    /// birini silmek) bu testi kirar.
+    #[test]
+    fn varlik_turleri_uretimdeki_kaydet_cagrilariyla_ayni() {
+        let uretimde = uretimdeki_varlik_degerleri();
+        let dizide: std::collections::BTreeSet<String> =
+            VARLIK_TURLERI.iter().map(|s| s.to_string()).collect();
+
+        let eksik: Vec<_> = uretimde.difference(&dizide).collect();
+        assert!(
+            eksik.is_empty(),
+            "uretimde yazilan ama `VARLIK_TURLERI`de OLMAYAN deger(ler): {eksik:?}. Bu \
+             degerler denetim kaydi suzgecinde secilemez; KVKK 2018/10 sorusu eksik \
+             cevaplanir. Diziye ekleyin ve AyarlarSekmesi.tsx'e bir secenek koyun."
+        );
+        let fazla: Vec<_> = dizide.difference(&uretimde).collect();
+        assert!(
+            fazla.is_empty(),
+            "`VARLIK_TURLERI`de olan ama uretimde HIC yazilmayan deger(ler): {fazla:?}. \
+             Suzgecte hicbir zaman sonuc vermeyen bir secenek kullaniciyi yaniltir."
+        );
+    }
+
+    /// **Capraz kontrol 2:** arayuzdeki suzgec secenekleri cekirdekteki
+    /// kumeyle birebir ayni olmali (emsal:
+    /// `search::tests::asgari_sorgu_istemciyle_ayni`).
+    #[test]
+    fn varlik_suzgeci_istemcideki_secenek_listesiyle_ayni() {
+        let yol = workspace_koku().join("web/src/ayarlar/AyarlarSekmesi.tsx");
+        let kaynak = std::fs::read_to_string(&yol)
+            .unwrap_or_else(|e| panic!("{} okunamadi: {e}", yol.display()));
+
+        let bas = kaynak
+            .find("const VARLIK_SECENEKLERI")
+            .expect("AyarlarSekmesi.tsx icinde `const VARLIK_SECENEKLERI` bulunamadi");
+        let govde = &kaynak[bas..];
+        let son = govde.find("\n]").expect("`VARLIK_SECENEKLERI` dizisi kapanmiyor");
+        let govde = &govde[..son];
+
+        let mut secenekler = std::collections::BTreeSet::new();
+        let mut kalan = govde;
+        while let Some(p) = kalan.find("deger: '") {
+            let sonrasi = &kalan[p + "deger: '".len()..];
+            let bitis = sonrasi.find('\'').expect("`deger: '` kapanmiyor");
+            let deger = &sonrasi[..bitis];
+            // `''` = "Tumu"; bir varlik turu degil, suzgecin kapali hali.
+            if !deger.is_empty() {
+                secenekler.insert(deger.to_string());
+            }
+            kalan = &sonrasi[bitis..];
+        }
+        assert!(
+            !secenekler.is_empty(),
+            "TSX ayristirilamadi: hicbir `deger: '...'` bulunamadi -- bu test bos donerdi"
+        );
+
+        let dizide: std::collections::BTreeSet<String> =
+            VARLIK_TURLERI.iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            secenekler, dizide,
+            "denetim kaydi 'Varlik turu' suzgeci (AyarlarSekmesi.tsx) cekirdekteki \
+             `VARLIK_TURLERI` ile ayrismis. Sunucu tam eslesme yapar; eksik bir secenek \
+             KVKK 2018/10 sorusunu sessizce eksik cevaplar."
+        );
     }
 }

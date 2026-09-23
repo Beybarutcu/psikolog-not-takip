@@ -68,20 +68,36 @@ type DenetimAkisi = {
 
 /**
  * Varlık türü süzgecinin seçenekleri. Sunucudaki `varlik` sütununun
- * kullandığı ham değerler (bkz. `store::audit::kaydet` çağrı yerleri) --
- * burada YALNIZCA görüntü etiketi ekleniyor, ikinci bir doğrulama katmanı
- * DEĞİL (bilinmeyen bir değer sunucuda sessizce boş sonuç verir).
+ * kullandığı ham değerler -- burada YALNIZCA görüntü etiketi ekleniyor,
+ * ikinci bir doğrulama katmanı DEĞİL (bilinmeyen bir değer sunucuda
+ * sessizce boş sonuç verir).
+ *
+ * # Bu liste ELLE TUTULMUYOR; çekirdekle EŞLEŞMEK ZORUNDA (dal incelemesi I1)
+ *
+ * Yetkili küme `core::store::audit::VARLIK_TURLERI`. Burası eskiden bağımsız
+ * bir kopyaydı ve ayrışmıştı: `appointment_seri` (seri iptali -- tek işlemde
+ * N randevu + M not) ve `ozet` eksikti. Sunucu tam eşleşme yaptığı için
+ * sonuç sessizdi: terapist "Varlık türü: Randevu" seçip "bu dönemde randevu
+ * silinmemiş" sonucuna varabiliyordu (KVKK 2018/10).
+ *
+ * Bu dosyayı okuyan Rust testi:
+ * `core::store::audit::tests::varlik_suzgeci_istemcideki_secenek_listesiyle_ayni`
+ * -- `deger:` alanları çekirdekteki diziyle birebir karşılaştırılır. Buraya
+ * yeni bir satır eklemeden önce çekirdekteki diziye de eklenmeli (ya da
+ * tersi); aksi hâlde test kırmızı olur.
  */
 const VARLIK_SECENEKLERI: { deger: string; etiket: string }[] = [
   { deger: '', etiket: 'Tümü' },
   { deger: 'client', etiket: 'Danışan dosyası' },
   { deger: 'appointment', etiket: 'Randevu' },
+  { deger: 'appointment_seri', etiket: 'Randevu serisi' },
   { deger: 'progress_note', etiket: 'Seans notu' },
   { deger: 'private_note', etiket: 'Özel not' },
   { deger: 'attachment', etiket: 'Ek dosya' },
   { deger: 'etiket', etiket: 'Etiket' },
   { deger: 'danisan_seanslari', etiket: 'Danışan seans listesi' },
   { deger: 'arama', etiket: 'Arama' },
+  { deger: 'ozet', etiket: 'Ay özeti' },
   { deger: 'session', etiket: 'Oturum (giriş/çıkış/parola)' },
   { deger: 'backup', etiket: 'Yedek' },
 ]

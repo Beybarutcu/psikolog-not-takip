@@ -207,6 +207,16 @@ use serde::Serialize;
 /// Bir aramanın çalışması için gereken en az karakter sayısı (kırpılmış ve
 /// katlanmış sorgu üzerinden). Tek karakterlik bir sorgu neredeyse her notu
 /// eşleştirir; sonuç listesi değil, veritabanı dökümü olur.
+///
+/// # İstemcide de AYNI sayı var, derleyici bunu KONTROL ETMEZ (Görev 6d)
+///
+/// `web/src/arama/HizliArama.tsx` kendi `ASGARI_SORGU` sabitini tutar (bkz.
+/// o dosyadaki yorum -- kontrol yalnızca sunucuda olsaydı her tek harfte
+/// gereksiz bir istek giderdi). İki sabit yalnızca YORUMLA eşleşiyor;
+/// biri değişip diğeri unutulursa (istemci "en az 2 karakter" derken
+/// sunucu 3'ten aşağısını reddeder, ya da tersi) kullanıcı "yazmaya devam
+/// edin" ile "sonuç yok" arasında yanlış bir mesaj görür. Çapraz kontrol
+/// testi bunu sabitler: `tests::asgari_sorgu_istemciyle_ayni`.
 const ASGARI_SORGU: usize = 2;
 
 /// Tek bir aramanın döndürebileceği en fazla sonuç. Bkz. modül başlığı —
@@ -2499,5 +2509,28 @@ mod tests {
             "panik mesaji not icerigini basmamali: {mesaj}"
         );
         assert!(!mesaj.contains("Ayse Yilmaz"), "panik mesaji danisan adini basmamali: {mesaj}");
+    }
+
+    /// `ASGARI_SORGU` ile istemcideki (`HizliArama.tsx`) karşılığı yalnızca
+    /// YORUMLA eşleşiyordu (Görev 6d). Emsal:
+    /// `server::routes::backup::tests::baglama_kararinin_kosulu_hala_gecerli_mi`
+    /// (Rust tarafından TypeScript kaynağını metin olarak okuyup sabiti
+    /// arıyor). Mutasyon: bu sabiti değiştirmek (`ASGARI_SORGU: usize = 3`)
+    /// -- test aranan dizgiyi bulamayıp kırmızıya döner.
+    #[test]
+    fn asgari_sorgu_istemciyle_ayni() {
+        let yol = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("core'un ust dizini workspace koku olmali")
+            .join("web/src/arama/HizliArama.tsx");
+        let kaynak = std::fs::read_to_string(&yol)
+            .unwrap_or_else(|e| panic!("{} okunamadi: {e}", yol.display()));
+        let beklenen = format!("const ASGARI_SORGU = {ASGARI_SORGU}");
+        assert!(
+            kaynak.contains(&beklenen),
+            "istemcideki ASGARI_SORGU (HizliArama.tsx) sunucudaki degerle \
+             ({ASGARI_SORGU}) artik eslesmiyor olabilir; ikisi ayri sabitler ve \
+             yalnizca yorumla baglaniyor (bkz. bu dosyadaki ASGARI_SORGU yorumu)."
+        );
     }
 }

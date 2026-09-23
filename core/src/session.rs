@@ -6,6 +6,12 @@ use std::time::{Duration, Instant, SystemTime};
 /// ekranda acik kalan notu koruma altina alir.
 pub const VARSAYILAN_KILIT_SURESI_SN: u64 = 300;
 
+// İstemcide de AYNI süre var (`web/src/bostaKalma.ts::BOSTA_KALMA_MS`,
+// milisaniye olarak 300_000), derleyici bunu KONTROL ETMEZ (Görev 6d). O
+// dosyanın yorumu bilerek `/api/durum`'dan okumadığını söylüyor -- bu
+// sabit istemcide de AYRI durur ve iki değer yalnızca YORUMLA eşleşir.
+// Çapraz kontrol testi: `tests::bosta_kalma_suresi_istemciyle_ayni`.
+
 /// Bir oturum etkinliginin oldugu andaki iki saat kaynagi birlikte.
 ///
 /// # Neden ikisi birden (uyku bulgusu)
@@ -415,5 +421,49 @@ mod tests {
              KAPATILIYOR, ne KAPATILMIYOR\")"
         );
         assert!(o.anahtar(t, td_elle_ayarlanmis).is_some());
+    }
+
+    /// `n`'i JS/TS bin ayracıyla yazar (`300000` -> `"300_000"`).
+    fn bin_ayracli(n: u64) -> String {
+        let basamaklar = n.to_string();
+        let bayt = basamaklar.as_bytes();
+        let mut cikti = String::new();
+        for (i, b) in bayt.iter().enumerate() {
+            if i > 0 && (bayt.len() - i).is_multiple_of(3) {
+                cikti.push('_');
+            }
+            cikti.push(*b as char);
+        }
+        cikti
+    }
+
+    /// `VARSAYILAN_KILIT_SURESI_SN` ile istemcideki karşılığı
+    /// (`bostaKalma.ts::BOSTA_KALMA_MS`, milisaniye) yalnızca YORUMLA
+    /// eşleşiyordu (Görev 6d). Emsal:
+    /// `server::routes::backup::tests::baglama_kararinin_kosulu_hala_gecerli_mi`.
+    /// Mutasyon: bu sabiti değiştirmek (`= 301`) ya da istemcideki
+    /// `300_000`'i değiştirmek -- test kırmızıya döner.
+    #[test]
+    fn bosta_kalma_suresi_istemciyle_ayni() {
+        let yol = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("core'un ust dizini workspace koku olmali")
+            .join("web/src/bostaKalma.ts");
+        let kaynak = std::fs::read_to_string(&yol)
+            .unwrap_or_else(|e| panic!("{} okunamadi: {e}", yol.display()));
+        let beklenen_ms = VARSAYILAN_KILIT_SURESI_SN * 1000;
+        // JS/TS sayı ayracı (`300_000`) YALNIZCA rakamların arasına girer;
+        // sabitin adındaki (`BOSTA_KALMA_MS`) alt çizgilerle karışmasın diye
+        // dosyanın tamamı değil, yalnızca beklenen sayı ayraçlı/ayraçsız iki
+        // biçimde de aranıyor.
+        let duz = format!("export const BOSTA_KALMA_MS = {beklenen_ms}");
+        let ayracli = format!("export const BOSTA_KALMA_MS = {}", bin_ayracli(beklenen_ms));
+        assert!(
+            kaynak.contains(&duz) || kaynak.contains(&ayracli),
+            "istemcideki BOSTA_KALMA_MS (bostaKalma.ts) sunucudaki \
+             VARSAYILAN_KILIT_SURESI_SN ile ({VARSAYILAN_KILIT_SURESI_SN} sn = \
+             {beklenen_ms} ms) artik eslesmiyor olabilir; ikisi ayri sabitler ve \
+             yalnizca yorumla baglaniyor."
+        );
     }
 }

@@ -840,6 +840,37 @@ mod tests {
         assert_eq!(sayi, 3, "danisan dosyasina her erisim ayri satir yazmali");
     }
 
+    #[test]
+    fn saklama_listesine_erisim_birlestirilmez() {
+        // `saklama_suresi_dolanlar` `getir` ile AYNI sinifta: uyum/denetim
+        // ekrani, gezinmenin yan etkisi degil (bkz. fonksiyonun kendi
+        // yorumu). MUTASYONLA KANITLANDI (Gorev 6f incelemesi): bu satir
+        // testsizdi ve iki mutasyon da hayatta kaliyordu -- (i) `HerCagri`
+        // -> `OturumBasi`, (ii) `kaydet` cagrisini tumden silmek --
+        // `cargo test -p psikolog-core` VE `-p psikolog-server` tam yesil
+        // kaliyordu. Emsal: `danisan_dosyasina_erisim_birlestirilmez`
+        // (yukarida) -- ayni SQL sorgusu, ayni iddia bicimi.
+        //
+        // Tek `assert_eq!(sayi, 3)` HER IKI mutasyonu da yakalar: satir hic
+        // yazilmazsa 0, ayni pencerede birlesirse 1 cikar -- ikisi de 3'e
+        // esit degildir.
+        let (_d, c) = baglanti();
+
+        for _ in 0..3 {
+            saklama_suresi_dolanlar(&c, "2026-09-07", Cihaz::Masaustu).unwrap();
+        }
+
+        let sayi: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM audit_log
+                  WHERE eylem='goruntuleme' AND varlik='client' AND varlik_id='saklama_listesi'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sayi, 3, "saklama listesine her erisim ayri satir yazmali (birlesmemeli)");
+    }
+
     fn clients_satir_sayisi(c: &rusqlite::Connection) -> i64 {
         c.query_row("SELECT COUNT(*) FROM clients", [], |r| r.get(0)).unwrap()
     }

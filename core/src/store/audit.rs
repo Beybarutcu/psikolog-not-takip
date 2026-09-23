@@ -62,8 +62,16 @@
 //!   silinemez bir gürültü yolu açılır.
 //!
 //! ## Not kayıtları
-//! Not başına, **düzenleme oturumu başına bir** satır — otomatik kayıt
-//! başına değil. Bunu sağlayan mekanizma `LogHacmi::OturumBasi`'dır.
+//! Not başına, **`BIRLESTIRME_PENCERESI_DK` (5 dakika) uzunluğundaki
+//! pencere başına bir** satır — otomatik kayıt başına değil. Bunu sağlayan
+//! mekanizma `LogHacmi::OturumBasi`'dır.
+//!
+//! Bu, "düzenleme oturumu başına bir satır" DEĞİLDİR (Görev 6g düzeltmesi):
+//! mekanizma gerçek bir oturum sınırını (editörün açılıp kapanmasını)
+//! izlemez, yalnızca ardışık iki kayıt arasındaki süreye bakar. 25 dakika
+//! süren KESİNTİSİZ bir yazım tek oturum olsa da ~5 satır üretir (her 5
+//! dakikada bir pencere yeniden açılır). Yanlış olan iddiaydı, hacim değil
+//! — 5 dakikada bir satır hâlâ kabul edilebilir bir gürültü düzeyi.
 //!
 //! ## Cascade silinen notlar: İKİNCİ SATIR DEĞİL, AYNI SATIRDA SAYI
 //! (dal incelemesi I2)
@@ -850,5 +858,28 @@ mod tests {
                 .expect("birlestirme hicbir UPDATE/DELETE denememeli");
         }
         assert_eq!(log_sayisi(&c), 1);
+    }
+
+    /// Modül başlığının "not kayıtları" iddiası gerçek pencere değeriyle
+    /// eşleşmeli (Görev 6g). Eskiden "düzenleme oturumu başına bir satır"
+    /// diyordu -- mekanizma (`LogHacmi::OturumBasi`) gerçek bir oturum
+    /// sınırını değil, ardışık kayıtlar arasındaki `BIRLESTIRME_PENCERESI_DK`
+    /// uzunluğundaki pencereyi izler; 25 dakikalık KESİNTİSİZ bir yazım tek
+    /// oturum olsa da ~5 satır üretir. Yanlış olan iddiaydı, hacim değil.
+    ///
+    /// Bu test yalnızca metni değil, metindeki SAYIYI da sabitler: sabit
+    /// değişip yorum unutulursa (Görev 1 dal incelemesindeki sınıf) kırmızı
+    /// olur.
+    #[test]
+    fn hacim_iddiasi_dogru_pencere_suresini_soyluyor() {
+        let yol = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/store/audit.rs");
+        let kaynak = std::fs::read_to_string(&yol)
+            .unwrap_or_else(|e| panic!("{} okunamadi: {e}", yol.display()));
+        let beklenen = format!("BIRLESTIRME_PENCERESI_DK` ({BIRLESTIRME_PENCERESI_DK} dakika)");
+        assert!(
+            kaynak.contains(&beklenen),
+            "modul basligindaki pencere suresi BIRLESTIRME_PENCERESI_DK ile \
+             artik eslesmiyor olabilir (aranan: {beklenen})"
+        );
     }
 }

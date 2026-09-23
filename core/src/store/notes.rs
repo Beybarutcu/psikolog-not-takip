@@ -34,8 +34,13 @@
 //! Not editörü **2 saniyede bir** otomatik kaydeder. `LogHacmi::HerCagri`
 //! kullanılsaydı bir saatlik seans ~1800 **silinemez** log satırı üretirdi ve
 //! denetim kaydı okunamaz hâle gelirdi. Kural (`store::audit` modül başlığı):
-//! *not başına, düzenleme oturumu başına bir satır — otomatik kayıt başına
-//! değil.*
+//! *not başına, `BIRLESTIRME_PENCERESI_DK` (5 dakika) uzunluğundaki pencere
+//! başına bir satır — otomatik kayıt başına değil.* Bu, "düzenleme oturumu
+//! başına bir satır" DEĞİLDİR (Görev 6g düzeltmesi): mekanizma gerçek
+//! oturum sınırlarını izlemez, yalnızca ardışık kayıtlar arasındaki süreye
+//! bakar — 25 dakikalık kesintisiz bir yazım tek oturum olsa da ~5 satır
+//! üretir. Hacim yine kabul edilebilir; yanlış olan yalnızca iddianın
+//! kendisiydi.
 //!
 //! Bu modüldeki **beş** log çağrısının hepsi
 //! `LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK)` kullanır. Seçim artık
@@ -1429,5 +1434,24 @@ mod tests {
         let liste = danisan_notlari(&c, _cid, 50, None, Cihaz::Masaustu);
         let metin = format!("{liste:?}");
         assert!(!metin.contains("COK_GIZLI_SEANS_ICERIGI"), "Vec<SeansNotu> Debug'i icerigi basmamali: {metin}");
+    }
+
+    /// Modül başlığının hacim iddiası gerçek pencere değeriyle eşleşmeli
+    /// (Görev 6g, `store::audit` modülündeki emsalle aynı test). Eskiden
+    /// "düzenleme oturumu başına bir satır" diyordu; mekanizma
+    /// (`LogHacmi::OturumBasi`) ardışık kayıtlar arasındaki
+    /// `BIRLESTIRME_PENCERESI_DK` uzunluğundaki pencereyi izler, gerçek bir
+    /// oturum sınırını değil. Yanlış olan iddiaydı, hacim değil.
+    #[test]
+    fn hacim_iddiasi_dogru_pencere_suresini_soyluyor() {
+        let yol = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/store/notes.rs");
+        let kaynak = std::fs::read_to_string(&yol)
+            .unwrap_or_else(|e| panic!("{} okunamadi: {e}", yol.display()));
+        let beklenen = format!("BIRLESTIRME_PENCERESI_DK` ({BIRLESTIRME_PENCERESI_DK} dakika)");
+        assert!(
+            kaynak.contains(&beklenen),
+            "modul basligindaki pencere suresi BIRLESTIRME_PENCERESI_DK ile \
+             artik eslesmiyor olabilir (aranan: {beklenen})"
+        );
     }
 }

@@ -910,17 +910,22 @@ mod tests {
         // yeniden ceker. `clients.rs:497` (getir'in doc yorumu) bu kosulun
         // GERCEKLESTIGINI ve kararin YENIDEN VERILIP AYNI KALDIGINI
         // (HerCagri, birlesmeye GECILMEDI) anlatiyor -- bu test o karari
-        // GERCEK tetikleyici desenle (bir mutasyon + hemen ardindan bir
-        // getir) davranissal olarak kanitlar. `rizaKaydet`in gercek sunucu
-        // yolu ayni: `guncelle_uc` -> `clients::guncelle` (Duzenleme
-        // logluyor), sonra istemci `dosyaGetir` -> `clients::getir`
-        // (Goruntuleme logluyor) cagiriyor.
+        // GERCEK tetikleyici desenle davranissal olarak kanitlar: kart ACMA
+        // (getir #1) -> mutasyon (`rizaKaydet`in gercek sunucu yolu:
+        // `guncelle_uc` -> `clients::guncelle`, Duzenleme logluyor) -> kart
+        // KENDI KENDINI TAZELER (getir #2). Ayni pencerede IKI Goruntuleme
+        // olayi var; `son_kayit_yakin_mi` eslesmeyi yalnizca AYNI
+        // (eylem, varlik, varlik_id) uzerinden aradigindan (bkz.
+        // `audit.rs::son_kayit_yakin_mi`), aradaki farkli turden bir
+        // Duzenleme satiri bu testi ATLATAMAZ -- `HerCagri` ->
+        // `OturumBasi`ye donulseydi bu iki Goruntuleme satiri BIRLESIRDI.
         let (_d, c) = baglanti();
         let d = ekle(&c, &yeni("Ayse"), Cihaz::Masaustu).unwrap();
 
+        getir(&c, d.id, Cihaz::Masaustu).unwrap(); // kart ACILDI
         let alan = DanisanGuncelleme { riza_tarihi: Some("2026-09-07".into()), ..Default::default() };
-        guncelle(&c, d.id, &alan, Cihaz::Masaustu).unwrap();
-        getir(&c, d.id, Cihaz::Masaustu).unwrap();
+        guncelle(&c, d.id, &alan, Cihaz::Masaustu).unwrap(); // rizaKaydet
+        getir(&c, d.id, Cihaz::Masaustu).unwrap(); // kart KENDI KENDINI TAZELEDI
 
         let duzenleme: i64 = c
             .query_row(
@@ -940,9 +945,9 @@ mod tests {
             .unwrap();
         assert_eq!(duzenleme, 1, "mutasyon kendi satirini yazmali");
         assert_eq!(
-            goruntuleme, 1,
-            "mutasyon sonrasi kendi kendini tazeleme AYRI bir goruntuleme satiri yazmali \
-             (birlesmemeli/kaybolmamali) -- bkz. getir'in guncel doc yorumu"
+            goruntuleme, 2,
+            "kart acma VE mutasyon sonrasi kendi kendini tazeleme AYRI goruntuleme \
+             satirlari yazmali (birlesmemeli) -- bkz. getir'in guncel doc yorumu"
         );
     }
 

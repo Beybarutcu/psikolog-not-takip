@@ -168,8 +168,13 @@ function hataYaniti(kod: number, mesaj: string): Response {
 // (bkz. üstteki açıklama) ve aşağıdaki `fetch` sahtesi yalnızca
 // `/api/yedek(ler)` yollarını biliyor -- gerçek kanca çağrılsaydı
 // `/api/denetim-kayitlari` isteği "beklenmeyen istek" hatasıyla patlardı.
-// Denetim akışının kendi davranışı ayrı bir `describe` bloğunda,
-// `/api/denetim-kayitlari`i bilen kendi sahte `fetch`iyle test ediliyor.
+// Denetim akışının kendi davranışı (gerçek veriyle satır render edilmesi,
+// istek zamanlaması, süzgeç/sayfalama) BU DOSYADA DEĞİL --
+// `web/src/screens/AnaEkran.test.tsx`teki `describe('AnaEkran — denetim
+// kaydı (Görev 7)', ...)` bloğunda, gerçek `AnaEkran` + gerçek
+// `useDenetimKayitlari` + `/api/denetim-kayitlari`i bilen kendi sahte
+// `fetch`iyle test ediliyor (Görev 7 incelemesi IMPORTANT-1/2: burada
+// önceden böyle bir blok OLMADIĞI hâlde var olduğu iddia ediliyordu).
 function sabitDenetim() {
   return {
     kayitlar: [],

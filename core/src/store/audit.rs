@@ -492,6 +492,41 @@ pub struct DenetimSuzgeci {
 ///
 /// Sıralama `son_kayitlar` ile aynı gerekçeyle `id DESC`'tir (bkz. o
 /// fonksiyonun dokümantasyonu).
+///
+/// ## Bilinen sınır: `OFFSET` kimlik tabanlı bir imleç DEĞİLDİR (Görev 7
+/// incelemesi, Minor)
+///
+/// Klasik `OFFSET` tuzağı: sayfa N çekildikten SONRA, sayfa N+1 çekilmeden
+/// ÖNCE `id DESC` sıranın BAŞINA yeni bir satır eklenirse, `OFFSET` bir
+/// pozisyon kayar -- terapist bir sonraki sayfada bir satırı ya İKİ KEZ
+/// görebilir ya da hiç GÖRMEZ. Doğru düzeltme kimlik tabanlı bir imleç
+/// olurdu (`WHERE id < :son_gorulen_id`), ama bu ekranın "önceki sayfa"
+/// düğmesini de desteklemesi gerektiği için (yalnızca ileri kaydırma değil)
+/// istemcinin bir imleç YIĞINI tutması gerekirdi -- kapsamı küçük tutma
+/// kararıyla (bkz. rota modülü başlığı) bilinçli olarak ŞİMDİLİK
+/// ERTELENDİ, unutulmadı.
+///
+/// **Neden bugün düşük risk:**
+/// - `audit_log` yalnızca EKLENİR (`UPDATE`/`DELETE` tetikleyicilerle
+///   reddedilir, bkz. modül başlığı); kayan pencere yalnızca YENİ satır
+///   EKLENDİĞİNDE oluşur, var olan satırlar asla kaybolmaz/değişmez.
+/// - Bu ekranı OKUMANIN KENDİSİ yeni bir satır YAZMAZ (bkz. üstteki
+///   "KRİTİK" başlığı) -- yani terapist listede sayfalarken kendi
+///   göz atma eylemi kaymaya neden olmaz; kayma yalnızca O SIRADA
+///   GERÇEKTEN başka bir eylem (başka bir cihazdan not yazmak, danışan
+///   eklemek vb.) olursa görülür. Tek kişilik bir muayenehanede, Ayarlar
+///   sekmesini açıp sayfalarken AYNI ANDA başka bir cihazdan yazma
+///   yapmak seyrek bir çakışmadır.
+/// - Sonuç veri KAYBI değil GÖRÜNÜM tutarsızlığıdır: alttaki günlük
+///   tamdır ve değişmez; bir tarih aralığı/varlık türü süzgeciyle
+///   YENİDEN sorgulamak her zaman doğru sonucu verir. KVKK'nın istediği
+///   "erişilebilirlik" bozulmaz, yalnızca uzun bir sayfalama oturumunun
+///   ortasında nadir bir kozmetik kaymadır.
+///
+/// Bu limit gerçek bir sorun hâline gelirse (ör. ürün çok kullanıcılı/
+/// çok cihazlı yoğun eşzamanlı kullanıma taşınırsa) düzeltme burada,
+/// `id`yi (ki `AuditKaydi` bugün dışarı vermiyor) taşıyan bir imleç
+/// parametresine geçmektir.
 pub fn son_kayitlar_sayfali(
     conn: &Connection,
     suzgec: &DenetimSuzgeci,

@@ -119,6 +119,11 @@ pub async fn liste(
     // `SAYFA_BOYUTU + 1` çekilir: (SAYFA_BOYUTU+1). satır varsa "sonraki
     // sayfa var" bilgisini `COUNT(*)` çalıştırmadan (bkz. `DenetimSayfasi`
     // dokümantasyonu) verir.
+    //
+    // `sayfa * SAYFA_BOYUTU` bir `OFFSET`tir, kimlik tabanlı bir imleç
+    // DEĞİL -- bilinen sınırı ve neden bugün düşük riskli olduğu
+    // `son_kayitlar_sayfali`nin dokümantasyonunda ("Bilinen sınır" başlığı,
+    // Görev 7 incelemesi) ayrıntılı yazılıdır.
     let mut kayitlar = son_kayitlar_sayfali(&conn, &suzgec, SAYFA_BOYUTU + 1, sayfa * SAYFA_BOYUTU)
         .map_err(|e| depo_hatasi(e.into()))?;
     let sonraki_sayfa_var = kayitlar.len() as i64 > SAYFA_BOYUTU;

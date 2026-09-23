@@ -69,7 +69,17 @@ const R301 = {
   baslangic: '2026-09-09T09:00', bitis: '2026-09-09T10:00',
   durum: 'planlandi', ucret: null as number | null, odendi: false, seri_id: null,
 }
-const TUMU = [R201, R202, R203, R301]
+// İnceleme IMPORTANT-1: Zeynep'in ÇOK ESKİ bir seansı — "Geldi"
+// işaretlenince mock kuralı (gün + 7 yıl) "2018-06-01" + 7 = "2025-06-01"
+// üretir; bu BUGUN_SAATI'nden (2026-09-09) ÖNCE, yani danışan yeni
+// `saklama_bitis`le de HÂLÂ süresi dolmuş sayılmalı (bkz. "IMPORTANT-1
+// düzeltme testi").
+const R302 = {
+  id: 302, client_id: 3, danisan_adi: 'Zeynep Kaya',
+  baslangic: '2018-06-01T09:00', bitis: '2018-06-01T10:00',
+  durum: 'planlandi', ucret: null as number | null, odendi: false, seri_id: null,
+}
+const TUMU = [R201, R202, R203, R301, R302]
 type RandevuKaydi = Omit<(typeof TUMU)[number], 'seri_id'> & { seri_id: string | null }
 
 const dosyalar: Record<number, unknown> = {
@@ -941,6 +951,80 @@ describe('Görev 3 — "saklama süresi doldu" bayatlığı', () => {
 
     await userEvent.click(screen.getByRole('tab', { name: 'Ayarlar' }))
     await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç (saklama süresi doldu)' })
+  })
+
+  // İnceleme IMPORTANT-1: koşulsuz düşürme, ÇOK ESKİ bir danışanın ÇOK ESKİ
+  // bir randevusu geriye dönük "Geldi" işaretlenirse (yeni `saklama_bitis`
+  // hâlâ BUGÜNDEN ÖNCE) danışanı GERÇEKTE hâlâ süresi dolmuşken listeden
+  // düşürüyordu -- görevin önlemeye çalıştığı hatanın TAM TERSİ. R302
+  // (2018-06-01) mock kuralıyla (gün + 7 yıl) "2025-06-01" üretir; bu
+  // BUGUN_SAATI'nden (2026-09-09) önce, yani hâlâ dolmuş.
+  it('IMPORTANT-1: yeni saklama_bitis HALA GECMISTEYSE danisan Ayarlar listesinden DUSMEZ', async () => {
+    saklamaDolanlarListesi = [danisanlar[2]]
+    ciz()
+
+    await userEvent.click(await screen.findByRole('tab', { name: 'Ayarlar' }))
+    await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç (saklama süresi doldu)' })
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('seans-listesi').getAttribute('data-yuklendi')).toBe('evet'),
+    )
+    await userEvent.click(listeSatiri('1 Haziran 2018, 09:00'))
+    await userEvent.click(screen.getByRole('button', { name: 'Geldi' }))
+    await waitFor(() => expect(durumlar[302]).toBe('geldi'))
+
+    // Kart hâlâ (yeni, ama hâlâ geçmiş tarihli) "doldu" uyarısını gösteriyor.
+    await userEvent.click(screen.getByRole('tab', { name: 'Bilgiler' }))
+    expect(screen.getByRole('region', { name: 'Saklama süresi' }).textContent).toContain(
+      'Saklama süresi doldu',
+    )
+
+    // Ayarlar listesinde HÂLÂ var — düşürülmedi.
+    await userEvent.click(screen.getByRole('tab', { name: 'Ayarlar' }))
+    await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç (saklama süresi doldu)' })
+  })
+
+  // İnceleme IMPORTANT-2: `dosyaSaati` yarış koruması — Görev 2'nin
+  // CRITICAL'ıyla AYNI sınıf. Kart YENİ açılmışken (mount okuması
+  // `GET /api/danisanlar/3` hâlâ uçuştayken) bir randevu "Geldi"
+  // işaretlenirse, mount'un GEÇ dönen ama ESKİ (yazmadan ÖNCEki) anlık
+  // görüntüyü taşıyan yanıtı `dosyaAlanlariniYama`nın az önce yaptığı
+  // yamanın ÜSTÜNE yazmamalı.
+  it('IMPORTANT-2: kart YUKLENIRKEN Geldi isaretlenirse gec donen kart yaniti YENI saklama tarihini EZMEZ', async () => {
+    ciz()
+    const k = kapi()
+    sonraBekle['GET /api/danisanlar/3'] = k.bekle
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç' }))
+    // BARİYER: kartın mount GET'i sunucuya ulaştı (ESKİ anlık görüntü
+    // alındı — henüz "Geldi" işaretlenmedi), yanıt yolda.
+    await waitFor(() =>
+      expect(istekler.some((i) => i.method === 'GET' && i.yol === '/api/danisanlar/3')).toBe(
+        true,
+      ),
+    )
+
+    // Takvimde Zeynep'in bugünkü seansını "Geldi" işaretle — kartın GET'i
+    // HÂLÂ uçuşta.
+    await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Zeynep Kaya' }))
+    await screen.findByLabelText('Seans notu')
+    await userEvent.click(screen.getByRole('button', { name: 'Geldi' }))
+    await waitFor(() => expect(durumlar[301]).toBe('geldi'))
+
+    // Kartın gecikmiş (ESKİ anlık görüntülü) yanıtı şimdi gelsin.
+    k.ac()
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await userEvent.click(await screen.findByRole('tab', { name: 'Bilgiler' }))
+    await waitFor(() =>
+      expect(screen.getByRole('region', { name: 'Saklama süresi' }).textContent).not.toContain(
+        'Saklama süresi doldu',
+      ),
+    )
   })
 })
 

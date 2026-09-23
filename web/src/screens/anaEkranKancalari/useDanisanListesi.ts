@@ -100,8 +100,28 @@ export function useDanisanListesi({ ayarlarGorunur }: { ayarlarGorunur: boolean 
    * başlığı) -- tek çağıran `AnaEkran.durumDegis`, yalnızca sunucunun PATCH
    * yanıtı `son_temas`/`saklama_bitis` taşıdığında (yani GERÇEKTEN ileri
    * taşındığında) çağırır.
+   *
+   * # İNCELEME DÜZELTMESİ (IMPORTANT-1) — koşulsuz düşürme YANLIŞTI
+   * İlk sürüm `saklamaBitis`e hiç bakmadan düşürüyordu. Kenar durum: zaten
+   * süresi dolmuş, ÇOK ESKİ bir danışanın ÇOK ESKİ bir randevusu geriye
+   * dönük "Geldi" işaretlenirse (`son_temasi_isaretle` yalnızca İLERİ
+   * taşır, ama "ileri" ile "bugünden ileri" AYNI ŞEY DEĞİL) yeni
+   * `saklama_bitis` hâlâ BUGÜNDEN ÖNCE olabilir -- danışan GERÇEKTE hâlâ
+   * süresi dolmuşken hatırlatma listesinden düşüyordu ve `dusenlerRef`
+   * KALICI olduğu için oturum boyunca geri gelmiyordu. Tam olarak bu
+   * görevin önlemeye çalıştığı hatanın TERSİ (bayat bir "süresi doldu"
+   * yerine bayat bir "süresi dolmadı"). Düzeltme: yalnızca sunucunun
+   * döndürdüğü `saklamaBitis` bugünün YEREL gününden GERÇEKTEN sonraysa
+   * düş -- karşılaştırma sunucudaki `saklama_suresi_dolanlar`la AYNI
+   * sözlüksel kural (`YYYY-AA-GG` biçimi sıralı olduğu için `<=` güvenli,
+   * bkz. o fonksiyonun dokümantasyonu). `new Date()` doğrudan
+   * karşılaştırmaya SOKULMUYOR, `yerelGun` üzerinden geçiyor -- projenin
+   * her yerindeki duvar saati kuralı (bkz. `yerelGun.ts`); testte
+   * `vi.setSystemTime` ile enjekte edilebiliyor (diğer tüm `yerelGun`
+   * çağrıları da aynı yoldan test ediliyor).
    */
-  function saklamaDolandanDus(clientId: number) {
+  function saklamaDolandanDus(clientId: number, saklamaBitis: string) {
+    if (saklamaBitis <= yerelGun(new Date())) return
     dusenlerRef.current.add(clientId)
     setSaklamaDolanlar((onceki) => onceki.filter((d) => d.id !== clientId))
   }

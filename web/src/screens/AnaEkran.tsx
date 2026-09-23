@@ -390,7 +390,7 @@ export function AnaEkran({
         son_temas: yanit.son_temas,
         saklama_bitis: yanit.saklama_bitis,
       })
-      liste.saklamaDolandanDus(yanit.client_id)
+      liste.saklamaDolandanDus(yanit.client_id, yanit.saklama_bitis)
     }
   }
 

@@ -421,6 +421,146 @@ async fn yanlis_parolayla_geri_yukleme_reddedilir_ve_mevcut_veri_korunur() {
     );
 }
 
+/// Bir yedek dosyasinin `schema_version` damgasini degistirir.
+///
+/// "Daha yeni bir surumle alinmis yedek" durumunu uretmenin tek yolu bu:
+/// dosya sapasaglamdir, yalnizca bu kurulum onu okuyamaz.
+fn yedek_surumunu_ayarla(o: &Ortam, damga: &str, deger: i64) {
+    let key = anahtar(o, PAROLA);
+    let yol = std::path::Path::new(&o.yedek_dizini).join(format!("yedek-{damga}.db"));
+    {
+        let c = open_encrypted(&yol, &key).unwrap();
+        c.execute(
+            "INSERT INTO app_meta (anahtar, deger) VALUES ('schema_version', ?1)
+             ON CONFLICT(anahtar) DO UPDATE SET deger = excluded.deger",
+            [deger.to_string()],
+        )
+        .unwrap();
+    }
+    for ek in ["db-wal", "db-shm"] {
+        let _ = std::fs::remove_file(yol.with_extension(ek));
+    }
+}
+
+#[tokio::test]
+async fn ileri_surumlu_yedek_reddedilir_ve_o_gunun_kayitlari_durur() {
+    // URUNUN EN CIDDI HATASININ HTTP KARSILIGI: veri kaybini onlemek icin
+    // var olan ozellik, veri kaybinin sebebi oluyordu. Terapist yeni surumle
+    // yedek almis, sonra eski kuruluma donuyor; parola dogru, dosya saglam
+    // -- eski davranista mevcut `veri.db` siliniyor, `migrate` patliyor ve o
+    // gun girilen, henuz yedeklenmemis kayitlar YOK oluyordu.
+    let o = ortam();
+    kur(&o).await;
+    danisan_ekle(&o, "Ayse Yilmaz").await;
+    let (kod, _) = yedek_al(&o, DAMGA).await;
+    assert_eq!(kod, StatusCode::OK, "on kosul: yedek alinabilmeli");
+
+    // Yedek, bu kurulumun bildiginden daha yeni bir semayla alinmis.
+    yedek_surumunu_ayarla(&o, DAMGA, psikolog_core::store::schema::CURRENT_VERSION + 1);
+
+    // YEDEKTEN SONRA girilen kayit: geri yukleme yapilsaydi KAYBOLURDU.
+    // Bu satir olmadan asagidaki "veri duruyor" iddiasi, yedekle canli
+    // veritabani ayni oldugu icin hicbir sey olcmezdi
+    // (docs/test-yesil-ama-korumuyor.md, 6. bicim).
+    danisan_ekle(&o, "Bugun Gelen").await;
+
+    let db_once = std::fs::read(o.s.db_yolu()).unwrap();
+    let ks_once = std::fs::read(o.s.keystore_yolu()).unwrap();
+
+    let (kod, json) = cagir(
+        &o.s,
+        "POST",
+        "/api/geri-yukleme",
+        Some(serde_json::json!({ "dosya_adi": format!("yedek-{DAMGA}.db"), "parola": PAROLA })),
+    )
+    .await;
+
+    // 409: sunucu arizasi degil, bu yedekle bu kurulum bagdasmiyor.
+    assert_eq!(kod, StatusCode::CONFLICT, "govde: {json}");
+    let mesaj = json["hata"].as_str().unwrap();
+    assert!(
+        !mesaj.to_lowercase().contains("bozuk"),
+        "saglam bir yedek 'bozuk' diye anlatilmamali: {mesaj}"
+    );
+    assert!(mesaj.contains("güncelle"), "mesaj ne yapilacagini soylemeli: {mesaj}");
+    // Hassas veri yok: dosya adi, klasor yolu, parola gecmemeli.
+    assert!(!mesaj.contains("yedek-"), "dosya adi hata govdesine girmemeli: {mesaj}");
+    assert!(!mesaj.contains(&o.yedek_dizini), "klasor yolu hata govdesine girmemeli: {mesaj}");
+    assert!(!mesaj.contains(PAROLA), "parola hata govdesine girmemeli: {mesaj}");
+
+    // Mevcut cift ICERIK olarak degismedi.
+    assert_eq!(std::fs::read(o.s.db_yolu()).unwrap(), db_once, "mevcut veritabani degismemeli");
+    assert_eq!(
+        std::fs::read(o.s.keystore_yolu()).unwrap(),
+        ks_once,
+        "mevcut anahtar dosyasi degismemeli"
+    );
+
+    // KANIT: uygulama calismaya devam ediyor ve o gunun kaydi YERINDE.
+    let (kod, danisanlar) = cagir(&o.s, "GET", "/api/danisanlar", None).await;
+    assert_eq!(kod, StatusCode::OK, "reddedilen geri yukleme oturumu bozmamali");
+    let adlar: Vec<&str> =
+        danisanlar.as_array().unwrap().iter().map(|d| d["ad_soyad"].as_str().unwrap()).collect();
+    assert!(
+        adlar.contains(&"Bugun Gelen"),
+        "yedeklenmemis kayit yok olmamali -- {adlar:?}"
+    );
+}
+
+#[tokio::test]
+async fn eski_semali_yedek_geri_yuklenince_goc_kosar() {
+    // "Geri yukleme gocten gecer" degismezinin HTTP karsiligi: eski semali
+    // bir yedek sessizce yerine konsaydi uygulama guncel semanin tablolarini
+    // arar ve kullanici bunu kendi hatasi sanardi.
+    let o = ortam();
+    kur(&o).await;
+    danisan_ekle(&o, "Ayse Yilmaz").await;
+    yedek_al(&o, DAMGA).await;
+
+    // Yedegi V4 semasina dondur: V5'in urettigi nesneler gider, damga 4 olur.
+    let key = anahtar(&o, PAROLA);
+    let yedek_yolu = std::path::Path::new(&o.yedek_dizini).join(format!("yedek-{DAMGA}.db"));
+    {
+        let c = open_encrypted(&yedek_yolu, &key).unwrap();
+        c.execute_batch(
+            "DROP TRIGGER progress_note_tags_temizle_kullanilmayan;
+             DROP TABLE progress_note_tags;
+             DROP TABLE tags;
+             UPDATE app_meta SET deger='4' WHERE anahtar='schema_version';",
+        )
+        .unwrap();
+    }
+    for ek in ["db-wal", "db-shm"] {
+        let _ = std::fs::remove_file(yedek_yolu.with_extension(ek));
+    }
+
+    let (kod, json) = cagir(
+        &o.s,
+        "POST",
+        "/api/geri-yukleme",
+        Some(serde_json::json!({ "dosya_adi": format!("yedek-{DAMGA}.db"), "parola": PAROLA })),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::OK, "eski semali yedek geri yuklenebilmeli: {json}");
+
+    // KANIT: sema yukseltildi ve veri yerinde.
+    let c = open_encrypted(&o.s.db_yolu(), &key).unwrap();
+    assert_eq!(
+        psikolog_core::store::schema::okunan_surum(&c).unwrap(),
+        psikolog_core::store::schema::CURRENT_VERSION,
+        "geri yuklenen veritabani guncel semaya yukseltilmis olmali"
+    );
+    drop(c);
+
+    let (kod, _) = kilit_ac(&o, PAROLA).await;
+    assert_eq!(kod, StatusCode::OK, "geri yuklemeden sonra kilit acilmali");
+    let (kod, danisanlar) = cagir(&o.s, "GET", "/api/danisanlar", None).await;
+    assert_eq!(kod, StatusCode::OK);
+    let adlar: Vec<&str> =
+        danisanlar.as_array().unwrap().iter().map(|d| d["ad_soyad"].as_str().unwrap()).collect();
+    assert_eq!(adlar, vec!["Ayse Yilmaz"], "goc hicbir kaydi degistirmemeli");
+}
+
 #[tokio::test]
 async fn eksik_ciftli_yedek_ne_listelenir_ne_geri_yuklenir() {
     // "Eksik" ile "bozuk" ayri hatalar: eksik dosya buyuk ihtimalle

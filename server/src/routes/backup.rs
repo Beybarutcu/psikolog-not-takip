@@ -202,6 +202,12 @@ pub(crate) fn yedek_hatasi(e: psikolog_core::backup::YedekHatasi) -> ApiHata {
     let kod = match e {
         Y::GecersizTarih(_) => StatusCode::BAD_REQUEST,
         Y::YedekEksik(_) => StatusCode::NOT_FOUND,
+        // 409: sunucu arızası DEĞİL. Yedek de istek de sağlam; bu yedekle bu
+        // kurulum bağdaşmıyor (yedek daha yeni bir şemayla alınmış ya da göç
+        // uygulanamıyor). 500 dönmek kullanıcıya "uygulama bozuldu" dedirtir
+        // ve onu yeniden kurmaya -- yani elindeki tek kopyayı geçersiz
+        // kılmaya -- iter; yapması gereken şey mesajda yazıyor.
+        Y::YedekIleriSurumlu { .. } | Y::YedekHazirlanamadi(_) => StatusCode::CONFLICT,
         _ => StatusCode::INTERNAL_SERVER_ERROR,
     };
     (kod, Json(json!({ "hata": e.to_string() })))

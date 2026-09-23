@@ -63,7 +63,6 @@ use psikolog_core::store::{
     audit::{kaydet, Cihaz, Eylem, LogHacmi},
     db::open_existing,
     keystore,
-    schema::migrate,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -259,15 +258,26 @@ pub async fn uygula(
         }
     };
 
-    // 3) Asıl geri yükleme. Doğrulama bitene kadar mevcut `veri.db` ve
-    //    `keystore.json` dosyalarına dokunulmaz; yerleştirme yarıda
-    //    kalırsa geri alınır ve `veri.db-wal`/`-shm` silinir.
+    // 3) Asıl geri yükleme -- **şema göçü dâhil**. Doğrulama bitene kadar
+    //    mevcut `veri.db` ve `keystore.json` dosyalarına dokunulmaz;
+    //    yerleştirmenin herhangi bir adımı (göç de bir adım) yarıda kalırsa
+    //    hepsi geri alınır.
+    //
+    //    # Göç neden ARTIK burada çağrılmıyor
+    //    Eskiden bu satırdan sonra ayrıca `migrate` çağrılıyordu ve tam da
+    //    o sıra veri kaybının sebebiydi: `geri_yukle` dönmüş, yani
+    //    `veri.db.onceki` silinmiş oluyordu; göç orada patlayınca (ileri
+    //    sürümlü yedek, eksi ücretli randevu taşıyan eski yedek, ...)
+    //    kullanıcının o gün girdiği, henüz yedeklenmemiş notları kalıcı
+    //    olarak yok oluyordu. Göç, geri alma mekanizmasıyla aynı yerde --
+    //    `core::backup::yerlestir`'de -- yaşamak zorunda; buradan ikinci
+    //    kez çağırmak o garantiyi VERMEZ, yalnızca tekrar eder.
     geri_yukle(&yedek_yolu, &s.db_yolu(), &s.keystore_yolu(), &anahtar)
         .map_err(yedek_hatasi)?;
 
     // 4) Denetim kaydı geri yüklenen veritabanına yazılır -- başka bir yere
-    //    yazılamaz da: eski veritabanı artık yerinde değil. `migrate` önce
-    //    çalışır çünkü eski bir yedek eski bir şemayla gelmiş olabilir.
+    //    yazılamaz da: eski veritabanı artık yerinde değil. Şema `geri_yukle`
+    //    içinde güncellendiği için bağlantı doğrudan kullanılabilir.
     //
     //    Bu satırı çekirdek DEĞİL, rota yazıyor. `routes::backup`'ta tersi
     //    yapıldı (`yedek_al_ve_kaydet`) ve fark gerçek: yedek alırken elde
@@ -276,13 +286,6 @@ pub async fn uygula(
     //    `giris`/`kurulum` satırlarını kendilerinin yazmasıyla aynı sınıf:
     //    satırın kaynağı burasıdır.
     let conn = open_existing(&s.db_yolu(), &anahtar).map_err(crate::guard::veritabani_hatasi)?;
-    if let Err(e) = migrate(&conn) {
-        eprintln!("geri-yukleme: göç başarısız: {e}");
-        return Err(istek_hatasi(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Geri yükleme tamamlandı ama veritabanı hazırlanamadı.",
-        ));
-    }
     kaydet(&conn, Eylem::GeriYukleme, VARLIK, &tarih, Cihaz::Masaustu, None, LogHacmi::HerCagri)
         .map_err(|_| {
             yedek_hatasi(YedekHatasi::KayitYazilamadi(

@@ -348,14 +348,23 @@ async fn kilitliyken_yedek_alinamaz_ve_dosya_olusmaz() {
     );
 }
 
-/// `.onceki` kenara kaldırma ucu da kapının **içinde** (inceleme
-/// IMPORTANT-A): taşınan dosyalar danışan verisinin kendisidir.
+/// (a) + (b): `.onceki` kenara kaldırma ucu **kilit açılmadan** çalışır ve
+/// yanıtı hiçbir danışan verisi taşımaz (inceleme, ikinci tur).
+///
+/// Kapının içinde olsaydı bir çıkmaz üretirdi: yarım kalmış bir geri
+/// almadan sonra canlı çift eşleşmez, oturum açılamaz ve `.onceki` durduğu
+/// için geri yükleme de `409` alır -- kullanıcının tek çıkışı Finder'da
+/// elle dosya taşımak olurdu; kapının önlemek istediği şey tam olarak budur.
 #[tokio::test]
-async fn kilitliyken_onceki_dosyalar_kaldirilamaz_ve_dosya_oynamaz() {
+async fn kilitliyken_onceki_dosyalar_kaldirilabilir_ve_yanit_veri_tasimaz() {
+    const TEK_KOPYA: &[u8] = b"KULLANICININ-TEK-KOPYASI";
     let o = ortam();
     kur(&o).await;
+    danisan_ekle(&o, "Ayse Yilmaz").await;
     let onceki = o.s.db_yolu().with_extension("db.onceki");
-    std::fs::write(&onceki, b"KULLANICININ-TEK-KOPYASI").unwrap();
+    let ks_onceki = o.s.keystore_yolu().with_extension("json.onceki");
+    std::fs::write(&onceki, TEK_KOPYA).unwrap();
+    std::fs::write(&ks_onceki, b"ANAHTAR-KOPYASI").unwrap();
     cagir(&o.s, "POST", "/api/kilitle", None).await;
 
     let (kod, json) = cagir(
@@ -365,13 +374,87 @@ async fn kilitliyken_onceki_dosyalar_kaldirilamaz_ve_dosya_oynamaz() {
         Some(serde_json::json!({ "damga": "20260923-1430" })),
     )
     .await;
-    assert_eq!(kod, StatusCode::UNAUTHORIZED, "bakim ucu kilit kapisindan gecmeli");
-    assert!(json.get("tasinan").is_none(), "kilitliyken sonuc dondurmemeli");
+    assert_eq!(kod, StatusCode::OK, "bakim ucu kilit ACILMADAN calismali: {json}");
+    assert_eq!(json["tasinan"], 2);
+
+    // (b) Yanit YALNIZCA bir sayi: dosya adi, yol ya da danisan verisi yok.
+    let metin = json.to_string();
+    for sizinti in ["Ayse", "onceki", "veri.db", "keystore", o.s.veri_dizini.to_str().unwrap()] {
+        assert!(!metin.contains(sizinti), "kapisiz uc `{sizinti}` sizdirdi: {metin}");
+    }
     assert_eq!(
-        std::fs::read(&onceki).unwrap(),
-        b"KULLANICININ-TEK-KOPYASI",
-        "kilitliyken atilan istek diskte hicbir sey oynatmamali"
+        json.as_object().map(|m| m.len()),
+        Some(1),
+        "yanitta `tasinan` disinda alan olmamali: {metin}"
     );
+
+    // Dosyalar TASINDI, silinmedi.
+    assert_eq!(
+        std::fs::read(o.s.db_yolu().with_extension("db.onceki-20260923-1430")).unwrap(),
+        TEK_KOPYA
+    );
+    assert!(!onceki.exists() && !ks_onceki.exists());
+}
+
+/// (c) Çıkmaz senaryosu uçtan uca: canlı çift BOZUK (oturum açılamıyor) +
+/// `.onceki` duruyor -> temizleme eylemi çalışır -> geri yükleme BAŞARILI.
+///
+/// Bu test kapıyı geri koyan mutasyonun asıl hedefi: kapı geri gelirse
+/// temizleme `401` alır ve senaryo çıkmaza döner.
+#[tokio::test]
+async fn bozuk_cift_ve_kalinti_varken_bile_kurtarma_yolu_acik() {
+    const TEK_KOPYA: &[u8] = b"KULLANICININ-TEK-KOPYASI";
+    let o = ortam();
+    kur(&o).await;
+    danisan_ekle(&o, "Ayse Yilmaz").await;
+    assert_eq!(yedek_al(&o, DAMGA).await.0, StatusCode::OK, "on kosul: yedek alinmali");
+
+    // Yarim kalmis bir geri almanin ardindan kalan durum: kullanicinin
+    // verisi `.onceki`de, canli veritabani ise ACILAMIYOR.
+    std::fs::write(o.s.db_yolu().with_extension("db.onceki"), TEK_KOPYA).unwrap();
+    std::fs::write(o.s.db_yolu(), b"bu bir SQLCipher veritabani degil").unwrap();
+    cagir(&o.s, "POST", "/api/kilitle", None).await;
+    let (kod, _) = kilit_ac(&o, PAROLA).await;
+    assert_ne!(kod, StatusCode::OK, "on kosul: oturum ACILAMAMALI");
+
+    let geri_yukle = || {
+        cagir(
+            &o.s,
+            "POST",
+            "/api/geri-yukleme",
+            Some(serde_json::json!({
+                "dizin": o.yedek_dizini,
+                "dosya_adi": format!("yedek-{DAMGA}.db"),
+                "parola": PAROLA,
+            })),
+        )
+    };
+
+    // Cikmazin ilk halkasi: kalinti geri yuklemeyi durduruyor.
+    let (kod, json) = geri_yukle().await;
+    assert_eq!(kod, StatusCode::CONFLICT, "kalinti varken geri yukleme durmali");
+    assert!(json["hata"].as_str().unwrap_or_default().contains("kenara kaldır"), "{json}");
+
+    // Cikis yolu: oturum ACILAMIYORKEN de calisiyor.
+    let (kod, json) = cagir(
+        &o.s,
+        "POST",
+        "/api/onceki-dosyalari-kaldir",
+        Some(serde_json::json!({ "damga": "20260923-1430" })),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::OK, "kurtarma yolu kilitliyken de acik olmali: {json}");
+    assert_eq!(json["tasinan"], 1);
+    assert_eq!(
+        std::fs::read(o.s.db_yolu().with_extension("db.onceki-20260923-1430")).unwrap(),
+        TEK_KOPYA,
+        "eylem SILMEZ; kullanicinin kopyasi birebir durmali"
+    );
+
+    // Ve artik geri yukleme BASARILI.
+    let (kod, json) = geri_yukle().await;
+    assert_eq!(kod, StatusCode::OK, "cikmaz acilmis olmali: {json}");
+    assert_eq!(kilit_ac(&o, PAROLA).await.0, StatusCode::OK, "oturum yeniden acilabilmeli");
 }
 
 /// Uçtan uca çıkış yolu (inceleme IMPORTANT-A): kalıntı yüzünden

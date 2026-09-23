@@ -5,14 +5,36 @@ import { KeystoreBozukEkrani } from './KeystoreBozukEkrani'
 
 const VERI_DIZINI = '/Users/psikolog/Library/Application Support/psikolog-not-takip'
 
-function kur(onGeriYukle: () => void = () => {}) {
-  return render(<KeystoreBozukEkrani veriDizini={VERI_DIZINI} onGeriYukle={onGeriYukle} />)
+function kur(onGeriYukle: () => void = () => {}, oncekileriKaldir = vi.fn(async () => ({ tasinan: 0 }))) {
+  return {
+    ...render(
+      <KeystoreBozukEkrani
+        veriDizini={VERI_DIZINI}
+        onGeriYukle={onGeriYukle}
+        oncekileriKaldir={oncekileriKaldir}
+      />,
+    ),
+    oncekileriKaldir,
+  }
 }
 
 describe('KeystoreBozukEkrani', () => {
   it('dosyanin silinmemesi gerektigini vurgular', () => {
     kur()
     expect(screen.getByText(/bu dosyayı silmeyin/i)).toBeDefined()
+  })
+
+  it('`.onceki` kalintilarini kenara kaldirma eylemi BURADA da var', async () => {
+    // Bu ekranda oturum TANIM GEREGI acilamaz (anahtar dosyasi okunamiyor).
+    // Eylem kilit kapisinin disinda oldugu icin buradan da calisir; aksi
+    // halde kullanicinin tek cikisi Finder'da elle dosya tasimak olurdu.
+    const { oncekileriKaldir } = kur()
+    const dugme = screen.getByRole('button', { name: /kenara kaldır/i })
+    expect(dugme.textContent).toMatch(/silmez/i)
+
+    await userEvent.click(dugme)
+    expect(oncekileriKaldir).toHaveBeenCalledTimes(1)
+    expect((await screen.findByRole('status')).textContent).toMatch(/bulunamadı/i)
   })
 
   it('kullanicinin kendi yapabilecegi somut adimlar verir, teknik destege yonlendirmez', () => {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { OncekiDosyalarEylemi } from './OncekiDosyalarEylemi'
 import type { YedekListesi, YedekOzeti } from '../api'
 import { boyutBicimle } from '../danisan/bicim'
 
@@ -50,6 +51,14 @@ type Props = {
   }) => Promise<unknown>
   /** Geri yükleme başarılı olduğunda çağrılır (App durumu tazeler). */
   onTamamlandi: () => void
+  /**
+   * `.onceki` kalıntılarını damgalı bir ada TAŞIR (hiçbir şey silmez).
+   *
+   * Bu ekranda duruyor çünkü geri yükleme tam da o kalıntı yüzünden
+   * durabiliyor ve o anda oturum çoğu zaman AÇILAMAZ -- Ayarlar'daki eşine
+   * ulaşmak mümkün olmazdı (bkz. `OncekiDosyalarEylemi`).
+   */
+  oncekileriKaldir: (damga: string) => Promise<{ tasinan: number }>
   /** Ekrandan çıkış yolu. Verilmezse "Vazgeç" gösterilmez. */
   onVazgec?: () => void
 }
@@ -80,6 +89,7 @@ export function GeriYuklemeEkrani({
   sebep,
   yedekleriGetir,
   geriYukle,
+  oncekileriKaldir,
   onTamamlandi,
   onVazgec,
 }: Props) {
@@ -315,6 +325,10 @@ export function GeriYuklemeEkrani({
               {hata}
             </p>
           )}
+          {/* Geri yükleme `.onceki` kalıntısına takılabilir ve o anda oturum
+              çoğu zaman AÇILAMAZ; eylem bu yüzden Ayarlar'ın yanı sıra
+              BURADA da duruyor (bkz. `OncekiDosyalarEylemi`). */}
+          <OncekiDosyalarEylemi kaldir={oncekileriKaldir} />
           <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"

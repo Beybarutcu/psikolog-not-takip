@@ -163,9 +163,10 @@ pub enum YedekHatasi {
          tutuyor. UYGULAMAYI YENİDEN KURMAYIN -- verileriniz duruyor: veri \
          klasörünüzde `.onceki` uzantılı dosyalardalar. Bu dosyaları \
          SİLMEYİN ve hepsini BİRLİKTE tutun: kayıt dosyası, eşleşen anahtar \
-         dosyası olmadan hiçbir koşulda açılamaz. Diğer programları kapatın; \
-         uygulama açılabiliyorsa Ayarlar > Yedekleme bölümündeki \"Eski \
-         dosyaları kenara kaldır\" eylemini çalıştırıp yeniden deneyin."
+         dosyası olmadan hiçbir koşulda açılamaz. Diğer programları kapatın, \
+         sonra geri yükleme ekranındaki \"Eski dosyaları kenara kaldır\" \
+         eylemini çalıştırıp yeniden deneyin. (Bu eylem kilit açılmadan da \
+         çalışır ve hiçbir şey silmez.)"
     )]
     GeriAlmaYarimKaldi(#[source] Box<YedekHatasi>),
     /// Kenara alınacak adda (`.onceki`) **zaten** bir dosya var; geri
@@ -202,10 +203,10 @@ pub enum YedekHatasi {
          Üzerlerine yazmamak için işlem durduruldu; hiçbir şey değiştirilmedi. \
          Bu dosyaları SİLMEYİN ve hepsini BİRLİKTE tutun: kayıt dosyası, \
          eşleşen anahtar dosyası olmadan hiçbir koşulda açılamaz. \
-         UYGULAMAYI YENİDEN KURMAYIN -- Ayarlar > Yedekleme bölümündeki \
-         \"Eski dosyaları kenara kaldır\" eylemini çalıştırın (o eylem \
-         hiçbir şey silmez, yalnızca yeniden adlandırır), sonra yeniden \
-         deneyin."
+         UYGULAMAYI YENİDEN KURMAYIN -- geri yükleme ekranındaki \"Eski \
+         dosyaları kenara kaldır\" eylemini çalıştırın (o eylem hiçbir şey \
+         silmez, yalnızca yeniden adlandırır ve kilit açılmadan da çalışır), \
+         sonra yeniden deneyin."
     )]
     OncekiDosyaDuruyor,
     /// `onceki_dosyalari_kenara_kaldir` sırasında bir dosya işlemi
@@ -910,18 +911,29 @@ fn damga_gecerli_mi(s: &str) -> bool {
 /// dosya kuralı böylece korunur ve taşınan çift gerekirse olduğu yerde
 /// açılabilir (`kenara_al`'ın adlandırma gerekçesiyle aynı).
 ///
-/// # Denetim kaydı
+/// # Denetim kaydı ve `conn: Option<&Connection>`
 ///
 /// Etkisiz işlem **loglanmaz** (`store::audit` hacim politikası): taşınacak
 /// dosya yoksa `Ok(0)` döner ve tek bir satır bile yazılmaz. Taşındıysa tek
 /// bir `duzenleme|backup|<damga>` satırı yazılır (`HerCagri` -- seyrek ve
 /// hesabı verilmesi gereken bir bakım işlemi). `varlik_id` damgadır: yol,
-/// dosya adı ya da danışan verisi loga girmez.
+/// dosya adı ya da danışan verisi loga girmez. Sıra `yedek_al_ve_kaydet`
+/// ile aynı: **önce iş, sonra log**; log yazılamazsa dosyalar geri alınmaz
+/// (`KayitYazilamadi`).
 ///
-/// Sıra `yedek_al_ve_kaydet` ile aynı: **önce iş, sonra log**; log
-/// yazılamazsa dosyalar geri alınmaz (`KayitYazilamadi`).
+/// Bağlantı `Option`'dır çünkü bu fonksiyonun **var oluş sebebi** tam da
+/// veritabanının açılamadığı durumdur: yarım kalmış bir geri almadan sonra
+/// canlı çift eşleşmez, oturum hiç açılamaz ve yazılacak bir `audit_log`
+/// **yoktur**. `None` geldiğinde işlem yine de tamamlanır ve satır
+/// yazılmaz.
+///
+/// Bu bir kaçış kapısı değil: emsali `routes::session::kilitle` --
+/// *"güvenlik/veri lehine olan eylem, log yazılamasa bile tamamlanır"*.
+/// Kapının sıfır bilgi verdiğini de unutmamak gerekir: bu fonksiyon hiçbir
+/// veri **okumaz** ve hiçbir şey **silmez**; yalnızca `.onceki` yan
+/// dosyalarını damgalı bir ada taşır.
 pub fn onceki_dosyalari_kenara_kaldir(
-    conn: &Connection,
+    conn: Option<&Connection>,
     db_yolu: &Path,
     keystore_yolu: &Path,
     damga: &str,
@@ -971,9 +983,15 @@ pub fn onceki_dosyalari_kenara_kaldir(
         std::fs::rename(asil, hedef).map_err(YedekHatasi::TemizlikBasarisiz)?;
         tasinan += 1;
     }
-    kaydet(conn, Eylem::Duzenleme, VARLIK, damga, cihaz, None, LogHacmi::HerCagri).map_err(
-        |_| YedekHatasi::KayitYazilamadi("Eski dosyalar taşındı ama denetim kaydına yazılamadı."),
-    )?;
+    if let Some(conn) = conn {
+        kaydet(conn, Eylem::Duzenleme, VARLIK, damga, cihaz, None, LogHacmi::HerCagri).map_err(
+            |_| {
+                YedekHatasi::KayitYazilamadi(
+                    "Eski dosyalar taşındı ama denetim kaydına yazılamadı.",
+                )
+            },
+        )?;
+    }
     Ok(tasinan)
 }
 
@@ -2382,7 +2400,7 @@ mod tests {
         // 4) Uygulama icindeki eylem.
         let c = open_encrypted(&o.db, &o.key).unwrap();
         let tasinan = onceki_dosyalari_kenara_kaldir(
-            &c,
+            Some(&c),
             &o.db,
             &o.keystore_yolu,
             DAMGA,
@@ -2433,7 +2451,7 @@ mod tests {
 
         let c = open_encrypted(&o.db, &o.key).unwrap();
         let tasinan = onceki_dosyalari_kenara_kaldir(
-            &c,
+            Some(&c),
             &o.db,
             &o.keystore_yolu,
             DAMGA,
@@ -2480,7 +2498,7 @@ mod tests {
         // ETKISIZ ISLEM LOGLANMAZ: tasinacak dosya yok -> tek satir bile yok.
         let once = sayi(&c);
         assert_eq!(
-            onceki_dosyalari_kenara_kaldir(&c, &o.db, &o.keystore_yolu, DAMGA, Cihaz::Masaustu)
+            onceki_dosyalari_kenara_kaldir(Some(&c), &o.db, &o.keystore_yolu, DAMGA, Cihaz::Masaustu)
                 .unwrap(),
             0
         );
@@ -2491,7 +2509,7 @@ mod tests {
         std::fs::write(o.db.with_extension("db.onceki"), b"GIZLI-VERI").unwrap();
         std::fs::write(o.keystore_yolu.with_extension("json.onceki"), b"GIZLI-ANAHTAR").unwrap();
         assert_eq!(
-            onceki_dosyalari_kenara_kaldir(&c, &o.db, &o.keystore_yolu, DAMGA, Cihaz::Masaustu)
+            onceki_dosyalari_kenara_kaldir(Some(&c), &o.db, &o.keystore_yolu, DAMGA, Cihaz::Masaustu)
                 .unwrap(),
             2
         );
@@ -2521,7 +2539,7 @@ mod tests {
 
         for kotu in ["../../kacis", "2026-09-23", "20260923-143", "20260923_1430", "", "/mutlak"] {
             let hata =
-                onceki_dosyalari_kenara_kaldir(&c, &o.db, &o.keystore_yolu, kotu, Cihaz::Masaustu)
+                onceki_dosyalari_kenara_kaldir(Some(&c), &o.db, &o.keystore_yolu, kotu, Cihaz::Masaustu)
                     .unwrap_err();
             assert!(matches!(hata, YedekHatasi::GecersizDamga), "`{kotu}` gecmemeliydi: {hata:?}");
             // Mesaj gelen dizgiyi YANSITMAMALI (girdi yansitma sinifi).
@@ -2533,7 +2551,7 @@ mod tests {
         // bir dogrulayici da yukaridaki dongunun hepsini gecerdi (7. bicim).
         assert_eq!(
             onceki_dosyalari_kenara_kaldir(
-                &c,
+                Some(&c),
                 &o.db,
                 &o.keystore_yolu,
                 "20260923-1430",
@@ -2554,13 +2572,13 @@ mod tests {
         let c = open_encrypted(&o.db, &o.key).unwrap();
 
         std::fs::write(o.db.with_extension("db.onceki"), b"BIRINCI").unwrap();
-        onceki_dosyalari_kenara_kaldir(&c, &o.db, &o.keystore_yolu, DAMGA, Cihaz::Masaustu)
+        onceki_dosyalari_kenara_kaldir(Some(&c), &o.db, &o.keystore_yolu, DAMGA, Cihaz::Masaustu)
             .unwrap();
         // Ayni dakika icinde yeni bir kalinti olustu.
         std::fs::write(o.db.with_extension("db.onceki"), b"IKINCI").unwrap();
 
         let hata =
-            onceki_dosyalari_kenara_kaldir(&c, &o.db, &o.keystore_yolu, DAMGA, Cihaz::Masaustu)
+            onceki_dosyalari_kenara_kaldir(Some(&c), &o.db, &o.keystore_yolu, DAMGA, Cihaz::Masaustu)
                 .unwrap_err();
         assert!(matches!(hata, YedekHatasi::TemizlikBasarisiz(_)), "gelen: {hata:?}");
         assert!(hata.to_string().contains("SİLİNMEDİ"), "{hata}");
@@ -2574,6 +2592,37 @@ mod tests {
             b"IKINCI",
             "ikinci kalinti da yerinde durmali"
         );
+    }
+
+    /// Eylem, veritabani HIC ACILAMAZKEN de calismali (inceleme, ikinci
+    /// tur): var olus sebebi tam da o durum. `conn: None` -> dosyalar
+    /// tasinir, denetim satiri yazilamaz (yazilacak bir `audit_log` yok).
+    #[test]
+    fn baglanti_olmadan_da_calisir_ve_dosyalar_tasinir() {
+        use crate::store::audit::Cihaz;
+        const DAMGA: &str = "20260923-1430";
+        const TEK_KOPYA: &[u8] = b"kullanicinin tek kopyasi";
+
+        let o = kur("parola123");
+        let onceki = o.db.with_extension("db.onceki");
+        let ks_onceki = o.keystore_yolu.with_extension("json.onceki");
+        std::fs::write(&onceki, TEK_KOPYA).unwrap();
+        std::fs::write(&ks_onceki, b"ANAHTAR").unwrap();
+
+        // Canli cift BOZUK: hicbir baglanti acilamaz.
+        std::fs::write(&o.db, b"bu bir SQLCipher veritabani degil").unwrap();
+        assert!(open_encrypted(&o.db, &o.key).is_err(), "on kosul: veritabani acilamamali");
+
+        let tasinan =
+            onceki_dosyalari_kenara_kaldir(None, &o.db, &o.keystore_yolu, DAMGA, Cihaz::Masaustu)
+                .unwrap();
+        assert_eq!(tasinan, 2);
+        assert_eq!(
+            std::fs::read(o.db.with_extension(format!("db.onceki-{DAMGA}"))).unwrap(),
+            TEK_KOPYA,
+            "baglanti olmadan da SILINMEZ, tasinir"
+        );
+        assert!(!onceki.exists() && !ks_onceki.exists(), "eski adlar bosalmali ki kapi acilsin");
     }
 
     /// Kullaniciya gosterilen iki mesaj, tek kopyasini SILMEYE yol

@@ -29,6 +29,7 @@ function kur(
     listeHatasi?: Error
     geriYukle?: GeriYukleMock
     onTamamlandi?: () => void
+    oncekileriKaldir?: (damga: string) => Promise<{ tasinan: number }>
   } = {},
 ) {
   const yedekleriGetir = vi.fn(async () => {
@@ -37,16 +38,19 @@ function kur(
   })
   const geriYukle: GeriYukleMock =
     secenek.geriYukle ?? vi.fn(async (_g: GeriYukleGirdi) => ({ tarih: '2026-09-08' }))
+  const oncekileriKaldir =
+    secenek.oncekileriKaldir ?? vi.fn(async (_d: string) => ({ tasinan: 2 }))
   const sonuc = render(
     <GeriYuklemeEkrani
       veriDizini={VERI_DIZINI}
       sebep={secenek.sebep ?? 'veritabani-bozuk'}
       yedekleriGetir={yedekleriGetir}
       geriYukle={geriYukle}
+      oncekileriKaldir={oncekileriKaldir}
       onTamamlandi={secenek.onTamamlandi ?? (() => {})}
     />,
   )
-  return { ...sonuc, yedekleriGetir, geriYukle }
+  return { ...sonuc, yedekleriGetir, geriYukle, oncekileriKaldir }
 }
 
 describe('GeriYuklemeEkrani — metnin taşıdığı güvenceler', () => {
@@ -276,5 +280,28 @@ describe('GeriYuklemeEkrani — davranış', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Yedekleri ara' }))
 
     await waitFor(() => expect(yedekleriGetir).toHaveBeenCalledWith('/Volumes/USB/yedek'))
+  })
+
+  it('`.onceki` kalintilarini kenara kaldirma eylemi BU EKRANDA', async () => {
+    // Inceleme (ikinci tur): geri yukleme `.onceki` kalintisina takilinca
+    // durur ve tam o anda oturum cogu zaman ACILAMAZ -- eylem yalnizca
+    // Ayarlar'da dursaydi kullanici ona hic ulasamaz, geriye Finder'da elle
+    // dosya tasimak kalirdi (ve oradaki ilk refleks SILMEK).
+    const { oncekileriKaldir } = kur()
+    await screen.findByText('2026-09-08')
+    await userEvent.click(screen.getAllByRole('radio')[0])
+
+    const dugme = screen.getByRole('button', { name: /kenara kaldır/i })
+    // Metin ne YAPMADIGINI da soyluyor.
+    expect(dugme.textContent).toMatch(/silmez/i)
+
+    await userEvent.click(dugme)
+    await waitFor(() => expect(oncekileriKaldir).toHaveBeenCalledTimes(1))
+    // Damga dosya adina giriyor: YYYYAAGG-SSDD.
+    expect((oncekileriKaldir as Mock).mock.calls[0][0]).toMatch(/^\d{8}-\d{4}$/)
+
+    const bilgi = await screen.findByRole('status')
+    expect(bilgi.textContent).toMatch(/2 eski dosya/)
+    expect(bilgi.textContent).toMatch(/hiçbiri silinmedi/i)
   })
 })

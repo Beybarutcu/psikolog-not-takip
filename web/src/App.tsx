@@ -82,6 +82,7 @@ export default function App() {
         sebep={sebep}
         yedekleriGetir={yedekApi.listele}
         geriYukle={yedekApi.geriYukle}
+        oncekileriKaldir={yedekApi.oncekiDosyalariKaldir}
         onTamamlandi={() => {
           kapat()
           void yenile()
@@ -99,6 +100,7 @@ export default function App() {
       <KeystoreBozukEkrani
         veriDizini={durum.veri_dizini}
         onGeriYukle={() => setGeriYuklemeIstendi(true)}
+        oncekileriKaldir={yedekApi.oncekiDosyalariKaldir}
       />
     )
   }

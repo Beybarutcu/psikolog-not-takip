@@ -56,7 +56,8 @@ use crate::routes::backup::yedek_hatasi;
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, Json};
 use psikolog_core::backup::{
-    ayarlari_oku, geri_yukle, keystore_yedek_yolu, yedekleri_listele, YedekHatasi, VARLIK,
+    ayarlari_oku, geri_yukle, keystore_yedek_yolu, onceki_dosyalari_kenara_kaldir,
+    yedekleri_listele, YedekHatasi, VARLIK,
 };
 use psikolog_core::crypto::keyring::CryptoError;
 use psikolog_core::store::{
@@ -364,6 +365,80 @@ pub async fn uygula(
     s.oturum.lock().unwrap_or_else(|e| e.into_inner()).kilitle();
 
     Ok(Json(json!({ "tarih": tarih })))
+}
+
+#[derive(Deserialize)]
+pub struct OncekiIstegi {
+    /// Taşınan dosyaların adına eklenecek zaman damgası — **istemcinin
+    /// yerel saati** (`YYYYAAGG-SSDD`).
+    ///
+    /// Sunucu kendi saatinden türetmiyor: duvar saati sözleşmesi
+    /// (`backup::YedekIstegi::damga` ile aynı gerekçe). Kullanıcı bu adı
+    /// dosya listesinde okuyacak.
+    ///
+    /// Biçim doğrulaması çekirdekte (`GecersizDamga`) ve bir **güvenlik**
+    /// kapısıdır: damga doğrudan bir dosya adına giriyor.
+    pub damga: String,
+}
+
+/// Veri klasöründe duran `.onceki` kalıntılarını damgalı bir ada taşır
+/// (`POST /api/onceki-dosyalari-kaldir`) — **bilerek kilit kapısının
+/// dışında**, tıpkı geri yüklemenin kendisi gibi.
+///
+/// # Neden kapısız (inceleme, ikinci tur)
+///
+/// Bu uç önce `routes::backup`'ta, kapının **içinde** duruyordu ve tam da
+/// korumanın gerektiği anda bir ÇIKMAZ üretiyordu:
+///
+/// 1. Geri yükleme denenir, göç patlar, geri alma yarım kalır -> canlı
+///    çift eşleşmez ve oturum **hiç açılamaz**.
+/// 2. Kullanıcı yeniden geri yüklemeyi dener -> `.onceki` durduğu için
+///    `kenara_al`'ın kapısı `409` ile reddeder.
+/// 3. Kilidi açamadığı için temizleme eylemine de ulaşamaz.
+///
+/// Sonuç: Finder'a elle inmeden hiçbir çıkış yok -- kapının önlemek
+/// istediği şeyin ta kendisi (`.onceki` dosyalarını silmek). Kurtarma yolu
+/// tutarlı olmak zorunda: temizleme, geri yüklemenin **kendisiyle aynı
+/// erişilebilirlikte**.
+///
+/// # Güvenlik gerekçesi
+///
+/// Bu, kapıyı gevşetmek değil. Uç:
+/// - hiçbir veri **okumaz**: yanıt yalnızca kaç dosyanın taşındığını söyler
+///   (`{"tasinan": N}`) -- dosya adı, yol, danışan verisi yok;
+/// - hiçbir şey **silmez**: `core::backup::onceki_dosyalari_kenara_kaldir`
+///   yalnızca yeniden adlandırır ve hiçbir hedefin üzerine yazmaz;
+/// - yalnızca veri dizinindeki `.onceki` **yan dosyalarına** dokunur, canlı
+///   çifte değil;
+/// - sunucu yalnızca `127.0.0.1` dinliyor ve geri yükleme ucu zaten kilit
+///   açılmadan çalışıyor -- aynı sınıf.
+///
+/// Denetim kaydı: oturum açıksa satır yazılır; kilitliyken yazılacak bir
+/// `audit_log` **yoktur** (veritabanı açılamıyor; bu ucun var oluş sebebi
+/// zaten o durum). Bkz. çekirdek fonksiyonun `conn: Option<&Connection>`
+/// belgesi ve `routes::session::kilitle`'nin aynı sınıf kararı.
+pub async fn onceki_dosyalari_kaldir(
+    State(s): State<AppState>,
+    Json(istek): Json<OncekiIstegi>,
+) -> Result<Json<Value>, ApiHata> {
+    // `guard::acik_baglanti` BILEREK kullanilmiyor (bkz. modul basligi ve
+    // `notlar_api.rs::VERI_DISI_ROTALAR`): bu ucun calismasi gereken durum
+    // tam da oturumun acilamadigi durumdur. Bunun yerine acik bir oturum
+    // VARSA denetim satirini yazabilmek icin baglanti KOSULLU aciliyor.
+    let kayit_baglantisi =
+        s.acik_anahtar().and_then(|anahtar| open_existing(&s.db_yolu(), &anahtar).ok());
+    let tasinan = onceki_dosyalari_kenara_kaldir(
+        kayit_baglantisi.as_ref(),
+        &s.db_yolu(),
+        &s.keystore_yolu(),
+        &istek.damga,
+        Cihaz::Masaustu,
+    )
+    .map_err(yedek_hatasi)?;
+    // Yanit YALNIZCA sayi tasir: dosya adi/yol donmek, kapisiz bir uctan
+    // kullanicinin ev dizinini sizdirmak olurdu (`YedekBilgisi`nin
+    // `Serialize` turetmeme karariyla ayni sinif).
+    Ok(Json(json!({ "tasinan": tasinan })))
 }
 
 #[cfg(test)]

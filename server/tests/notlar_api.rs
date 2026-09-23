@@ -316,15 +316,6 @@ async fn kilitliyken_govde_ve_sorgu_alan_her_uc_once_401_doner() {
             None,
         ),
         ("backup.rs", "al", "POST", "/api/yedek".into(), bozuk_govde.clone()),
-        // Inceleme IMPORTANT-A: `.onceki` kalintilarini damgali bir ada
-        // TASIYAN bakim ucu (hicbir sey silmez). Kapinin icinde.
-        (
-            "backup.rs",
-            "onceki_dosyalari_kaldir",
-            "POST",
-            "/api/onceki-dosyalari-kaldir".into(),
-            bozuk_govde.clone(),
-        ),
         ("clients.rs", "olustur", "POST", "/api/danisanlar".into(), bozuk_govde.clone()),
         ("clients.rs", "guncelle_uc", "PATCH", format!("/api/danisanlar/{cid}"), bozuk_govde.clone()),
         (
@@ -2361,8 +2352,7 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
     // seans_listesi, ekle, kaldir, seanslar) -- toplam 32 -> 37.
     // Gorev 7 Plan 7: `routes::audit::liste` (denetim kaydini OKUMA ucu)
     // eklendi -- toplam 37 -> 38.
-    // Inceleme IMPORTANT-A: `backup::onceki_dosyalari_kaldir` eklendi -- 38 -> 39.
-    assert_eq!(toplam, 39, "toplam veri handler'i sayisi 39 olmali");
+    assert_eq!(toplam, 38, "toplam veri handler'i sayisi 38 olmali");
 }
 
 /// Kapıyı ilk satırda VE uzun bir üretimden sonra ikinci kez çağırmasına izin
@@ -3526,6 +3516,108 @@ fn istemci_cagrilari() -> Vec<(String, String)> {
 /// aksi hâlde bu test artık gerçek bir bağlantı eksikliğini sessizce
 /// gizlerdi.
 const ISTEMCISIZ_UCLAR: [(&str, &str); 0] = [];
+
+/// Kilit kapısının **dışında** olması BİLİNÇLİ olan uçlar — adı konmuş
+/// istisna (inceleme, ikinci tur).
+///
+/// Her satırın gerekçesi burada; sessizce kapısız kalan bir uç ile bilinçli
+/// olarak kapısız bırakılan bir uç arasındaki fark tam olarak budur
+/// (`ISTEMCISIZ_UCLAR` / `VERI_DISI_ROTALAR` ile aynı kalıp).
+///
+/// - `POST /api/kurulum`, `/api/kilit-ac`, `/api/kilitle`, `GET /api/durum`:
+///   oturumun **kendisini** kuran/yöneten uçlar; kilitliyken çalışmazlarsa
+///   kilit hiç açılamaz.
+/// - `POST /api/yedekler`, `/api/geri-yukleme`: geri yüklemenin var oluş
+///   sebebi oturumun **açılamadığı** durumdur (bkz. `routes::restore` modül
+///   başlığı). Yetkisiz değil: çağıran yedeğin kendi anahtar dosyasını
+///   açabilen parolayı vermek zorunda.
+/// - `POST /api/onceki-dosyalari-kaldir`: geri yüklemenin **kendisiyle aynı
+///   erişilebilirlikte** olmak zorunda. Kapının içindeyken bir ÇIKMAZ
+///   üretiyordu: yarım kalmış bir geri almadan sonra canlı çift eşleşmez,
+///   oturum açılamaz, `.onceki` durduğu için geri yükleme de `409` alır ve
+///   kullanıcının tek çıkışı Finder'da elle dosya taşımak olurdu -- kapının
+///   önlemek istediği şeyin ta kendisi. Uç hiçbir veri OKUMAZ (yanıt
+///   yalnızca bir sayı) ve hiçbir şey SİLMEZ.
+const KILITSIZ_UCLAR: [(&str, &str); 7] = [
+    ("GET", "/api/durum"),
+    ("POST", "/api/kurulum"),
+    ("POST", "/api/kilit-ac"),
+    ("POST", "/api/kilitle"),
+    ("POST", "/api/yedekler"),
+    ("POST", "/api/geri-yukleme"),
+    ("POST", "/api/onceki-dosyalari-kaldir"),
+];
+
+/// İstisna listesinin **iki yönlü** kontrolü.
+///
+/// (1) Listedeki her uç GERÇEKTEN kilitsiz olmalı: biri kapının arkasına
+///     alınırsa (`401`) bu test kırılır ve karar yeniden verilmeye zorlanır.
+/// (2) Listede OLMAYAN her uç kilitliyken `401` dönmeli: yarın eklenecek
+///     kapısız bir uç, listeye yazılmadan sessizce geçemez.
+///
+/// Tek yönlü bir istisna listesi (yalnızca (2)) bayatlardı: kapıya geri
+/// alınan bir uç listede kalır ve kimse fark etmezdi.
+#[tokio::test]
+async fn kilitsiz_uclar_bilincli_digerlerinin_hepsi_401() {
+    let (_d, s, cid, rid) = dolu_state().await;
+    kilitle(&s).await;
+
+    // Yol kaliplarindaki `{}` yerine var olan kimlikler konur; `401`
+    // kararinin kimlikten BAGIMSIZ oldugunu da gosterir.
+    let somutlastir = |yol: &str| -> String {
+        let mut cikti = String::new();
+        let mut kalan = yol;
+        let mut sira = 0;
+        while let Some(bas) = kalan.find("{}") {
+            cikti.push_str(&kalan[..bas]);
+            // Ilk yer tutucu danisan/randevu kimligi, ikincisi etiket.
+            cikti.push_str(&if yol.starts_with("/api/danisanlar") && sira == 0 {
+                cid.to_string()
+            } else if sira == 0 {
+                rid.to_string()
+            } else {
+                "1".to_string()
+            });
+            kalan = &kalan[bas + 2..];
+            sira += 1;
+        }
+        cikti.push_str(kalan);
+        cikti
+    };
+
+    let rotalar = sunucu_rotalari();
+    // ON KOSUL: istisna listesi bayat olmasin -- adi yazili her uc
+    // GERCEKTEN bir rota olmali.
+    for (metot, yol) in KILITSIZ_UCLAR {
+        assert!(
+            rotalar.contains(&(metot.to_string(), yol.to_string())),
+            "istisna listesi bayat: {metot} {yol} artik bir rota degil"
+        );
+    }
+
+    for (metot, yol) in &rotalar {
+        let somut = somutlastir(yol);
+        let (kod, _) = cagir(&s, metot, &somut, Some(json!({}))).await;
+        if KILITSIZ_UCLAR.iter().any(|(m, y)| m == metot && y == yol) {
+            // (1) Istisna GEREKLI: bu uc kilitliyken 401 DONMEMELI.
+            assert_ne!(
+                kod,
+                StatusCode::UNAUTHORIZED,
+                "{metot} {yol} KILITSIZ_UCLAR'da ama kilitliyken 401 donuyor -- ya kapinin \
+                 arkasina alindi (o zaman kurtarma yolu kirilmis olabilir) ya da istisna \
+                 gereksiz ve listeden silinmeli"
+            );
+        } else {
+            // (2) Kapisiz kalan yeni bir uc sessizce gecemez.
+            assert_eq!(
+                kod,
+                StatusCode::UNAUTHORIZED,
+                "{metot} {yol} kilitliyken 401 donmeli; bilerek kapisizsa KILITSIZ_UCLAR'a \
+                 GEREKCESIYLE yazilmali"
+            );
+        }
+    }
+}
 
 #[test]
 fn her_http_ucunun_bir_istemci_cagri_yeri_var() {

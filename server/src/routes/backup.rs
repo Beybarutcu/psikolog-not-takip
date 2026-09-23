@@ -43,7 +43,7 @@
 //!
 //! # Kilit
 //!
-//! Her handler'ın ilk satırı `guard::acik_baglanti`'dir. Yedek almak
+//! Tek handler'ın ilk satırı `guard::acik_baglanti`'dir. Yedek almak
 //! danışan verisinin **tamamının** kopyasını üretir; kilitli oturumda
 //! yapılamamalıdır. **Geri yükleme** ise bilerek başka bir modüldedir
 //! (`routes::restore`) çünkü tam da oturumun açılamadığı durumda
@@ -52,17 +52,13 @@
 //! # Denetim kaydı
 //!
 //! Bu modül `audit::kaydet` **çağırmaz**; hacim kararını çekirdek verdi
-//! (`core::backup::yedek_al_ve_kaydet` -> `DisaAktarma` + `HerCagri`;
-//! `core::backup::onceki_dosyalari_kenara_kaldir` -> `Duzenleme` + `HerCagri`,
-//! etkisiz cagri hic satir yazmaz).
+//! (`core::backup::yedek_al_ve_kaydet` -> `DisaAktarma` + `HerCagri`).
 
 use crate::guard::{acik_baglanti, govde_coz, ApiHata};
 use axum::extract::rejection::JsonRejection;
 use crate::state::AppState;
 use axum::{extract::State, http::StatusCode, Json};
-use psikolog_core::backup::{
-    ayarlari_oku, ayarlari_yaz, onceki_dosyalari_kenara_kaldir, yedek_al_ve_kaydet, YedekAyarlari,
-};
+use psikolog_core::backup::{ayarlari_oku, ayarlari_yaz, yedek_al_ve_kaydet, YedekAyarlari};
 use psikolog_core::store::audit::Cihaz;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -182,56 +178,6 @@ pub async fn al(
         "tarih": bilgi.tarih,
         "boyut": bilgi.boyut,
     })))
-}
-
-#[derive(Deserialize)]
-pub struct OncekiIstegi {
-    /// Taşınan dosyaların adına eklenecek zaman damgası — **istemcinin
-    /// yerel saati** (`YYYYAAGG-SSDD`).
-    ///
-    /// Sunucu kendi saatinden türetmiyor: duvar saati sözleşmesi
-    /// (`YedekIstegi::damga` ile aynı gerekçe). Kullanıcı bu adı Finder'da
-    /// okuyacak ve "hangisi dünkü" diye soracak; UTC'den türetilen bir ad
-    /// Istanbul'da 00:00–03:00 arasında bir gün geriye yazardı.
-    ///
-    /// Biçim doğrulaması çekirdekte (`GecersizDamga`) ve bir **güvenlik**
-    /// kapısıdır: damga bir dosya adına giriyor.
-    pub damga: String,
-}
-
-/// Veri klasöründe duran `.onceki` kalıntılarını damgalı bir ada taşır
-/// (`POST /api/onceki-dosyalari-kaldir`).
-///
-/// # Neden bir uç nokta gerekti (inceleme IMPORTANT-A)
-///
-/// `core::backup::Yerlestirme::kenara_al` artık hedefte bir `.onceki`
-/// bulursa geri yüklemeyi durduruyor. Kalıntı **başarılı** bir geri
-/// yüklemeden de kalabilir (`tamamla()`'nın silmesi başarısız olabilir) ve
-/// o durumda bundan sonraki her geçerli geri yükleme `409` alırdı.
-/// Kullanıcının tek çıkışı `~/Library` altında elle dosya taşımak olurdu --
-/// macOS'ta gizli bir klasör, ve oradaki ilk refleks **silmek**.
-///
-/// **Hiçbir şey silmez**; karar çekirdekte ve testle sabitlenmiş
-/// (`kenara_kaldirma_hicbir_dosyayi_silmez`). Arayüzdeki düğme metni de
-/// bunu söyler.
-///
-/// Kapının **içinde**: taşınan dosyalar danışan verisinin kendisidir.
-/// Denetim kaydını çekirdek yazar (bu modül `audit::kaydet` çağırmaz).
-pub async fn onceki_dosyalari_kaldir(
-    State(s): State<AppState>,
-    istek: Result<Json<OncekiIstegi>, JsonRejection>,
-) -> Result<Json<Value>, ApiHata> {
-    let conn = acik_baglanti(&s)?;
-    let istek = govde_coz(istek)?;
-    let tasinan = onceki_dosyalari_kenara_kaldir(
-        &conn,
-        &s.db_yolu(),
-        &s.keystore_yolu(),
-        &istek.damga,
-        Cihaz::Masaustu,
-    )
-    .map_err(yedek_hatasi)?;
-    Ok(Json(json!({ "tasinan": tasinan })))
 }
 
 /// Bağlama kararının **koşulu** — bkz. modül başlığı ve `tests`.

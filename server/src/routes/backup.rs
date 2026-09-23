@@ -212,9 +212,13 @@ pub(crate) fn yedek_hatasi(e: psikolog_core::backup::YedekHatasi) -> ApiHata {
         // duruyor ve onlar kullanıcının eski verisi olabilir; yapılacak şey
         // mesajda yazıyor. 500 dönmek "uygulama bozuldu" dedirtir ve
         // kullanıcıyı yeniden kurmaya iter -- bu modülün tam da önlediği şey.
-        Y::YedekIleriSurumlu { .. } | Y::YedekHazirlanamadi(_) | Y::OncekiDosyaDuruyor => {
-            StatusCode::CONFLICT
-        }
+        // `OncekiAdKullanimda` de 409 (inceleme M-1): sunucu arizasi degil,
+        // bir on kosul catismasi -- ayni damgayla tasinmis dosyalar duruyor
+        // ve uzerlerine YAZILMADI. 500 "uygulama bozuldu" dedirtirdi.
+        Y::YedekIleriSurumlu { .. }
+        | Y::YedekHazirlanamadi(_)
+        | Y::OncekiDosyaDuruyor
+        | Y::OncekiAdKullanimda => StatusCode::CONFLICT,
         // 500: bu gerçekten sunucu/çevre tarafı bir sorun (dosyalar başka
         // bir program tarafından tutuluyor) ve 409'un aksine kullanıcının
         // hemen müdahale etmesi gerekiyor -- gövdedeki metin ne yapacağını
@@ -226,7 +230,9 @@ pub(crate) fn yedek_hatasi(e: psikolog_core::backup::YedekHatasi) -> ApiHata {
         // `tests::yarim_geri_alma_500_doner` ve
         // `tests::dosya_hatasi_500_doner_ve_govde_akibeti_soyler` -- yoksa
         // `_`'a düşen sessiz bir değişiklik fark edilmezdi.
-        Y::GeriAlmaYarimKaldi(_) | Y::YerlestirmeBasarisiz(_) | Y::TemizlikBasarisiz(_) => {
+        Y::GeriAlmaYarimKaldi(_)
+        | Y::YerlestirmeBasarisiz(_)
+        | Y::TemizlikBasarisiz(_) => {
             StatusCode::INTERNAL_SERVER_ERROR
         }
         _ => StatusCode::INTERNAL_SERVER_ERROR,

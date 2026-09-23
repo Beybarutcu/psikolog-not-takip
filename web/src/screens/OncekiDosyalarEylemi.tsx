@@ -30,7 +30,7 @@ export function OncekiDosyalarEylemi({
   kaldir,
 }: {
   /** `yedekApi.oncekiDosyalariKaldir` — damgayı alır, taşınan sayısını döner. */
-  kaldir: (damga: string) => Promise<{ tasinan: number }>
+  kaldir: (damga: string) => Promise<{ tasinan: number; damga: string }>
 }) {
   const [bilgi, setBilgi] = useState<string | null>(null)
   const [suruyor, setSuruyor] = useState(false)
@@ -41,11 +41,14 @@ export function OncekiDosyalarEylemi({
     try {
       // Damga İSTEMCİNİN yerel saati (duvar saati sözleşmesi): kullanıcı bu
       // adı dosya listesinde okuyup "hangisi dünkü" diye soracak.
-      const { tasinan } = await kaldir(yerelDamga(new Date()))
+      const { tasinan, damga } = await kaldir(yerelDamga(new Date()))
+      // Yeni adın SONEKİ söyleniyor (yol değil): bu dosyaları başka
+      // hiçbir şey temizlemiyor ve kullanıcı onları sonradan kendisi
+      // bulmak zorunda (inceleme M-2).
       setBilgi(
         tasinan === 0
           ? 'Kenara kaldırılacak eski dosya bulunamadı.'
-          : `${tasinan} eski dosya yeniden adlandırıldı; hiçbiri silinmedi.`,
+          : `${tasinan} eski dosya "…onceki-${damga}" ile biten adlara taşındı; hiçbiri silinmedi.`,
       )
     } catch (e) {
       // Sunucunun mesajı OLDUĞU GİBİ: "dosyalar taşınamadı" ile "geçersiz

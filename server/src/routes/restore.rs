@@ -413,10 +413,22 @@ pub struct OncekiIstegi {
 /// - sunucu yalnızca `127.0.0.1` dinliyor ve geri yükleme ucu zaten kilit
 ///   açılmadan çalışıyor -- aynı sınıf.
 ///
-/// Denetim kaydı: oturum açıksa satır yazılır; kilitliyken yazılacak bir
-/// `audit_log` **yoktur** (veritabanı açılamıyor; bu ucun var oluş sebebi
-/// zaten o durum). Bkz. çekirdek fonksiyonun `conn: Option<&Connection>`
-/// belgesi ve `routes::session::kilitle`'nin aynı sınıf kararı.
+/// # Denetim kaydı ve `.ok()`'in DÜRÜST tarifi (inceleme M-3)
+///
+/// Bağlantı koşullu açılıyor ve `.ok()` **iki farklı durumu tek kefeye**
+/// koyuyor: (a) oturum kilitli -- anahtar yok, (b) oturum açık ama
+/// `open_existing` başarısız. İkisinde de satır yazılmaz ve işlem yapılır.
+///
+/// Bu **bilinçli**, ama doküman önce fail-loud ima ediyordu; değil. (b)'yi
+/// ayırıp hata döndürmek, tam da bu ucun var olma sebebi olan durumda
+/// (veritabanı açılamıyor) kurtarma yolunu kapatırdı -- yani düzeltilen
+/// çıkmazı geri getirirdi. Çekirdek tarafında ise ayrım korunuyor:
+/// `Some(conn)` verilip yazma **başarısız olursa** `KayitYazilamadi`
+/// döner (fail-loud). Sessiz olan yalnızca "yazılacak bir veritabanı yok"
+/// hâlidir.
+///
+/// Bkz. çekirdek fonksiyonun `conn: Option<&Connection>` belgesi ve
+/// `routes::session::kilitle`'nin aynı sınıf kararı.
 pub async fn onceki_dosyalari_kaldir(
     State(s): State<AppState>,
     Json(istek): Json<OncekiIstegi>,
@@ -435,10 +447,14 @@ pub async fn onceki_dosyalari_kaldir(
         Cihaz::Masaustu,
     )
     .map_err(yedek_hatasi)?;
-    // Yanit YALNIZCA sayi tasir: dosya adi/yol donmek, kapisiz bir uctan
-    // kullanicinin ev dizinini sizdirmak olurdu (`YedekBilgisi`nin
-    // `Serialize` turetmeme karariyla ayni sinif).
-    Ok(Json(json!({ "tasinan": tasinan })))
+    // Yanit sayi + ISTEMCININ KENDI gonderdigi damga tasir; dosya adi ya da
+    // YOL donmez (kapisiz bir uctan kullanicinin ev dizinini sizdirmak
+    // olurdu -- `YedekBilgisi`nin `Serialize` turetmeme karariyla ayni
+    // sinif). Damga geri veriliyor cunku kullanici bu dosyalari sonradan
+    // kendisi bulmak zorunda: onlari baska HICBIR SEY temizlemiyor ve
+    // arayuz "...-<damga> ile biten adlara tasindi" diyebilmeli
+    // (inceleme M-2).
+    Ok(Json(json!({ "tasinan": tasinan, "damga": istek.damga })))
 }
 
 #[cfg(test)]

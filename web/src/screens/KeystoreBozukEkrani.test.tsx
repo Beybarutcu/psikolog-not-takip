@@ -5,7 +5,7 @@ import { KeystoreBozukEkrani } from './KeystoreBozukEkrani'
 
 const VERI_DIZINI = '/Users/psikolog/Library/Application Support/psikolog-not-takip'
 
-function kur(onGeriYukle: () => void = () => {}, oncekileriKaldir = vi.fn(async () => ({ tasinan: 0 }))) {
+function kur(onGeriYukle: () => void = () => {}, oncekileriKaldir = vi.fn(async (_d: string) => ({ tasinan: 0, damga: _d }))) {
   return {
     ...render(
       <KeystoreBozukEkrani

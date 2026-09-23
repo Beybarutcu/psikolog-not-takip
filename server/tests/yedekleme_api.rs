@@ -382,10 +382,14 @@ async fn kilitliyken_onceki_dosyalar_kaldirilabilir_ve_yanit_veri_tasimaz() {
     for sizinti in ["Ayse", "onceki", "veri.db", "keystore", o.s.veri_dizini.to_str().unwrap()] {
         assert!(!metin.contains(sizinti), "kapisiz uc `{sizinti}` sizdirdi: {metin}");
     }
+    // Yanit YALNIZCA sayi + istemcinin KENDI gonderdigi damga (inceleme
+    // M-2). Ucuncu bir alan eklenirse burasi kirilir ve karar bilincli
+    // olarak verilir.
+    assert_eq!(json["damga"], "20260923-1430");
     assert_eq!(
         json.as_object().map(|m| m.len()),
-        Some(1),
-        "yanitta `tasinan` disinda alan olmamali: {metin}"
+        Some(2),
+        "yanitta `tasinan`+`damga` disinda alan olmamali: {metin}"
     );
 
     // Dosyalar TASINDI, silinmedi.
@@ -414,8 +418,16 @@ async fn bozuk_cift_ve_kalinti_varken_bile_kurtarma_yolu_acik() {
     std::fs::write(o.s.db_yolu().with_extension("db.onceki"), TEK_KOPYA).unwrap();
     std::fs::write(o.s.db_yolu(), b"bu bir SQLCipher veritabani degil").unwrap();
     cagir(&o.s, "POST", "/api/kilitle", None).await;
-    let (kod, _) = kilit_ac(&o, PAROLA).await;
+    let (kod, json) = kilit_ac(&o, PAROLA).await;
     assert_ne!(kod, StatusCode::OK, "on kosul: oturum ACILAMAMALI");
+    // ZINCIRIN KOPTUGU HALKA (inceleme KRITIK-1): arayuz geri yukleme
+    // ekranina YALNIZCA bu bayrakla duser. Bayrak gelmezse kullanici kilit
+    // ekraninda kalir ve temizleme eylemine -- ugruna kapiyi gevsettigimiz
+    // eyleme -- hic ulasamaz.
+    assert_eq!(
+        json["veritabani_bozuk"], true,
+        "acilamayan veritabani arayuzu geri yukleme ekranina dusurmeli: {json}"
+    );
 
     let geri_yukle = || {
         cagir(
@@ -507,6 +519,60 @@ async fn kalinti_geri_yuklemeyi_kilitler_ve_bakim_ucu_acar() {
     );
 
     assert_eq!(geri_yukle().await.0, StatusCode::OK, "kilit acilmis olmali");
+}
+
+/// Canlı çift EŞLEŞMİYORKEN (yarım kalmış bir geri almanın tam karşılığı)
+/// `kilit-ac` `veritabani_bozuk` bayrağını taşımalı (inceleme KRİTİK-1).
+///
+/// Bütünlük kontrolü yolu (`bozuk_veritabani_yedekten_geri_yuklenerek_kurtarilir`)
+/// bayrağı zaten taşıyordu; **`open_existing`'in patladığı** yol
+/// taşımıyordu ve fark kullanıcı için ölümcül: dosya hiç açılamadığında
+/// bütünlük kontrolüne sıra bile gelmez.
+#[tokio::test]
+async fn eslesmeyen_cift_kilit_acmada_veritabani_bozuk_bayragi_tasir() {
+    let o = ortam();
+    kur(&o).await;
+    danisan_ekle(&o, "Ayse Yilmaz").await;
+    cagir(&o.s, "POST", "/api/kilitle", None).await;
+
+    // Anahtar dosyasi SAGLAM (parola dogrulanacak) ama veritabani bu
+    // anahtarla acilamiyor: yarim kalmis bir geri almanin biraktigi durum.
+    std::fs::write(o.s.db_yolu(), b"bu bir SQLCipher veritabani degil").unwrap();
+
+    let (kod, json) = kilit_ac(&o, PAROLA).await;
+    assert_eq!(kod, StatusCode::INTERNAL_SERVER_ERROR, "{json}");
+    assert_eq!(json["veritabani_bozuk"], true, "{json}");
+    // `/api/durum` bu bilgiyi TASIYAMAZ (butunluk kontrolu anahtar ister,
+    // o uc ise kilitliyken de yanit verir) -- bayragin kilit acma
+    // yanitinda olmasinin sebebi tam olarak budur.
+    let (_, durum) = cagir(&o.s, "GET", "/api/durum", None).await;
+    assert_eq!(durum["kilitli"], true);
+    assert_eq!(durum["keystore_bozuk"], false);
+}
+
+/// **EKSI YON**: yanlış parola "veritabanı bozuk" DEĞİLDİR.
+///
+/// Bayrağı genişletirken en kolay hata bu olurdu: her hata yolunu
+/// `veritabani_bozuk: true` yapmak, parolasını yanlış yazan kullanıcıyı
+/// geri yükleme ekranına -- yani "kayıtlarınızı geri yükleyin" diyen bir
+/// ekrana -- düşürürdü. Bu iddia olmadan "her şeye bayrak koy" mutasyonu
+/// da yukarıdaki testi geçerdi (7. biçim).
+#[tokio::test]
+async fn yanlis_parola_veritabani_bozuk_bayragi_tasimaz() {
+    let o = ortam();
+    kur(&o).await;
+    cagir(&o.s, "POST", "/api/kilitle", None).await;
+
+    let (kod, json) = kilit_ac(&o, "yanlis-parola").await;
+    assert_eq!(kod, StatusCode::UNAUTHORIZED, "yanlis parola 401 olmali: {json}");
+    assert!(
+        json.get("veritabani_bozuk").is_none(),
+        "yanlis parola kullaniciyi geri yukleme ekranina DUSURMEMELI: {json}"
+    );
+
+    // ARTI YON: dogru parola hala aciyor -- "her seye 401 don" mutasyonu
+    // yukaridaki iddiayi da gecerdi.
+    assert_eq!(kilit_ac(&o, PAROLA).await.0, StatusCode::OK);
 }
 
 #[tokio::test]

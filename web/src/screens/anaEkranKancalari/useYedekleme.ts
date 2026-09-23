@@ -64,11 +64,11 @@ export function useYedekleme() {
     setSuruyor(true)
     setTemizlikBilgisi(null)
     try {
-      const { tasinan } = await yedekApi.oncekiDosyalariKaldir(yerelDamga(new Date()))
+      const { tasinan, damga } = await yedekApi.oncekiDosyalariKaldir(yerelDamga(new Date()))
       setTemizlikBilgisi(
         tasinan === 0
           ? 'Kenara kaldırılacak eski dosya bulunamadı.'
-          : `${tasinan} eski dosya yeniden adlandırıldı; hiçbiri silinmedi.`,
+          : `${tasinan} eski dosya "…onceki-${damga}" ile biten adlara taşındı; hiçbiri silinmedi.`,
       )
       return true
     } catch (e) {

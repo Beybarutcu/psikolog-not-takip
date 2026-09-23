@@ -1,4 +1,3 @@
-use crate::guard::veritabani_hatasi;
 use crate::state::{AppState, KeystoreDurumu};
 use axum::{extract::State, http::StatusCode, Json};
 use psikolog_core::crypto::keyring::CryptoError;
@@ -98,11 +97,41 @@ pub async fn kilit_ac(
                 Ok(c) => c,
                 Err(e) => {
                     eprintln!("kilit-ac: veritabanı açılamadı: {e}");
-                    // `veritabani_hatasi` her `DbError` varyantını -- `DosyaYok`
-                    // dahil -- kendi `Display` metniyle gövdeye taşır.
-                    // `DosyaYok`'un mesajı kullanıcıyı yedekten geri yüklemeye
-                    // yönlendirir, "parolanız hatalı" DEMEZ (bkz. Bulgu 1).
-                    return veritabani_hatasi(e);
+                    // Metin `DbError`'un kendi `Display`'inden gelir --
+                    // `DosyaYok` dahil, ve o mesaj kullanıcıyı yedekten geri
+                    // yüklemeye yönlendirir, "parolanız hatalı" DEMEZ
+                    // (bkz. Bulgu 1).
+                    //
+                    // `veritabani_bozuk: true` (inceleme KRITIK-1). Bu satır
+                    // olmadan ZINCIR KOPUYORDU ve kopuk yer tam olarak
+                    // kurtarmanin gerektigi yerdi:
+                    //
+                    //   yarim kalmis geri alma -> canli cift ESLESMIYOR ->
+                    //   kullanici uygulamayi kapatip acar -> kilit ekrani ->
+                    //   dogru parola -> `open_existing` patlar -> govde
+                    //   bayraksiz -> `api.ts` `VeritabaniBozukHata`
+                    //   FIRLATMAZ -> `App` `KilitEkrani`'nde kalir -> o
+                    //   ekranda "Ac" ve "Parolami unuttum"dan baska bir sey
+                    //   YOK -> kurtarma kodu da ayni hatayi verir -> geriye
+                    //   tek yorum kalir: YENIDEN KURAYIM.
+                    //
+                    // Verisi `.onceki` dosyalarinda dururken. Bu, `backup.rs`
+                    // modul basliginin onlemek icin yazildigi tuzagin ta
+                    // kendisi.
+                    //
+                    // Kapsam BILEREK genis (her `DbError`): buraya gelmek
+                    // parolanin/kurtarma kodunun ZATEN DOGRULANDIGI anlamina
+                    // gelir -- keystore acildi, anahtar elde. Yanlis parola
+                    // bu koda hic ulasmaz, asagidaki `WrongSecret` kolunda
+                    // 401 ile biter ve bayrak TASIMAZ (testle sabit:
+                    // `yanlis_parola_veritabani_bozuk_bayragi_tasimaz`).
+                    // Dolayisiyla buradaki her hata "dogru anahtar, ama bu
+                    // veritabani acilamiyor" sinifidir ve gidilecek yer her
+                    // zaman geri yukleme ekranidir.
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({ "hata": e.to_string(), "veritabani_bozuk": true })),
+                    );
                 }
             };
             // BÜTÜNLÜK KONTROLÜ — tasarım §8: "Veritabanı bozuk → açılışta

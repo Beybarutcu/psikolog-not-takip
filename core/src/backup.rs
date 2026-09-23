@@ -225,6 +225,21 @@ pub enum YedekHatasi {
          onu kapatıp yeniden deneyin."
     )]
     TemizlikBasarisiz(#[source] std::io::Error),
+    /// Kenara kaldırma eyleminde hedef ad **zaten kullanımda**: aynı damga
+    /// ile daha önce taşınmış dosyalar duruyor (pratikte aynı dakika içinde
+    /// ikinci tık).
+    ///
+    /// `TemizlikBasarisiz`'dan ayrı çünkü o mesaj sebebi **yanlış**
+    /// anlatıyordu ("başka bir program dosyaları tutuyor olabilir") ve
+    /// kullanıcıyı olmayan bir sorunu aramaya gönderirdi (inceleme M-1).
+    /// Üzerine yazmama kararı değişmedi: o dosyalar da kullanıcının
+    /// kopyaları.
+    #[error(
+        "Eski dosyalar taşınmadı: aynı zaman damgasıyla taşınmış dosyalar \
+         zaten var ve üzerlerine yazılmadı. HİÇBİR DOSYA SİLİNMEDİ. Bir \
+         dakika sonra yeniden deneyin."
+    )]
+    OncekiAdKullanimda,
     /// İstemciden gelen zaman damgası `YYYYAAGG-SSDD` biçiminde değil.
     ///
     /// Damga bir **dosya adına** giriyor; doğrulanmadan geçseydi `../` ya
@@ -970,10 +985,7 @@ pub fn onceki_dosyalari_kenara_kaldir(
     // Ayni dakika icinde iki kez calistirilmak bir kopyayi yok etmemeli.
     for (_, hedef) in &tasinacaklar {
         if hedef.exists() {
-            return Err(YedekHatasi::TemizlikBasarisiz(std::io::Error::new(
-                std::io::ErrorKind::AlreadyExists,
-                "hedef ad kullanimda",
-            )));
+            return Err(YedekHatasi::OncekiAdKullanimda);
         }
     }
     let mut tasinan = 0usize;
@@ -2580,8 +2592,17 @@ mod tests {
         let hata =
             onceki_dosyalari_kenara_kaldir(Some(&c), &o.db, &o.keystore_yolu, DAMGA, Cihaz::Masaustu)
                 .unwrap_err();
-        assert!(matches!(hata, YedekHatasi::TemizlikBasarisiz(_)), "gelen: {hata:?}");
-        assert!(hata.to_string().contains("SİLİNMEDİ"), "{hata}");
+        // Kendi varyanti (inceleme M-1): `TemizlikBasarisiz`'in mesaji bu
+        // alt durumda sebebi YANLIS anlatiyordu ("baska bir program
+        // dosyalari tutuyor olabilir") ve kullaniciyi olmayan bir sorunu
+        // aramaya gonderirdi.
+        assert!(matches!(hata, YedekHatasi::OncekiAdKullanimda), "gelen: {hata:?}");
+        let mesaj = hata.to_string();
+        assert!(mesaj.contains("SİLİNMEDİ"), "{mesaj}");
+        assert!(
+            !mesaj.contains("başka bir program"),
+            "sebep yanlis anlatilmamali: {mesaj}"
+        );
         assert_eq!(
             std::fs::read(o.db.with_extension(format!("db.onceki-{DAMGA}"))).unwrap(),
             b"BIRINCI",

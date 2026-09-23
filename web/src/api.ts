@@ -1012,7 +1012,7 @@ export const yedekApi = {
    * sözleşmesi: kullanıcı bu adı dosya listesinde okuyacak.
    */
   oncekiDosyalariKaldir: (damga: string) =>
-    istek<{ tasinan: number }>('/api/onceki-dosyalari-kaldir', {
+    istek<{ tasinan: number; damga: string }>('/api/onceki-dosyalari-kaldir', {
       method: 'POST',
       body: JSON.stringify({ damga }),
     }),

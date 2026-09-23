@@ -58,7 +58,7 @@ type Props = {
    * durabiliyor ve o anda oturum çoğu zaman AÇILAMAZ -- Ayarlar'daki eşine
    * ulaşmak mümkün olmazdı (bkz. `OncekiDosyalarEylemi`).
    */
-  oncekileriKaldir: (damga: string) => Promise<{ tasinan: number }>
+  oncekileriKaldir: (damga: string) => Promise<{ tasinan: number; damga: string }>
   /** Ekrandan çıkış yolu. Verilmezse "Vazgeç" gösterilmez. */
   onVazgec?: () => void
 }
@@ -206,6 +206,16 @@ export function GeriYuklemeEkrani({
         <code>keystore.json</code> dosyalarını da silmeyin.
       </p>
 
+      {/* ESKI DOSYALARI KENARA KALDIR — SECIMDEN BAGIMSIZ, HER ZAMAN GORUNUR.
+          (Inceleme KRITIK-1 + ONEMLI: once yalnizca "yedek secildi" dalinda
+          render ediliyordu.) Iki sebep:
+          1. Geri yukleme `.onceki` kalintisi yuzunden HIC BASLAMAZ; kullanici
+             o mesaji almak icin once bir yedek secmek zorunda kalmamali.
+          2. Bu ekran, canli cift acilamadigi icin gelinmis olabilir ve o
+             durumda yedek listesi BOS gelebilir -- secim dalina hic
+             girilmez, eylem de hic gorunmezdi. */}
+      <OncekiDosyalarEylemi kaldir={oncekileriKaldir} />
+
       {/* --- Yedek klasoru ve liste --- */}
       <h2 className="mt-6 text-base font-semibold">Yedeğinizi seçin</h2>
       <p className="mt-2 text-sm text-slate-600">
@@ -325,10 +335,6 @@ export function GeriYuklemeEkrani({
               {hata}
             </p>
           )}
-          {/* Geri yükleme `.onceki` kalıntısına takılabilir ve o anda oturum
-              çoğu zaman AÇILAMAZ; eylem bu yüzden Ayarlar'ın yanı sıra
-              BURADA da duruyor (bkz. `OncekiDosyalarEylemi`). */}
-          <OncekiDosyalarEylemi kaldir={oncekileriKaldir} />
           <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"

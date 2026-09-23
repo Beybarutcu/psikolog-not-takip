@@ -35,7 +35,7 @@ export function KeystoreBozukEkrani({
    * Bu ekranda oturum tanım gereği açılamaz; eylem kilit kapısının
    * dışında olduğu için buradan da çalışır (bkz. `OncekiDosyalarEylemi`).
    */
-  oncekileriKaldir: (damga: string) => Promise<{ tasinan: number }>
+  oncekileriKaldir: (damga: string) => Promise<{ tasinan: number; damga: string }>
 }) {
   return (
     <div className="mx-auto max-w-lg p-8">

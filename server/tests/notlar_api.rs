@@ -3538,14 +3538,23 @@ const ISTEMCISIZ_UCLAR: [(&str, &str); 0] = [];
 ///   kullanıcının tek çıkışı Finder'da elle dosya taşımak olurdu -- kapının
 ///   önlemek istediği şeyin ta kendisi. Uç hiçbir veri OKUMAZ (yanıt
 ///   yalnızca bir sayı) ve hiçbir şey SİLMEZ.
-const KILITSIZ_UCLAR: [(&str, &str); 7] = [
-    ("GET", "/api/durum"),
-    ("POST", "/api/kurulum"),
-    ("POST", "/api/kilit-ac"),
-    ("POST", "/api/kilitle"),
-    ("POST", "/api/yedekler"),
-    ("POST", "/api/geri-yukleme"),
-    ("POST", "/api/onceki-dosyalari-kaldir"),
+///
+/// Üçüncü alan, kilitliyken **beklenen durum kodudur** (aşağıdaki testteki
+/// birleşik geçerli gövdeyle). "`401` değil" demek yetmiyor; bkz. testin
+/// içindeki gerekçe (inceleme ÖNEMLİ-1).
+const KILITSIZ_UCLAR: [(&str, &str, StatusCode); 7] = [
+    ("GET", "/api/durum", StatusCode::OK),
+    // Kurulum zaten yapılmış: `409`. Uç çalışıyor ve kendi kararını
+    // veriyor -- kapıya takılmıyor.
+    ("POST", "/api/kurulum", StatusCode::CONFLICT),
+    ("POST", "/api/kilit-ac", StatusCode::OK),
+    ("POST", "/api/kilitle", StatusCode::OK),
+    // Yedek klasörü ayarı yok: `400` ("klasörün yolunu yazın"). Kapı
+    // değil, uç noktanın kendi doğrulaması.
+    ("POST", "/api/yedekler", StatusCode::BAD_REQUEST),
+    ("POST", "/api/geri-yukleme", StatusCode::BAD_REQUEST),
+    // Taşınacak `.onceki` yok: `200 {"tasinan": 0}`.
+    ("POST", "/api/onceki-dosyalari-kaldir", StatusCode::OK),
 ];
 
 /// İstisna listesinin **iki yönlü** kontrolü.
@@ -3588,7 +3597,7 @@ async fn kilitsiz_uclar_bilincli_digerlerinin_hepsi_401() {
     let rotalar = sunucu_rotalari();
     // ON KOSUL: istisna listesi bayat olmasin -- adi yazili her uc
     // GERCEKTEN bir rota olmali.
-    for (metot, yol) in KILITSIZ_UCLAR {
+    for (metot, yol, _) in KILITSIZ_UCLAR {
         assert!(
             rotalar.contains(&(metot.to_string(), yol.to_string())),
             "istisna listesi bayat: {metot} {yol} artik bir rota degil"
@@ -3597,13 +3606,13 @@ async fn kilitsiz_uclar_bilincli_digerlerinin_hepsi_401() {
 
     for (metot, yol) in &rotalar {
         let somut = somutlastir(yol);
+        // Her cagridan ONCE yeniden kilitlenir: listedeki `/api/kilit-ac`
+        // basariyla acar ve sonraki uclar artik kilitli bir oturum
+        // olcmezdi.
+        kilitle(&s).await;
         // GOVDE: istisna listesindeki uclarin extractor'i BASARIYLA
-        // cozulmeli. Bos bir govde onlarda 400/422 uretir ve "401 DEGIL"
-        // iddiasi handler'a hic girmeden -- yani hicbir sey olcmeden --
-        // saglanirdi (6. bicim: islem oncesi durumla tatmin olan
-        // assertion; mutasyonla dogrulandi: ucu kapinin arkasina alan
-        // degisiklik bos govdeyle YESIL kaliyordu). Serde bilinmeyen
-        // alanlari yok saydigi icin tek bir birlesik govde hepsine yetiyor.
+        // cozulmeli. Serde bilinmeyen alanlari yok saydigi icin tek bir
+        // birlesik govde hepsine yetiyor.
         let govde = json!({
             "parola": "gizliparola",
             "damga": "20260101-0000",
@@ -3611,14 +3620,35 @@ async fn kilitsiz_uclar_bilincli_digerlerinin_hepsi_401() {
             "ad_soyad": "X",
         });
         let (kod, _) = cagir(&s, metot, &somut, Some(govde)).await;
-        if KILITSIZ_UCLAR.iter().any(|(m, y)| m == metot && y == yol) {
-            // (1) Istisna GEREKLI: bu uc kilitliyken 401 DONMEMELI.
+        if let Some((_, _, beklenen)) =
+            KILITSIZ_UCLAR.iter().find(|(m, y, _)| m == metot && y == yol)
+        {
+            // (1) Istisna GEREKLI **ve** uc GERCEKTEN CALISIYOR.
+            //
+            // # Neden `assert_ne!(kod, 401)` YETMIYOR (inceleme ONEMLI-1)
+            //
+            // O iddia, handler'a hic GIRILMEDEN de saglanabiliyordu: govde
+            // sozlesmesi degisip extractor `400/422` dondururse "401 degil"
+            // dogru olur ve test yesil kalir (`docs/test-yesil-ama-
+            // korumuyor.md` 6. bicim). Inceleme bunu olcerek gosterdi --
+            // `OncekiIstegi`'ye zorunlu bir alan eklenip AYNI ANDA uc
+            // kapinin arkasina alininca test YESIL kalmisti: kapiya geri
+            // alinmis bir KURTARMA ucu sessizce gecti.
+            //
+            // Cozum: her istisnanin BEKLENEN durum kodu listede yazili ve
+            // birebir karsilastiriliyor. Govde sozlesmesi degisirse test,
+            // kurtarma yolu kirilmadan ONCE kirilir.
+            assert_eq!(
+                kod, *beklenen,
+                "{metot} {yol} KILITSIZ_UCLAR'da ama kilitliyken {kod} donuyor (beklenen \
+                 {beklenen}). Ya kapinin arkasina alindi (kurtarma yolu kirilmis olabilir), \
+                 ya govde sozlesmesi degisti ve uc artik CALISMIYOR, ya da istisna gereksiz."
+            );
             assert_ne!(
                 kod,
                 StatusCode::UNAUTHORIZED,
-                "{metot} {yol} KILITSIZ_UCLAR'da ama kilitliyken 401 donuyor -- ya kapinin \
-                 arkasina alindi (o zaman kurtarma yolu kirilmis olabilir) ya da istisna \
-                 gereksiz ve listeden silinmeli"
+                "{metot} {yol}: bir istisnanin beklenen kodu 401 OLAMAZ -- o zaman istisna \
+                 degildir"
             );
         } else {
             // (2) Kapisiz kalan yeni bir uc sessizce gecemez.

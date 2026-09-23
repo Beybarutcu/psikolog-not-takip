@@ -29,7 +29,7 @@ function kur(
     listeHatasi?: Error
     geriYukle?: GeriYukleMock
     onTamamlandi?: () => void
-    oncekileriKaldir?: (damga: string) => Promise<{ tasinan: number }>
+    oncekileriKaldir?: (damga: string) => Promise<{ tasinan: number; damga: string }>
   } = {},
 ) {
   const yedekleriGetir = vi.fn(async () => {
@@ -39,7 +39,7 @@ function kur(
   const geriYukle: GeriYukleMock =
     secenek.geriYukle ?? vi.fn(async (_g: GeriYukleGirdi) => ({ tarih: '2026-09-08' }))
   const oncekileriKaldir =
-    secenek.oncekileriKaldir ?? vi.fn(async (_d: string) => ({ tasinan: 2 }))
+    secenek.oncekileriKaldir ?? vi.fn(async (_d: string) => ({ tasinan: 2, damga: _d }))
   const sonuc = render(
     <GeriYuklemeEkrani
       veriDizini={VERI_DIZINI}
@@ -287,9 +287,10 @@ describe('GeriYuklemeEkrani — davranış', () => {
     // durur ve tam o anda oturum cogu zaman ACILAMAZ -- eylem yalnizca
     // Ayarlar'da dursaydi kullanici ona hic ulasamaz, geriye Finder'da elle
     // dosya tasimak kalirdi (ve oradaki ilk refleks SILMEK).
-    const { oncekileriKaldir } = kur()
-    await screen.findByText('2026-09-08')
-    await userEvent.click(screen.getAllByRole('radio')[0])
+    // Eylem SECIMDEN BAGIMSIZ gorunur: bu ekrana canli cift acilamadigi
+    // icin gelinmis olabilir ve yedek listesi BOS gelebilir.
+    const { oncekileriKaldir } = kur({ liste: { hedef_dizin: '/Volumes/YEDEK/terapi', yedekler: [] } })
+    await screen.findByRole('heading', { name: 'Yedekten geri yükleme' })
 
     const dugme = screen.getByRole('button', { name: /kenara kaldır/i })
     // Metin ne YAPMADIGINI da soyluyor.

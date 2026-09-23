@@ -1,5 +1,11 @@
 pub mod appointments;
 pub mod attachments;
+/// Denetim kaydını OKUMA ucu (Görev 7 Plan 7, KVKK 2018/10) — salt okur,
+/// kapının içinde. Tek handler `audit::son_kayitlar_sayfali`yi çağırır ve
+/// **hiçbir zaman** `audit::kaydet` çağırmaz (bkz. modülün kendi başlığı):
+/// okumak yeni bir silinemez satır yazsaydı log kendini besler, okundukça
+/// büyürdü.
+pub mod audit;
 /// Yedek **alma** ve yedek klasörü ayarı — kilit kapısının içinde.
 pub mod backup;
 pub mod clients;

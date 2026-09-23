@@ -175,6 +175,11 @@ fn api_router() -> Router<AppState> {
             axum::routing::delete(routes::tags::kaldir),
         )
         .route("/etiketler/{id}/seanslar", get(routes::tags::seanslar))
+        // Denetim kaydini OKUMA ucu (Gorev 7 Plan 7, KVKK 2018/10): kapinin
+        // icinde, 38. veri handler'i, salt okur. Tarih araligi + varlik
+        // turu suzgeci ve sayfalama sorgu dizesinde -- gerekce icin bkz.
+        // `routes::audit` modul basligi.
+        .route("/denetim-kayitlari", get(routes::audit::liste))
         // --- Yedekleme ve geri yukleme (tasarim §7 ve §8) -----------------
         //
         // Yedek ALMA kapinin ICINDE (`routes::backup`, 27. veri handler'i):

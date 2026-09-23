@@ -163,6 +163,32 @@ function hataYaniti(kod: number, mesaj: string): Response {
   return { ok: false, status: kod, json: async () => ({ hata: mesaj }) } as unknown as Response
 }
 
+// `useDenetimKayitlari` BİLEREK burada çağrılmıyor: bu kabuk yalnızca
+// yedekleme/parola akışlarının GERÇEK async davranışını ölçmek için var
+// (bkz. üstteki açıklama) ve aşağıdaki `fetch` sahtesi yalnızca
+// `/api/yedek(ler)` yollarını biliyor -- gerçek kanca çağrılsaydı
+// `/api/denetim-kayitlari` isteği "beklenmeyen istek" hatasıyla patlardı.
+// Denetim akışının kendi davranışı ayrı bir `describe` bloğunda,
+// `/api/denetim-kayitlari`i bilen kendi sahte `fetch`iyle test ediliyor.
+function sabitDenetim() {
+  return {
+    kayitlar: [],
+    sayfa: 0,
+    sonrakiSayfaVar: false,
+    baslangic: '',
+    setBaslangic: () => {},
+    bitis: '',
+    setBitis: () => {},
+    varlik: '',
+    setVarlik: () => {},
+    yukleniyor: false,
+    hata: null,
+    suzgecUygula: () => {},
+    sonrakiSayfa: () => {},
+    oncekiSayfa: () => {},
+  }
+}
+
 function Kabuk() {
   const yedekleme = useYedekleme()
   const parola = useParolaFormu()
@@ -173,6 +199,7 @@ function Kabuk() {
       saklama={{ dolanlar: [], onAc: () => {} }}
       depolama={null}
       onGeriYukle={() => {}}
+      denetim={sabitDenetim()}
     />
   )
 }

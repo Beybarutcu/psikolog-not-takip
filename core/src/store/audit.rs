@@ -441,6 +441,91 @@ pub fn son_kayitlar(conn: &Connection, limit: i64) -> Result<Vec<AuditKaydi>, ru
     Ok(kayitlar)
 }
 
+/// `son_kayitlar_sayfali`'nin filtre kümesi (Görev 7 Plan 7 -- denetim
+/// kaydını OKUMA ucu).
+///
+/// Üçü de `Option`: boş bırakılan filtre uygulanmaz. Biçim doğrulaması
+/// **burada yapılmaz** -- `baslangic`/`bitis` çağıran katmanda
+/// (`server::routes::audit`, `zaman::tarih_gecerli_mi` ile) doğrulanır.
+/// Bilinçli bir katman sınırı: `clients` bu modülü (audit) kullanıyor,
+/// tersi olmamalı -- bu modül `clients::DepoHatasi`'na bağımlı olsaydı
+/// döngüsel bir kavramsal bağımlılık (audit -> clients -> audit) doğardı.
+#[derive(Debug, Default)]
+pub struct DenetimSuzgeci {
+    /// `YYYY-AA-GG`, dahil (o günün `00:00:00Z`'sinden itibaren).
+    pub baslangic: Option<String>,
+    /// `YYYY-AA-GG`, dahil (o günün `23:59:59Z`'sine kadar).
+    pub bitis: Option<String>,
+    /// Tam eşleşme (`varlik` sütunu), ör. `"client"`, `"progress_note"`.
+    pub varlik: Option<String>,
+}
+
+/// `son_kayitlar`'ın filtre + sayfalama kardeşi -- denetim kaydını OKUMA
+/// ucunun (Görev 7 Plan 7) tek veri kaynağı.
+///
+/// # KRİTİK: bu fonksiyon İKİNCİ bir denetim satırı YAZMAZ
+///
+/// Modül başlığındaki ilke -- *"denetlenebilir olmayan bir denetim kaydı,
+/// olmayan denetim kaydıyla aynı şeydir"* -- bu görevin VAR OLUŞ nedeni:
+/// `son_kayitlar` üretimde hiçbir yerden çağrılmıyordu. Ama bunu okunabilir
+/// KILARKEN yeni bir tuzak açılır: "denetim kaydını görüntülemek" de
+/// başlı başına bir erişimdir ve bu fonksiyonu `Eylem::Goruntuleme` ile
+/// `kaydet`e sarmak cazip görünebilir. Bu **bilerek YAPILMAZ**: audit_log
+/// silinemez bir tablodur ve terapist bu ekranı tekrar tekrar açıp
+/// sayfalarsa (ya da yarın eklenecek bir otomatik yenileme), her okuma
+/// kendi hakkında bir satır yazar -- log kendini besler ve okundukça büyür,
+/// tam olarak modül başlığının uyardığı "kendi kendini yenileyen ekran"
+/// sınıfı. Fonksiyon gövdesi bu yüzden SAF bir `SELECT`tir: hiçbir `INSERT`
+/// içermez, `kaydet`/`yaz`'ı çağırmaz. Kural rota katmanında
+/// `tests/notlar_api.rs::rota_modulleri_audit_kaydet_cagirmaz` ile
+/// yapısal olarak, davranışsal olarak da
+/// `tests/notlar_api.rs::denetim_ucu_okuma_ikinci_bir_satir_uretmez` ile
+/// sabitlenir (mutasyonla kanıtlandı: rotaya bir `kaydet` çağrısı eklemek
+/// o testi kırmızıya döndürür).
+///
+/// # Sayfalama
+///
+/// 10 yıllık bir günlükte ~190 bin satır beklenir (bkz. modül başlığı hacim
+/// politikası); `limit`/`offset` çağıranın (rota katmanı) sorumluluğudur,
+/// bu fonksiyon yalnızca SQL'e aktarır -- `son_kayitlar`'ın zaten sahip
+/// olduğu `LIMIT`'e bir `OFFSET` ve üç isteğe bağlı filtre eklenmiş hâli.
+///
+/// Sıralama `son_kayitlar` ile aynı gerekçeyle `id DESC`'tir (bkz. o
+/// fonksiyonun dokümantasyonu).
+pub fn son_kayitlar_sayfali(
+    conn: &Connection,
+    suzgec: &DenetimSuzgeci,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<AuditKaydi>, rusqlite::Error> {
+    // Tarih sınırları `olay_zamani` ile AYNI biçime (RFC3339, saniye
+    // çözünürlüğü, `Z` ekli) genişletiliyor ki sözlüksel karşılaştırma
+    // (`>=`/`<=`) doğru çalışsın -- `pencere_esigi`teki ilkeyle aynı.
+    let baslangic = suzgec.baslangic.as_deref().map(|t| format!("{t}T00:00:00Z"));
+    let bitis = suzgec.bitis.as_deref().map(|t| format!("{t}T23:59:59Z"));
+    let mut stmt = conn.prepare(
+        "SELECT olay_zamani, eylem, varlik, varlik_id, cihaz, ayrinti
+         FROM audit_log
+         WHERE (?1 IS NULL OR olay_zamani >= ?1)
+           AND (?2 IS NULL OR olay_zamani <= ?2)
+           AND (?3 IS NULL OR varlik = ?3)
+         ORDER BY id DESC LIMIT ?4 OFFSET ?5",
+    )?;
+    let kayitlar = stmt
+        .query_map(rusqlite::params![baslangic, bitis, suzgec.varlik, limit, offset], |r| {
+            Ok(AuditKaydi {
+                olay_zamani: r.get(0)?,
+                eylem: r.get(1)?,
+                varlik: r.get(2)?,
+                varlik_id: r.get(3)?,
+                cihaz: r.get(4)?,
+                ayrinti: r.get(5)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(kayitlar)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -881,5 +966,100 @@ mod tests {
             "modul basligindaki pencere suresi BIRLESTIRME_PENCERESI_DK ile \
              artik eslesmiyor olabilir (aranan: {beklenen})"
         );
+    }
+
+    // =====================================================================
+    // son_kayitlar_sayfali -- Gorev 7 Plan 7 (denetim kaydini OKUMA ucu)
+    // =====================================================================
+
+    #[test]
+    fn sayfali_varlik_turune_gore_suzer() {
+        let (_d, c) = baglanti();
+        kaydet(&c, Eylem::Goruntuleme, "client", "1", Cihaz::Masaustu, None, LogHacmi::HerCagri)
+            .unwrap();
+        kaydet(&c, Eylem::Duzenleme, "progress_note", "9", Cihaz::Masaustu, None, LogHacmi::HerCagri)
+            .unwrap();
+
+        let suzgec = DenetimSuzgeci { varlik: Some("client".into()), ..Default::default() };
+        let kayitlar = son_kayitlar_sayfali(&c, &suzgec, 10, 0).unwrap();
+        assert_eq!(kayitlar.len(), 1, "yalnizca 'client' donmeli");
+        assert_eq!(kayitlar[0].varlik, "client");
+    }
+
+    #[test]
+    fn sayfali_tarih_araligina_gore_suzer() {
+        let (_d, c) = baglanti();
+        kaydet(&c, Eylem::Giris, "session", "1", Cihaz::Masaustu, None, LogHacmi::HerCagri)
+            .unwrap();
+
+        // Uzak GELECEK bir baslangic: bugunku (gercek saatle yazilan) satir
+        // asla bu araliga girmemeli.
+        let suzgec_bos =
+            DenetimSuzgeci { baslangic: Some("2099-01-01".into()), ..Default::default() };
+        assert_eq!(son_kayitlar_sayfali(&c, &suzgec_bos, 10, 0).unwrap().len(), 0);
+
+        // Uzak GECMIS bir bitis: bugunku satir asla bunun ALTINDA olamaz.
+        let suzgec_bos2 =
+            DenetimSuzgeci { bitis: Some("2000-01-01".into()), ..Default::default() };
+        assert_eq!(son_kayitlar_sayfali(&c, &suzgec_bos2, 10, 0).unwrap().len(), 0);
+
+        // Genis bir aralik (dun -> yarin benzeri): satir donmeli.
+        let suzgec_dolu = DenetimSuzgeci {
+            baslangic: Some("2000-01-01".into()),
+            bitis: Some("2099-01-01".into()),
+            varlik: None,
+        };
+        assert_eq!(son_kayitlar_sayfali(&c, &suzgec_dolu, 10, 0).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn sayfali_limit_ve_offset_ile_sayfalanir() {
+        let (_d, c) = baglanti();
+        for i in 0..5 {
+            kaydet(
+                &c,
+                Eylem::Goruntuleme,
+                "client",
+                &i.to_string(),
+                Cihaz::Masaustu,
+                None,
+                LogHacmi::HerCagri,
+            )
+            .unwrap();
+        }
+        let suzgec = DenetimSuzgeci::default();
+
+        let sayfa0 = son_kayitlar_sayfali(&c, &suzgec, 2, 0).unwrap();
+        assert_eq!(sayfa0.len(), 2);
+        // id DESC: en son eklenen ("4") once gelir.
+        assert_eq!(sayfa0[0].varlik_id, "4");
+        assert_eq!(sayfa0[1].varlik_id, "3");
+
+        let sayfa1 = son_kayitlar_sayfali(&c, &suzgec, 2, 2).unwrap();
+        assert_eq!(sayfa1.len(), 2);
+        assert_eq!(sayfa1[0].varlik_id, "2");
+        assert_eq!(sayfa1[1].varlik_id, "1");
+
+        let sayfa2 = son_kayitlar_sayfali(&c, &suzgec, 2, 4).unwrap();
+        assert_eq!(sayfa2.len(), 1, "son sayfada tek satir kalmali");
+        assert_eq!(sayfa2[0].varlik_id, "0");
+    }
+
+    /// Bu görevin en kritik kuralının çekirdek katmanındaki güvencesi:
+    /// `son_kayitlar_sayfali` SAF bir okuma olmalı, `audit_log`'a hiçbir
+    /// `INSERT` bırakmamalı. HTTP seviyesindeki davranışsal eşi
+    /// `server/tests/notlar_api.rs::denetim_ucu_okuma_ikinci_bir_satir_uretmez`.
+    #[test]
+    fn sayfali_okuma_ikinci_bir_satir_yazmaz() {
+        let (_d, c) = baglanti();
+        kaydet(&c, Eylem::Goruntuleme, "client", "1", Cihaz::Masaustu, None, LogHacmi::HerCagri)
+            .unwrap();
+        let suzgec = DenetimSuzgeci::default();
+
+        let once = log_sayisi(&c);
+        for _ in 0..10 {
+            son_kayitlar_sayfali(&c, &suzgec, 100, 0).unwrap();
+        }
+        assert_eq!(log_sayisi(&c), once, "okuma audit_log'a satir eklememeli");
     }
 }

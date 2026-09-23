@@ -62,13 +62,14 @@ function jsonYanit(govde: unknown): Response {
 //
 // `AnaEkran` artik mount'ta `GET /api/saklama-suresi-dolanlar` ve
 // `GET /api/depolama-durumu` de cagiriyor (HTTP -> arayuz taramasinin
-// bagladigi uclar). Bu dosyadaki ON taklidin hepsi bilinmeyen yolda
-// FIRLATIYOR; ortak yardimci her taklide ayri dal eklemek yerine tek
-// yerde cevap veriyor.
+// bagladigi uclar). Ayarlar sekmesi gorunur oldugunda `GET
+// /api/denetim-kayitlari` de eklendi (Gorev 7 Plan 7, `useDenetimKayitlari`).
+// Bu dosyadaki ON UC taklidin hepsi bilinmeyen yolda FIRLATIYOR; ortak
+// yardimci her taklide ayri dal eklemek yerine tek yerde cevap veriyor.
 //
-// VARSAYILAN NOTR: hicbir dosyanin suresi dolmamis, esik asilmamis --
-// yani iki yeni bolum de gorunmez ve mevcut testlerin ekran iddialari
-// degismez. Onlari goren testler degerleri kendileri kuruyor.
+// VARSAYILAN NOTR: hicbir dosyanin suresi dolmamis, esik asilmamis, denetim
+// listesi bos -- yani ucu de gorunmez/bos ve mevcut testlerin ekran
+// iddialari degismez. Onlari goren testler degerleri kendileri kuruyor.
 let sunucuSaklamaDolanlar: typeof danisanlar = []
 let sunucuDepolama = { toplam_boyut: 0, esik: 500 * 1024 * 1024, uyari: false }
 
@@ -137,6 +138,12 @@ function ekUcYaniti(yol: string, secenekler?: RequestInit): Response | null {
   if (yol === '/api/etiketler') return jsonYanit([])
   if (yol.startsWith('/api/saklama-suresi-dolanlar')) return jsonYanit(sunucuSaklamaDolanlar)
   if (yol.startsWith('/api/depolama-durumu')) return jsonYanit(sunucuDepolama)
+  // Denetim kaydı (Görev 7 Plan 7): Ayarlar sekmesi görünür olunca bir kez
+  // çekilir (`useDenetimKayitlari`). Bu dosyanın testleri onu ÖLÇMÜYOR (bkz.
+  // `AyarlarSekmesi.test.tsx`teki kendi davranış testleri); sabit boş yanıt.
+  if (yol.startsWith('/api/denetim-kayitlari')) {
+    return jsonYanit({ kayitlar: [], sayfa: 0, sonraki_sayfa_var: false })
+  }
   // `/api/yedekler` ONCE: `/api/yedek` onun oneki.
   if (yol.startsWith('/api/yedekler')) {
     if (yedekListeHatasi) return hataYaniti(400, yedekListeHatasi)

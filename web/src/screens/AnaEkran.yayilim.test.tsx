@@ -288,6 +288,12 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
   if (yol.startsWith('/api/depolama-durumu')) {
     return json({ toplam_boyut: 0, esik: 500 * 1024 * 1024, uyari: false })
   }
+  // Denetim kaydı (Görev 7 Plan 7): Ayarlar sekmesi görünür olunca bir kez
+  // çekilir (`useDenetimKayitlari`). Bu dosyanın testleri onu ÖLÇMÜYOR; sabit
+  // boş yanıt (`saklama-suresi-dolanlar`/`depolama-durumu` ile aynı desen).
+  if (yol.startsWith('/api/denetim-kayitlari')) {
+    return json({ kayitlar: [], sayfa: 0, sonraki_sayfa_var: false })
+  }
   if (yol.startsWith('/api/yedekler')) {
     return json({ hedef_dizin: '/Volumes/YEDEK', yedekler: [{ dosya_adi: 'y.db', tarih: '2026-09-09', boyut: 1 }] })
   }

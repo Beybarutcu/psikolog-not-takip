@@ -12,6 +12,7 @@ import { TakvimSekmesi } from '../takvim/TakvimSekmesi'
 import { useDanisanDosyasi } from './anaEkranKancalari/useDanisanDosyasi'
 import { useDanisanListesi } from './anaEkranKancalari/useDanisanListesi'
 import { useDanisanSeanslari } from './anaEkranKancalari/useDanisanSeanslari'
+import { useDenetimKayitlari } from './anaEkranKancalari/useDenetimKayitlari'
 import { useDosyaNotu } from './anaEkranKancalari/useDosyaNotu'
 import { useEtiketler } from './anaEkranKancalari/useEtiketler'
 import { useParolaFormu } from './anaEkranKancalari/useParolaFormu'
@@ -37,6 +38,8 @@ import { yerelGun } from './anaEkranKancalari/yerelGun'
  *   - `useSeansNotlari`    — açık seansın resmî notu, geçmişi ve özel notu
  *   - `useDanisanDosyasi`  — açık danışan kartı, ekleri ve depolama durumu
  *   - `useDanisanListesi`  — danışan listesi, ekleme, arşivleme, saklama uyarısı
+ *   - `useDenetimKayitlari`— Ayarlar > Denetim kaydı: salt okunur liste, süzgeç,
+ *                            sayfalama (Görev 7 Plan 7)
  *   - `useDanisanSeanslari`— açık danışanın Seanslar alt sekmesindeki listesi,
  *                            seçili seansı ve yamaları
  *   - `useDosyaNotu`       — danışan dosyasında seçili seansın resmî notu
@@ -213,6 +216,11 @@ export function AnaEkran({
   // Ayarlar sekmesinde gösterildiği için terapist Ayarlar'ı hiç açmasa bile
   // mount'ta atılan bir istek kalıcı, hiç görülmeyecek bir kayıt bırakırdı.
   const liste = useDanisanListesi({ ayarlarGorunur: sekme === 'ayarlar' })
+  // Denetim kaydı (Görev 7 Plan 7): AYNI `ayarlarGorunur` deseni, ama farklı
+  // gerekçeyle -- bkz. `useDenetimKayitlari` modül başlığı ("okumak yeni bir
+  // satır yazmaz" ama "terapistin bakmadığı şey için istek atılmaz" hâlâ
+  // geçerli).
+  const denetim = useDenetimKayitlari({ ayarlarGorunur: sekme === 'ayarlar' })
   const dosya = useDanisanDosyasi({ onYetkisiz: () => oturumKapandi() })
   // Danışan dosyasının alt sekmesi (Seanslar/Bilgiler). BURADA, bileşende
   // değil (son inceleme M1): `DanisanDosyasi` sekme gidip gelince yeniden
@@ -675,6 +683,7 @@ export function AnaEkran({
             saklama={{ dolanlar: liste.saklamaDolanlar, onAc: (id) => danisanaGit(id) }}
             depolama={dosya.depolama}
             onGeriYukle={onGeriYukle}
+            denetim={denetim}
           />
         </div>
       )}

@@ -999,6 +999,63 @@ export const yedekApi = {
     }),
 }
 
+/**
+ * Tek bir denetim kaydı satırı (`GET /api/denetim-kayitlari` yanıtı,
+ * sunucudaki `AuditKaydi`, Görev 7 Plan 7).
+ *
+ * Yalnızca kimlik ve tür taşır -- not içeriği, dosya adı, arama terimi,
+ * etiket adı **hiçbir zaman** buraya girmez: `store::audit::Ayrinti` kapalı
+ * bir enumdur ve doğrulanmamış serbest metin taşıyan bir varyantı yoktur
+ * (bkz. sunucudaki `store::audit` modül başlığı). `varlik_id` ham bir
+ * kimliktir (ör. bir danışan kimliği) -- bu ekran onu bir isme ÇEVİRMEZ,
+ * çevirmek hem hassas veri (danışan adı) eklerdi hem de her satır için
+ * yeni bir `HerCagri` `goruntuleme` satırı üretirdi (bkz.
+ * `useDenetimKayitlari` modül başlığı).
+ */
+export type DenetimKaydi = {
+  olay_zamani: string
+  eylem: string
+  varlik: string
+  varlik_id: string
+  cihaz: string
+  ayrinti: string | null
+}
+
+/** `GET /api/denetim-kayitlari` yanıtı. */
+export type DenetimSayfasi = {
+  kayitlar: DenetimKaydi[]
+  sayfa: number
+  /** `true` ise `sayfa + 1` ile bir sonraki sayfa çekilebilir. */
+  sonraki_sayfa_var: boolean
+}
+
+/**
+ * Denetim kaydı (audit log) OKUMA istemcisi (Görev 7 Plan 7, KVKK 2018/10).
+ *
+ * # Bu ucu çağırmak yeni bir denetim satırı YAZMAZ
+ *
+ * Sunucudaki `routes::audit::liste` salt okur, `audit::kaydet`i hiç
+ * çağırmaz (bkz. o modülün başlığı) -- yani bu fonksiyonu çağırmak "bir
+ * denetim satırı daha yazılsın" riski TAŞIMIYOR. Yine de gereksiz çağrı
+ * boşuna sunucu/DB yüküdür; çağıran taraf (`useDenetimKayitlari`) yine de
+ * yalnızca Ayarlar sekmesi görünürken ve kullanıcı açıkça istediğinde çağırır.
+ */
+export const denetimApi = {
+  kayitlar: (suzgec: {
+    sayfa?: number
+    baslangic?: string
+    bitis?: string
+    varlik?: string
+  }): Promise<DenetimSayfasi> => {
+    const p = new URLSearchParams()
+    if (suzgec.sayfa !== undefined) p.set('sayfa', String(suzgec.sayfa))
+    if (suzgec.baslangic) p.set('baslangic', suzgec.baslangic)
+    if (suzgec.bitis) p.set('bitis', suzgec.bitis)
+    if (suzgec.varlik) p.set('varlik', suzgec.varlik)
+    return istek<DenetimSayfasi>(`/api/denetim-kayitlari?${p}`)
+  },
+}
+
 export const api = {
   durumAl: () =>
     istek<{

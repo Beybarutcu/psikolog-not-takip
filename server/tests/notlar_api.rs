@@ -305,6 +305,16 @@ async fn kilitliyken_govde_ve_sorgu_alan_her_uc_once_401_doner() {
             None,
         ),
         ("appointments.rs", "cakisma", "GET", format!("/api/cakisma?x={KANARYA}"), None),
+        (
+            "audit.rs",
+            "liste",
+            "GET",
+            // `sayfa: Option<i64>` -- alan opsiyonel ama tipi sayisal; harf
+            // gonderilince ayristirma coker (`notes.rs::danisan_listesi`nin
+            // `limit={KANARYA}`iyle AYNI mekanizma).
+            format!("/api/denetim-kayitlari?sayfa={KANARYA}"),
+            None,
+        ),
         ("backup.rs", "al", "POST", "/api/yedek".into(), bozuk_govde.clone()),
         ("clients.rs", "olustur", "POST", "/api/danisanlar".into(), bozuk_govde.clone()),
         ("clients.rs", "guncelle_uc", "PATCH", format!("/api/danisanlar/{cid}"), bozuk_govde.clone()),
@@ -1809,6 +1819,133 @@ async fn eksik_sorgu_parametresi_turkce_json_hata_dondurur() {
 }
 
 // =====================================================================
+// 9b. DENETIM KAYITLARI -- Gorev 7 Plan 7 (KVKK 2018/10)
+// =====================================================================
+
+/// Bu görevin EN KRİTİK kuralı: denetim kaydını OKUMAK yeni bir silinemez
+/// satır YAZMAMALI (bkz. `routes::audit` ve
+/// `store::audit::son_kayitlar_sayfali` modül başlıkları -- "log kendini
+/// besler, okundukça büyür"). Ucu ÜST ÜSTE ve FARKLI sayfalarla defalarca
+/// çağırıp `audit_log`'un TAMAMEN değişmediğini doğrular.
+///
+/// Mutasyonla kanıtlandı: `routes::audit::liste`'nin gövdesine bir
+/// `audit::kaydet(...)` çağrısı eklemek bu testi kırmızıya döndürür (bkz.
+/// Görev 7 raporu).
+#[tokio::test]
+async fn denetim_ucu_okuma_ikinci_bir_satir_uretmez() {
+    let (_d, s, cid, rid) = dolu_state().await;
+    // Bilinen bir miktar GERCEK etkinlik uret ki asagidaki karsilastirma bos
+    // bir listeyi bos bir listeyle kiyaslayip totolojiye dusmesin.
+    cagir(&s, "GET", &format!("/api/danisanlar/{cid}"), None).await;
+    cagir(
+        &s,
+        "PUT",
+        &format!("/api/randevular/{rid}/not"),
+        Some(json!({"sablon":"dap","icerik":"x"})),
+    )
+    .await;
+
+    let once = log_satirlari(&s).await;
+    assert!(!once.is_empty(), "on kosul: log bos olmamali");
+
+    for sayfa in 0..5 {
+        let (kod, _yanit) =
+            cagir(&s, "GET", &format!("/api/denetim-kayitlari?sayfa={sayfa}"), None).await;
+        assert_eq!(kod, StatusCode::OK);
+    }
+    let sonra = log_satirlari(&s).await;
+    assert_eq!(once, sonra, "denetim kaydini OKUMAK yeni bir satir birakmamali");
+}
+
+/// Arti yon: liste gercekten dolu, en yeniden eskiye sirali, varlik/tarih
+/// suzgecleri calisiyor -- VE gövdede hassas veri (not icerigi, danisan
+/// adi) yok. Gizlilik iddiasi once VERININ GERCEKTEN DONDUGUNU (on kosul)
+/// dogrular, yoksa bos bir yanitla da saglanirdi (bkz. dosya basligi).
+#[tokio::test]
+async fn denetim_kayitlari_listelenir_siralanir_ve_hassas_veri_tasimaz() {
+    let (_d, s, cid, rid) = dolu_state().await;
+    cagir(
+        &s,
+        "PUT",
+        &format!("/api/randevular/{rid}/not"),
+        Some(json!({"sablon":"dap","icerik":"COK_GIZLI_ICERIK"})),
+    )
+    .await;
+    // EN SON eylem: danisan dosyasini acmak (client|goruntuleme, HerCagri).
+    cagir(&s, "GET", &format!("/api/danisanlar/{cid}"), None).await;
+
+    let (kod, sayfa) = cagir(&s, "GET", "/api/denetim-kayitlari", None).await;
+    assert_eq!(kod, StatusCode::OK);
+    let metin = sayfa.to_string();
+    assert!(
+        !metin.contains("COK_GIZLI_ICERIK"),
+        "not icerigi denetim listesine sizmamali: {metin}"
+    );
+    assert!(!metin.contains("Ayse Yilmaz"), "danisan adi denetim listesine sizmamali: {metin}");
+
+    let kayitlar = sayfa["kayitlar"].as_array().unwrap();
+    assert!(!kayitlar.is_empty(), "on kosul: liste bos olmamali");
+    // id DESC: en son yazilan satir ilk sirada olmali.
+    assert_eq!(kayitlar[0]["varlik"], "client");
+    assert_eq!(kayitlar[0]["varlik_id"], cid.to_string());
+    assert_eq!(kayitlar[0]["eylem"], "goruntuleme");
+    assert_eq!(kayitlar[0]["cihaz"], "masaustu");
+
+    // Varlik suzgeci: yalnizca "progress_note".
+    let (_, filtreli) =
+        cagir(&s, "GET", "/api/denetim-kayitlari?varlik=progress_note", None).await;
+    let filtreli_kayitlar = filtreli["kayitlar"].as_array().unwrap();
+    assert!(!filtreli_kayitlar.is_empty(), "on kosul: filtreli liste bos olmamali");
+    assert!(filtreli_kayitlar.iter().all(|k| k["varlik"] == "progress_note"));
+
+    // Tarih araligi: uzak GELECEK bir baslangic hicbir gercek satiri kapsamaz.
+    let (_, bos) = cagir(&s, "GET", "/api/denetim-kayitlari?baslangic=2099-01-01", None).await;
+    assert_eq!(bos["kayitlar"].as_array().unwrap().len(), 0);
+
+    // Uzak GECMIS bir bitis de ayni sekilde bos donmeli.
+    let (_, bos2) = cagir(&s, "GET", "/api/denetim-kayitlari?bitis=2000-01-01", None).await;
+    assert_eq!(bos2["kayitlar"].as_array().unwrap().len(), 0);
+}
+
+/// `son_kayitlar`'in zaten sahip oldugu `LIMIT`, bu ucta sayfalamaya
+/// donusuyor: 190 bin satirlik bir gunlukte hepsini tek seferde cekmek
+/// yasak (bkz. dosya basligi).
+#[tokio::test]
+async fn denetim_kayitlari_sayfalanir() {
+    let (_d, s, cid, _rid) = dolu_state().await;
+    // HerCagri: ayni id icin bile her cagri AYRI bir satir yazar (birlestirme
+    // yok), bkz. `clients::getir_uc` -> `clients::getir`.
+    for _ in 0..60 {
+        cagir(&s, "GET", &format!("/api/danisanlar/{cid}"), None).await;
+    }
+
+    let (kod, sayfa0) = cagir(&s, "GET", "/api/denetim-kayitlari", None).await;
+    assert_eq!(kod, StatusCode::OK);
+    let kayitlar0 = sayfa0["kayitlar"].as_array().unwrap();
+    assert_eq!(kayitlar0.len(), 50, "sayfa boyutu 50 olmali");
+    assert_eq!(sayfa0["sayfa"], 0);
+    assert_eq!(sayfa0["sonraki_sayfa_var"], true);
+
+    let (_, sayfa1) = cagir(&s, "GET", "/api/denetim-kayitlari?sayfa=1", None).await;
+    let kayitlar1 = sayfa1["kayitlar"].as_array().unwrap();
+    assert!(!kayitlar1.is_empty(), "ikinci sayfa bos olmamali");
+    assert_eq!(sayfa1["sayfa"], 1);
+    // Sayfalar CAKISMAMALI.
+    assert_ne!(kayitlar0[0], kayitlar1[0]);
+}
+
+#[tokio::test]
+async fn denetim_kayitlari_gecersiz_tarihi_400_ile_reddeder() {
+    let (_d, s, _cid, _rid) = dolu_state().await;
+    for (alan, deger) in [("baslangic", "2026-9-7"), ("bitis", "yarin")] {
+        let (kod, json) =
+            cagir(&s, "GET", &format!("/api/denetim-kayitlari?{alan}={deger}"), None).await;
+        assert_eq!(kod, StatusCode::BAD_REQUEST, "'{alan}={deger}' reddedilmeli");
+        assert!(json["hata"].as_str().unwrap().contains("YYYY-AA-GG"), "{json}");
+    }
+}
+
+// =====================================================================
 // YAPISAL GUVENCELERIN DOSYA KUMESI -- DIZINDEN TURETILIR
 // =====================================================================
 //
@@ -2196,7 +2333,9 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
     // 32. veri handler'i olarak eklendi; kapiyi kullanan tek handler'i var.
     // Plan 5 Gorev 5: `routes::tags` bes yeni veri handler'i ekledi (listele,
     // seans_listesi, ekle, kaldir, seanslar) -- toplam 32 -> 37.
-    assert_eq!(toplam, 37, "toplam veri handler'i sayisi 37 olmali");
+    // Gorev 7 Plan 7: `routes::audit::liste` (denetim kaydini OKUMA ucu)
+    // eklendi -- toplam 37 -> 38.
+    assert_eq!(toplam, 38, "toplam veri handler'i sayisi 38 olmali");
 }
 
 /// Kapıyı ilk satırda VE uzun bir üretimden sonra ikinci kez çağırmasına izin

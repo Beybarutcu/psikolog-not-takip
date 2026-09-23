@@ -1,5 +1,5 @@
 import type { Dispatch, SetStateAction } from 'react'
-import type { Danisan, DepolamaDurumu, YedekListesi } from '../api'
+import type { Danisan, DenetimKaydi, DepolamaDurumu, YedekListesi } from '../api'
 import { boyutBicimle } from '../danisan/bicim'
 
 /**
@@ -45,6 +45,47 @@ type SaklamaHatirlatmasi = {
   onAc: (clientId: number) => void
 }
 
+/**
+ * `useDenetimKayitlari()`'nin dönüşüyle birebir aynı alanlar (Görev 7 Plan
+ * 7, KVKK 2018/10). Kanca burada ÇAĞRILMIYOR (bkz. dosya başlığı).
+ */
+type DenetimAkisi = {
+  kayitlar: DenetimKaydi[]
+  sayfa: number
+  sonrakiSayfaVar: boolean
+  baslangic: string
+  setBaslangic: Dispatch<SetStateAction<string>>
+  bitis: string
+  setBitis: Dispatch<SetStateAction<string>>
+  varlik: string
+  setVarlik: Dispatch<SetStateAction<string>>
+  yukleniyor: boolean
+  hata: string | null
+  suzgecUygula: () => void
+  sonrakiSayfa: () => void
+  oncekiSayfa: () => void
+}
+
+/**
+ * Varlık türü süzgecinin seçenekleri. Sunucudaki `varlik` sütununun
+ * kullandığı ham değerler (bkz. `store::audit::kaydet` çağrı yerleri) --
+ * burada YALNIZCA görüntü etiketi ekleniyor, ikinci bir doğrulama katmanı
+ * DEĞİL (bilinmeyen bir değer sunucuda sessizce boş sonuç verir).
+ */
+const VARLIK_SECENEKLERI: { deger: string; etiket: string }[] = [
+  { deger: '', etiket: 'Tümü' },
+  { deger: 'client', etiket: 'Danışan dosyası' },
+  { deger: 'appointment', etiket: 'Randevu' },
+  { deger: 'progress_note', etiket: 'Seans notu' },
+  { deger: 'private_note', etiket: 'Özel not' },
+  { deger: 'attachment', etiket: 'Ek dosya' },
+  { deger: 'etiket', etiket: 'Etiket' },
+  { deger: 'danisan_seanslari', etiket: 'Danışan seans listesi' },
+  { deger: 'arama', etiket: 'Arama' },
+  { deger: 'session', etiket: 'Oturum (giriş/çıkış/parola)' },
+  { deger: 'backup', etiket: 'Yedek' },
+]
+
 type Props = {
   yedekleme: YedeklemeDurumu
   parola: ParolaFormu
@@ -57,6 +98,8 @@ type Props = {
    * çalışırken kullanılan dördüncü yol.
    */
   onGeriYukle: () => void
+  /** Denetim kaydı (Görev 7 Plan 7) -- bkz. `DenetimAkisi`. */
+  denetim: DenetimAkisi
 }
 
 /**
@@ -78,7 +121,14 @@ type Props = {
  * çağrıldığı yerde kurulabiliyor. Bu bileşeni kancalardan ayırmak o bağı
  * koparırdı.
  */
-export function AyarlarSekmesi({ yedekleme, parola, saklama, depolama, onGeriYukle }: Props) {
+export function AyarlarSekmesi({
+  yedekleme,
+  parola,
+  saklama,
+  depolama,
+  onGeriYukle,
+  denetim,
+}: Props) {
   return (
     // `data-testid`: `TakvimSekmesi`/`DanisanlarSekmesi` ile AYNI desen —
     // sekme izolasyonu testinin (`AnaEkran.test.tsx`) bu köke ihtiyacı var.
@@ -366,6 +416,136 @@ export function AyarlarSekmesi({ yedekleme, parola, saklama, depolama, onGeriYuk
             </div>
           </div>
         )}
+      </section>
+
+      {/* DENETIM KAYDI (Gorev 7 Plan 7, KVKK 2018/10) -- salt okunur liste.
+          `store::audit_log` silinemez ama Gorev 7'den ONCE onu OKUYAN hicbir
+          yol yoktu: "su tarihte bu dosyaya kim, hangi cihazdan eristi"
+          sorusu yalnizca sifreli veritabanini elle acarak yanitlanabiliyordu.
+
+          Yalnizca kimlik ve tur gosteriliyor -- not icerigi, danisan adi,
+          dosya adi hicbir zaman burada YOK (bkz. `useDenetimKayitlari` ve
+          `denetimApi` modul basliklari): sunucu zaten bunlari tasimiyor ve
+          bu ekran varlik kimligini bir isme CEVIRMIYOR (ek bir sorgu hem
+          hassas veri eklerdi hem yeni bir `goruntuleme` satiri uretirdi). */}
+      <section aria-label="Denetim kaydı" className="mb-4 rounded border p-4 text-sm">
+        <h3 className="font-medium">Denetim kaydı</h3>
+        <p className="mt-1 text-xs text-slate-600">
+          Bu kayıtları hangi tarihte, hangi cihazdan, hangi dosyaya erişildiğini
+          gösterir; silinemez. Bu listeyi görüntülemek yeni bir kayıt oluşturmaz.
+        </p>
+
+        <div className="mt-2 flex flex-wrap items-end gap-2">
+          <div>
+            <label className="block text-xs" htmlFor="denetim-baslangic">
+              Başlangıç tarihi
+            </label>
+            <input
+              id="denetim-baslangic"
+              type="date"
+              className="mt-1 rounded border p-1 text-xs"
+              value={denetim.baslangic}
+              onChange={(e) => denetim.setBaslangic(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-xs" htmlFor="denetim-bitis">
+              Bitiş tarihi
+            </label>
+            <input
+              id="denetim-bitis"
+              type="date"
+              className="mt-1 rounded border p-1 text-xs"
+              value={denetim.bitis}
+              onChange={(e) => denetim.setBitis(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="block text-xs" htmlFor="denetim-varlik">
+              Varlık türü
+            </label>
+            <select
+              id="denetim-varlik"
+              className="mt-1 rounded border p-1 text-xs"
+              value={denetim.varlik}
+              onChange={(e) => denetim.setVarlik(e.target.value)}
+            >
+              {VARLIK_SECENEKLERI.map((s) => (
+                <option key={s.deger} value={s.deger}>
+                  {s.etiket}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="button"
+            className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+            disabled={denetim.yukleniyor}
+            onClick={denetim.suzgecUygula}
+          >
+            Süzgeci uygula
+          </button>
+        </div>
+
+        {denetim.hata && (
+          <p role="alert" className="mt-2 text-red-600">
+            {denetim.hata}
+          </p>
+        )}
+
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead>
+              <tr className="border-b text-slate-600">
+                <th className="py-1 pr-3">Tarih</th>
+                <th className="py-1 pr-3">Eylem</th>
+                <th className="py-1 pr-3">Varlık türü</th>
+                <th className="py-1 pr-3">Varlık kimliği</th>
+                <th className="py-1 pr-3">Cihaz</th>
+                <th className="py-1 pr-3">Ayrıntı</th>
+              </tr>
+            </thead>
+            <tbody>
+              {denetim.kayitlar.map((k, i) => (
+                // Denetim satırları benzersiz bir kimlik TAŞIMIYOR (bkz.
+                // `AuditKaydi` -- yalnızca gösterim alanları var); sayfa +
+                // sıra bu listede sabit ve yeterli bir anahtardır.
+                // eslint-disable-next-line react/no-array-index-key
+                <tr key={`${denetim.sayfa}-${i}`} className="border-b last:border-0">
+                  <td className="py-1 pr-3 font-mono">{k.olay_zamani}</td>
+                  <td className="py-1 pr-3">{k.eylem}</td>
+                  <td className="py-1 pr-3">{k.varlik}</td>
+                  <td className="py-1 pr-3 font-mono">{k.varlik_id}</td>
+                  <td className="py-1 pr-3">{k.cihaz}</td>
+                  <td className="py-1 pr-3">{k.ayrinti ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {denetim.kayitlar.length === 0 && !denetim.yukleniyor && (
+            <p className="mt-2 text-xs text-slate-600">Bu süzgeçle eşleşen kayıt yok.</p>
+          )}
+        </div>
+
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            type="button"
+            className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+            disabled={denetim.sayfa === 0 || denetim.yukleniyor}
+            onClick={denetim.oncekiSayfa}
+          >
+            Önceki sayfa
+          </button>
+          <span className="text-xs text-slate-600">Sayfa {denetim.sayfa + 1}</span>
+          <button
+            type="button"
+            className="rounded border px-2 py-1 text-xs disabled:opacity-50"
+            disabled={!denetim.sonrakiSayfaVar || denetim.yukleniyor}
+            onClick={denetim.sonrakiSayfa}
+          >
+            Sonraki sayfa
+          </button>
+        </div>
       </section>
     </div>
   )

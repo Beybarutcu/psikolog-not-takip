@@ -961,8 +961,17 @@ mod tests {
         let yol = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/store/clients.rs");
         let kaynak = std::fs::read_to_string(&yol)
             .unwrap_or_else(|e| panic!("{} okunamadi: {e}", yol.display()));
+        // YALNIZCA `#[cfg(test)]`den ÖNCEKİ (üretim/doküman) kısım aranır:
+        // aranan dizginin kendisi bu test bloğunun İÇİNDE de geçiyor
+        // (panik mesajında), tüm dosyada arasaydık test kendi metnini
+        // bulup HER ZAMAN yeşil kalırdı -- dördüncü biçim ("test kendi
+        // iddiasını sınamıyor").
+        let uretim_kismi = kaynak
+            .split("#[cfg(test)]")
+            .next()
+            .expect("dosyada en az bir parca olmali");
         assert!(
-            kaynak.contains("birleştirmeye GEÇİLMEDİ") || kaynak.contains("GEÇİLMEDİ"),
+            uretim_kismi.contains("birleştirmeye GEÇİLMEDİ"),
             "getir'in doc yorumu Görev 6h kararının SONUCUNU (HerCagri korundu mu, \
              birleştirmeye mi geçildi) artık açıkça söylemiyor olabilir."
         );

@@ -162,9 +162,38 @@ pub enum YedekHatasi {
          istemcisi, virüs tarayıcı, açık bir yedekleme aracı) dosyaları \
          tutuyor. UYGULAMAYI YENİDEN KURMAYIN -- verileriniz duruyor: veri \
          klasörünüzde `.onceki` uzantılı dosyalardalar. Diğer programları \
-         kapatıp yeniden deneyin."
+         kapatın ve `.onceki` uzantılı dosyaları veri klasörünün DIŞINA \
+         taşıyın; ancak ondan sonra yeniden deneyin."
     )]
     GeriAlmaYarimKaldi(#[source] Box<YedekHatasi>),
+    /// Kenara alınacak adda (`.onceki`) **zaten** bir dosya var; geri
+    /// yükleme hiç başlatılmadı.
+    ///
+    /// # Neden bu kapı var (dal incelemesi M1)
+    ///
+    /// `Yerlestirme::kenara_al` `fs::rename(veri.db, veri.db.onceki)`
+    /// çağırıyor ve POSIX'te (hedef platform macOS) `rename` var olan
+    /// hedefi **sessizce üzerine yazar**. Yarım kalmış bir geri almadan
+    /// sonra `veri.db.onceki` tam da kullanıcının **asıl verisini** taşır
+    /// -- `GeriAlmaYarimKaldi` mesajı onu oraya yönlendiriyor; ikinci bir
+    /// geri yükleme denemesi onu yok ederdi. `tamamla()` yalnızca kendi
+    /// kenara aldıklarını siler, yani öksüz bir `.onceki` kalıcıdır ve bir
+    /// sonraki geri yüklemenin hedefi olur.
+    ///
+    /// Windows'ta `rename` hedef varsa zaten başarısız olur; tuzak
+    /// **yalnızca hedef platformda** açıktı. Kapı bu yüzden bir `exists()`
+    /// kontrolüdür: iki platformda da aynı, yol gösteren cevabı verir.
+    ///
+    /// Mesaj yol taşımaz; `.onceki` sabit bir **uzantıdır**.
+    #[error(
+        "Geri yükleme başlatılmadı: veri klasörünüzde önceki bir geri \
+         yükleme denemesinden kalan `.onceki` uzantılı dosyalar var ve \
+         bunlar SİZİN ESKİ VERİNİZ olabilir. Üzerlerine yazmamak için işlem \
+         durduruldu; hiçbir şey değiştirilmedi. UYGULAMAYI YENİDEN KURMAYIN \
+         -- önce `.onceki` uzantılı dosyaları veri klasörünün dışına taşıyın \
+         (kopyalayıp bırakmayın, taşıyın), sonra yeniden deneyin."
+    )]
+    OncekiDosyaDuruyor,
     /// Geri yükleme sırasında bir **dosya işlemi** başarısız oldu ve canlı
     /// çift hâlâ yerinde: ya yerleştirmeye hiç başlanmadı (geçici kopyalama
     /// adımı), ya da başlandı ve **eksiksiz** geri alındı.
@@ -684,9 +713,21 @@ struct Yerlestirme {
 impl Yerlestirme {
     /// `yol` varsa `hedef` adiyla kenara alir; yoksa sessizce gecer
     /// (bos bir kuruluma geri yukleme gecerli bir senaryodur).
-    fn kenara_al(&mut self, yol: &Path, hedef: PathBuf) -> std::io::Result<()> {
+    /// (dal incelemesi M1)
+    fn kenara_al(&mut self, yol: &Path, hedef: PathBuf) -> Result<(), YedekHatasi> {
         if !yol.exists() {
+            // Hedefte oksuz bir `.onceki` duruyor olabilir; ona DOKUNULMAZ
+            // (ne tasinir ne silinir), cunku kullanicinin tek kopyasi
+            // olabilir. Burada yapilacak bir sey yok.
             return Ok(());
+        }
+        // GUVENLIK AGINI EZME: POSIX'te `rename` var olan hedefi SESSIZCE
+        // uzerine yazar ve `veri.db.onceki` tam da kullanicinin asil verisi
+        // olabilir (bkz. `YedekHatasi::OncekiDosyaDuruyor`). Bu kontrol
+        // `rename`'in Windows'taki davranisini butun platformlara tasir --
+        // ve hatayi yol gosteren bir cumleye cevirir.
+        if hedef.exists() {
+            return Err(YedekHatasi::OncekiDosyaDuruyor);
         }
         std::fs::rename(yol, &hedef)?;
         self.kenara_alinanlar.push((yol.to_path_buf(), hedef));
@@ -1974,10 +2015,11 @@ mod tests {
         canli_wal_birak(&o);
         wal_yuk_tasiyor(&o, "kenara");
 
-        // Uzerine rename edilemeyecek bir engel: ayni adda bir KLASOR.
-        // (Inceleme bunu Windows'ta ERROR_ACCESS_DENIED ile ureten bir
-        // senaryoyla kanitlamisti; klasor her iki isletim sisteminde de ayni
-        // hatayi verir.)
+        // Kenara almayi durduracak bir engel: hedef adda ZATEN bir sey var
+        // (burada bir KLASOR; uretimde yarim kalmis bir geri almadan artan
+        // `.onceki` dosyasi ya da bir esitleme aracinin urettigi kalinti).
+        // M1'den once bu bir `rename` hatasiydi; artik `kenara_al`'in
+        // acik kapisi devreye giriyor (bkz. `OncekiDosyaDuruyor`).
         std::fs::create_dir_all(o.db.with_extension("db.onceki")).unwrap();
 
         let wal = o.db.with_extension("db-wal");
@@ -1985,12 +2027,11 @@ mod tests {
         let db_once = std::fs::read(&o.db).unwrap();
 
         let hata = geri_yukle(&bilgi.yol, &o.db, &o.keystore_yolu, &o.key).unwrap_err();
-        // Ham `Io` DEGIL (dal incelemesi I2): hicbir sey tasinmadigi icin
-        // geri alma eksiksizdir ve cumle bunu soylemek zorundadir.
-        assert!(matches!(hata, YedekHatasi::YerlestirmeBasarisiz(_)), "gelen: {hata:?}");
+        // Hicbir sey tasinmadi; cumle akibeti soylemek zorunda (I2 + M1).
+        assert!(matches!(hata, YedekHatasi::OncekiDosyaDuruyor), "gelen: {hata:?}");
         assert!(
-            hata.to_string().contains("kaybolmadı"),
-            "mesaj verinin yerinde oldugunu soylemeli: {hata}"
+            hata.to_string().contains("değiştirilmedi"),
+            "mesaj hicbir seyin degismedigini soylemeli: {hata}"
         );
 
         assert_eq!(std::fs::read(&o.db).unwrap(), db_once, "canli veritabani degismemeli");
@@ -2001,6 +2042,94 @@ mod tests {
             BUGUNUN_NOTU,
             "hicbir sey tasinmadan basarisiz olan geri yukleme, o gunun \
              kaydini yok etmemeli"
+        );
+    }
+
+    /// `.onceki` GUVENLIK AGI ikinci bir geri yuklemede EZILMEMELI
+    /// (dal incelemesi M1).
+    ///
+    /// Senaryo: bir geri yukleme yarida kaldi, geri alma da yarim kaldi ve
+    /// kullaniciya "verileriniz `.onceki` uzantili dosyalarda" dendi. O
+    /// dosya artik kullanicinin TEK kopyasidir. Ikinci bir geri yukleme
+    /// denemesi `fs::rename(veri.db, veri.db.onceki)` cagiriyor; POSIX'te
+    /// (hedef platform macOS) rename var olan hedefi SESSIZCE uzerine yazar
+    /// ve o tek kopya yok olur.
+    ///
+    /// # ORTAMA BAGLILIK (3. bicim) -- hangi iddia hangi platformda yuk tasiyor
+    ///
+    /// Bu gelistirme makinesi Windows ve orada `rename` hedef varsa ZATEN
+    /// basarisiz olur; yani "icerik degismedi" iddiasi burada korumayi
+    /// kaldiran bir mutasyonda bile YESIL kalir. Mutasyonu bu makinede
+    /// yakalayan sey VARYANT iddiasidir (`OncekiDosyaDuruyor` yerine bir
+    /// `Io` gelir). Hedef platformda (macOS) yuku tasiyan ise "icerik
+    /// degismedi" iddiasidir. Ikisi birlikte yazildi; biri silinirse test
+    /// bir platformda korumayi birakir.
+    #[test]
+    fn ikinci_geri_yukleme_onceki_dosyadaki_tek_kopyayi_ezmez() {
+        const TEK_KOPYA: &[u8] = b"kullanicinin TEK kopyasi -- yarim geri almadan kaldi";
+
+        let o = kur("parola123");
+        let bilgi = yedek_al(&o.db, &o.keystore_yolu, &o.hedef, "2026-09-07", &o.key).unwrap();
+
+        // Yarim kalmis bir geri almadan artan durum: `.onceki` kullanicinin
+        // verisini tasiyor ve `veri.db` (yok edilemedigi icin) hala yerinde.
+        let onceki = o.db.with_extension("db.onceki");
+        std::fs::write(&onceki, TEK_KOPYA).unwrap();
+
+        let hata = geri_yukle(&bilgi.yol, &o.db, &o.keystore_yolu, &o.key).unwrap_err();
+        assert!(matches!(hata, YedekHatasi::OncekiDosyaDuruyor), "gelen: {hata:?}");
+
+        assert_eq!(
+            std::fs::read(&onceki).unwrap(),
+            TEK_KOPYA,
+            "`.onceki` kullanicinin TEK kopyasi olabilir; uzerine YAZILMAMALI"
+        );
+
+        let mesaj = hata.to_string();
+        assert!(
+            mesaj.contains(".onceki"),
+            "mesaj hangi dosyaya bakilacagini soylemeli: {mesaj}"
+        );
+        assert!(
+            mesaj.contains("YENİDEN KURMAYIN"),
+            "modul basligindaki tuzak burada da yasaklanmali: {mesaj}"
+        );
+        assert!(
+            mesaj.contains("değiştirilmedi"),
+            "islem hic baslamadi; cumle bunu soylemeli: {mesaj}"
+        );
+        // Mesaj yol/dosya adi tasimamali (hassas veri: ev dizini).
+        assert!(!mesaj.contains(&o.kok.display().to_string()), "mesaj yol tasimamali: {mesaj}");
+    }
+
+    /// EKSI YON: kapi HER `.onceki` gorunce degil, yalnizca gercekten
+    /// UZERINE YAZILACAKKEN kapanmali. Canli dosya yoksa (bos bir kuruluma
+    /// geri yukleme) kenara alinacak bir sey de yoktur; oksuz `.onceki`'ye
+    /// DOKUNULMAZ ve geri yukleme calisir.
+    ///
+    /// Bu iddia olmadan "her seyi reddeden" bir uygulama da usttekiyle ayni
+    /// testi gecerdi (7. bicim).
+    #[test]
+    fn oksuz_onceki_canli_dosya_yokken_geri_yuklemeyi_engellemez() {
+        const OKSUZ: &[u8] = b"oksuz kalinti";
+
+        let o = kur("parola123");
+        let bilgi = yedek_al(&o.db, &o.keystore_yolu, &o.hedef, "2026-09-07", &o.key).unwrap();
+
+        // Bos kurulum: canli cift yok, ama bir `.onceki` kalintisi var.
+        let yeni_db = o.kok.join("yeni/veri.db");
+        let yeni_ks = o.kok.join("yeni/keystore.json");
+        std::fs::create_dir_all(o.kok.join("yeni")).unwrap();
+        let oksuz = yeni_db.with_extension("db.onceki");
+        std::fs::write(&oksuz, OKSUZ).unwrap();
+
+        geri_yukle(&bilgi.yol, &yeni_db, &yeni_ks, &o.key).unwrap();
+
+        assert!(yeni_db.exists() && yeni_ks.exists(), "geri yukleme tamamlanmali");
+        assert_eq!(
+            std::fs::read(&oksuz).unwrap(),
+            OKSUZ,
+            "oksuz `.onceki` ne silinmeli ne de degistirilmeli"
         );
     }
 

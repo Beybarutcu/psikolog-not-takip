@@ -207,7 +207,14 @@ pub(crate) fn yedek_hatasi(e: psikolog_core::backup::YedekHatasi) -> ApiHata {
         // uygulanamıyor). 500 dönmek kullanıcıya "uygulama bozuldu" dedirtir
         // ve onu yeniden kurmaya -- yani elindeki tek kopyayı geçersiz
         // kılmaya -- iter; yapması gereken şey mesajda yazıyor.
-        Y::YedekIleriSurumlu { .. } | Y::YedekHazirlanamadi(_) => StatusCode::CONFLICT,
+        // 409, aynı gerekçe (dal incelemesi M1): sunucu arızası değil, bir
+        // ÖN KOŞUL çatışması. Veri klasöründe öksüz `.onceki` dosyalar
+        // duruyor ve onlar kullanıcının eski verisi olabilir; yapılacak şey
+        // mesajda yazıyor. 500 dönmek "uygulama bozuldu" dedirtir ve
+        // kullanıcıyı yeniden kurmaya iter -- bu modülün tam da önlediği şey.
+        Y::YedekIleriSurumlu { .. } | Y::YedekHazirlanamadi(_) | Y::OncekiDosyaDuruyor => {
+            StatusCode::CONFLICT
+        }
         // 500: bu gerçekten sunucu/çevre tarafı bir sorun (dosyalar başka
         // bir program tarafından tutuluyor) ve 409'un aksine kullanıcının
         // hemen müdahale etmesi gerekiyor -- gövdedeki metin ne yapacağını
@@ -322,6 +329,18 @@ mod tests {
         );
         assert!(metin.contains("YENİDEN KURMAYIN"), "{metin}");
         assert!(metin.contains(".onceki"), "mesaj verinin nerede oldugunu soylemeli: {metin}");
+    }
+
+    /// Oksuz bir `.onceki` yuzunden durdurulan geri yukleme 409 donmeli
+    /// (dal incelemesi M1): kullanicinin yapacagi bir sey var ve 500
+    /// "uygulama bozuldu" izlenimi verip onu yeniden kuruluma iterdi.
+    #[test]
+    fn onceki_dosya_duruyorsa_409_doner() {
+        use psikolog_core::backup::YedekHatasi as Y;
+        let (kod, metin) = cevir(Y::OncekiDosyaDuruyor);
+        assert_eq!(kod, StatusCode::CONFLICT, "sunucu arizasi degil, on kosul catismasi");
+        assert!(metin.contains(".onceki"), "govde hangi dosyaya bakilacagini soylemeli: {metin}");
+        assert!(metin.contains("değiştirilmedi"), "{metin}");
     }
 
     /// Geri yuklemedeki dosya (IO) hatasi kullaniciya verisinin AKIBETINI

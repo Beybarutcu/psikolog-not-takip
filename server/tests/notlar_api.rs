@@ -3597,7 +3597,20 @@ async fn kilitsiz_uclar_bilincli_digerlerinin_hepsi_401() {
 
     for (metot, yol) in &rotalar {
         let somut = somutlastir(yol);
-        let (kod, _) = cagir(&s, metot, &somut, Some(json!({}))).await;
+        // GOVDE: istisna listesindeki uclarin extractor'i BASARIYLA
+        // cozulmeli. Bos bir govde onlarda 400/422 uretir ve "401 DEGIL"
+        // iddiasi handler'a hic girmeden -- yani hicbir sey olcmeden --
+        // saglanirdi (6. bicim: islem oncesi durumla tatmin olan
+        // assertion; mutasyonla dogrulandi: ucu kapinin arkasina alan
+        // degisiklik bos govdeyle YESIL kaliyordu). Serde bilinmeyen
+        // alanlari yok saydigi icin tek bir birlesik govde hepsine yetiyor.
+        let govde = json!({
+            "parola": "gizliparola",
+            "damga": "20260101-0000",
+            "dosya_adi": "yedek-2026-01-01.db",
+            "ad_soyad": "X",
+        });
+        let (kod, _) = cagir(&s, metot, &somut, Some(govde)).await;
         if KILITSIZ_UCLAR.iter().any(|(m, y)| m == metot && y == yol) {
             // (1) Istisna GEREKLI: bu uc kilitliyken 401 DONMEMELI.
             assert_ne!(

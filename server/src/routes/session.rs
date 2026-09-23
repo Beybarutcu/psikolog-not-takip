@@ -10,7 +10,7 @@ use psikolog_core::store::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 #[derive(Deserialize)]
 pub struct KilitAcIstegi {
@@ -155,7 +155,10 @@ pub async fn kilit_ac(
                     Json(json!({ "hata": "Kilit açılamadı: erişim kaydı oluşturulamadı." })),
                 );
             }
-            s.oturum.lock().unwrap_or_else(|e| e.into_inner()).ac(key, Instant::now());
+            s.oturum
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .ac(key, Instant::now(), SystemTime::now());
             (StatusCode::OK, Json(json!({})))
         }
         // "Her hata parola hatasidir" tuzagi: `CryptoError`'in dort varyanti

@@ -5,7 +5,7 @@ use psikolog_core::crypto::keyring::KdfParams;
 use psikolog_server::guard::acik_baglanti_ile;
 use psikolog_server::{router, AppState};
 use serde_json::json;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use tower::ServiceExt;
 
 fn test_state() -> (tempfile::TempDir, AppState) {
@@ -289,7 +289,7 @@ async fn danisan_arsivlenir_ve_listeden_dusser_ama_silinmez() {
     // Arsivleme FIZIKSEL SILME DEGILDIR: kayit duruyor, yalnizca durumu
     // degisti. Arayuz metni de bunu soyluyor -- burada dogrulanan sey o
     // metnin dogru oldugudur.
-    let conn = acik_baglanti_ile(&s, Instant::now()).unwrap();
+    let conn = acik_baglanti_ile(&s, Instant::now(), SystemTime::now()).unwrap();
     let (sayi, durum): (i64, String) = conn
         .query_row(
             "SELECT (SELECT COUNT(*) FROM clients), durum FROM clients WHERE id = ?1",
@@ -893,21 +893,28 @@ async fn basarili_istek_oturuma_dokunur_ve_sureyi_uzatir() {
     let (_d, s) = kurulu_state().await;
 
     let t = Instant::now();
+    let td = SystemTime::now();
     {
         let mut oturum = s.oturum.lock().unwrap();
-        let anahtar = oturum.anahtar(t).expect("kurulumdan sonra oturum acik olmali");
+        let anahtar =
+            oturum.anahtar(t, td).expect("kurulumdan sonra oturum acik olmali");
         oturum.kilit_suresi_ayarla(2);
-        // Bilinen bir `t` anindan yeniden ac: son_islem'i kesin olarak
-        // biliyoruz, gercek saatin akisina bagli degiliz.
-        oturum.ac(anahtar, t);
+        // Bilinen bir `t`/`td` anindan yeniden ac: son_islem'i kesin olarak
+        // biliyoruz, gercek saatin akisina bagli degiliz. Ikisi (monotonik +
+        // duvar) birlikte ayni miktarda ilerletiliyor ki bu test yalnizca
+        // "dokun cagrildi mi" kuralini olcsun (bkz. `core::session::Oturum`
+        // - uyku/duvar saati bulgusu bu testin konusu degil).
+        oturum.ac(anahtar, t, td);
     }
 
     let orta = t + Duration::from_millis(1500);
-    let sonuc1 = acik_baglanti_ile(&s, orta);
+    let orta_td = td + Duration::from_millis(1500);
+    let sonuc1 = acik_baglanti_ile(&s, orta, orta_td);
     assert!(sonuc1.is_ok(), "ilk istek kilit suresi dolmadan yapilmali");
 
     let sonra = orta + Duration::from_millis(1500);
-    let sonuc2 = acik_baglanti_ile(&s, sonra);
+    let sonra_td = orta_td + Duration::from_millis(1500);
+    let sonuc2 = acik_baglanti_ile(&s, sonra, sonra_td);
     assert!(
         sonuc2.is_ok(),
         "basarili istek oturuma dokunmadiysa toplam 3sn gecmis olur ve 2sn'lik kilit suresi asilirdi"
@@ -1243,7 +1250,7 @@ async fn ozet_icin_borclu(s: &AppState) -> i64 {
 }
 
 async fn ozet_log_satirlari(s: &AppState) -> Vec<String> {
-    let conn = acik_baglanti_ile(s, Instant::now()).expect("oturum acik olmali");
+    let conn = acik_baglanti_ile(s, Instant::now(), SystemTime::now()).expect("oturum acik olmali");
     psikolog_core::store::audit::son_kayitlar(&conn, 200)
         .unwrap()
         .into_iter()

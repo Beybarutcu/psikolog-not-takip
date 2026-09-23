@@ -4,7 +4,7 @@ use psikolog_core::store::audit::AuditKaydi;
 use psikolog_core::store::keystore::{self, Keystore};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 /// Bu dosyadaki her `.lock()` çağrısı `.unwrap_or_else(|e| e.into_inner())`
 /// kullanır, `.unwrap()` değil. Bir handler kilidi tutarken panikleseydi
@@ -94,7 +94,10 @@ impl AppState {
     /// zaten dagitilmis klonlar etkilenmez, bu yuzden her istekte tekrar
     /// buradan alinmalidir.
     pub fn acik_anahtar(&self) -> Option<DataKey> {
-        self.oturum.lock().unwrap_or_else(|e| e.into_inner()).anahtar(Instant::now())
+        self.oturum
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .anahtar(Instant::now(), SystemTime::now())
     }
 
     pub fn audit_dokumu(&self) -> anyhow::Result<Vec<AuditKaydi>> {

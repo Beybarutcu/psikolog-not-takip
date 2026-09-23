@@ -1,17 +1,74 @@
 use crate::crypto::keyring::DataKey;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// Varsayilan bosta kalma kilit suresi (saniye). Bu sure boyunca islem
 /// yapilmazsa oturum kendiliginden kilitlenir; danisan odadan cikarken
 /// ekranda acik kalan notu koruma altina alir.
 pub const VARSAYILAN_KILIT_SURESI_SN: u64 = 300;
 
-/// Bellekte acik veri anahtarini tutan oturum. Zaman disaridan `Instant`
-/// olarak verilir; boylece testler gercekten beklemek zorunda kalmaz ve
-/// `Instant::now()` bu modulun icinde asla cagrilmaz.
+/// Bir oturum etkinliginin oldugu andaki iki saat kaynagi birlikte.
+///
+/// # Neden ikisi birden (uyku bulgusu)
+/// Onceki surum yalnizca `Instant` (monotonik saat) tutuyordu. macOS'ta
+/// `Instant` isletim sisteminin "suspend" (uyku) sayacina degil, yalnizca
+/// calisir durumdaki gecen sureye dayanir -- kapak kapatilip MacBook uykuya
+/// dalinca `Instant` ILERLEMEZ. Terapist gun sonunda kapagi kapatir (ekranda
+/// bir danisanin notu aciktir), ertesi sabah acar: uykuda gecen saatler
+/// `Instant` farkina hic yansimaz, 300 saniyelik pencere "dolmamis" gorunur
+/// ve sunucu oturumu acik sayar -- butun takvim, danisan adlari ve acik not
+/// geri gelir. Bu modulun kendi tehdit modeli ("danisan odadan cikarken
+/// ekranda acik kalan notu koruma altina alir") tam bu senaryoda tutmuyordu.
+///
+/// Duvar saati (`SystemTime`) tek basina da yeterli degil: kullanici (ya da
+/// isletim sistemi saat senkronizasyonu) saati GERIYE alirsa, duvar saati
+/// farki kucuk/negatif cikar ve kilit hic tetiklenmeyebilir -- bu da ayri
+/// bir acik.
+///
+/// Cozum: ikisini BIRLIKTE tutmak. `acik_mi` icin oturum "acik" sayilmasi
+/// hem monotonik HEM duvar saatinin sinirin icinde kalmasini gerektirir --
+/// yani ikisinden HANGISI sinir asarsa oturum kilitlenir, tek bir kolun
+/// basarisiz olmasi yeter: monotonik saat uykuyu yakalar, duvar saati saat
+/// oynamasini yakalar; birlesim her iki yolu da kapatir. Duvar saati GERIYE
+/// giderse (kullanici saati degistirdi, senkronizasyon sicradi) bu zaten bir
+/// uyari isaretidir -- guvenli taraf kilitlemektir, bu yuzden negatif fark da
+/// "sinir asildi" sayilir (bkz. `ZamanDamgasi::sinir_asildi_mi`).
+///
+/// Iki alan HER ZAMAN birlikte, ayni "an"dan alinip birlikte saklanir (tek
+/// bir struct icinde) ki biri guncellenip digeri unutulamasin.
+#[derive(Clone, Copy)]
+struct ZamanDamgasi {
+    mono: Instant,
+    duvar: SystemTime,
+}
+
+impl ZamanDamgasi {
+    fn yeni(mono: Instant, duvar: SystemTime) -> Self {
+        Self { mono, duvar }
+    }
+
+    /// `simdi`'ye gore bu damgadan bu yana ya monotonik ya da duvar saati
+    /// tarafinda `sinir` asilmis mi? Ikisinden BIRI yeterli.
+    fn sinir_asildi_mi(&self, simdi: &ZamanDamgasi, sinir: Duration) -> bool {
+        let mono_asildi = simdi.mono.duration_since(self.mono) > sinir;
+        let duvar_asildi = match simdi.duvar.duration_since(self.duvar) {
+            Ok(gecen) => gecen > sinir,
+            // Duvar saati GERIYE gitti: `SystemTime::duration_since` bunu
+            // `Err` ile bildirir. Bu bir uyari isaretidir (saat degistirildi
+            // ya da senkronizasyon sicradi); guvenli taraf kilitlemektir, o
+            // yuzden bunu da "sinir asildi" sayiyoruz.
+            Err(_) => true,
+        };
+        mono_asildi || duvar_asildi
+    }
+}
+
+/// Bellekte acik veri anahtarini tutan oturum. Zaman disaridan `Instant` VE
+/// `SystemTime` olarak verilir; boylece testler gercekten beklemek zorunda
+/// kalmaz ve `Instant::now()`/`SystemTime::now()` bu modulun icinde asla
+/// cagrilmaz (bkz. `ZamanDamgasi` dokumantasyonu: neden ikisi birden).
 pub struct Oturum {
     anahtar: Option<DataKey>,
-    son_islem: Option<Instant>,
+    son_islem: Option<ZamanDamgasi>,
     kilit_suresi: Duration,
 }
 
@@ -30,10 +87,11 @@ impl Oturum {
         self.kilit_suresi = Duration::from_secs(sn);
     }
 
-    /// Oturumu verilen anahtarla acar ve son islem zamanini `now` olarak isaretler.
-    pub fn ac(&mut self, anahtar: DataKey, now: Instant) {
+    /// Oturumu verilen anahtarla acar ve son islem zamanini `now`/`now_duvar`
+    /// olarak isaretler.
+    pub fn ac(&mut self, anahtar: DataKey, now: Instant, now_duvar: SystemTime) {
         self.anahtar = Some(anahtar);
-        self.son_islem = Some(now);
+        self.son_islem = Some(ZamanDamgasi::yeni(now, now_duvar));
     }
 
     /// Oturumu kilitler: anahtar `None`'a set edilir, `Zeroizing` dusurulunce
@@ -43,31 +101,35 @@ impl Oturum {
         self.son_islem = None;
     }
 
-    /// Oturum gercekten acik mi? Anahtar varsa VE bosta kalma suresi
-    /// asilmamissa `true` doner.
-    pub fn acik_mi(&self, now: Instant) -> bool {
-        match (&self.anahtar, self.son_islem) {
-            // `<=` kasitli: tam sinirda (now - son_islem == kilit_suresi)
-            // oturum hala ACIK sayilir. Bu secim
-            // `sinirda_acik_bir_ns_sonra_kapali` testiyle kilitlenmistir -
-            // karsilastirma `<`'ya degistirilirse o test kirilir.
-            (Some(_), Some(son)) => now.duration_since(son) <= self.kilit_suresi,
+    /// Oturum gercekten acik mi? Anahtar varsa VE ne monotonik ne de duvar
+    /// saati bosta kalma suresini asmamissa `true` doner. Ikisinden hangisi
+    /// siniri asarsa oturum kilitli sayilir (bkz. `ZamanDamgasi`).
+    pub fn acik_mi(&self, now: Instant, now_duvar: SystemTime) -> bool {
+        match (&self.anahtar, &self.son_islem) {
+            // `>` (asildi mi) kasitli, `<=` degil: tam sinirda
+            // (now - son_islem == kilit_suresi) oturum hala ACIK sayilir. Bu
+            // secim `sinirda_acik_bir_ns_sonra_kapali` testiyle
+            // kilitlenmistir - karsilastirma degistirilirse o test kirilir.
+            (Some(_), Some(son)) => {
+                !son.sinir_asildi_mi(&ZamanDamgasi::yeni(now, now_duvar), self.kilit_suresi)
+            }
             _ => false,
         }
     }
 
     /// Kullanici etkilesimini isaretler ve bosta kalma suresini sifirlar.
-    /// Oturum zaten suresi dolmussa (yani `acik_mi(now)` yanlissa) hicbir
-    /// sey yapmaz - suresi dolmus bir oturum dokunmayla dirilmemelidir.
-    pub fn dokun(&mut self, now: Instant) {
-        if self.acik_mi(now) {
-            self.son_islem = Some(now);
+    /// Oturum zaten suresi dolmussa (yani `acik_mi(now, now_duvar)` yanlissa)
+    /// hicbir sey yapmaz - suresi dolmus bir oturum dokunmayla
+    /// dirilmemelidir.
+    pub fn dokun(&mut self, now: Instant, now_duvar: SystemTime) {
+        if self.acik_mi(now, now_duvar) {
+            self.son_islem = Some(ZamanDamgasi::yeni(now, now_duvar));
         }
     }
 
     /// Oturum acikken anahtarin bir kopyasini doner; degilse `None`.
-    pub fn anahtar(&self, now: Instant) -> Option<DataKey> {
-        if self.acik_mi(now) {
+    pub fn anahtar(&self, now: Instant, now_duvar: SystemTime) -> Option<DataKey> {
+        if self.acik_mi(now, now_duvar) {
             self.anahtar.clone()
         } else {
             None
@@ -79,95 +141,110 @@ impl Oturum {
 mod tests {
     use super::*;
     use crate::crypto::keyring::generate_data_key;
-    use std::time::{Duration, Instant};
+    use std::time::{Duration, Instant, SystemTime};
 
     #[test]
     fn yeni_oturum_kapalidir() {
         let t = Instant::now();
-        assert!(!Oturum::kapali().acik_mi(t));
+        let td = SystemTime::now();
+        assert!(!Oturum::kapali().acik_mi(t, td));
     }
 
     #[test]
     fn acilan_oturum_anahtari_verir() {
         let t = Instant::now();
+        let td = SystemTime::now();
         let key = generate_data_key();
         let mut o = Oturum::kapali();
-        o.ac(key.clone(), t);
-        assert!(o.acik_mi(t));
-        assert_eq!(o.anahtar(t).unwrap().as_ref(), key.as_ref());
+        o.ac(key.clone(), t, td);
+        assert!(o.acik_mi(t, td));
+        assert_eq!(o.anahtar(t, td).unwrap().as_ref(), key.as_ref());
     }
 
     #[test]
     fn sure_dolunca_kendiliginden_kilitlenir() {
         let t = Instant::now();
+        let td = SystemTime::now();
         let mut o = Oturum::kapali();
-        o.ac(generate_data_key(), t);
+        o.ac(generate_data_key(), t, td);
 
         let sonra = t + Duration::from_secs(VARSAYILAN_KILIT_SURESI_SN + 1);
-        assert!(!o.acik_mi(sonra));
-        assert!(o.anahtar(sonra).is_none());
+        let sonra_td = td + Duration::from_secs(VARSAYILAN_KILIT_SURESI_SN + 1);
+        assert!(!o.acik_mi(sonra, sonra_td));
+        assert!(o.anahtar(sonra, sonra_td).is_none());
     }
 
     #[test]
     fn dokunmak_sureyi_uzatir() {
         let t = Instant::now();
+        let td = SystemTime::now();
         let mut o = Oturum::kapali();
-        o.ac(generate_data_key(), t);
+        o.ac(generate_data_key(), t, td);
 
         let orta = t + Duration::from_secs(200);
-        o.dokun(orta);
+        let orta_td = td + Duration::from_secs(200);
+        o.dokun(orta, orta_td);
 
         let sonra = orta + Duration::from_secs(200);
-        assert!(o.acik_mi(sonra), "dokunma sonrasi sure yeniden baslamali");
+        let sonra_td = orta_td + Duration::from_secs(200);
+        assert!(o.acik_mi(sonra, sonra_td), "dokunma sonrasi sure yeniden baslamali");
     }
 
     #[test]
     fn kilitlenince_anahtar_verilmez() {
         let t = Instant::now();
+        let td = SystemTime::now();
         let mut o = Oturum::kapali();
-        o.ac(generate_data_key(), t);
+        o.ac(generate_data_key(), t, td);
         o.kilitle();
-        assert!(o.anahtar(t).is_none());
+        assert!(o.anahtar(t, td).is_none());
     }
 
     #[test]
     fn kilit_suresi_ayarlanabilir() {
         let t = Instant::now();
+        let td = SystemTime::now();
         let mut o = Oturum::kapali();
         o.kilit_suresi_ayarla(60);
-        o.ac(generate_data_key(), t);
-        assert!(o.acik_mi(t + Duration::from_secs(59)));
-        assert!(!o.acik_mi(t + Duration::from_secs(61)));
+        o.ac(generate_data_key(), t, td);
+        assert!(o.acik_mi(t + Duration::from_secs(59), td + Duration::from_secs(59)));
+        assert!(!o.acik_mi(t + Duration::from_secs(61), td + Duration::from_secs(61)));
     }
 
     #[test]
     fn sinirda_acik_bir_ns_sonra_kapali() {
-        // `acik_mi` icindeki `<=` karsilastirmasinin sinirini kilitler:
-        // tam sinirda (son_islem + kilit_suresi) oturum ACIK, bir
-        // nanosaniye sonrasinda KAPALI olmali. Hem `acik_mi` hem
-        // `anahtar` uzerinden dogrulanir - biri dogru digeri yanlis olabilir.
+        // `acik_mi` icindeki sinir karsilastirmasinin ucunu kilitler: tam
+        // sinirda (son_islem + kilit_suresi) oturum ACIK, bir nanosaniye
+        // sonrasinda KAPALI olmali. Hem `acik_mi` hem `anahtar` uzerinden
+        // dogrulanir - biri dogru digeri yanlis olabilir. Monotonik ve duvar
+        // saati BIRLIKTE, ayni miktarda ilerletiliyor ki bu test yalnizca
+        // sinir ucunu olcsun, iki saat kaynaginin etkilesimini degil (o
+        // ayri testlerde -- asagidaki (a)-(d) -- kontrol ediliyor).
         let t = Instant::now();
+        let td = SystemTime::now();
         let mut o = Oturum::kapali();
         o.kilit_suresi_ayarla(60);
-        o.ac(generate_data_key(), t);
+        o.ac(generate_data_key(), t, td);
 
         let tam_sinirda = t + Duration::from_secs(60);
+        let tam_sinirda_td = td + Duration::from_secs(60);
         assert!(
-            o.acik_mi(tam_sinirda),
+            o.acik_mi(tam_sinirda, tam_sinirda_td),
             "tam sinirda oturum hala acik sayilmali"
         );
         assert!(
-            o.anahtar(tam_sinirda).is_some(),
+            o.anahtar(tam_sinirda, tam_sinirda_td).is_some(),
             "tam sinirda anahtar hala verilmeli"
         );
 
         let sinirdan_bir_ns_sonra = tam_sinirda + Duration::from_nanos(1);
+        let sinirdan_bir_ns_sonra_td = tam_sinirda_td + Duration::from_nanos(1);
         assert!(
-            !o.acik_mi(sinirdan_bir_ns_sonra),
+            !o.acik_mi(sinirdan_bir_ns_sonra, sinirdan_bir_ns_sonra_td),
             "sinirdan bir ns sonra oturum kapali olmali"
         );
         assert!(
-            o.anahtar(sinirdan_bir_ns_sonra).is_none(),
+            o.anahtar(sinirdan_bir_ns_sonra, sinirdan_bir_ns_sonra_td).is_none(),
             "sinirdan bir ns sonra anahtar verilmemeli"
         );
     }
@@ -175,15 +252,106 @@ mod tests {
     #[test]
     fn suresi_dolmus_oturuma_dokunmak_diriltmez() {
         let t = Instant::now();
+        let td = SystemTime::now();
         let mut o = Oturum::kapali();
-        o.ac(generate_data_key(), t);
+        o.ac(generate_data_key(), t, td);
 
         let sonra = t + Duration::from_secs(VARSAYILAN_KILIT_SURESI_SN + 1);
-        o.dokun(sonra);
+        let sonra_td = td + Duration::from_secs(VARSAYILAN_KILIT_SURESI_SN + 1);
+        o.dokun(sonra, sonra_td);
         assert!(
-            !o.acik_mi(sonra),
+            !o.acik_mi(sonra, sonra_td),
             "suresi dolmus oturum dokunmayla dirilmemeli"
         );
-        assert!(o.anahtar(sonra).is_none());
+        assert!(o.anahtar(sonra, sonra_td).is_none());
+    }
+
+    // --- Uyku/duvar saati bulgusu: Gorev 4 (a)-(d) ---
+    //
+    // Senaryo: terapist MacBook'un kapagini kapatir, makine uykuya dalar.
+    // macOS'ta `Instant` uyku boyunca ILERLEMEZ (monotonik saat yalnizca
+    // calisir durumdaki sureyi sayar) ama `SystemTime` (duvar saati) ilerler.
+    // Asagidaki dort test, brief'teki (a)-(d) senaryolarinin birebir
+    // karsiligidir.
+
+    /// (a) Monotonik saat HIC ilerlemedi (sanki islem uykuda donmus) ama
+    /// duvar saati 8 saat ilerledi (kapak 8 saat kapali kaldi) -> KILITLI
+    /// olmali. Yalnizca monotonik saate bakan eski kod bunu KACIRIRDI --
+    /// tam da uyku bulgusunun kendisi.
+    #[test]
+    fn a_mono_ilerlemedi_duvar_8_saat_ilerledi_kilitli() {
+        let t = Instant::now();
+        let td = SystemTime::now();
+        let mut o = Oturum::kapali();
+        o.ac(generate_data_key(), t, td);
+
+        // Mono: AYNI an (uykuda gecen sure sayilmadi). Duvar: 8 saat sonra.
+        let sonra_td = td + Duration::from_secs(8 * 3600);
+        assert!(
+            !o.acik_mi(t, sonra_td),
+            "monotonik ilerlemese bile duvar saati siniri asarsa kilitlenmeli (uyku senaryosu)"
+        );
+        assert!(o.anahtar(t, sonra_td).is_none());
+    }
+
+    /// (b) Duvar saati GERIYE gitti (kullanici saati degistirdi ya da saat
+    /// senkronizasyonu sicradi) -> KILITLI olmali, monotonik saat sinirin
+    /// cok altinda olsa bile. Negatif fark bir uyari isaretidir; guvenli
+    /// taraf kilitlemektir.
+    #[test]
+    fn b_duvar_geriye_gitti_kilitli() {
+        let t = Instant::now();
+        let td = SystemTime::now();
+        let mut o = Oturum::kapali();
+        o.ac(generate_data_key(), t, td);
+
+        // Mono: 1 saniye ileri (sinirin cok altinda). Duvar: 1 saat GERI.
+        let sonra = t + Duration::from_secs(1);
+        let sonra_td = td - Duration::from_secs(3600);
+        assert!(
+            !o.acik_mi(sonra, sonra_td),
+            "duvar saati geriye giderse kilitlenmeli, monotonik sinirin altinda olsa bile"
+        );
+        assert!(o.anahtar(sonra, sonra_td).is_none());
+    }
+
+    /// (c) Ikisi de sinirin altinda -> ACIK kalmali (normal kullanim, uyku
+    /// veya saat oynamasi yok).
+    #[test]
+    fn c_ikisi_de_sinirin_altinda_acik() {
+        let t = Instant::now();
+        let td = SystemTime::now();
+        let mut o = Oturum::kapali();
+        o.kilit_suresi_ayarla(300);
+        o.ac(generate_data_key(), t, td);
+
+        let sonra = t + Duration::from_secs(120);
+        let sonra_td = td + Duration::from_secs(120);
+        assert!(o.acik_mi(sonra, sonra_td), "ikisi de sinirin altindayken oturum acik kalmali");
+        assert!(o.anahtar(sonra, sonra_td).is_some());
+    }
+
+    /// (d) Mevcut davranis: yalnizca monotonik saat siniri asarsa da
+    /// (duvar saati sinirin icinde kalsa bile -- ornegin sistem saatinin
+    /// donduruldugu bir test/hata durumu) KILITLI olmali. Bu, uykuyu
+    /// yakalamak icin eklenen duvar saati kolunun var olan monotonik
+    /// korumayi ZAYIFLATMADIGINI dogrular.
+    #[test]
+    fn d_yalnizca_mono_siniri_astiginda_da_kilitli() {
+        let t = Instant::now();
+        let td = SystemTime::now();
+        let mut o = Oturum::kapali();
+        o.kilit_suresi_ayarla(60);
+        o.ac(generate_data_key(), t, td);
+
+        // Mono: 61 saniye ileri (siniri asti). Duvar: yalnizca 1 saniye ileri
+        // (sinirin cok altinda).
+        let sonra = t + Duration::from_secs(61);
+        let sonra_td = td + Duration::from_secs(1);
+        assert!(
+            !o.acik_mi(sonra, sonra_td),
+            "monotonik saat tek basina siniri asarsa kilitlenmeli"
+        );
+        assert!(o.anahtar(sonra, sonra_td).is_none());
     }
 }

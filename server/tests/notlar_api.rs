@@ -2487,7 +2487,7 @@ fn indirme_koku_tarayicisi_yardimci_zincirini_izler() {
 /// uclusunu dondurur (en yeni once). Testler dogrudan veriye bakar.
 async fn log_satirlari(s: &AppState) -> Vec<String> {
     use psikolog_server::guard::acik_baglanti_ile;
-    let conn = acik_baglanti_ile(s, std::time::Instant::now())
+    let conn = acik_baglanti_ile(s, std::time::Instant::now(), std::time::SystemTime::now())
         .expect("log okumak icin oturum acik olmali");
     psikolog_core::store::audit::son_kayitlar(&conn, 100_000)
         .unwrap()
@@ -2500,7 +2500,7 @@ async fn log_satirlari(s: &AppState) -> Vec<String> {
 /// ayrinti) tek metin olarak -- sizinti taramasi icin. En yeni satir once.
 async fn audit_dokumu(s: &AppState) -> String {
     use psikolog_server::guard::acik_baglanti_ile;
-    let conn = acik_baglanti_ile(s, std::time::Instant::now()).expect("oturum acik olmali");
+    let conn = acik_baglanti_ile(s, std::time::Instant::now(), std::time::SystemTime::now()).expect("oturum acik olmali");
     psikolog_core::store::audit::son_kayitlar(&conn, 100_000)
         .unwrap()
         .into_iter()
@@ -2862,7 +2862,7 @@ async fn kayit_yazilamazsa_500_doner_ve_pdf_verilmez() {
 
     {
         use psikolog_server::guard::acik_baglanti_ile;
-        let conn = acik_baglanti_ile(&s, std::time::Instant::now()).unwrap();
+        let conn = acik_baglanti_ile(&s, std::time::Instant::now(), std::time::SystemTime::now()).unwrap();
         conn.execute_batch("DROP TABLE audit_log").unwrap();
     }
 

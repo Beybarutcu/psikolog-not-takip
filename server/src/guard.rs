@@ -128,7 +128,7 @@ use psikolog_core::store::db::{open_existing, DbError};
 use rusqlite::Connection;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
 
 pub type ApiHata = (StatusCode, Json<Value>);
 
@@ -216,27 +216,33 @@ fn istek_sorgusu_hatasi() -> ApiHata {
 
 /// Açık oturumun anahtarıyla veritabanı bağlantısı verir; kilitliyse `401`.
 /// Başarılı her çağrı `Oturum::dokun()`'u tetikler (bkz. modül dokümantasyonu).
-/// `Instant::now()` geçen ince bir sarmalayıcı -- gerçek istekler bunu kullanır.
+/// `Instant::now()`/`SystemTime::now()` geçen ince bir sarmalayıcı -- gerçek
+/// istekler bunu kullanır. İkisi birden geçilir çünkü `Oturum` artık ikisini
+/// birden okuyor (bkz. `core::session::ZamanDamgasi`: uyku/duvar saati bulgusu).
 pub fn acik_baglanti(state: &AppState) -> Result<Connection, ApiHata> {
-    acik_baglanti_ile(state, Instant::now())
+    acik_baglanti_ile(state, Instant::now(), SystemTime::now())
 }
 
 /// `acik_baglanti`'nin zamanı dışarıdan enjekte edilebilen hali. `core::session::Oturum`
-/// da aynı gerekçeyle `Instant`'ı parametre alır: böylece testler gerçekten
-/// beklemek zorunda kalmaz (bkz. Bulgu 2). Gerçek istekler `acik_baglanti`
-/// üzerinden `Instant::now()` ile çağırır; testler bu fonksiyonu doğrudan,
-/// kendi ürettikleri `Instant` değerleriyle çağırabilir.
-pub fn acik_baglanti_ile(state: &AppState, now: Instant) -> Result<Connection, ApiHata> {
+/// da aynı gerekçeyle `Instant` VE `SystemTime`'ı parametre alır: böylece
+/// testler gerçekten beklemek zorunda kalmaz (bkz. Bulgu 2). Gerçek istekler
+/// `acik_baglanti` üzerinden `Instant::now()`/`SystemTime::now()` ile çağırır;
+/// testler bu fonksiyonu doğrudan, kendi ürettikleri değerlerle çağırabilir.
+pub fn acik_baglanti_ile(
+    state: &AppState,
+    now: Instant,
+    now_duvar: SystemTime,
+) -> Result<Connection, ApiHata> {
     let mut oturum = state.oturum.lock().unwrap_or_else(|e| e.into_inner());
 
-    let anahtar = oturum.anahtar(now).ok_or((
+    let anahtar = oturum.anahtar(now, now_duvar).ok_or((
         StatusCode::UNAUTHORIZED,
         Json(json!({ "hata": "Oturum kilitli. Lütfen parolanızı girin." })),
     ))?;
 
     // Kural 1: yalnızca burada, tam da erişimin fiilen VERİLDİĞİ an --
     // oturumu bu istek için "canlı" say ve boşta kalma sayacını sıfırla.
-    oturum.dokun(now);
+    oturum.dokun(now, now_duvar);
     drop(oturum);
 
     open_existing(&state.db_yolu(), &anahtar).map_err(veritabani_hatasi)
@@ -309,7 +315,7 @@ mod tests {
             .oturum
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .ac(anahtar.clone(), Instant::now());
+            .ac(anahtar.clone(), Instant::now(), SystemTime::now());
 
         const YAZMA: usize = 30;
 

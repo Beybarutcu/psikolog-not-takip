@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { tlMetni } from './para'
+import {
+  AZAMI_UCRET_KURUS, UCRET_BICIM_HATASI, UCRET_SINIR_HATASI, tlMetni, tlSayisi, ucretOku,
+} from './para'
 
 // `tlMetni` uygulamadaki tek para biçimi (kart, panel, özet). `Intl`'e
 // bağlı DEĞİL: buradaki tam eşitlik, macOS webview'inin basacağı metnin
@@ -36,5 +38,52 @@ describe('tlMetni', () => {
 
   it('beklenmedik ondalik kurus tam sayiya yuvarlanir', () => {
     expect(tlMetni(45049.6)).toBe('450,50 TL')
+  })
+})
+
+describe('ucretOku — Türkçe yazım (tasarım A5)', () => {
+  // Tasarımdaki tablonun TAMAMI. Tek satır bile eksik kalırsa kural
+  // o satırda sessizce başka bir şey yapabilir.
+  const gecerli: [string, number | null][] = [
+    ['', null], ['   ', null],
+    ['1.250', 125000], ['1250', 125000], ['1.250,50', 125050],
+    ['450,5', 45050], ['450.50', 45050], ['1.25', 125], ['0450', 45000],
+    ['0', 0], ['0,00', 0], ['1250 TL', 125000], ['1250TL', 125000],
+    ['₺1250', 125000], ['tl 1250', 125000], ['  450  ', 45000],
+    ['1.000.000', AZAMI_UCRET_KURUS],
+  ]
+  for (const [girdi, beklenen] of gecerli) {
+    it(`"${girdi}" -> ${beklenen}`, () => {
+      expect(ucretOku(girdi)).toEqual({ kurus: beklenen })
+    })
+  }
+
+  const bicimHatasi = [
+    '1.250.50', '1250.500', '12.50,00', '1.2345', '.5', ',5', '5.', '5,',
+    '4TL50', '-5', 'abc', 'TL 5 TL', '1,250,00', '12.5.000',
+  ]
+  for (const girdi of bicimHatasi) {
+    it(`"${girdi}" biçim hatası`, () => {
+      expect(ucretOku(girdi)).toEqual({ hata: UCRET_BICIM_HATASI })
+    })
+  }
+
+  it('üst sınırın bir kuruş üstü sınır hatası verir', () => {
+    expect(ucretOku('1.000.000,01')).toEqual({ hata: UCRET_SINIR_HATASI })
+    expect(ucretOku('99999999999999999999')).toEqual({ hata: UCRET_SINIR_HATASI })
+  })
+
+  it('sınır sabiti sunucudaki AZAMI_UCRET ile aynı düz sayı', () => {
+    expect(AZAMI_UCRET_KURUS).toBe(100_000_000)
+  })
+
+  it('biçimle -> oku aynı değeri verir (0..AZAMI arası, sınırlar dahil)', () => {
+    const degerler = [0, 1, 9, 10, 99, 100, 101, 999, 1000, 45000, 45050, 125050,
+      999_999, 1_000_000, 12_345_678, AZAMI_UCRET_KURUS - 1, AZAMI_UCRET_KURUS]
+    // Ayrıca sabit adımlı bir tarama (rastgele değil: sonuç tekrarlanabilir).
+    for (let k = 0; k <= AZAMI_UCRET_KURUS; k += 9_876_543) degerler.push(k)
+    for (const k of degerler) {
+      expect(ucretOku(tlSayisi(k))).toEqual({ kurus: k })
+    }
   })
 })

@@ -110,7 +110,7 @@ test('mevcut randevunun ucreti guncellenir, kopya olusmaz', async ({ page }) => 
 
   // Randevuyu ac, ucreti degistir, Guncelle'ye bas.
   await bloklar.first().click()
-  await expect(page.getByLabel('Ücret (TL)')).toHaveValue('450')
+  await expect(page.getByLabel('Ücret (TL)')).toHaveValue('450,00')
   await page.getByLabel('Ücret (TL)').fill('500')
   await page.getByRole('button', { name: 'Güncelle' }).click()
 
@@ -135,7 +135,7 @@ test('mevcut randevunun ucreti guncellenir, kopya olusmaz', async ({ page }) => 
 
   // (b) UCRET GERCEKTEN DEGISTI: paneli yeniden ac ve alani oku.
   await bloklar.first().click()
-  await expect(page.getByLabel('Ücret (TL)')).toHaveValue('500')
+  await expect(page.getByLabel('Ücret (TL)')).toHaveValue('500,00')
 })
 
 // Dal incelemesi I4a: seri kurulabiliyor ama iptal edilemiyordu

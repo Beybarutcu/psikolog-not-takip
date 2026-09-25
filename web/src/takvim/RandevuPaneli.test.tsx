@@ -276,7 +276,7 @@ describe('RandevuPaneli', () => {
     await userEvent.type(screen.getByLabelText('Ücret (TL)'), 'abc')
     await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
 
-    expect(screen.getByText(/ücret.*sayısal/i)).toBeDefined()
+    expect(screen.getByText('Ücreti ör. 1.250 ya da 450,50 biçiminde yazın.')).toBeDefined()
     expect(props.onKaydet).not.toHaveBeenCalled()
   })
 
@@ -287,6 +287,57 @@ describe('RandevuPaneli', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
 
     expect(props.onKaydet).toHaveBeenCalledWith(expect.objectContaining({ ucret: null }))
+  })
+
+  // --- Görev 1: ücret alanı Türkçe yazımı doğru okur (tasarım A5) ------
+
+  it('1.1: "1.250" 1.250 TL olarak kaydedilir (eski hata: 1,25 TL)', async () => {
+    const props = kur()
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.type(screen.getByLabelText('Ücret (TL)'), '1.250')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    expect(props.onKaydet).toHaveBeenCalledWith(expect.objectContaining({ ucret: 125000 }))
+  })
+
+  it('1.2: "450,50" kabul edilir (eski hata: sayısal değil)', async () => {
+    const props = kur()
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.type(screen.getByLabelText('Ücret (TL)'), '450,50')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    expect(props.onKaydet).toHaveBeenCalledWith(expect.objectContaining({ ucret: 45050 }))
+  })
+
+  it('1.3: alanın altında neyin kaydedileceği görünür', async () => {
+    kur()
+    expect(screen.queryByTestId('ucret-onizleme')).toBeNull()
+    await userEvent.type(screen.getByLabelText('Ücret (TL)'), '1250,5')
+    expect(screen.getByTestId('ucret-onizleme').textContent).toBe('= 1.250,50 TL')
+  })
+
+  it('1.4: geçersiz yazımda önizleme yok, kaydet hatayı söyler', async () => {
+    const props = kur()
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.type(screen.getByLabelText('Ücret (TL)'), '1.250.50')
+    expect(screen.queryByTestId('ucret-onizleme')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    expect(screen.getByText('Ücreti ör. 1.250 ya da 450,50 biçiminde yazın.')).toBeDefined()
+    expect(props.onKaydet).not.toHaveBeenCalled()
+  })
+
+  it('1.5: üst sınırı aşan ücret kaydedilmez', async () => {
+    const props = kur()
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.type(screen.getByLabelText('Ücret (TL)'), '1.000.000,01')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    expect(screen.getByText('Ücret en fazla 1.000.000 TL olabilir.')).toBeDefined()
+    expect(props.onKaydet).not.toHaveBeenCalled()
+  })
+
+  it('1.6 (inceleme odağı 4): kuruşlu kayıt "450,50" açılır, dokunmadan Güncelle ücreti değiştirmez', async () => {
+    const props = kur({ randevu: { ...mevcut, ucret: 45050 } })
+    expect((screen.getByLabelText('Ücret (TL)') as HTMLInputElement).value).toBe('450,50')
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    expect(props.onKaydet).toHaveBeenCalledWith(expect.objectContaining({ ucret: 45050 }))
   })
 
   // --- Dal incelemesi I4a: seri silme ---------------------------------
@@ -483,7 +534,7 @@ describe('RandevuPaneli', () => {
 
     // Düzenleme kipi: alanlar mevcut kayıttan doluyor.
     expect((screen.getByLabelText('Danışan') as HTMLSelectElement).value).toBe('1')
-    expect((screen.getByLabelText('Ücret (TL)') as HTMLInputElement).value).toBe('450')
+    expect((screen.getByLabelText('Ücret (TL)') as HTMLInputElement).value).toBe('450,00')
 
     await userEvent.clear(screen.getByLabelText('Ücret (TL)'))
     await userEvent.type(screen.getByLabelText('Ücret (TL)'), '500')

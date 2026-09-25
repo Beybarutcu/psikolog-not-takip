@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Danisan, SeriCakismasi, SeriSilmeOnizlemesi } from '../api'
+import { tlMetni, tlSayisi, ucretOku } from '../para'
 import type { Randevu } from './HaftalikTakvim'
 import { dakikaFarki, yerelZaman, zamandanDate } from './hafta'
 
@@ -83,15 +84,6 @@ function bitisHesapla(baslangic: string, sureDk: number): string {
   return yerelZaman(d)
 }
 
-// Kullanıcı TL girer ("450"), sunucuya kuruş (tam sayı, 45000) gider. Ücret *
-// 100 kayan noktalı yuvarlama hatasına açıktır (ör. 19.99 * 100 tam olarak
-// 1999 çıkmayabilir) — bu yüzden çarpımdan sonra Math.round ile en yakın
-// kuruşa yuvarlanır, sonucu doğrudan sunucuya tam sayı olarak gönderiyoruz.
-function tldenKurusa(tl: string): number | null {
-  if (tl.trim() === '') return null
-  return Math.round(Number(tl) * 100)
-}
-
 export function RandevuPaneli({
   zaman, randevu, danisanlar, onKaydet, onSil, onSeriSil, seriSayisiAl,
   silinecekNotSayisiAl, onKapat, cakismaKontrol,
@@ -101,7 +93,7 @@ export function RandevuPaneli({
   const [sureDk, setSureDk] = useState(
     randevu ? dakikaFarki(randevu.baslangic, randevu.bitis) : VARSAYILAN_SURE_DK,
   )
-  const [ucretTl, setUcretTl] = useState(randevu?.ucret != null ? String(randevu.ucret / 100) : '')
+  const [ucretTl, setUcretTl] = useState(randevu?.ucret != null ? tlSayisi(randevu.ucret) : '')
   const [tekrar, setTekrar] = useState(false)
   const [haftaSayisi, setHaftaSayisi] = useState('8')
   const [cakisma, setCakisma] = useState<SeriCakismasi | null>(null)
@@ -127,6 +119,10 @@ export function RandevuPaneli({
   }, [])
 
   const bitis = bitisHesapla(baslangic, sureDk)
+  // Tasarım A5: tek okuma kaynağı `para.ts::ucretOku`. Render gövdesinde
+  // hesaplanır ki hem önizleme hem `kaydet()` AYNI ayrıştırmayı kullansın —
+  // ikisi ayrı ayrı ayrıştırsaydı biri kabul edip diğeri reddedebilirdi.
+  const ucretOkuma = ucretOku(ucretTl)
 
   // Seri kuruluyorsa çakışma TÜM haftalar için sorulur. Bu yokken panel
   // yalnızca 1. haftayı kontrol ediyordu: "Salı 14:00, 12 hafta" serisi, o
@@ -176,9 +172,8 @@ export function RandevuPaneli({
       setHata('Lütfen bir danışan seçin.')
       return
     }
-    const ucretTrim = ucretTl.trim()
-    if (ucretTrim !== '' && Number.isNaN(Number(ucretTrim))) {
-      setHata('Ücret sayısal bir değer olmalı (ör. 450 veya 450.50).')
+    if ('hata' in ucretOkuma) {
+      setHata(ucretOkuma.hata)
       return
     }
     // Kaydetme yolu, çakışma sorgusuyla AYNI süzgeci kullanır
@@ -198,7 +193,7 @@ export function RandevuPaneli({
         client_id: Number(clientId),
         baslangic,
         bitis,
-        ucret: tldenKurusa(ucretTl),
+        ucret: ucretOkuma.kurus,
         ...(sorulacakTekrar !== undefined ? { tekrar_sayisi: sorulacakTekrar } : {}),
       }),
     )
@@ -258,6 +253,11 @@ export function RandevuPaneli({
         value={ucretTl}
         onChange={(e) => setUcretTl(e.target.value)}
       />
+      {'kurus' in ucretOkuma && ucretOkuma.kurus !== null && (
+        <p data-testid="ucret-onizleme" className="mt-1 text-xs text-slate-500">
+          = {tlMetni(ucretOkuma.kurus)}
+        </p>
+      )}
 
       {!randevu && (
         <div className="mt-3">

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { takvimApi, YetkisizHata } from '../../api'
 import type { Randevu } from '../../takvim/HaftalikTakvim'
-import { haftaGunleri, haftaninBasi, yerelZaman } from '../../takvim/hafta'
+import { haftaGunleri, haftaninBasi, yerelZaman, zamandanDate } from '../../takvim/hafta'
+import { simdiYerel } from './yerelGun'
 import { randevuSaatiOlustur } from './yazmaSaati'
 
 /**
@@ -24,7 +25,10 @@ import { randevuSaatiOlustur } from './yazmaSaati'
  * kimliklerle sınırlı tutmanın bedeli sıfır olan yoludur.
  */
 export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
-  const [haftaBasi, setHaftaBasi] = useState(() => haftaninBasi(new Date()))
+  // Açılış haftası uygulamadaki TEK "şimdi" kaynağından (`yerelGun.ts::
+  // simdiYerel`, tasarım A2) — ikinci bir `new Date()` çağrısı bu ekranın
+  // "şimdi"sini danışan dosyasınınkinden testlerde sessizce ayrıştırırdı.
+  const [haftaBasi, setHaftaBasi] = useState(() => haftaninBasi(zamandanDate(simdiYerel())))
   const [randevular, setRandevular] = useState<Randevu[]>([])
   const [hata, setHata] = useState<string | null>(null)
   const [seciliRandevu, setSeciliRandevu] = useState<Randevu | null>(null)
@@ -118,6 +122,12 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
       yeni.setDate(yeni.getDate() + yon * 7)
       return yeni
     })
+  }
+
+  // Mutlak gezinme: "Bugün" düğmesi ve gün seçici (tasarım A1). Göreli
+  // `haftaDegis(±1)` yanında durur; ikisi de aynı state'i kurar.
+  function haftayaGit(tarih: Date) {
+    setHaftaBasi(haftaninBasi(tarih))
   }
 
   function randevuSec(randevu: Randevu) {
@@ -301,6 +311,7 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
     panelAcik: seciliRandevu !== null || seciliBosSaat !== null,
     oturumKapandi,
     haftaDegis,
+    haftayaGit,
     randevuSec,
     bosSaatSec,
     panelKapat,

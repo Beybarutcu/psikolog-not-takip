@@ -163,9 +163,8 @@ async function ozetKapat(page: Page) {
 
 /** Takvimi `n` hafta ileri götürür; her adımda başlığın DEĞİŞMESİNİ bekler. */
 async function haftaIlerle(page: Page, n: number) {
-  const haftaBasligi = page
-    .getByRole('button', { name: 'Önceki hafta', exact: true })
-    .locator('xpath=following-sibling::h2')
+  // Görev 5: hafta başlığı tek araç çubuğunda `#hafta-basligi` (DOM kancası).
+  const haftaBasligi = page.locator('#hafta-basligi')
   for (let i = 0; i < n; i++) {
     const once = (await haftaBasligi.textContent()) ?? ''
     await page.getByRole('button', { name: 'Sonraki hafta', exact: true }).click()

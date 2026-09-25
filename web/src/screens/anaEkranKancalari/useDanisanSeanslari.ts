@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { danisanApi, YetkisizHata, type DanisanSeansi } from '../../api'
 import { varsayilanSeans } from '../../danisan/seansSecimi'
-import { yerelZaman } from '../../takvim/hafta'
+import { simdiYerel } from './yerelGun'
 import { yazmaSaatiOlustur } from './yazmaSaati'
 
 /**
@@ -85,8 +85,9 @@ type Secim = { clientId: number; seansId: number }
  *     randevunun başlangıcını geçtiği anki ilk render seçimi (ve açık not
  *     editörünü) terapistin elinin altından değiştirirdi.
  *
- * `simdi` enjekte edilebilir (varsayılanı yerel duvar saati, `yerelZaman`):
- * testler "şimdi"yi kendileri seçebilsin.
+ * `simdi` enjekte edilebilir (varsayılanı yerel duvar saati,
+ * `yerelGun.ts::simdiYerel` — uygulamadaki TEK "şimdi" kaynağı, bkz. o
+ * dosyanın modül başlığı): testler "şimdi"yi kendileri seçebilsin.
  *
  * # Bayatlık: yamanamayan yazmalar listeyi YENİDEN ÇEKTİRİR
  *
@@ -132,7 +133,7 @@ export function useDanisanSeanslari({
   clientId,
   gorunur,
   onYetkisiz,
-  simdi = () => yerelZaman(new Date()),
+  simdi = simdiYerel,
 }: {
   clientId: number | null
   /** Liste ekranda mı — bayat listenin yeniden çekilmesi buna bağlı. */

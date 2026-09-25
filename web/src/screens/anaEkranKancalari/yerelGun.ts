@@ -1,3 +1,6 @@
+import { useEffect, useState } from 'react'
+import { yerelZaman } from '../../takvim/hafta'
+
 /**
  * Yerel takvim günü (`YYYY-AA-GG`). Sunucunun `saklama-suresi-dolanlar`
  * uç noktası da `bugun`'ü istemciden alıyor: karşılaştırma duvar saatine
@@ -46,4 +49,24 @@ export function yerelDamga(tarih: Date): string {
   const iki = (n: number) => String(n).padStart(2, '0')
   const gun = `${tarih.getFullYear()}${iki(tarih.getMonth() + 1)}${iki(tarih.getDate())}`
   return `${gun}-${iki(tarih.getHours())}${iki(tarih.getMinutes())}`
+}
+
+/**
+ * Uygulamadaki TEK "şimdi" (tasarım A2). Takvimin açılış haftası, "Bugün",
+ * bugün vurgusu, şimdi çizgisi, "sıradaki" ve danışan dosyasının varsayılan
+ * seçimi bunu kullanır; ikinci bir saat kaynağı iki ekranın "şimdi"sini
+ * testlerde ayrıştırırdı. Testler `vi.setSystemTime` ile sabitler.
+ */
+export function simdiYerel(): string {
+  return yerelZaman(new Date())
+}
+
+/** `simdiYerel`'in dakikada bir yenilenen React durumu (tek tik). */
+export function useDakikalikSimdi(): string {
+  const [simdi, setSimdi] = useState(simdiYerel)
+  useEffect(() => {
+    const zamanlayici = setInterval(() => setSimdi(simdiYerel()), 60_000)
+    return () => clearInterval(zamanlayici)
+  }, [])
+  return simdi
 }

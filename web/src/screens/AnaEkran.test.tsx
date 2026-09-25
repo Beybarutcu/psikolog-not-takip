@@ -2946,6 +2946,31 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     })
   })
 
+  // GÖREV 5: mutlak gezinme (`useTakvimAkisi.haftayaGit`, tasarım §4 A1).
+  // Gün seçici alanı takvim başlığına tıklayınca açılıyor (bkz.
+  // `TakvimSekmesi.tsx`) — burada UÇTAN UCA ölçülen şey, seçilen günün
+  // GERÇEKTEN o haftanın randevu isteğini tetiklemesi (mock'lanmış
+  // `takvim.haftayaGit` değil, hook'un kendi state'i).
+  it('gun secicide GIRILEN gune gercekten gidilir: haftanin basi ve randevu istegi degisir', async () => {
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await listeYuklenmesiniBekleVeTakvimeDon()
+
+    // Varsayılan hafta (bugün 2026-09-09 Çarşamba): 7 – 13 Eylül 2026.
+    await userEvent.click(screen.getByRole('button', { name: '7 – 13 Eylül 2026' }))
+    fireEvent.change(screen.getByLabelText('Gidilecek gün'), { target: { value: '2026-10-15' } })
+
+    // haftayaGit(15 Ekim) -> haftanın başı 12 Ekim (Pazartesi); GET isteği
+    // o günün YEREL saat 00:00'ıyla gider.
+    await waitFor(() =>
+      expect(
+        istekYollari.some((y) => y.startsWith('GET /api/randevular?baslangic=2026-10-12')),
+      ).toBe(true),
+    )
+    expect(document.querySelector('#hafta-basligi')?.textContent).toBe('12 – 18 Ekim 2026')
+    // Alan kullanıcının seçimi tamamlanınca kapanır.
+    expect(screen.queryByLabelText('Gidilecek gün')).toBeNull()
+  })
+
   // GÖREV 7: eskiden ("O HAFTAYA gidilir ve panel açılır" adlı test) not
   // sonucuna tıklamak takvim haftasını değiştirip seans panelini açıyordu.
   // Tasarım §8 kararı bunu değiştirdi: not sonucu artık danışanın

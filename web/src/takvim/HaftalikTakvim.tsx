@@ -1,4 +1,4 @@
-import { AYLAR, GUN_ADLARI, haftaBasligi, haftaGunleri, yerelZaman, zamandanDate } from './hafta'
+import { AYLAR, GUN_ADLARI, haftaGunleri, yerelZaman, zamandanDate } from './hafta'
 import { RandevuBloku } from './RandevuBloku'
 
 export type Randevu = {
@@ -49,14 +49,22 @@ function hucreAnahtari(tarih: Date): string {
 type Props = {
   randevular: Randevu[]
   haftaBasi: Date
-  onHaftaDegis: (yon: number) => void
   onRandevuSec: (randevu: Randevu) => void
   onBosSaatSec: (zaman: string) => void
+  /**
+   * Uygulamadaki TEK "şimdi" kaynağı (`yerelGun.ts::simdiYerel`,
+   * `TakvimSekmesi`'nde `useDakikalikSimdi` ile dakikada bir yenilenir).
+   * Bu görevde yalnızca geçiriliyor; Görev 6 bugün vurgusu ve şimdi
+   * çizgisi için kullanacak.
+   */
+  simdi: string
 }
 
 export function HaftalikTakvim({
-  randevular, haftaBasi, onHaftaDegis, onRandevuSec, onBosSaatSec,
+  randevular, haftaBasi, onRandevuSec, onBosSaatSec, simdi,
 }: Props) {
+  // Görev 6'ya kadar yalnızca prop olarak taşınıyor (bkz. Props yorumu).
+  void simdi
   const gunler = haftaGunleri(haftaBasi)
   const saatler = Array.from(
     { length: CALISMA_BITIS - CALISMA_BASLANGIC },
@@ -107,21 +115,8 @@ export function HaftalikTakvim({
 
   return (
     <div className="p-4">
-      <div className="mb-4 flex items-center gap-3">
-        <button
-          className="rounded border px-3 py-1"
-          onClick={() => onHaftaDegis(-1)}
-        >
-          Önceki hafta
-        </button>
-        <h2 className="text-lg font-semibold">{haftaBasligi(haftaBasi)}</h2>
-        <button
-          className="rounded border px-3 py-1"
-          onClick={() => onHaftaDegis(1)}
-        >
-          Sonraki hafta
-        </button>
-      </div>
+      {/* Hafta başlığı ve gezinme okları Görev 5'te `TakvimSekmesi`'nin tek
+          araç çubuğuna taşındı (tasarım §4 A1/A2, "tek araç çubuğu"). */}
 
       {/* GÖRÜNEN ARALIK DIŞINDAKİ RANDEVULAR.
           Bu randevular sunucudan çekiliyor ama ızgarada hiçbir hücreye

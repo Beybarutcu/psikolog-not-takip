@@ -5,9 +5,11 @@ import { HizliArama } from '../arama/HizliArama'
 import { AyOzeti } from '../ozet/AyOzeti'
 import { SeansAltSatiri } from '../seans/SeansAltSatiri'
 import { SeansPaneli } from '../seans/SeansPaneli'
+import { useDakikalikSimdi } from '../screens/anaEkranKancalari/yerelGun'
 import type { useSeansNotlari } from '../screens/anaEkranKancalari/useSeansNotlari'
 import type { useTakvimAkisi } from '../screens/anaEkranKancalari/useTakvimAkisi'
 import { HaftalikTakvim } from './HaftalikTakvim'
+import { haftaBasligi, haftaninBasi, zamandanDate } from './hafta'
 import { RandevuPaneli } from './RandevuPaneli'
 
 /**
@@ -71,6 +73,28 @@ import { RandevuPaneli } from './RandevuPaneli'
  * özeti düğmesinin ("Ay sonu özeti") kendisi takvimden ÖNCE göründüğü için
  * yanlışlıkla geçerdi (bkz. görev raporu). `id`'siz bir `<div>` sarmalayıcı
  * bu ölçümün tek çapası.
+ *
+ * # Tek araç çubuğu, tek "şimdi" kaynağı (Görev 5, tasarım §4 A1/A2)
+ *
+ * Hafta başlığı ve gezinme okları eskiden `HaftalikTakvim`'in İÇİNDEYDİ;
+ * "Bugün" düğmesi ve gün seçiciyle birlikte tek bir satırda toplanmaları
+ * gerekince BURAYA taşındı — ikinci bir yerde aynı okları/başlığı yeniden
+ * kurmak, ileride biri güncellenip diğerinin unutulduğu bir çift üretirdi.
+ * Başlık `<h2 id="hafta-basligi">` (DOM kancası): Görev 6'nın bugün vurgusu
+ * ve şimdi çizgisi de bu satırı okuyacak.
+ *
+ * `simdi` (`useDakikalikSimdi`, `yerelGun.ts::simdiYerel`'in dakikada bir
+ * yenilenen React durumu) BURADA okunuyor, `AnaEkran`'da DEĞİL: "Bugün"
+ * düğmesinin soluklaşması (`buHafta`) ve `HaftalikTakvim`'e geçen `simdi`
+ * (Görev 6) aynı tek kaynaktan besleniyor — ikinci bir `useDakikalikSimdi()`
+ * çağrısı da aynı değeri üretirdi ama saniyede bir render tetikleyen bir
+ * kancayı gereksiz yere ikinci bir bileşende daha çalıştırmak anlamsız.
+ *
+ * Gün seçici (`<input type="date">`) yalnızca kullanıcı başlığa TIKLAYINCA
+ * DOM'a girer ve `autoFocus` taşır: randevuya tıklamanın imleci hiçbir
+ * alana kendiliğinden GÖTÜRMEMESİ kuralıyla (global kısıtlar) çelişmiyor,
+ * çünkü odak burada kullanıcının kendi açtığı bir alana gidiyor — kapalı bir
+ * alana kendiliğinden odak YOK.
  */
 
 type Props = {
@@ -134,33 +158,93 @@ export function TakvimSekmesi({
 }: Props) {
   // Bkz. modül başlığı: kapalı başlama kuralı burada yaşıyor.
   const [ozetAcik, setOzetAcik] = useState(false)
+  // Uygulamadaki TEK "şimdi" (bkz. modül başlığı) — "Bugün" düğmesi ve
+  // (Görev 6'da) HaftalikTakvim'e geçen `simdi` AYNI kaynaktan.
+  const simdi = useDakikalikSimdi()
+  // Kullanıcının başlığa tıklamasıyla açılan gün seçici (tasarım A1).
+  const [gunSecici, setGunSecici] = useState(false)
+  const buHafta = haftaninBasi(zamandanDate(simdi)).getTime() === takvim.haftaBasi.getTime()
 
   const { seciliRandevu, seciliBosSaat } = takvim
   const seans = seansAkisi.seans
 
   return (
     <div data-testid="takvim-sekmesi">
-      <div className="mb-4 flex items-center justify-end gap-2">
-        {/* Hızlı arama her zaman monte: Cmd+K dinleyicisi bileşenin kendi
-            içinde. Kapalıyken yalnızca kısayolu duyuran bir düğme basar;
-            hiçbir istek atmaz. */}
-        <HizliArama
-          ara={aramaApi.ara}
-          onDanisanSec={(id, appointmentId) => onDanisanAc(id, appointmentId)}
-          onEtiketSec={onEtiketAc}
-        />
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <button
           type="button"
-          className="rounded-lg border px-4 py-2"
-          aria-expanded={ozetAcik}
-          onClick={() => setOzetAcik((acik) => !acik)}
+          aria-label="Önceki hafta"
+          className="rounded border px-2 py-1"
+          onClick={() => takvim.haftaDegis(-1)}
         >
-          Ay sonu özeti
+          ‹
         </button>
-        {/* `Kilitle` burada DEĞİL (son inceleme I1): tasarım §4 onu kabuğun
-            üst satırına koyuyor ve risk notu ya da açık bir dosya
-            ekrandayken kilitlemek için Takvim'e geçmek gerekmemeli — bkz.
-            `AnaEkran.tsx`. */}
+        <h2 id="hafta-basligi" className="text-lg font-semibold">
+          <button
+            type="button"
+            aria-expanded={gunSecici}
+            className="rounded px-1 hover:bg-slate-100"
+            onClick={() => setGunSecici((acik) => !acik)}
+          >
+            {haftaBasligi(takvim.haftaBasi)}
+          </button>
+        </h2>
+        <button
+          type="button"
+          aria-label="Sonraki hafta"
+          className="rounded border px-2 py-1"
+          onClick={() => takvim.haftaDegis(1)}
+        >
+          ›
+        </button>
+        <button
+          type="button"
+          aria-disabled={buHafta}
+          className={`rounded border px-3 py-1 ${buHafta ? 'text-slate-400' : ''}`}
+          onClick={() => {
+            if (!buHafta) takvim.haftayaGit(zamandanDate(simdi))
+          }}
+        >
+          Bugün
+        </button>
+        {gunSecici && (
+          // Kullanıcının kendi açtığı alan: odak burada verilir (açık eylem,
+          // bkz. global kısıtlar — imleç kendiliğinden başka hiçbir alana
+          // gitmez).
+          <input
+            type="date"
+            aria-label="Gidilecek gün"
+            autoFocus
+            className="rounded border px-2 py-1"
+            onChange={(e) => {
+              if (e.target.value === '') return
+              takvim.haftayaGit(zamandanDate(`${e.target.value}T00:00`))
+              setGunSecici(false)
+            }}
+          />
+        )}
+        <div className="ml-auto flex items-center gap-2">
+          {/* Hızlı arama her zaman monte: Cmd+K dinleyicisi bileşenin kendi
+              içinde. Kapalıyken yalnızca kısayolu duyuran bir düğme basar;
+              hiçbir istek atmaz. */}
+          <HizliArama
+            ara={aramaApi.ara}
+            onDanisanSec={(id, appointmentId) => onDanisanAc(id, appointmentId)}
+            onEtiketSec={onEtiketAc}
+          />
+          <button
+            type="button"
+            className="rounded-lg border px-4 py-2"
+            aria-expanded={ozetAcik}
+            onClick={() => setOzetAcik((acik) => !acik)}
+          >
+            Ay sonu özeti
+          </button>
+          {/* `Kilitle` burada DEĞİL (son inceleme I1): tasarım §4 onu
+              kabuğun üst satırına koyuyor ve risk notu ya da açık bir dosya
+              ekrandayken kilitlemek için Takvim'e geçmek gerekmemeli — bkz.
+              `AnaEkran.tsx`. */}
+        </div>
       </div>
 
       {takvim.hata && <p className="mb-4 text-sm text-red-600">{takvim.hata}</p>}
@@ -170,9 +254,9 @@ export function TakvimSekmesi({
           <HaftalikTakvim
             randevular={takvim.randevular}
             haftaBasi={takvim.haftaBasi}
-            onHaftaDegis={takvim.haftaDegis}
             onRandevuSec={takvim.randevuSec}
             onBosSaatSec={takvim.bosSaatSec}
+            simdi={simdi}
           />
         </div>
 

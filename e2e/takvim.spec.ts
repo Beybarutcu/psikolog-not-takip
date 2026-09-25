@@ -175,7 +175,8 @@ test('seri kurulur ve tek adimda iptal edilir', async ({ page }) => {
 
 test('haftalar arasi gezinme calisir', async ({ page }) => {
   await kurulumYap(page)
-  const baslik = page.locator('h2').first()
+  // Görev 5: hafta başlığı tek araç çubuğunda `#hafta-basligi` (DOM kancası).
+  const baslik = page.locator('#hafta-basligi')
   const ilk = await baslik.textContent()
 
   await page.getByRole('button', { name: 'Sonraki hafta' }).click()

@@ -14,7 +14,10 @@ function kur(ozel = {}) {
   const props = {
     randevular: [randevu],
     haftaBasi: haftaninBasi(new Date(2026, 8, 7)),
-    onHaftaDegis: vi.fn(),
+    // Görev 6'da kullanılacak (bugün vurgusu, şimdi çizgisi); bu görevde
+    // yalnızca geçiriliyor. `simdi` zorunlu bir prop olduğu için `kur()`
+    // burada sabit bir değer veriyor (Görev 6 AYNI değeri kullanacak).
+    simdi: '2026-09-09T14:30',
     onRandevuSec: vi.fn(),
     onBosSaatSec: vi.fn(),
     ...ozel,
@@ -24,9 +27,12 @@ function kur(ozel = {}) {
 }
 
 describe('HaftalikTakvim', () => {
-  it('hafta başlığını ve yedi günü gösterir', () => {
+  // Hafta başlığı ve gezinme okları Görev 5'te `TakvimSekmesi`nin tek araç
+  // çubuğuna taşındı (bkz. `TakvimSekmesi.test.tsx` — "araç çubuğu (Görev
+  // 5)"); burada yalnızca ızgaranın kendi içeriği (gün adları, randevular)
+  // ölçülüyor.
+  it('yedi günü gösterir', () => {
     kur()
-    expect(screen.getByText('7 – 13 Eylül 2026')).toBeDefined()
     for (const gun of ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz']) {
       expect(screen.getByText(gun)).toBeDefined()
     }
@@ -41,15 +47,6 @@ describe('HaftalikTakvim', () => {
     const props = kur()
     await userEvent.click(screen.getByText('Ayşe Yılmaz'))
     expect(props.onRandevuSec).toHaveBeenCalledWith(randevu)
-  })
-
-  it('ileri ve geri gezinme hafta değişimini bildirir', async () => {
-    const props = kur()
-    await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
-    expect(props.onHaftaDegis).toHaveBeenCalledWith(1)
-
-    await userEvent.click(screen.getByRole('button', { name: 'Önceki hafta' }))
-    expect(props.onHaftaDegis).toHaveBeenCalledWith(-1)
   })
 
   it('boş saate tıklayınca o saati bildirir', async () => {
@@ -82,7 +79,8 @@ describe('HaftalikTakvim', () => {
 
   it('randevusuz hafta boş ızgara gösterir, hata vermez', () => {
     kur({ randevular: [] })
-    expect(screen.getByText('7 – 13 Eylül 2026')).toBeDefined()
+    expect(screen.getByRole('table')).toBeDefined()
+    expect(screen.getByText('Pzt')).toBeDefined()
   })
 })
 

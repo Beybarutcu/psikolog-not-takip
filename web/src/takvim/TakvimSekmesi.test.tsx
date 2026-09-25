@@ -1,9 +1,12 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { yerelGun } from '../screens/anaEkranKancalari/yerelGun'
 import type { useSeansNotlari } from '../screens/anaEkranKancalari/useSeansNotlari'
 import type { useTakvimAkisi } from '../screens/anaEkranKancalari/useTakvimAkisi'
 import { TakvimSekmesi } from './TakvimSekmesi'
+
+afterEach(() => vi.useRealTimers())
 
 // Aynı desen `AyOzeti.test.tsx`'te: `ozetApi.ayOzeti` test başına
 // değiştirilebilir bir taklitle çağrılıyor, geri kalan `../api` GERÇEK
@@ -39,6 +42,9 @@ function bosTakvim(): ReturnType<typeof useTakvimAkisi> {
     panelAcik: false,
     oturumKapandi: vi.fn(),
     haftaDegis: vi.fn(),
+    // Görev 5: mutlak gezinme ("Bugün" düğmesi, gün seçici). Sonraki
+    // görevler bu taklide başka alanlar ekleyecek.
+    haftayaGit: vi.fn(),
     randevuSec: vi.fn(),
     bosSaatSec: vi.fn(),
     panelKapat: vi.fn(),
@@ -119,5 +125,68 @@ describe('TakvimSekmesi', () => {
     // burada TANIMSIZ olurdu. `queryByText` zaten `null` döner; diğer tüm
     // testlerle aynı desen (`toBeNull()`).
     expect(screen.queryByText('Gelinen seans')).toBeNull()
+  })
+})
+
+// Görev 5: gezinme ve başlık `HaftalikTakvim`den BURAYA taşındı — tek araç
+// çubuğu (tasarım §4 A1). Oklar `HaftalikTakvim.test.tsx`teki AYNI
+// senaryoyu ölçüyordu; başlık artık `#hafta-basligi` (DOM kancası, Görev
+// 6'nın bugün vurgusu ve şimdi çizgisi de bunu kullanacak).
+describe('TakvimSekmesi — araç çubuğu (Görev 5)', () => {
+  it('hafta başlığını #hafta-basligi içinde gösterir', () => {
+    render(<TakvimSekmesi {...varsayilanProplar()} />)
+    const baslik = document.querySelector('#hafta-basligi')
+    // bosTakvim().haftaBasi = 7 Eylül 2026 (Pazartesi).
+    expect(baslik?.textContent).toBe('7 – 13 Eylül 2026')
+  })
+
+  it('ileri ve geri gezinme hafta değişimini bildirir', async () => {
+    const props = varsayilanProplar()
+    render(<TakvimSekmesi {...props} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
+    expect(props.takvim.haftaDegis).toHaveBeenCalledWith(1)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Önceki hafta' }))
+    expect(props.takvim.haftaDegis).toHaveBeenCalledWith(-1)
+  })
+
+  it('"Bugün" düğmesi takvim.haftayaGit\'i bugünün tarihiyle çağırır', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 24, 10, 0))
+    const props = varsayilanProplar()
+    render(<TakvimSekmesi {...props} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Bugün' }))
+
+    expect(props.takvim.haftayaGit).toHaveBeenCalledTimes(1)
+    const arg = vi.mocked(props.takvim.haftayaGit).mock.calls[0][0]
+    // Yerel GÜN karşılaştırılıyor: `haftayaGit`e giden argüman `simdi`den
+    // (saat:dakika taşıyan bir Date) türüyor, saati değil günü sınıyoruz.
+    expect(yerelGun(arg)).toBe('2026-09-24')
+  })
+
+  it('görünen hafta BU HAFTAYKEN "Bugün" düğmesi aria-disabled olur', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    // bosTakvim().haftaBasi 7 Eylül 2026 (Pazartesi) — 10 Eylül AYNI hafta.
+    vi.setSystemTime(new Date(2026, 8, 10, 10, 0))
+    render(<TakvimSekmesi {...varsayilanProplar()} />)
+
+    expect(screen.getByRole('button', { name: 'Bugün' }).getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it('hafta başlığına tıklayınca "Gidilecek gün" alanı açılır; gün girilince haftayaGit çağrılır ve alan kapanır', async () => {
+    const props = varsayilanProplar()
+    render(<TakvimSekmesi {...props} />)
+
+    await userEvent.click(screen.getByRole('button', { name: '7 – 13 Eylül 2026' }))
+    const gunAlani = screen.getByLabelText('Gidilecek gün')
+    fireEvent.change(gunAlani, { target: { value: '2026-10-15' } })
+
+    expect(props.takvim.haftayaGit).toHaveBeenCalledTimes(1)
+    const arg = vi.mocked(props.takvim.haftayaGit).mock.calls[0][0]
+    expect(yerelGun(arg)).toBe('2026-10-15')
+    // Kullanıcının açtığı alan, seçimden SONRA kendiliğinden kapanır.
+    expect(screen.queryByLabelText('Gidilecek gün')).toBeNull()
   })
 })

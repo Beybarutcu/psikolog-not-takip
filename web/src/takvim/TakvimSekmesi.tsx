@@ -419,13 +419,26 @@ export function TakvimSekmesi({
               <div className="mt-4">
                 <div role="alert" className="rounded border border-red-300 bg-red-50 p-3">
                   <p className="text-sm text-red-800">Seans notu yüklenemedi. {seans.hata}</p>
-                  <button
-                    type="button"
-                    className="mt-2 rounded border border-red-300 px-2 py-1 text-sm"
-                    onClick={seansAkisi.yenidenDene}
-                  >
-                    Yeniden dene
-                  </button>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      type="button"
+                      className="rounded border border-red-300 px-2 py-1 text-sm"
+                      onClick={seansAkisi.yenidenDene}
+                    >
+                      Yeniden dene
+                    </button>
+                    {/* Düzeltme turu 1 (kontrolör R12): bölümdeki form gömülü
+                        ("Kapat" yok) ve seçimi kapatan "Seansı kapat" seans
+                        panelinde; panel çizilmeyince bölümün kapatma yolu
+                        kalmıyordu. */}
+                    <button
+                      type="button"
+                      className="rounded border px-2 py-1 text-sm"
+                      onClick={takvim.panelKapat}
+                    >
+                      Seansı kapat
+                    </button>
+                  </div>
                 </div>
                 {/* Durum ve ödeme notlara BAĞLI DEĞİL: notlar okunamasa da
                     işaretlenebilmeli (Görev 2 inceleme I1, AnaEkran'dan taşındı). */}

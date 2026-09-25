@@ -53,6 +53,14 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
   const gorunenHafta = useRef(haftaBasi.getTime())
   gorunenHafta.current = haftaBasi.getTime()
 
+  // Seçimin ŞU ANKİ kimliği (düzeltme turu 1, kontrolör R11). `kaydet`in PUT
+  // dalı `await`ten SONRA "A hâlâ seçili mi?" diye sormalı ve o soru eski
+  // kapanıştaki `seciliRandevu`ya sorulamaz: ızgara PUT uçuştayken
+  // tıklanabilir. Ref seçimi değiştiren HER yerde, `setSeciliRandevu`nun
+  // yanında güncelleniyor (render'ı beklemeden); kimliği koruyan tazelemeler
+  // (`durumDegis`/`odemeDegis`) ona dokunmaz.
+  const seciliIdRef = useRef<number | null>(null)
+
   // # Uçuştaki yazma × liste yüklemesi (Görev 2 inceleme M7)
   //
   // `durumDegis`/`odemeDegis` listeye YEREL yazıyor; yazmadan önce başlayıp
@@ -75,6 +83,7 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
    */
   const oturumKapandi = useCallback(() => {
     setRandevular([])
+    seciliIdRef.current = null
     setSeciliRandevu(null)
     setSeciliBosSaat(null)
   }, [])
@@ -110,6 +119,12 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
       // iptali bu randevuyu da kapsadı) ya da başka bir haftaya bakılıyordur.
       // Her iki durumda da ekranda görünmeyen bir randevuya bağlı bir not
       // editörü açık tutmak, kaydı belirsiz bir kimliğe göndermek olurdu.
+      //
+      // Ref aşağıdaki güncelleyiciyle AYNI kararı verir (seçim, ref'in
+      // taşıdığı kimlikle aynı; listede yoksa kapanır).
+      if (seciliIdRef.current !== null && !gelen.some((r) => r.id === seciliIdRef.current)) {
+        seciliIdRef.current = null
+      }
       setSeciliRandevu((secili) => {
         if (secili === null) return null
         return gelen.find((r) => r.id === secili.id) ?? null
@@ -157,6 +172,7 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
 
   function randevuSec(randevu: Randevu, secenek?: { kaydir?: boolean }) {
     setSeciliBosSaat(null)
+    seciliIdRef.current = randevu.id
     setSeciliRandevu(randevu)
     // Kaydırma YALNIZCA kullanıcı seçiminde (tasarım A6); istek burada, sekme
     // yeniden monte olunca tekrar çalışmasın diye bileşenin DIŞINDA tutulur.
@@ -169,11 +185,13 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
   }
 
   function bosSaatSec(zaman: string) {
+    seciliIdRef.current = null
     setSeciliRandevu(null)
     setSeciliBosSaat(zaman)
   }
 
   function panelKapat() {
+    seciliIdRef.current = null
     setSeciliRandevu(null)
     setSeciliBosSaat(null)
   }
@@ -231,15 +249,28 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
           odendi: yanit.odendi,
           seri_id: yanit.seri_id,
         }
-        setSeciliRandevu(randevu)
+        // Düzeltme turu 1 (kontrolör R11): ızgara PUT uçuştayken
+        // tıklanabilir. Kullanıcı bu arada boş bir saate, başka bir randevuya
+        // ya da "Seansı kapat"a bastıysa yanıt O SEÇİMİ EZMEZ. Koşulsuz
+        // yamada A geri seçiliyor, boş saat seçimi de yerinde kalıyordu: iki
+        // form birden açılıyor ve "Yeni randevu"nun Kaydet'i A'yı yeni
+        // saatin danışanına PUT ediyordu (A ve notu sessizce başka danışana).
+        // Yama bu yüzden işlevsel ve kimlik koşullu; karar ÖNCEKİ render'ın
+        // kapanışına değil, şu anki seçimi taşıyan `seciliIdRef`e soruluyor.
+        const halaSecili = seciliIdRef.current === randevu.id
+        setSeciliRandevu((secili) => (secili?.id === randevu.id ? randevu : secili))
         const yeniHafta = haftaninBasi(zamandanDate(randevu.baslangic))
-        if (yeniHafta.getTime() !== haftaBasi.getTime()) {
+        if (halaSecili && yeniHafta.getTime() !== haftaBasi.getTime()) {
           // Başka haftaya taşındı: eski kapanıştaki `yukle` ÇAĞRILMAZ (eski
           // haftayı yükler, taşınan randevuyu orada bulamaz ve seçimi
           // KAPATIRDI); yeni haftayı efekt yükler, seçim listede bulunduğu
-          // için korunur.
+          // için korunur. Seçim artık A değilse hafta ATLAMAZ: kullanıcı
+          // başka bir şeye bakıyor.
           setHaftaBasi(yeniHafta)
         } else {
+          // Aynı hafta ya da A artık seçili değil: görünen hafta tazelenir
+          // (taşınan blok eski yerinde kalmasın); seçimi yalnızca listeyle
+          // eşitler, A'yı geri SEÇMEZ.
           await yukle()
         }
         return yanit

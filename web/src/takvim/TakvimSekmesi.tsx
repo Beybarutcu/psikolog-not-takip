@@ -75,6 +75,11 @@ import { RandevuPaneli } from './RandevuPaneli'
  * yanlışlıkla geçerdi (bkz. görev raporu). `id`'siz bir `<div>` sarmalayıcı
  * bu ölçümün tek çapası.
  *
+ * Plan A Görev 10'dan beri bu kanca yalnızca testlerin değil: `SeansPaneli`
+ * başlığındaki "Takvime dön" ızgarayı BU seçiciyle bulup kaydırıyor. Kanca
+ * kaldırılır ya da adı değişirse düğme sessizce hiçbir şey yapmaz (ölçen
+ * test: `TakvimSekmesi.test.tsx` > "10.9").
+ *
  * # Tek araç çubuğu, tek "şimdi" kaynağı (Görev 5, tasarım §4 A1/A2)
  *
  * Hafta başlığı ve gezinme okları eskiden `HaftalikTakvim`'in İÇİNDEYDİ;

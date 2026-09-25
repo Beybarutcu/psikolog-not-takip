@@ -518,6 +518,17 @@ describe('SeansPaneli — yeni notun şablon başlıkları', () => {
     await userEvent.click(ozelSekme())
     expect((screen.getByLabelText('Özel notum') as HTMLTextAreaElement).value).toBe('')
   })
+
+  it('sunucudan Serbest sablonlu bos not gelmece gosterilir', () => {
+    // Varsayılan şablon Serbest olduğunda, boş not Serbest başlıkları
+    // (yani başlık yok) ile açılır. Alan değeri boş olur.
+    kur({ not: { ...resmiNot, sablon: 'serbest', icerik: '' } })
+    const alan = screen.getByLabelText('Seans notu') as HTMLTextAreaElement
+    expect(alan.value).toBe('')
+    // Şablon seçici Serbest seçili gösterir
+    const sablonSecici = screen.getByLabelText('Şablon') as HTMLSelectElement
+    expect(sablonSecici.value).toBe('serbest')
+  })
 })
 
 // Sekme değişimi giden editörü gerçekten unmount eder; bekleyen metin

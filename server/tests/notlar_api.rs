@@ -593,7 +593,7 @@ async fn notu_olmayan_randevu_bos_not_dondurur_404_degil() {
     let (kod, not) = cagir(&s, "GET", &format!("/api/randevular/{rid}/not"), None).await;
     assert_eq!(kod, StatusCode::OK, "editor acilirken 404 gosterilmemeli");
     assert_eq!(not["icerik"], "");
-    assert_eq!(not["sablon"], "dap", "varsayilan sablon DAP");
+    assert_eq!(not["sablon"], "serbest", "varsayilan sablon Serbest olmali (analitik calisma, tasarim A7)");
 }
 
 #[tokio::test]

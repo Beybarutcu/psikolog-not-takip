@@ -112,8 +112,13 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 /// mesajla) reddedilir, ham SQLite kısıt hatası olarak değil.
 pub const GECERLI_SABLONLAR: [&str; 3] = ["dap", "soap", "serbest"];
 
-/// Varsayılan şablon: henüz notu olmayan bir randevu DAP ile açılır.
-pub const VARSAYILAN_SABLON: &str = "dap";
+/// Varsayılan şablon: henüz notu olmayan bir randevu **Serbest** (başlıksız)
+/// açılır. Terapist analitik çalışıyor ve süreç notunu düz anlatı olarak
+/// yazıyor; DAP başlıkları her notta silinmek zorunda kalıyordu (tasarım A7,
+/// 2026-09-24). Şemadaki sütun varsayılanına dokunulmadı: kod şablonu her
+/// zaman açıkça yazıyor, göç gerekmez. İçeriği boş, şablonu DAP olan eski
+/// notlar DAP başlıklarıyla açılmaya devam eder.
+pub const VARSAYILAN_SABLON: &str = "serbest";
 
 /// `audit_log.varlik` değeri — resmî not.
 const VARLIK_RESMI: &str = "progress_note";
@@ -604,7 +609,7 @@ mod tests {
         let (_d, c, _cid, rid) = kurulum();
         let not = not_getir(&c, rid, Cihaz::Masaustu).unwrap();
         assert_eq!(not.icerik, "");
-        assert_eq!(not.sablon, "dap", "varsayilan sablon DAP olmali");
+        assert_eq!(not.sablon, "serbest", "varsayilan sablon Serbest olmali (analitik calisma, tasarim A7)");
     }
 
     #[test]

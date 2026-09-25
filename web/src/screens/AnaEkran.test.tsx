@@ -186,7 +186,7 @@ function notYaniti(yol: string, method: string, govde: unknown): Response | null
   if (resmi) {
     const id = Number(resmi[1])
     if (method === 'PUT') sunucuNotlari[id] = govde as NotKaydi
-    const kayit = sunucuNotlari[id] ?? { sablon: 'dap', icerik: '' }
+    const kayit = sunucuNotlari[id] ?? { sablon: 'serbest', icerik: '' }
     const randevu = id === randevuB.id ? randevuB : randevuA
     return jsonYanit({
       appointment_id: id,
@@ -1770,10 +1770,9 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
   it('bos notta sablon basliklari gorunur ama HICBIR yazma uretilmez', async () => {
     await seansAc()
     const alan = screen.getByLabelText('Seans notu') as HTMLTextAreaElement
-    // Görev 2: başlıklar artık Markdown ikinci düzey başlık biçiminde
-    // (`sablon.ts::sablonMetni`) — adlar aynı, yalnızca biçim değişti.
-    expect(alan.value).toContain('## Veri')
-    expect(alan.value).toContain('## Plan')
+    // Varsayılan şablon Serbest olduğundan (tasarım A7), boş not başlıksız açılır.
+    // Serbest şablonunun başlık metni yoktur.
+    expect(alan.value).toBe('')
 
     await userEvent.click(screen.getByRole('button', { name: 'Seansı kapat' }))
     // BARİYER: panel gerçekten kapandı, yani editörün unmount tahliyesi

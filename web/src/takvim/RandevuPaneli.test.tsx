@@ -40,8 +40,15 @@ function kur(ozel = {}) {
     cakismaKontrol: vi.fn().mockResolvedValue(temizCakisma),
     ...ozel,
   }
-  render(<RandevuPaneli {...props} />)
-  return props
+  const r = render(<RandevuPaneli {...props} />)
+  return {
+    ...props,
+    // Görev 8 (8.9/8.10): "kirli değilken prop değişince eşitlenir" ve
+    // "kullanıcı dokunduysa ezilmez" testleri AYNI örneği yeni prop'larla
+    // yeniden render etmeli (temiz mount başlangıç durumunu ölçer, geçişi
+    // DEĞİL — bkz. docs/test-yesil-ama-korumuyor.md madde 4).
+    rerender: (yeni: Record<string, unknown>) => r.rerender(<RandevuPaneli {...props} {...yeni} />),
+  }
 }
 
 describe('RandevuPaneli', () => {
@@ -566,5 +573,88 @@ describe('RandevuPaneli', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
 
     expect(await screen.findByText('Ücret negatif olamaz.')).toBeDefined()
+  })
+
+  // --- Görev 8: tarih, saat, süre, özet, yeniden eşitleme (tasarım A4) --
+
+  it('8.1: yeni randevu tıklanan hücreyle dolu açılır; 10:30 seçilebilir', async () => {
+    const props = kur({ zaman: '2026-09-07T10:00' })
+    expect((screen.getByLabelText('Tarih') as HTMLInputElement).value).toBe('2026-09-07')
+    expect((screen.getByLabelText('Başlangıç') as HTMLInputElement).value).toBe('10:00')
+    fireEvent.change(screen.getByLabelText('Başlangıç'), { target: { value: '10:30' } })
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    expect(props.onKaydet).toHaveBeenCalledWith(
+      expect.objectContaining({ baslangic: '2026-09-07T10:30', bitis: '2026-09-07T11:30' }))
+  })
+
+  it('8.2: hazır süre düğmeleri süreyi kurar; alan 5 dakika adımlı', async () => {
+    const props = kur()
+    expect(screen.getByLabelText('Süre (dakika)').getAttribute('step')).toBe('5')
+    await userEvent.click(screen.getByRole('button', { name: '50 dk' }))
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    expect(props.onKaydet).toHaveBeenCalledWith(expect.objectContaining({ bitis: '2026-09-07T14:50' }))
+  })
+
+  it('8.3: okunur özet', () => {
+    kur({ randevu: mevcut })
+    expect(screen.getByText('Pazartesi, 7 Eylül · 14:00–15:00')).toBeDefined()
+  })
+
+  it('8.4: var olan randevuyu başka güne taşımak AYNI kaydı günceller', async () => {
+    const props = kur({ randevu: mevcut })
+    fireEvent.change(screen.getByLabelText('Tarih'), { target: { value: '2026-09-10' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    expect(props.onKaydet).toHaveBeenCalledWith(expect.objectContaining({
+      baslangic: '2026-09-10T14:00', bitis: '2026-09-10T15:00', client_id: 1 }))
+  })
+
+  it('8.5: tarih ya da saat boşsa kaydetmez', async () => {
+    const props = kur({ randevu: mevcut })
+    fireEvent.change(screen.getByLabelText('Tarih'), { target: { value: '' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    expect(screen.getByText('Tarih ve başlangıç saatini girin.')).toBeDefined()
+    expect(props.onKaydet).not.toHaveBeenCalled()
+  })
+
+  it('8.6: tarih alanı kartın penceresiyle sınırlı (2000–2099)', () => {
+    kur()
+    const alan = screen.getByLabelText('Tarih')
+    expect(alan.getAttribute('min')).toBe('2000-01-01')
+    expect(alan.getAttribute('max')).toBe('2099-12-31')
+  })
+
+  it('8.7: tarih/saat değişince çakışma kontrolü YENİ aralık ve randevunun kendi id si ile sorulur', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const props = kur({ randevu: mevcut })
+    fireEvent.change(screen.getByLabelText('Başlangıç'), { target: { value: '16:00' } })
+    await act(async () => { vi.advanceTimersByTime(400) })
+    expect(props.cakismaKontrol).toHaveBeenLastCalledWith('2026-09-07T16:00', '2026-09-07T17:00', 7, undefined)
+    vi.useRealTimers()
+  })
+
+  it('8.8: seri üyesinde "Yalnızca bu randevu taşınır." yazar', () => {
+    kur({ randevu: { ...mevcut, seri_id: 's1' } })
+    expect(screen.getByText('Yalnızca bu randevu taşınır.')).toBeDefined()
+  })
+
+  it('8.9: kirli değilken prop değişince form sunucudaki yeni değerle eşitlenir', () => {
+    const p = kur({ randevu: mevcut })
+    p.rerender({ randevu: { ...mevcut, baslangic: '2026-09-07T16:00', bitis: '2026-09-07T17:00', ucret: 50000 } })
+    expect((screen.getByLabelText('Başlangıç') as HTMLInputElement).value).toBe('16:00')
+    expect((screen.getByLabelText('Ücret (TL)') as HTMLInputElement).value).toBe('500,00')
+  })
+
+  it('8.10: kullanıcı alanı değiştirdiyse prop değişimi yazdığını EZMEZ', () => {
+    const p = kur({ randevu: mevcut })
+    fireEvent.change(screen.getByLabelText('Ücret (TL)'), { target: { value: '600' } })
+    p.rerender({ randevu: { ...mevcut, ucret: 50000 } })
+    expect((screen.getByLabelText('Ücret (TL)') as HTMLInputElement).value).toBe('600')
+  })
+
+  it('8.11: gomulu kipte Kapat düğmesi yok', () => {
+    kur({ randevu: mevcut, gomulu: true })
+    expect(screen.queryByRole('button', { name: 'Kapat' })).toBeNull()
   })
 })

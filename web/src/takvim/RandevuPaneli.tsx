@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Danisan, SeriCakismasi, SeriSilmeOnizlemesi } from '../api'
 import { tlMetni, tlSayisi, ucretOku } from '../para'
 import type { Randevu } from './HaftalikTakvim'
-import { dakikaFarki, yerelZaman, zamandanDate } from './hafta'
+import { dakikaFarki, okunurAralik, yerelZaman, zamandanDate } from './hafta'
 
 /**
  * # Silme onayı NOTLARI da söyler (dal incelemesi I2)
@@ -64,6 +64,13 @@ type Props = {
     haricId?: number,
     tekrarSayisi?: number,
   ) => Promise<SeriCakismasi>
+  /**
+   * Görev 10'da panel seans bölümünün İÇİNE gömülür: `Kapat` düğmesi orada
+   * anlamsız (seans zaten kendi "Seansı kapat"ını taşıyor) ve panel artık
+   * ayrı bir kart değil, bölümün bir parçası — bu yüzden `aside`'ın sol
+   * kenarlığı (`border-l`, önceki ayrı-panel görünümünün izi) de kalkıyor.
+   */
+  gomulu?: boolean
 }
 
 // Tekrar sayısı kullanıcı tarafından serbest metin olarak giriliyor
@@ -86,9 +93,17 @@ function bitisHesapla(baslangic: string, sureDk: number): string {
 
 export function RandevuPaneli({
   zaman, randevu, danisanlar, onKaydet, onSil, onSeriSil, seriSayisiAl,
-  silinecekNotSayisiAl, onKapat, cakismaKontrol,
+  silinecekNotSayisiAl, onKapat, cakismaKontrol, gomulu,
 }: Props) {
-  const baslangic = randevu?.baslangic ?? zaman
+  // Görev 8: tarih ve saat artık AYRI, düzenlenebilir alanlar (eskiden
+  // `baslangic` doğrudan `randevu?.baslangic ?? zaman`, hiç değiştirilemezdi
+  // — panel yalnızca tıklanan hücreyi GÖSTERİYORDU, taşımanın tek yolu
+  // randevuyu silip yeniden kurmaktı). `ilk` yalnızca İLK render'ın
+  // başlangıcı; sonraki değişiklikler kullanıcıdan ya da aşağıdaki yeniden
+  // eşitleme efektinden gelir.
+  const ilk = randevu?.baslangic ?? zaman
+  const [tarih, setTarih] = useState(ilk.slice(0, 10))
+  const [saat, setSaat] = useState(ilk.slice(11, 16))
   const [clientId, setClientId] = useState<number | ''>(randevu?.client_id ?? '')
   const [sureDk, setSureDk] = useState(
     randevu ? dakikaFarki(randevu.baslangic, randevu.bitis) : VARSAYILAN_SURE_DK,
@@ -118,7 +133,56 @@ export function RandevuPaneli({
     gecerli.current = false
   }, [])
 
-  const bitis = bitisHesapla(baslangic, sureDk)
+  const baslangic = `${tarih}T${saat}`
+  // Tarih ya da saat alanı boşaltılmışsa (kullanıcı sildi ya da hiç
+  // girmedi) "T" ile birleşmiş yarım bir dizgi geçerli bir duvar saati
+  // DEĞİLDİR — ne özet satırı, ne çakışma isteği, ne de kaydetme bu yarım
+  // değeri kullanmalı.
+  const zamanTamam = tarih.length === 10 && saat.length === 5
+  const bitis = zamanTamam ? bitisHesapla(baslangic, sureDk) : baslangic
+
+  // Görev 10'dan sonra panel Güncelle'de kapanmıyor; aynı kimlikle gelen
+  // taze kayıt formu bayat bırakmasın, ama kullanıcının yazdığını da
+  // ezmesin. `esas`: son eşitlenen (ya "sunucudan geldi" ya da "kullanıcı
+  // henüz dokunmadı") değerler. Efekt yalnızca `randevu`nun KİMLİK
+  // TAŞIMAYAN alanları değişince (yeni saat, yeni ücret, yeni danışan)
+  // çalışır -- `randevu?.id` YOK: panel zaten `key`li (bkz.
+  // `TakvimSekmesi.tsx`), farklı bir randevuya geçiş bu bileşeni yeniden
+  // MONTE eder, aynı bileşen örneği hiçbir zaman iki farklı id görmez.
+  const esas = useRef({ tarih, saat, sureDk, ucretTl, clientId })
+  useEffect(() => {
+    if (!randevu) return
+    const kullaniciDokunmadi =
+      tarih === esas.current.tarih &&
+      saat === esas.current.saat &&
+      sureDk === esas.current.sureDk &&
+      ucretTl === esas.current.ucretTl &&
+      clientId === esas.current.clientId
+    // Kullanıcı herhangi bir alana dokunduysa (esas'tan sapıldıysa) hiçbir
+    // şey yapılmaz -- kısmi eşitleme (yalnızca dokunulmamış alanları
+    // güncellemek) kullanıcının "şu an düzenlediğim kayıt" algısını
+    // bölerdi; ör. tarihi değiştirirken ücretin arkadan sessizce değişmesi.
+    if (!kullaniciDokunmadi) return
+    const yeniTarih = randevu.baslangic.slice(0, 10)
+    const yeniSaat = randevu.baslangic.slice(11, 16)
+    const yeniSureDk = dakikaFarki(randevu.baslangic, randevu.bitis)
+    const yeniUcretTl = randevu.ucret != null ? tlSayisi(randevu.ucret) : ''
+    const yeniClientId = randevu.client_id
+    setTarih(yeniTarih)
+    setSaat(yeniSaat)
+    setSureDk(yeniSureDk)
+    setUcretTl(yeniUcretTl)
+    setClientId(yeniClientId)
+    esas.current = {
+      tarih: yeniTarih, saat: yeniSaat, sureDk: yeniSureDk,
+      ucretTl: yeniUcretTl, clientId: yeniClientId,
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- kasıtlı: yalnızca
+    // SUNUCUDAKİ değerler değişince tetiklenmeli, form state'i (tarih/saat/
+    // sureDk/ucretTl/clientId) DEĞİL -- onlar efektin İÇİNDE okunuyor ama
+    // bağımlılık olsalardı her kullanıcı tuş vuruşu bu efekti yeniden
+    // çalıştırırdı.
+  }, [randevu?.baslangic, randevu?.bitis, randevu?.ucret, randevu?.client_id])
   // Tasarım A5: tek okuma kaynağı `para.ts::ucretOku`. Render gövdesinde
   // hesaplanır ki hem önizleme hem `kaydet()` AYNI ayrıştırmayı kullansın —
   // ikisi ayrı ayrı ayrıştırsaydı biri kabul edip diğeri reddedebilirdi.
@@ -131,6 +195,10 @@ export function RandevuPaneli({
   const sorulacakTekrar = tekrar ? gecerliTekrar(haftaSayisi) : undefined
 
   useEffect(() => {
+    // Tarih ya da saat boşsa `baslangic`/`bitis` yarım bir duvar saati
+    // taşır (bkz. `zamanTamam` gerekçesi) -- sunucuya böyle bir istek
+    // atmak anlamsız bir 400 üretirdi.
+    if (!zamanTamam) return
     let iptal = false
     const zamanlayici = setTimeout(() => {
       cakismaKontrol(baslangic, bitis, randevu?.id, sorulacakTekrar)
@@ -149,7 +217,7 @@ export function RandevuPaneli({
       iptal = true
       clearTimeout(zamanlayici)
     }
-  }, [baslangic, bitis, randevu?.id, sorulacakTekrar, cakismaKontrol])
+  }, [zamanTamam, baslangic, bitis, randevu?.id, sorulacakTekrar, cakismaKontrol])
 
   // Kaydet/sil işlemleri sürerken düğmeleri devre dışı bırakmak ve
   // sunucudan dönen hatayı panelin içinde de göstermek için ortak sarmalayıcı.
@@ -170,6 +238,10 @@ export function RandevuPaneli({
   async function kaydet() {
     if (clientId === '') {
       setHata('Lütfen bir danışan seçin.')
+      return
+    }
+    if (!zamanTamam) {
+      setHata('Tarih ve başlangıç saatini girin.')
       return
     }
     if ('hata' in ucretOkuma) {
@@ -200,17 +272,19 @@ export function RandevuPaneli({
   }
 
   return (
-    <aside className="w-80 border-l bg-white p-4">
+    <aside className={gomulu ? 'w-80 shrink-0 bg-white p-4' : 'w-80 border-l bg-white p-4'}>
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">{randevu ? 'Randevu' : 'Yeni randevu'}</h3>
-        <button className="text-slate-500" onClick={onKapat}>
-          Kapat
-        </button>
+        {!gomulu && (
+          <button className="text-slate-500" onClick={onKapat}>
+            Kapat
+          </button>
+        )}
       </div>
 
-      <p className="mt-1 text-sm text-slate-600">
-        {baslangic.replace('T', ' ')} – {bitis.slice(11)}
-      </p>
+      {zamanTamam && (
+        <p className="mt-1 text-sm text-slate-600">{okunurAralik(baslangic, bitis)}</p>
+      )}
 
       <label className="mt-4 block text-sm" htmlFor="danisan">
         Danışan
@@ -229,18 +303,55 @@ export function RandevuPaneli({
         ))}
       </select>
 
+      <div className="mt-3 flex gap-2">
+        <div className="flex-1">
+          <label className="block text-sm" htmlFor="tarih">Tarih</label>
+          <input id="tarih" type="date" min="2000-01-01" max="2099-12-31"
+            className="mt-1 w-full rounded border p-2" value={tarih}
+            onChange={(e) => setTarih(e.target.value)} />
+        </div>
+        <div className="w-28">
+          <label className="block text-sm" htmlFor="baslangic">Başlangıç</label>
+          <input id="baslangic" type="time" step={300}
+            className="mt-1 w-full rounded border p-2" value={saat}
+            onChange={(e) => setSaat(e.target.value)} />
+        </div>
+      </div>
+      {randevu?.seri_id && (
+        <p className="mt-1 text-xs text-slate-500">Yalnızca bu randevu taşınır.</p>
+      )}
+
       <label className="mt-3 block text-sm" htmlFor="sure">
         Süre (dakika)
       </label>
       <input
         id="sure"
         type="number"
-        min={15}
-        step={15}
+        min={5}
+        step={5}
         className="mt-1 w-full rounded border p-2"
         value={sureDk}
         onChange={(e) => setSureDk(Number(e.target.value))}
       />
+      {/* Hazır süreler (tasarım A4): en sık kullanılan dört değer tek
+          tıkla kurulur — süre alanına elle 45/50/60/90 yazmak, özellikle
+          5'lik adımla, her seferinde birkaç tık ister. `aria-pressed`
+          seçili süreyi işaretler; alan elle başka bir değere yazılırsa
+          hiçbiri basılı görünmez (dördü de `sureDk === dk` ile karşılaştırır,
+          uydurma bir "en yakını seç" mantığı YOK). */}
+      <div className="mt-1 flex gap-1">
+        {[45, 50, 60, 90].map((dk) => (
+          <button
+            key={dk}
+            type="button"
+            aria-pressed={sureDk === dk}
+            className="rounded border px-2 py-0.5 text-xs"
+            onClick={() => setSureDk(dk)}
+          >
+            {dk} dk
+          </button>
+        ))}
+      </div>
 
       <label className="mt-3 block text-sm" htmlFor="ucret">
         Ücret (TL)

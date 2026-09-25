@@ -82,6 +82,26 @@ describe('HaftalikTakvim', () => {
     expect(screen.getByRole('table')).toBeDefined()
     expect(screen.getByText('Pzt')).toBeDefined()
   })
+
+  // Görev 8 (R2): saat yalnızca TAM olmayan (off-hour) randevularda görünür.
+  // Erişilebilir ad saat ile isim arasında GERÇEK bir metin boşluğu taşımalı
+  // ("10:50 Ayşe Yılmaz") — yalnızca CSS margin ("mr-1") kullanılsaydı
+  // erişilebilir ad "10:50Ayşe Yılmaz" olur, ekran okuyucu iki kelimeyi
+  // birleştirirdi. Var olan e2e seçicileri tam saat bloklarının erişilebilir
+  // adının yalnızca isim olmasına dayanıyor; o davranış burada da sabitleniyor.
+  it('8.12: off-hour randevu bloğunun erişilebilir adı "saat isim"; tam saat yalnızca isim', () => {
+    kur({
+      randevular: [
+        randevu,
+        {
+          ...randevu, id: 10, client_id: 2, danisan_adi: 'Mehmet Demir',
+          baslangic: '2026-09-07T10:50', bitis: '2026-09-07T11:20',
+        },
+      ],
+    })
+    expect(screen.getByRole('button', { name: '10:50 Mehmet Demir' })).toBeDefined()
+    expect(screen.getByRole('button', { name: 'Ayşe Yılmaz' })).toBeDefined()
+  })
 })
 
 // Izgara 08:00–21:00. Bu aralığın DIŞINDAKİ randevular sunucudan

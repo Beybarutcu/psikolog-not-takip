@@ -964,7 +964,11 @@ describe('AnaEkran — seçili randevu yeniden yüklemede bayatlamaz (Plan 2 dev
 
   it('yeniden yükleme, panelin elindeki randevuyu TAZELER', async () => {
     await randevuSec()
-    expect(screen.getByText(/2026-09-07 10:00/)).toBeDefined()
+    // Görev 8: RandevuPaneli'nin özeti artık `okunurAralik` (yıl taşımıyor,
+    // "Pazartesi, 7 Eylül · 10:00–11:00"); bu testte ölçülen başlangıç metni
+    // artık SEANS PANELİNİN başlığından okunuyor (`SeansPaneli.tsx::zamanMetni`,
+    // "7 Eylül 2026, 10:00").
+    expect(screen.getByText(/7 Eylül 2026, 10:00/)).toBeDefined()
 
     // Kayıt sunucuda değişti (ör. başka bir uygulama örneği güncelledi).
     sunucudakiler = [{
@@ -980,8 +984,8 @@ describe('AnaEkran — seçili randevu yeniden yüklemede bayatlamaz (Plan 2 dev
     // Panel yeniden mount edilmedi (`key` aynı id) ama elindeki nesne taze.
     // Bayat kalsaydı burada hâlâ 10:00 yazardı — ve editör notu, kaydı
     // değişmiş bir randevunun eski kopyasına dayanarak yazardı.
-    await waitFor(() => expect(screen.getByText(/2026-09-07 11:00/)).toBeDefined())
-    expect(screen.queryByText(/2026-09-07 10:00/)).toBeNull()
+    await waitFor(() => expect(screen.getByText(/7 Eylül 2026, 11:00/)).toBeDefined())
+    expect(screen.queryByText(/7 Eylül 2026, 10:00/)).toBeNull()
   })
 
   it('yeniden yüklemede randevu artık gelmiyorsa panel kapanır', async () => {

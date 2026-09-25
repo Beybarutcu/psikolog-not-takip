@@ -36,6 +36,17 @@ export function RandevuBloku({ randevu, onSec }: { randevu: Randevu; onSec: () =
       data-ucret={randevu.ucret ?? undefined}
       className={`w-full truncate rounded px-1 py-0.5 text-left text-xs ${stil}`}
     >
+      {/* Görev 8 (R2): saat yalnızca TAM OLMAYAN (off-hour) randevularda
+          gösterilir — tam saatteki bloklar var olan e2e seçicilerinin
+          dayandığı "yalnızca isim" adını korur. Saat ile isim arasında
+          GERÇEK bir metin boşluğu (`{' '}`) var: yalnızca CSS margin
+          (`mr-1`) kullanılsaydı erişilebilir ad "10:50Ayşe Yılmaz" çıkardı
+          — erişilebilir ad hesaplaması CSS'i değil metni okur. */}
+      {randevu.baslangic.slice(14, 16) !== '00' && (
+        <>
+          <span className="tabular-nums">{randevu.baslangic.slice(11, 16)}</span>{' '}
+        </>
+      )}
       {randevu.danisan_adi}
     </button>
   )

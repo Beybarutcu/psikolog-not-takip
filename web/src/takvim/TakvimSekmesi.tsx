@@ -8,7 +8,8 @@ import { SeansPaneli } from '../seans/SeansPaneli'
 import { useDakikalikSimdi } from '../screens/anaEkranKancalari/yerelGun'
 import type { useSeansNotlari } from '../screens/anaEkranKancalari/useSeansNotlari'
 import type { useTakvimAkisi } from '../screens/anaEkranKancalari/useTakvimAkisi'
-import { HaftalikTakvim } from './HaftalikTakvim'
+import { bugunOzeti } from './bugun'
+import { HaftalikTakvim, type Randevu } from './HaftalikTakvim'
 import { haftaBasligi, haftaninBasi, zamandanDate } from './hafta'
 import { RandevuPaneli } from './RandevuPaneli'
 
@@ -246,6 +247,32 @@ export function TakvimSekmesi({
               `AnaEkran.tsx`. */}
         </div>
       </div>
+
+      {/* Bilgi satırı (tasarım A2): yalnızca görünen hafta BU HAFTAYKEN
+          anlamlı — başka bir haftaya gezinildiğinde "bugün" o haftada YOK,
+          göstermek yanıltıcı olurdu. `bugunOzeti` AYNI `simdi` ve
+          `takvim.randevular`dan türüyor — ızgaradaki sayıyla bu satırın
+          sayısı İKİ AYRI süzgeçten gelmiyor. */}
+      {buHafta && (() => {
+        const o = bugunOzeti(takvim.randevular, simdi)
+        return (
+          <p className="mb-3 text-sm text-slate-600" data-testid="bugun-bilgisi">
+            {o.sayi === 0 ? 'Bugün seans yok' : `Bugün ${o.sayi} seans`}
+            {o.siradaki && (
+              <>
+                {' · sıradaki '}
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => takvim.randevuSec(o.siradaki as Randevu)}
+                >
+                  {o.siradaki.baslangic.slice(11, 16)} {o.siradaki.danisan_adi}
+                </button>
+              </>
+            )}
+          </p>
+        )
+      })()}
 
       {takvim.hata && <p className="mb-4 text-sm text-red-600">{takvim.hata}</p>}
 

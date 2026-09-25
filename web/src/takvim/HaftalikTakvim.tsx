@@ -63,8 +63,12 @@ type Props = {
 export function HaftalikTakvim({
   randevular, haftaBasi, onRandevuSec, onBosSaatSec, simdi,
 }: Props) {
-  // Görev 6'ya kadar yalnızca prop olarak taşınıyor (bkz. Props yorumu).
-  void simdi
+  // Bugün vurgusu ve şimdi çizgisi (tasarım A2) — üçü de AYNI `simdi`
+  // dizgisinden (duvar saati, 16 karakter) türüyor: ikinci bir kaynak iki
+  // hesaplamanın sessizce ayrışabileceği yer demekti.
+  const bugunGunu = simdi.slice(0, 10)
+  const simdiSaat = Number(simdi.slice(11, 13))
+  const simdiDakika = Number(simdi.slice(14, 16))
   const gunler = haftaGunleri(haftaBasi)
   const saatler = Array.from(
     { length: CALISMA_BITIS - CALISMA_BASLANGIC },
@@ -156,12 +160,27 @@ export function HaftalikTakvim({
           <thead>
             <tr>
               <th className="w-14" />
-              {gunler.map((g, i) => (
-                <th key={i} className="border-b p-1 text-xs font-medium text-slate-600">
-                  <div>{GUN_ADLARI[i]}</div>
-                  <div className="text-sm text-slate-900">{g.getDate()}</div>
-                </th>
-              ))}
+              {gunler.map((g, i) => {
+                const bugunMu = yerelZaman(g).slice(0, 10) === bugunGunu
+                return (
+                  <th
+                    key={i}
+                    aria-current={bugunMu ? 'date' : undefined}
+                    className="border-b p-1 text-xs font-medium text-slate-600"
+                  >
+                    <div>{GUN_ADLARI[i]}</div>
+                    <div
+                      className={
+                        bugunMu
+                          ? 'inline-flex rounded-full bg-slate-900 px-2 text-sm text-white'
+                          : 'text-sm text-slate-900'
+                      }
+                    >
+                      {g.getDate()}
+                    </div>
+                  </th>
+                )
+              })}
             </tr>
           </thead>
           <tbody>
@@ -175,8 +194,22 @@ export function HaftalikTakvim({
                   const zaman = yerelZaman(
                     new Date(gun.getFullYear(), gun.getMonth(), gun.getDate(), saat, 0),
                   )
+                  const bugunMu = yerelZaman(gun).slice(0, 10) === bugunGunu
                   return (
-                    <td key={i} className="h-10 border border-slate-100 p-0.5 align-top">
+                    <td
+                      key={i}
+                      className={`relative h-10 border border-slate-100 p-0.5 align-top ${
+                        bugunMu ? 'bg-sky-50/60' : ''
+                      }`}
+                    >
+                      {bugunMu && saat === simdiSaat && (
+                        <div
+                          aria-hidden="true"
+                          data-testid="simdi-cizgisi"
+                          className="pointer-events-none absolute inset-x-0 z-10 h-0.5 bg-rose-500"
+                          style={{ top: `${(simdiDakika / 60) * 100}%` }}
+                        />
+                      )}
                       {hucredekiler.length > 0 ? (
                         hucredekiler.map((r) => (
                           <RandevuBloku key={r.id} randevu={r} onSec={() => onRandevuSec(r)} />
@@ -186,9 +219,16 @@ export function HaftalikTakvim({
                           aria-label={`${gun.getDate()} ${AYLAR[gun.getMonth()]} ${saat
                             .toString()
                             .padStart(2, '0')}:00 boş`}
-                          className="h-full w-full"
+                          className="group h-full w-full text-left"
                           onClick={() => onBosSaatSec(zaman)}
-                        />
+                        >
+                          <span
+                            aria-hidden="true"
+                            className="px-1 text-xs text-slate-400 opacity-0 group-hover:opacity-100"
+                          >
+                            + {saat.toString().padStart(2, '0')}:00
+                          </span>
+                        </button>
                       )}
                     </td>
                   )

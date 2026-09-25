@@ -163,3 +163,64 @@ describe('HaftalikTakvim — görünen aralık dışındaki randevular', () => {
     expect(bolum().textContent).toContain('Tam Yirmibir')
   })
 })
+
+// Görev 6 (tasarım A2): bugün vurgusu ve şimdi çizgisi. `kur()`'un varsayılan
+// `simdi`'si '2026-09-09T14:30' (9 Eylül Çarşamba); görünen hafta hep
+// haftaninBasi(new Date(2026, 8, 7)) yani 7–13 Eylül — 9 Eylül BU haftanın
+// içinde, Çarşamba (gunler[2]).
+describe('HaftalikTakvim — bugün ve şimdi (Görev 6)', () => {
+  it('6.1 bugünün sütun başlığı aria-current="date" taşır; başka hiçbir başlık taşımaz', () => {
+    kur()
+    const basliklar = screen.getAllByRole('columnheader')
+    const isaretliler = basliklar.filter((b) => b.getAttribute('aria-current') === 'date')
+    expect(isaretliler.length).toBe(1)
+    expect(isaretliler[0].textContent).toContain('9')
+  })
+
+  it('6.2 şimdi çizgisi tam bir tane, 9 Eylül 14:00 hücresinin içinde, style.top %50', () => {
+    kur()
+    const cizgiler = screen.getAllByTestId('simdi-cizgisi')
+    expect(cizgiler.length).toBe(1)
+    const cizgi = cizgiler[0]
+    // Çizginin en yakın hücresi (td), o saatin satırındaki 9 Eylül sütunu
+    // olmalı: satırın ilk hücresi (saat etiketi) "14:00" yazıyor ve çizgi o
+    // satırın Çarşamba (4. td, indeks 3) hücresinde.
+    const satir = cizgi.closest('tr')
+    expect(satir?.querySelector('td')?.textContent).toBe('14:00')
+    const hucreler = satir ? Array.from(satir.querySelectorAll('td')) : []
+    // gunler[0]=Pzt(7) .. gunler[2]=Çar(9): saat hücresinden sonraki 3. td.
+    expect(hucreler[3]?.contains(cizgi)).toBe(true)
+    expect((cizgi as HTMLElement).style.top).toBe('50%')
+  })
+
+  it('6.3 simdi görünen haftanın dışındaysa çizgi ve aria-current yok', () => {
+    kur({ simdi: '2026-09-20T10:00' })
+    expect(screen.queryByTestId('simdi-cizgisi')).toBeNull()
+    const basliklar = screen.getAllByRole('columnheader')
+    expect(basliklar.some((b) => b.getAttribute('aria-current') === 'date')).toBe(false)
+  })
+
+  it('6.4 simdi 07:30 ise çizgi yok, aria-current var', () => {
+    kur({ simdi: '2026-09-09T07:30' })
+    expect(screen.queryByTestId('simdi-cizgisi')).toBeNull()
+    const basliklar = screen.getAllByRole('columnheader')
+    expect(basliklar.some((b) => b.getAttribute('aria-current') === 'date')).toBe(true)
+  })
+
+  it('6.4b simdi 21:10 ise çizgi yok, aria-current var', () => {
+    kur({ simdi: '2026-09-09T21:10' })
+    expect(screen.queryByTestId('simdi-cizgisi')).toBeNull()
+    const basliklar = screen.getAllByRole('columnheader')
+    expect(basliklar.some((b) => b.getAttribute('aria-current') === 'date')).toBe(true)
+  })
+
+  it('boş hücrede görünür ipucu "+ HH:00" var; erişilebilir ad DEĞİŞMEZ', () => {
+    kur()
+    const dugme = screen.getByLabelText('8 Eylül 10:00 boş')
+    expect(dugme.textContent).toBe('+ 10:00')
+    const ipucu = dugme.querySelector('span')
+    expect(ipucu?.getAttribute('aria-hidden')).toBe('true')
+    expect(ipucu?.className).toContain('opacity-0')
+    expect(ipucu?.className).toContain('group-hover:opacity-100')
+  })
+})

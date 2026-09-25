@@ -1,9 +1,10 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { yerelGun } from '../screens/anaEkranKancalari/yerelGun'
 import type { useSeansNotlari } from '../screens/anaEkranKancalari/useSeansNotlari'
 import type { useTakvimAkisi } from '../screens/anaEkranKancalari/useTakvimAkisi'
+import type { Randevu } from './HaftalikTakvim'
 import { TakvimSekmesi } from './TakvimSekmesi'
 
 afterEach(() => vi.useRealTimers())
@@ -188,5 +189,67 @@ describe('TakvimSekmesi — araç çubuğu (Görev 5)', () => {
     expect(yerelGun(arg)).toBe('2026-10-15')
     // Kullanıcının açtığı alan, seçimden SONRA kendiliğinden kapanır.
     expect(screen.queryByLabelText('Gidilecek gün')).toBeNull()
+  })
+})
+
+// Görev 6 (tasarım A2): araç çubuğunun altındaki bilgi satırı. `bosTakvim()`
+// -> `haftaBasi` her zaman 7 Eylül 2026 (Pazartesi); aşağıdaki senaryolar bu
+// haftanın İÇİNDE ya da tam SINIRINDA `simdi` değerleri kullanıyor.
+describe('TakvimSekmesi — bugün ve şimdi bilgi satırı (Görev 6)', () => {
+  function randevu(id: number, baslangic: string, durum: string, ad: string): Randevu {
+    return {
+      id, client_id: id, danisan_adi: ad, baslangic,
+      bitis: baslangic.slice(0, 11) + '23:00', durum,
+      ucret: null, odendi: false, seri_id: null,
+    }
+  }
+
+  it('6.5 hafta sınırını dakikalık tik ile geçince bilgi satırı kalkar, Bugün düğmesi aktif olur', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    // 13 Eylül 2026 Pazar 23:59 — bosTakvim().haftaBasi (7 Eylül Pazartesi)
+    // İLE AYNI hafta, haftanın SON dakikası.
+    vi.setSystemTime(new Date(2026, 8, 13, 23, 59))
+    render(<TakvimSekmesi {...varsayilanProplar()} />)
+
+    expect(screen.getByTestId('bugun-bilgisi').textContent).toBe('Bugün seans yok')
+    expect(screen.getByRole('button', { name: 'Bugün' }).getAttribute('aria-disabled')).toBe('true')
+
+    // `useDakikalikSimdi`nin dakikalık tiki: saat 00:00'a geçiyor, artık
+    // 14 Eylül Pazartesi — YENİ hafta.
+    await act(() => vi.advanceTimersByTimeAsync(60_000))
+
+    expect(screen.queryByTestId('bugun-bilgisi')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Bugün' }).getAttribute('aria-disabled')).toBe('false')
+  })
+
+  it('6.6 bilgi satırı sayı ve sıradakini gösterir; ada tıklamak takvim.randevuSec\'i çağırır', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 9, 11, 30)) // 9 Eylül Çarşamba, aynı hafta.
+    const props = varsayilanProplar()
+    props.takvim.randevular = [
+      randevu(1, '2026-09-09T14:00', 'planlandi', 'Ayşe Kaya'),
+      randevu(2, '2026-09-09T09:00', 'geldi', 'X'),
+      randevu(3, '2026-09-09T10:00', 'iptal', 'Y'),
+    ]
+    render(<TakvimSekmesi {...props} />)
+
+    const satir = screen.getByTestId('bugun-bilgisi')
+    expect(satir.textContent).toBe('Bugün 2 seans · sıradaki 14:00 Ayşe Kaya')
+
+    fireEvent.click(screen.getByRole('button', { name: '14:00 Ayşe Kaya' }))
+    expect(props.takvim.randevuSec).toHaveBeenCalledWith(props.takvim.randevular[0])
+  })
+
+  it('6.7 sıradaki yoksa yalnızca "Bugün N seans" gösterir', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 9, 11, 30))
+    const props = varsayilanProplar()
+    props.takvim.randevular = [
+      randevu(1, '2026-09-09T09:00', 'geldi', 'X'),
+      randevu(2, '2026-09-09T10:00', 'gelmedi', 'Y'),
+    ]
+    render(<TakvimSekmesi {...props} />)
+
+    expect(screen.getByTestId('bugun-bilgisi').textContent).toBe('Bugün 2 seans')
   })
 })

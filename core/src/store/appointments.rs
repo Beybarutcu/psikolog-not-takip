@@ -592,8 +592,9 @@ pub fn guncelle(
 /// `geldi_seansi_geri_tasininca_son_temas_gerilemez`,
 /// `planli_seansi_tasimak_son_temasa_dokunmaz`, `tasima_tek_log_satiri_yazar`.
 ///
-/// Son temas güncellemesi aynı transaction'dadır: log yazımı başarısız olursa
-/// taşıma da son temas da geri alınır.
+/// Son temas güncellemesi taşımayla AYNI transaction'dadır (log satırından
+/// sonra, `commit`'ten önce): son temas yazılamazsa taşıma ve log satırı da
+/// geri alınır. Test: `tasima_son_temas_yazilamazsa_tasima_ve_log_da_geri_alinir`.
 ///
 /// UYARI: Kendi `unchecked_transaction()`'ını içeride açar -- bunu zaten
 /// açık bir transaction'ın içinden çağırmayın (SQLite iç içe transaction
@@ -2409,6 +2410,38 @@ mod tests {
         ).unwrap();
         assert!(s.son_temas.is_some(), "on kosul: son temas gercekten ilerledi");
         assert_eq!(sayi(&c) - once, 1);
+    }
+
+    #[test]
+    fn tasima_son_temas_yazilamazsa_tasima_ve_log_da_geri_alinir() {
+        // Atomiklik: tasima + log + son temas TEK transaction. Son temas
+        // yazimi (clients UPDATE) bir tetikleyiciyle bozulunca tasima da
+        // denetim satiri da kalici olmamali -- "seans tasindi ama saklama
+        // suresi eski" ya da "tasinmadi ama loglandi" durumu olusmamali.
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+        durum_guncelle(&c, r.id, "geldi", Cihaz::Masaustu).unwrap();
+        c.execute_batch(
+            "CREATE TRIGGER son_temas_yazilamaz BEFORE UPDATE OF son_temas ON clients
+             BEGIN SELECT RAISE(ABORT, 'son temas yazilamaz'); END;",
+        )
+        .unwrap();
+        let log_sayisi = |c: &rusqlite::Connection| -> i64 {
+            c.query_row("SELECT COUNT(*) FROM audit_log", [], |r| r.get(0)).unwrap()
+        };
+        let once = log_sayisi(&c);
+
+        let sonuc = guncelle_ve_son_temas(
+            &c, r.id, &guncelleme(cid, "2026-09-10T14:00", "2026-09-10T15:00", Some(45000)), Cihaz::Masaustu,
+        );
+
+        assert!(sonuc.is_err(), "son temas yazilamazsa tasima Err donmeli");
+        let baslangic: String = c
+            .query_row("SELECT baslangic FROM appointments WHERE id = ?1", [r.id], |x| x.get(0))
+            .unwrap();
+        assert_eq!(baslangic, "2026-09-07T14:00", "tasima geri alinmali");
+        assert_eq!(log_sayisi(&c), once, "denetim satiri da geri alinmali");
+        assert_eq!(danisanin_son_temasi(&c, cid).0.as_deref(), Some("2026-09-07"));
     }
 
     #[test]

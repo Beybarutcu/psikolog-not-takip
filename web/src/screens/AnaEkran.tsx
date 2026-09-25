@@ -489,16 +489,31 @@ export function AnaEkran({
    * burada satır ekleniyor/çıkıyor/taşınıyor ya da ücret gibi henüz kartın
    * yama tipinde OLMAYAN bir alan değişiyor, bu yüzden yama değil yeniden
    * çekme.
+   *
+   * İstisna — son temas (Plan A Görev 9, tasarım A4): taşınan "geldi"
+   * seansının PUT yanıtı `son_temas`/`saklama_bitis` taşıyorsa bu iki alan
+   * `durumDegis`teki gibi YAMANIR (yeniden çekilemezler, bkz. fonksiyon
+   * içi). Ölçen testler: `AnaEkran.yayilim.test.tsx` > "Plan A Görev 9".
    */
   async function randevuKaydet(kayit: Parameters<typeof takvim.kaydet>[0]) {
     // Düzenleme kipinde ESKİ danışan (taşıma iki dosyayı birden değiştirir);
     // yeni kayıtta seçili randevu yok, yalnızca `kayit.client_id`.
     const eskiDanisan = takvim.seciliRandevu?.client_id ?? null
-    await takvim.kaydet(kayit)
+    const yanit = await takvim.kaydet(kayit)
     etiketler.randevularDegisti()
     seanslar.yapiDegisti([kayit.client_id, eskiDanisan])
     dosya.randevularTazele([kayit.client_id, eskiDanisan])
     setOzetTazeleme((n) => n + 1)
+    // Tasarım A4: taşınan "geldi" seansı son temas ilerlettiyse kart ve
+    // saklama listesi YEREL yamanır (`durumDegis` ile aynı gerekçe: ikisi de
+    // `HerCagri`, yeniden çekilmez).
+    if (yanit && yanit.son_temas !== undefined && yanit.saklama_bitis !== undefined) {
+      dosya.dosyaAlanlariniYama(yanit.client_id, {
+        son_temas: yanit.son_temas,
+        saklama_bitis: yanit.saklama_bitis,
+      })
+      liste.saklamaDolandanDus(yanit.client_id, yanit.saklama_bitis)
+    }
   }
 
   async function randevuSil(id: number) {

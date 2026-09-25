@@ -375,6 +375,10 @@ export type DurumYaniti = {
   saklama_bitis?: string
 }
 
+/** `PUT /api/randevular/{id}` yanıtı: kayıt + (taşınan "geldi" seansı son
+ * temas GERÇEKTEN ilerlettiyse) yeni son temas. İki alan birlikte gelir. */
+export type GuncellemeYaniti = Randevu & { son_temas?: string; saklama_bitis?: string }
+
 export const takvimApi = {
   danisanlariGetir: () => istek<Danisan[]>('/api/danisanlar'),
   danisanEkle: (ad_soyad: string, telefon?: string) =>
@@ -404,11 +408,15 @@ export const takvimApi = {
   // çağrıda YENİ kayıt üretir — düzenleme için onu çağırmak randevunun
   // kopyasını oluşturur (bkz. dal incelemesi C1). Sunucuda ayrı bir metot
   // (PUT) kullanılıyor; PATCH'in `{durum}` sözleşmesi dokunulmadan kaldı.
+  // Yanıt `GuncellemeYaniti` (Plan A Görev 9, tasarım A4): taşınan "geldi"
+  // seansı son temasını ilerlettiyse `son_temas`/`saklama_bitis` de gelir —
+  // `randevuDurumu` yanıtıyla aynı gerekçe (aşağıda); çağıran
+  // `AnaEkran.randevuKaydet`.
   randevuGuncelle: (
     id: number,
     govde: { client_id: number; baslangic: string; bitis: string; ucret?: number | null },
   ) =>
-    istek<Randevu>(`/api/randevular/${id}`, {
+    istek<GuncellemeYaniti>(`/api/randevular/${id}`, {
       method: 'PUT',
       body: JSON.stringify(govde),
     }),

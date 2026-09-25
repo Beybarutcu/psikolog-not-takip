@@ -15,8 +15,8 @@
 //! isim asla yazılmaz.
 //!
 //! # Yazma + log aynı transaction'da
-//! `olustur`, `guncelle`, `durum_guncelle`, `odeme_guncelle`, `sil`,
-//! `seri_olustur` ve `seriyi_sil` veriyi değiştirir; hepsi tabloya yazdıktan hemen sonra
+//! `olustur`, `guncelle` (gövdesi `guncelle_ve_son_temas`), `durum_guncelle`,
+//! `odeme_guncelle`, `sil`, `seri_olustur` ve `seriyi_sil` veriyi değiştirir; hepsi tabloya yazdıktan hemen sonra
 //! `audit::kaydet` çağırır. Bu adımlar
 //! `conn.unchecked_transaction()` ile TEK transaction'a alınır -- log yazımı
 //! başarısız olursa veri değişikliği de geri alınır, "randevu değişti ama
@@ -510,9 +510,26 @@ fn son_temasi_isaretle(
     Ok(Some(SonTemasSonucu { client_id, son_temas: gun.to_string(), saklama_bitis }))
 }
 
+/// `guncelle`'nin tam sonucu: guncellenen kayit ve -- kayit "geldi" ise ve
+/// tasima son temasi GERCEKTEN ilerlettiyse -- yeni son temas (tasarim A4).
+///
+/// `Debug` türetilebilir (`SeriCakismasi` ile aynı gerekçe): iki alan da
+/// KVKK alanlarını gizleyen elle yazılmış `Debug`'larını kullanır, bu tip
+/// yeni bir alan eklemez.
+#[derive(Debug)]
+pub struct GuncellemeSonucu {
+    pub randevu: Randevu,
+    pub son_temas: Option<SonTemasSonucu>,
+}
+
 /// Mevcut bir randevunun alanlarını (danışan, başlangıç, bitiş, ücret)
 /// günceller ve güncellenmiş kaydı döndürür. Güncelleme ve erişim logu tek
 /// transaction'da yazılır.
+///
+/// Gövde `guncelle_ve_son_temas`'tadır; bu fonksiyon yalnızca kaydı döndüren
+/// ince bir sarmalayıcıdır (imzası Plan A Görev 9'dan önceki hâliyle aynı,
+/// testlerdeki çağrı yerleri dokunulmadan kaldı). Son temas sonucunu isteyen
+/// tek çağıran rota katmanıdır (`PUT /randevular/{id}`).
 ///
 /// # Neden ayrı bir fonksiyon -- `olustur` düzenleme için kullanılamaz
 /// Düzenleme akışı `olustur` ile taklit edilemez: `olustur` her çağrıda YENİ
@@ -531,6 +548,14 @@ fn son_temasi_isaretle(
 /// tekil düzenleme zaten modelin desteklediği akıştır. Testle korunur:
 /// `guncelleme_seri_uyesini_tekil_gunceller_digerlerine_dokunmaz`.
 ///
+/// Seri işlemleri (`seri_sayisi`, `seriyi_sil`, `seri_silinecek_not_sayisi`)
+/// ZAMANA göredir (tasarım A4): kesme `baslangic >= bu_tarihten_itibaren`
+/// ile yapılır, serideki SIRA ile değil. Taşınmış bir üye YENİ tarihine göre
+/// dahil/hariç kalır -- kesmeden sonraya taşınan üye "bu ve sonrakiler"
+/// silinirken gider, kesmeden önceye taşınan üye kalır. Testle korunur:
+/// `seri_silme_zamana_gore_ileri_tasinmis_uye_kesmeden_sonraysa_silinir`,
+/// `seri_silme_zamana_gore_geri_tasinmis_uye_kesmeden_onceyse_korunur`.
+///
 /// # Loga ne yazılır
 /// `Eylem::Duzenleme` + `varlik_id` = randevu kimliği, `ayrinti` YOK
 /// (`None`). Eski/yeni değerler (danışan kimliği, saat, ücret) loga
@@ -547,6 +572,38 @@ pub fn guncelle(
     yeni: &RandevuGuncelleme,
     cihaz: Cihaz,
 ) -> Result<Randevu, DepoHatasi> {
+    guncelle_ve_son_temas(conn, id, yeni, cihaz).map(|s| s.randevu)
+}
+
+/// `guncelle`'nin gövdesi; kayda EK OLARAK son temas sonucunu da döndürür
+/// (bkz. `GuncellemeSonucu`).
+///
+/// # Taşınan "geldi" seansı son temasını ilerletir (tasarım A4)
+/// Kullanıcı kararı (2026-09-25): işaretlenmiş seanslar da taşınabilir.
+/// "Geldi" işaretli bir seans taşınınca danışanın `son_temas`/
+/// `saklama_bitis`i `durum_guncelle` ile AYNI işlevden
+/// (`son_temasi_isaretle`) geçer -- dolayısıyla aynı iki kural geçerlidir:
+/// yalnızca İLERİ gider (seansı geçmişe taşımak saklama süresini
+/// kısaltmaz, bkz. o fonksiyonun "Neden geriye gitmez" bölümü) ve ayrı bir
+/// log satırı YAZMAZ (taşıma tek kullanıcı eylemidir, tek `Duzenleme`
+/// satırı). `son_temas` yalnızca GERÇEKTEN ilerlediyse `Some` olur; planlı/
+/// gelmedi/iptal seansı taşımak ya da "geldi"yi geriye taşımak `None`.
+/// Testler: `geldi_seansi_ileri_tasininca_son_temas_ilerler`,
+/// `geldi_seansi_geri_tasininca_son_temas_gerilemez`,
+/// `planli_seansi_tasimak_son_temasa_dokunmaz`, `tasima_tek_log_satiri_yazar`.
+///
+/// Son temas güncellemesi aynı transaction'dadır: log yazımı başarısız olursa
+/// taşıma da son temas da geri alınır.
+///
+/// UYARI: Kendi `unchecked_transaction()`'ını içeride açar -- bunu zaten
+/// açık bir transaction'ın içinden çağırmayın (SQLite iç içe transaction
+/// desteklemez, bkz. modül başlığındaki uyarı).
+pub fn guncelle_ve_son_temas(
+    conn: &Connection,
+    id: i64,
+    yeni: &RandevuGuncelleme,
+    cihaz: Cihaz,
+) -> Result<GuncellemeSonucu, DepoHatasi> {
     if !zaman_gecerli_mi(&yeni.baslangic) || !zaman_gecerli_mi(&yeni.bitis) {
         return Err(DepoHatasi::GecersizVeri(
             "Tarih biçimi YYYY-AA-GGTSS:DD olmalı.".into(),
@@ -592,10 +649,17 @@ pub fn guncelle(
     }
     kaydet(&tx, Eylem::Duzenleme, "appointment", &id.to_string(), cihaz, None, LogHacmi::HerCagri)?;
 
+    let durum: String =
+        tx.query_row("SELECT durum FROM appointments WHERE id = ?1", [id], |r| r.get(0))?;
+    // Tasarim A4 (kullanici karari 2026-09-25): isaretlenmis seanslar da
+    // tasinabilir. "geldi" seansi tasininca son temas `durum_guncelle` ile
+    // AYNI islevden gecer: yalnizca ileri gider, ayri log satiri yazmaz.
+    let son_temas = if durum == "geldi" { son_temasi_isaretle(&tx, id)? } else { None };
+
     let randevu = tx.query_row(&format!("{SECIM} WHERE a.id = ?1"), [id], satirdan)?;
 
     tx.commit()?;
-    Ok(randevu)
+    Ok(GuncellemeSonucu { randevu, son_temas })
 }
 
 /// Bir randevu silinirse **kaç not** yok olacağını söyler; hiçbir şey
@@ -2285,6 +2349,127 @@ mod tests {
             .unwrap();
         assert_eq!(durum, "planlandi", "randevu durumu da geri alinmali");
     }
+
+    // --- Plan A Gorev 9 (tasarim A4): tasinan "geldi" seansi -------------
+    //
+    // Isaretlenmis seanslar da tasinabilir (kullanici karari 2026-09-25).
+    // "geldi" seansi tasininca son temas `durum_guncelle` ile AYNI islevden
+    // (`son_temasi_isaretle`) gecer: yalnizca ileri gider, ayri log yazmaz.
+
+    #[test]
+    fn geldi_seansi_ileri_tasininca_son_temas_ilerler() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+        durum_guncelle(&c, r.id, "geldi", Cihaz::Masaustu).unwrap();
+        let s = guncelle_ve_son_temas(
+            &c, r.id, &guncelleme(cid, "2026-09-10T14:00", "2026-09-10T15:00", Some(45000)), Cihaz::Masaustu,
+        ).unwrap();
+        assert_eq!(s.randevu.durum, "geldi", "tasima durumu korur");
+        let st = s.son_temas.expect("ileri tasima son temasi degistirmeli");
+        assert_eq!(st.son_temas, "2026-09-10");
+        assert_eq!(danisanin_son_temasi(&c, cid).0.as_deref(), Some("2026-09-10"));
+    }
+
+    #[test]
+    fn geldi_seansi_geri_tasininca_son_temas_gerilemez() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-10T14:00", "2026-09-10T15:00"), Cihaz::Masaustu).unwrap();
+        durum_guncelle(&c, r.id, "geldi", Cihaz::Masaustu).unwrap();
+        let s = guncelle_ve_son_temas(
+            &c, r.id, &guncelleme(cid, "2026-09-07T14:00", "2026-09-07T15:00", Some(45000)), Cihaz::Masaustu,
+        ).unwrap();
+        assert!(s.son_temas.is_none(), "geriye tasima degismeyen alan bildirmemeli");
+        assert_eq!(danisanin_son_temasi(&c, cid).0.as_deref(), Some("2026-09-10"));
+    }
+
+    #[test]
+    fn planli_seansi_tasimak_son_temasa_dokunmaz() {
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+        let s = guncelle_ve_son_temas(
+            &c, r.id, &guncelleme(cid, "2026-09-10T14:00", "2026-09-10T15:00", Some(45000)), Cihaz::Masaustu,
+        ).unwrap();
+        assert!(s.son_temas.is_none());
+        assert_eq!(danisanin_son_temasi(&c, cid).0, None, "planli seans temas degildir");
+    }
+
+    #[test]
+    fn tasima_tek_log_satiri_yazar() {
+        // "geldi" seansi tasimak tek bir kullanici eylemi: bir Duzenleme
+        // satiri. Son temas tazelemesi ek satir YAZMAZ (durum_guncelle ile ayni).
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+        durum_guncelle(&c, r.id, "geldi", Cihaz::Masaustu).unwrap();
+        let sayi = |c: &rusqlite::Connection| -> i64 {
+            c.query_row("SELECT COUNT(*) FROM audit_log", [], |r| r.get(0)).unwrap()
+        };
+        let once = sayi(&c);
+        let s = guncelle_ve_son_temas(
+            &c, r.id, &guncelleme(cid, "2026-09-10T14:00", "2026-09-10T15:00", Some(45000)), Cihaz::Masaustu,
+        ).unwrap();
+        assert!(s.son_temas.is_some(), "on kosul: son temas gercekten ilerledi");
+        assert_eq!(sayi(&c) - once, 1);
+    }
+
+    #[test]
+    fn tasima_notu_ozel_notu_etiketi_ve_odemeyi_korur() {
+        use crate::store::{notes, tags};
+        let (_d, c, cid) = kurulum();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+        notes::not_kaydet(&c, r.id, "serbest", "Seans notu metni", Cihaz::Masaustu).unwrap();
+        notes::ozel_not_kaydet(&c, r.id, "Ozel not metni", Cihaz::Masaustu).unwrap();
+        tags::etiket_ekle(&c, r.id, "ruya", Cihaz::Masaustu).unwrap();
+        odeme_guncelle(&c, r.id, true, Cihaz::Masaustu).unwrap();
+
+        let s = guncelle_ve_son_temas(
+            &c, r.id, &guncelleme(cid, "2026-09-12T10:30", "2026-09-12T11:20", Some(45000)), Cihaz::Masaustu,
+        ).unwrap();
+
+        assert_eq!(s.randevu.id, r.id, "tasima ayni kaydi gunceller");
+        assert!(s.randevu.odendi, "odeme isareti korunur");
+        assert_eq!(notes::not_getir(&c, r.id, Cihaz::Masaustu).unwrap().icerik, "Seans notu metni");
+        assert_eq!(notes::ozel_not_getir(&c, r.id, Cihaz::Masaustu).unwrap().icerik, "Ozel not metni");
+        let etiketler: Vec<String> =
+            tags::seans_etiketleri(&c, r.id, Cihaz::Masaustu).unwrap().into_iter().map(|e| e.ad).collect();
+        assert_eq!(etiketler, vec!["ruya".to_string()]);
+    }
+
+    /// Seri islemleri ZAMANA gore (tasarim A4): kesme noktasindan sonra
+    /// baslayan her uye -- tasinmis olsa bile -- silinir.
+    #[test]
+    fn seri_silme_zamana_gore_ileri_tasinmis_uye_kesmeden_sonraysa_silinir() {
+        let (_d, c, cid) = kurulum();
+        let seri = seri_olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), 4, Cihaz::Masaustu)
+            .unwrap();
+        let seri_id = seri[0].seri_id.clone().unwrap();
+        guncelle(&c, seri[1].id, &guncelleme(cid, "2026-10-05T14:00", "2026-10-05T15:00", Some(45000)), Cihaz::Masaustu)
+            .unwrap();
+        assert_eq!(seri_sayisi(&c, &seri_id, "2026-09-21T14:00").unwrap(), 3);
+        assert_eq!(seriyi_sil(&c, &seri_id, "2026-09-21T14:00", Cihaz::Masaustu).unwrap(), 3);
+        let kalan = aralik_getir(&c, "2026-09-01T00:00", "2026-11-01T00:00", Cihaz::Masaustu).unwrap();
+        assert_eq!(kalan.iter().map(|r| r.id).collect::<Vec<_>>(), vec![seri[0].id]);
+    }
+
+    #[test]
+    fn seri_silme_zamana_gore_geri_tasinmis_uye_kesmeden_onceyse_korunur() {
+        let (_d, c, cid) = kurulum();
+        let seri = seri_olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), 4, Cihaz::Masaustu)
+            .unwrap();
+        let seri_id = seri[0].seri_id.clone().unwrap();
+        guncelle(&c, seri[3].id, &guncelleme(cid, "2026-09-01T14:00", "2026-09-01T15:00", Some(45000)), Cihaz::Masaustu)
+            .unwrap();
+        // 14 Eylul'den itibaren: 14 ve 21 Eylul silinir; 7 Eylul ve 1 Eylul'e
+        // tasinmis uye KALIR.
+        assert_eq!(seri_sayisi(&c, &seri_id, "2026-09-14T14:00").unwrap(), 2);
+        assert_eq!(seriyi_sil(&c, &seri_id, "2026-09-14T14:00", Cihaz::Masaustu).unwrap(), 2);
+        let mut kalan: Vec<i64> = aralik_getir(&c, "2026-08-01T00:00", "2026-11-01T00:00", Cihaz::Masaustu)
+            .unwrap().into_iter().map(|r| r.id).collect();
+        kalan.sort_unstable();
+        let mut beklenen = vec![seri[0].id, seri[3].id];
+        beklenen.sort_unstable();
+        assert_eq!(kalan, beklenen);
+    }
+
     // --- Dal incelemesi I2: cascade silinen notlar ----------------------
     //
     // `ON DELETE CASCADE` (schema::V3) davranisini DOGRULAYAN hicbir test

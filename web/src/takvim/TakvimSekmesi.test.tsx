@@ -49,7 +49,7 @@ function bosTakvim(): ReturnType<typeof useTakvimAkisi> {
     randevuSec: vi.fn(),
     bosSaatSec: vi.fn(),
     panelKapat: vi.fn(),
-    kaydet: vi.fn(async () => {}),
+    kaydet: vi.fn(async () => null),
     durumDegis: vi.fn(async () => ({})),
     odemeDegis: vi.fn(async () => {}),
     sil: vi.fn(async () => {}),

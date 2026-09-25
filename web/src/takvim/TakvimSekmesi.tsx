@@ -124,8 +124,12 @@ type Props = {
    * randevuSeriSil`). `onDurumDegis` ile aynı gerekçe: başarılı yazma takvim
    * listesinin yanında açık etiketli seanslar panelini de tazelemeli (son
    * inceleme I1) ve o panel bu bileşenin görmediği `useEtiketler`'de.
+   *
+   * Dönüş `Promise<void>` (Plan A Görev 9): `takvim.kaydet` artık PUT
+   * yanıtını döndürüyor ama onu tüketen tek yer `AnaEkran.randevuKaydet`
+   * (son temas yaması); bu bileşen ve `RandevuPaneli` yalnızca bitişi bekler.
    */
-  onRandevuKaydet: ReturnType<typeof useTakvimAkisi>['kaydet']
+  onRandevuKaydet: (kayit: Parameters<ReturnType<typeof useTakvimAkisi>['kaydet']>[0]) => Promise<void>
   onRandevuSil: (id: number) => Promise<void>
   onSeriSil: (seriId: string, buTarihtenItibaren: string) => Promise<void>
   /**

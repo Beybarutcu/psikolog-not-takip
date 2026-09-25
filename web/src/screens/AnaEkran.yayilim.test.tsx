@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { borcaGirerMi } from '../borc'
@@ -228,6 +228,26 @@ function randevuAnlik(r: RandevuKaydi) {
   return { ...r, odendi: odemeler[r.id] ?? r.odendi, durum: durumlar[r.id] ?? r.durum }
 }
 
+/**
+ * Gerçek sunucunun `appointments::son_temasi_isaretle`ini TAKLİT eder
+ * (Görev 3; Plan A Görev 9'da PUT da buradan geçiyor): seansın GÜNÜ
+ * (`baslangic`ın ilk 10 karakteri) danışanın son temasından İLERİDEYSE son
+ * temas ve saklama bitişi taşınır ve ikisi döner; değilse `null` (geriye
+ * gitmez). `+7` yıl sabiti test verilerinde 29 Şubat gibi kenar durumlara
+ * denk gelmiyor, bu yüzden yıl basit string aritmetiğiyle ilerletiliyor
+ * (gerçek `yil_ekle`nin ayrıntısı Rust testlerinde ölçülüyor, burada
+ * yalnızca istemci kablolaması).
+ */
+function sonTemasiIsaretle(r: RandevuKaydi): { son_temas: string; saklama_bitis: string } | null {
+  const gun = r.baslangic.slice(0, 10)
+  const mevcut = sonTemaslar[r.client_id]?.son_temas ??
+    (dosyalar[r.client_id] as { son_temas: string | null }).son_temas
+  if (mevcut !== null && mevcut !== undefined && mevcut >= gun) return null
+  const saklamaBitis = `${Number(gun.slice(0, 4)) + 7}${gun.slice(4)}`
+  sonTemaslar[r.client_id] = { son_temas: gun, saklama_bitis: saklamaBitis }
+  return { son_temas: gun, saklama_bitis: saklamaBitis }
+}
+
 function notYaniti(id: number) {
   const r = tumu().find((x) => x.id === id)!
   const k = notlar[id] ?? { sablon: 'serbest', icerik: '' }
@@ -362,7 +382,13 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
       bitis: g.bitis,
       ucret: g.ucret,
     }
-    return json(randevuAnlik(tumu().find((r) => r.id === id)!))
+    const anlik = randevuAnlik(tumu().find((r) => r.id === id)!)
+    // Plan A Görev 9 (tasarım A4): gerçek sunucunun `guncelle_ve_son_temas`
+    // davranışı — taşınan seans "geldi" ise son temas PATCH ile AYNI kuraldan
+    // geçer ve GERÇEKTEN ilerlediyse yanıta iki alan eklenir (`client_id`
+    // zaten kayıtta).
+    const sonTemas = anlik.durum === 'geldi' ? sonTemasiIsaretle(anlik) : null
+    return json(sonTemas ? { ...anlik, ...sonTemas } : anlik)
   }
   if (durum && method === 'DELETE') {
     randevuyuSil(Number(durum[1]))
@@ -372,22 +398,12 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
     const id = Number(durum[1])
     const yeniDurum = (govde as { durum: string }).durum
     durumlar[id] = yeniDurum
-    // Görev 3: gerçek sunucunun `appointments::son_temasi_isaretle`
-    // davranışını TAKLİT eder — yalnızca "geldi" GÜN'ü (`baslangic`ın ilk 10
-    // karakteri) ileri taşıyabilir. `+7` sabiti test verilerinde 29 Şubat
-    // gibi kenar durumlara denk gelmiyor, bu yüzden yıl basit string
-    // aritmetiğiyle ilerletiliyor (gerçek `yil_ekle`nin ayrıntısı zaten
-    // Rust testlerinde ölçülüyor, burada yalnızca istemci kablolaması).
+    // Görev 3: yalnızca "geldi" son teması ileri taşıyabilir (kural
+    // `sonTemasiIsaretle`de).
     if (yeniDurum === 'geldi') {
       const r = tumu().find((x) => x.id === id)!
-      const gun = r.baslangic.slice(0, 10)
-      const mevcut = sonTemaslar[r.client_id]?.son_temas ??
-        (dosyalar[r.client_id] as { son_temas: string | null }).son_temas
-      if (mevcut === null || mevcut === undefined || mevcut < gun) {
-        const saklamaBitis = `${Number(gun.slice(0, 4)) + 7}${gun.slice(4)}`
-        sonTemaslar[r.client_id] = { son_temas: gun, saklama_bitis: saklamaBitis }
-        return json({ client_id: r.client_id, son_temas: gun, saklama_bitis: saklamaBitis })
-      }
+      const sonTemas = sonTemasiIsaretle(r)
+      if (sonTemas) return json({ client_id: r.client_id, ...sonTemas })
     }
     return json({})
   }
@@ -1038,6 +1054,94 @@ describe('Görev 3 — "saklama süresi doldu" bayatlığı', () => {
         'Saklama süresi doldu',
       ),
     )
+  })
+})
+
+describe('Plan A Görev 9 — taşınan "geldi" seansı son temasını ilerletir (tasarım A4)', () => {
+  const saklamaIstekleri = () =>
+    istekler.filter((i) => i.yol.startsWith('/api/saklama-suresi-dolanlar')).length
+  const dosyaGetleri = () =>
+    istekler.filter((i) => i.method === 'GET' && i.yol === '/api/danisanlar/3').length
+  const saklamaMetni = () => screen.getByRole('region', { name: 'Saklama süresi' }).textContent ?? ''
+  const zeynepSaklamaListesinde = 'Zeynep Kaya dosyasını aç (saklama süresi doldu)'
+
+  /** Ayarlar'daki liste (TEK istek) ve Zeynep'in Bilgiler sekmesi açılır. */
+  async function saklamaEkranlariniHazirla() {
+    await userEvent.click(await screen.findByRole('tab', { name: 'Ayarlar' }))
+    await screen.findByRole('button', { name: zeynepSaklamaListesinde })
+    expect(saklamaIstekleri()).toBe(1)
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Zeynep Kaya dosyasını aç' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Bilgiler' }))
+    await waitFor(() => expect(saklamaMetni()).toContain('Saklama süresi doldu (10.01.2024)'))
+  }
+
+  /** Açık randevu panelinde Tarih'i değiştirip "Güncelle"ye basar; PUT bitene kadar bekler. */
+  async function tarihiTasi(id: number, yeniTarih: string) {
+    fireEvent.change(screen.getByLabelText('Tarih'), { target: { value: yeniTarih } })
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    await waitFor(() =>
+      expect(tumu().find((r) => r.id === id)!.baslangic.slice(0, 10)).toBe(yeniTarih),
+    )
+    // BARİYER: kaydetme bitti (panel bu görevde hâlâ kapanıyor) — yayılım
+    // `await takvim.kaydet(...)`in ARDINDAN koştu.
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Güncelle' })).toBeNull())
+  }
+
+  // Senaryo: Zeynep'in bir seansının YILI yanlış girilmiş (2017) ve seans
+  // "geldi" işaretli — son teması o yüzden 2017, saklama süresi dolmuş
+  // görünüyor. Terapist formdan tarihi düzeltir (taşır). Sunucu son teması
+  // ilerletir; ekran bunu kart ve Ayarlar listesi YENİDEN ÇEKİLMEDEN
+  // göstermeli (`clients::getir` ve `saklama_suresi_dolanlar` `HerCagri`).
+  it('geldi seansi formdan ileri tasininca (a) acik dosyanin saklama alani yeni tarihi gosterir, (b) Ayarlar listesinden duser, (c) dosya ve saklama listesi YENIDEN ISTENMEZ', async () => {
+    eklenenler.push({
+      id: 303, client_id: 3, danisan_adi: 'Zeynep Kaya',
+      baslangic: '2017-01-10T09:00', bitis: '2017-01-10T10:00',
+      durum: 'geldi', ucret: null, odendi: false, seri_id: null,
+    })
+    saklamaDolanlarListesi = [danisanlar[2]]
+    ciz()
+    await saklamaEkranlariniHazirla()
+    const dosyaGetleriOnce = dosyaGetleri()
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
+    await userEvent.click(screen.getByRole('button', { name: '7 – 13 Eylül 2026' }))
+    fireEvent.change(screen.getByLabelText('Gidilecek gün'), { target: { value: '2017-01-10' } })
+    await userEvent.click(await screen.findByRole('button', { name: 'Zeynep Kaya' }))
+    await tarihiTasi(303, '2026-09-10')
+
+    // (a) Kart yerelde yamandı: yeni saklama bitişi, "doldu" yok.
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await waitFor(() => expect(saklamaMetni()).toContain('10.09.2033 tarihinde doluyor'))
+    expect(saklamaMetni()).not.toContain('Saklama süresi doldu')
+    expect(dosyaGetleri()).toBe(dosyaGetleriOnce)
+
+    // (b) Ayarlar listesinden düştü.
+    await userEvent.click(screen.getByRole('tab', { name: 'Ayarlar' }))
+    expect(screen.queryByRole('button', { name: zeynepSaklamaListesinde })).toBeNull()
+
+    // (c) Saklama listesi YENİDEN İSTENMEDİ.
+    expect(saklamaIstekleri()).toBe(1)
+  })
+
+  // Ters yön: planlı seans temas değildir — sunucu yanıtı iki alanı
+  // TAŞIMAZ, istemci hiçbir şeyi yamamamalı. "Yanıt geldiyse yama" diyen
+  // (alanlara bakmayan) bir uygulama kartı `undefined` ile bozar ve danışanı
+  // listeden düşürürdü; bu test onu yakalar.
+  it('planli seansi tasimak saklama uyarisini ve Ayarlar listesini DEGISTIRMEZ', async () => {
+    saklamaDolanlarListesi = [danisanlar[2]]
+    ciz()
+    await saklamaEkranlariniHazirla()
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Zeynep Kaya' }))
+    await tarihiTasi(301, '2026-09-10')
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    expect(saklamaMetni()).toContain('Saklama süresi doldu (10.01.2024)')
+    await userEvent.click(screen.getByRole('tab', { name: 'Ayarlar' }))
+    expect(screen.getByRole('button', { name: zeynepSaklamaListesinde })).toBeDefined()
+    expect(saklamaIstekleri()).toBe(1)
   })
 })
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { takvimApi, YetkisizHata } from '../../api'
+import { takvimApi, YetkisizHata, type GuncellemeYaniti } from '../../api'
 import type { Randevu } from '../../takvim/HaftalikTakvim'
 import { haftaGunleri, haftaninBasi, yerelZaman, zamandanDate } from '../../takvim/hafta'
 import { simdiYerel } from './yerelGun'
@@ -145,14 +145,25 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
     setSeciliBosSaat(null)
   }
 
+  /**
+   * Paneldeki kaydı yazar. Dönüş: düzenlemede (PUT) sunucunun yanıtı, yeni
+   * kayıtta (POST) `null`.
+   *
+   * Plan A Görev 9 (tasarım A4): taşınan "geldi" seansı son temasını
+   * ilerlettiyse PUT yanıtı `son_temas`/`saklama_bitis` taşır. `durumDegis`
+   * ile AYNI karar: bu kanca yanıtı yalnızca YUKARI iletir; kartı ve saklama
+   * listesini `AnaEkran.randevuKaydet` yamar (o iki önbellek bu kancada
+   * değil).
+   */
   async function kaydet(kayit: {
     client_id: number
     baslangic: string
     bitis: string
     ucret: number | null
     tekrar_sayisi?: number
-  }) {
+  }): Promise<GuncellemeYaniti | null> {
     try {
+      let yanit: GuncellemeYaniti | null = null
       // İki kip: panel mevcut bir randevuyla açıldıysa DÜZENLEME (PUT),
       // yalnızca boş bir saatle açıldıysa YENİ KAYIT (POST). Bu ayrım
       // yokken düzenleme kipinde de POST atılıyordu ve sunucu randevunun
@@ -162,7 +173,7 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
         // `tekrar_sayisi` bilerek geçirilmiyor: düzenleme kipinde panel o
         // alanı zaten göstermiyor ve mevcut bir randevuyu "8 hafta
         // tekrarla" ile kaydetmek anlamsız olurdu.
-        await takvimApi.randevuGuncelle(seciliRandevu.id, {
+        yanit = await takvimApi.randevuGuncelle(seciliRandevu.id, {
           client_id: kayit.client_id,
           baslangic: kayit.baslangic,
           bitis: kayit.bitis,
@@ -174,6 +185,7 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
       setHata(null)
       panelKapat()
       await yukle()
+      return yanit
     } catch (e) {
       // Üstteki bant dar bir sayfada gözden kaçabilir (bkz. Görev 10 inceleme
       // bulgusu) — burada set edilip yeniden fırlatılıyor ki panel de kendi

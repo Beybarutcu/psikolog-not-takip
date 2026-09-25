@@ -193,6 +193,37 @@ describe('TakvimSekmesi — araç çubuğu (Görev 5)', () => {
     // Kullanıcının açtığı alan, seçimden SONRA kendiliğinden kapanır.
     expect(screen.queryByLabelText('Gidilecek gün')).toBeNull()
   })
+
+  // Son inceleme I1 (kontrolör R14): tarayıcı yılı rakam rakam yazarken her
+  // tuşta `onChange` tam bir değerle gelir — ilk rakamda "0002-10-15", yani
+  // `new Date(2, …)` = 1902. Alan eskiden ilk tuşta 1902'ye gidip kapanıyordu.
+  it('R14 I1: yil rakam rakam yazilirken 2000-2099 disindaki ara degerler gezinmez ve alani KAPATMAZ; tam gun gider', async () => {
+    const props = varsayilanProplar()
+    render(<TakvimSekmesi {...props} />)
+
+    await userEvent.click(screen.getByRole('button', { name: '7 – 13 Eylül 2026' }))
+    const gunAlani = screen.getByLabelText('Gidilecek gün')
+    // Tarayıcının kendi seçicisi de aynı pencereyi göstersin (danışan
+    // kartının ve randevu formunun penceresi).
+    expect(gunAlani.getAttribute('min')).toBe('2000-01-01')
+    expect(gunAlani.getAttribute('max')).toBe('2099-12-31')
+
+    for (const ara of ['0002-10-15', '0020-10-15', '0202-10-15']) {
+      fireEvent.change(gunAlani, { target: { value: ara } })
+      expect(props.takvim.haftayaGit).not.toHaveBeenCalled()
+      // Alan AÇIK kaldı ve aynı düğüm (kullanıcı yazmaya devam ediyor).
+      expect(screen.getByLabelText('Gidilecek gün')).toBe(gunAlani)
+    }
+    // Üst sınırın ötesi de gezinmez (iki yön).
+    fireEvent.change(gunAlani, { target: { value: '2100-10-15' } })
+    expect(props.takvim.haftayaGit).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Gidilecek gün')).toBe(gunAlani)
+
+    fireEvent.change(gunAlani, { target: { value: '2026-10-15' } })
+    expect(props.takvim.haftayaGit).toHaveBeenCalledTimes(1)
+    expect(yerelGun(vi.mocked(props.takvim.haftayaGit).mock.calls[0][0])).toBe('2026-10-15')
+    expect(screen.queryByLabelText('Gidilecek gün')).toBeNull()
+  })
 })
 
 // Görev 6 (tasarım A2): araç çubuğunun altındaki bilgi satırı. `bosTakvim()`

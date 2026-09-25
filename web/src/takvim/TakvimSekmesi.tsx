@@ -103,6 +103,21 @@ import { RandevuPaneli } from './RandevuPaneli'
  * alana kendiliğinden odak YOK.
  */
 
+// Gün seçicinin penceresi: randevu formunun Tarih alanı ve danışan kartının
+// randevu penceresiyle aynı (tasarım A4).
+const GUN_SECICI_MIN = '2000-01-01'
+const GUN_SECICI_MAX = '2099-12-31'
+
+/**
+ * Gün seçiciden gelen değer gidilecek bir gün mü? Tam `YYYY-AA-GG` ve yıl
+ * 2000–2099 (bkz. `onChange`'teki gerekçe). Biçim `YYYY-AA-GG` olduğu için
+ * sözlük sırası takvim sırasıyla aynı; sınırlar dizgi olarak karşılaştırılır.
+ */
+function gunSeciciDegeriGecerli(deger: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(deger)) return false
+  return deger >= GUN_SECICI_MIN && deger <= GUN_SECICI_MAX
+}
+
 type Props = {
   takvim: ReturnType<typeof useTakvimAkisi>
   seansAkisi: ReturnType<typeof useSeansNotlari>
@@ -247,9 +262,17 @@ export function TakvimSekmesi({
             type="date"
             aria-label="Gidilecek gün"
             autoFocus
+            min={GUN_SECICI_MIN}
+            max={GUN_SECICI_MAX}
             className="rounded border px-2 py-1"
             onChange={(e) => {
-              if (e.target.value === '') return
+              // Son inceleme I1: yıl rakam rakam yazılırken tarayıcı her
+              // tuşta TAM bir değer bildirir — ilk rakamda "0002-10-15",
+              // yani `new Date(2, …)` = 1902 — ve alan ilk tuşta 1902'ye
+              // gidip kapanıyordu. `min`/`max` elle yazılanı doğrulamaz;
+              // pencerenin dışındaki her değer yok sayılır (ne gezinme ne
+              // kapanma), yalnızca pencere içindeki tam bir gün gider.
+              if (!gunSeciciDegeriGecerli(e.target.value)) return
               takvim.haftayaGit(zamandanDate(`${e.target.value}T00:00`))
               setGunSecici(false)
             }}

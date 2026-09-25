@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, useState } from 'react'
 import { AYLAR, GUN_ADLARI, haftaGunleri, yerelZaman, zamandanDate } from './hafta'
 import { RandevuBloku } from './RandevuBloku'
 
@@ -107,6 +108,21 @@ export function HaftalikTakvim({
     (r) => !izgaraAnahtarlari.has(hucreAnahtari(zamandanDate(r.baslangic))),
   )
 
+  // Tasarım A3: satır yüksekliği pencereden türetilir, en az 36px.
+  // max(36, (pencere yüksekliği − tbody'nin üst kenarı − alt boşluk) / satır sayısı)
+  const tbodyRef = useRef<HTMLTableSectionElement>(null)
+  const [satirYuksekligi, setSatirYuksekligi] = useState(40)
+  useLayoutEffect(() => {
+    function olc() {
+      const ust = tbodyRef.current?.getBoundingClientRect().top ?? 0
+      const kalan = window.innerHeight - ust - 16
+      setSatirYuksekligi(Math.max(36, Math.floor(kalan / saatler.length)))
+    }
+    olc()
+    window.addEventListener('resize', olc)
+    return () => window.removeEventListener('resize', olc)
+  }, [saatler.length, gizliRandevular.length > 0])
+
   function hucreRandevulari(gun: Date, saat: number): Randevu[] {
     return (
       hucreler.get(
@@ -118,7 +134,7 @@ export function HaftalikTakvim({
   const bicimliAralik = (saat: number) => `${saat.toString().padStart(2, '0')}:00`
 
   return (
-    <div className="p-4">
+    <div className="p-2">
       {/* Hafta başlığı ve gezinme okları Görev 5'te `TakvimSekmesi`'nin tek
           araç çubuğuna taşındı (tasarım §4 A1/A2, "tek araç çubuğu"). */}
 
@@ -183,7 +199,7 @@ export function HaftalikTakvim({
               })}
             </tr>
           </thead>
-          <tbody>
+          <tbody ref={tbodyRef}>
             {saatler.map((saat) => (
               <tr key={saat}>
                 <td className="border-r p-1 text-right align-top text-xs text-slate-500">
@@ -198,9 +214,10 @@ export function HaftalikTakvim({
                   return (
                     <td
                       key={i}
-                      className={`relative h-10 border border-slate-100 p-0.5 align-top ${
+                      className={`relative border border-slate-100 p-0.5 align-top ${
                         bugunMu ? 'bg-sky-50/60' : ''
                       }`}
+                      style={{ height: satirYuksekligi }}
                     >
                       {bugunMu && saat === simdiSaat && (
                         <div

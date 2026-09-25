@@ -276,8 +276,8 @@ export function TakvimSekmesi({
 
       {takvim.hata && <p className="mb-4 text-sm text-red-600">{takvim.hata}</p>}
 
-      <div className="flex items-start gap-4">
-        <div className="flex-1" data-testid="takvim-izgara">
+      <div className="flex flex-wrap items-start gap-4">
+        <div className="min-w-0 flex-1 basis-[720px]" data-testid="takvim-izgara">
           <HaftalikTakvim
             randevular={takvim.randevular}
             haftaBasi={takvim.haftaBasi}
@@ -288,23 +288,25 @@ export function TakvimSekmesi({
         </div>
 
         {takvim.panelAcik && (
-          <RandevuPaneli
-            // Seçim değişince (başka bir randevu ya da boş saat) bileşen
-            // yeniden mount edilmeli — aksi hâlde panelin iç state'i (silme
-            // onayı, doldurulmuş form alanları) önceki seçimden yeni seçime
-            // sızar (bkz. Görev 10 inceleme Bulgu 1, AnaEkran'dan taşındı).
-            key={seciliRandevu ? `randevu-${seciliRandevu.id}` : `bos-${seciliBosSaat}`}
-            zaman={seciliBosSaat ?? seciliRandevu?.baslangic ?? ''}
-            randevu={seciliRandevu}
-            danisanlar={danisanlar}
-            onKaydet={onRandevuKaydet}
-            onSil={onRandevuSil}
-            onSeriSil={onSeriSil}
-            seriSayisiAl={takvimApi.seriSayisi}
-            silinecekNotSayisiAl={takvimApi.silinecekNotSayisi}
-            onKapat={takvim.panelKapat}
-            cakismaKontrol={takvimApi.cakismaKontrol}
-          />
+          <div className="shrink-0">
+            <RandevuPaneli
+              // Seçim değişince (başka bir randevu ya da boş saat) bileşen
+              // yeniden mount edilmeli — aksi hâlde panelin iç state'i (silme
+              // onayı, doldurulmuş form alanları) önceki seçimden yeni seçime
+              // sızar (bkz. Görev 10 inceleme Bulgu 1, AnaEkran'dan taşındı).
+              key={seciliRandevu ? `randevu-${seciliRandevu.id}` : `bos-${seciliBosSaat}`}
+              zaman={seciliBosSaat ?? seciliRandevu?.baslangic ?? ''}
+              randevu={seciliRandevu}
+              danisanlar={danisanlar}
+              onKaydet={onRandevuKaydet}
+              onSil={onRandevuSil}
+              onSeriSil={onSeriSil}
+              seriSayisiAl={takvimApi.seriSayisi}
+              silinecekNotSayisiAl={takvimApi.silinecekNotSayisi}
+              onKapat={takvim.panelKapat}
+              cakismaKontrol={takvimApi.cakismaKontrol}
+            />
+          </div>
         )}
       </div>
 

@@ -32,6 +32,9 @@ const SUNUCULAR = [
   // Görev 8: gelişmiş not alma (biçim çubuğu + Ctrl+Z, etiketler, arama
   // sonucundan danışan dosyasına geçiş) uçtan uca doğrulaması.
   { ad: 'notlar-gelismis', spec: 'notlar-gelismis.spec.ts', port: 7706 },
+  // Görev 7: hafta pencereye kaydırmadan sığar (tasarım A3) uçtan uca
+  // ölçümü — gerçek tarayıcı yerleşimi gerektirir (bkz. yerlesim.spec.ts).
+  { ad: 'yerlesim', spec: 'yerlesim.spec.ts', port: 7707 },
 ] as const
 
 // Bir spec dosyası hiçbir projeye bağlı değilse Playwright onu SESSİZCE

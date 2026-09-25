@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { AYLAR, GUN_ADLARI, haftaGunleri, yerelZaman, zamandanDate } from './hafta'
+import { blokKonumu, cakismaSutunlari } from './blokYerlesimi'
 import { RandevuBloku } from './RandevuBloku'
 
 export type Randevu = {
@@ -106,6 +107,13 @@ export function HaftalikTakvim({
   // dışındakiler kadar (ileride mümkün olursa) haftanın dışındakiler de.
   const gizliRandevular = randevular.filter(
     (r) => !izgaraAnahtarlari.has(hucreAnahtari(zamandanDate(r.baslangic))),
+  )
+
+  // Çakışan randevular yan yana (bkz. `blokYerlesimi.ts`). Yalnızca ızgarada
+  // görünenler üzerinden: aralık dışındaki bir randevu ekranda yer tutmuyor,
+  // görünen bir bloğu daraltmamalı.
+  const sutunlar = cakismaSutunlari(
+    randevular.filter((r) => izgaraAnahtarlari.has(hucreAnahtari(zamandanDate(r.baslangic)))),
   )
 
   // Tasarım A3: satır yüksekliği pencereden türetilir, en az 36px.
@@ -275,7 +283,15 @@ export function HaftalikTakvim({
                       )}
                       {hucredekiler.length > 0 ? (
                         hucredekiler.map((r) => (
-                          <RandevuBloku key={r.id} randevu={r} onSec={() => onRandevuSec(r)} />
+                          <RandevuBloku
+                            key={r.id}
+                            randevu={r}
+                            onSec={() => onRandevuSec(r)}
+                            konum={{
+                              ...blokKonumu(r, satirYuksekligi, CALISMA_BITIS),
+                              ...(sutunlar.get(r.id) ?? { sutun: 0, sutunSayisi: 1 }),
+                            }}
+                          />
                         ))
                       ) : (
                         <button

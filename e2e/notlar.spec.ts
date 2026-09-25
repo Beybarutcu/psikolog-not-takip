@@ -72,7 +72,12 @@ async function danisanVeRandevu(page: Page, ad: string, saat: string) {
 
   // `exact: true`: rol adı eşleşmesi de varsayılan olarak alt dizgidir ve
   // onsuz bu locator danışan çipindeki arşivleme düğmesini bulurdu.
-  const blok = page.getByRole('button', { name: ad, exact: true }).first()
+  // Blok adı "SS:DD Ad Soyad" (başlangıç saati her blokta). Izgarayla
+  // sınırlı: bugünün sıradaki seansıysa bilgi satırındaki bağlantı da aynı
+  // adı taşır.
+  const blok = page
+    .getByTestId('takvim-izgara')
+    .getByRole('button', { name: `${saat} ${ad}`, exact: true })
   await expect(blok).toBeVisible()
   return blok
 }
@@ -519,7 +524,7 @@ test('randevu silme onayi, gidecek NOTLARI da soyler (dal incelemesi I2)', async
   // Silme uygulanınca randevu da notu da gider (cascade).
   await page.getByRole('button', { name: 'Sil', exact: true }).click()
   await page.getByRole('button', { name: 'Evet, sil', exact: true }).click()
-  await expect(page.getByRole('button', { name: ad, exact: true })).toHaveCount(0)
+  await expect(blok).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Hızlı arama (⌘K)' }).click()
   await page.getByLabel('Danışan adı veya not içeriği').fill('CASCADEKANARYA19')

@@ -29,7 +29,10 @@ test('danisan ekle, randevu olustur, geldi isaretle', async ({ page }) => {
   // Onsuz bu locator takvimdeki randevu blogunu degil, danisan listesindeki
   // "Ayşe Yılmaz adlı danışanı arşivle" dugmesini bulur ve tiklama arsivleme
   // onayini acar.
-  const blok = page.getByRole('button', { name: 'Ayşe Yılmaz', exact: true }).first()
+  // Blok adi "SS:DD Ad Soyad" (baslangic saati her blokta). Izgarayla
+  // sinirli: bugunun siradaki seansiysa bilgi satirindaki baglanti da ayni
+  // adi tasir.
+  const blok = page.getByTestId('takvim-izgara').getByRole('button', { name: '10:00 Ayşe Yılmaz', exact: true })
   await expect(blok).toBeVisible()
 
   await blok.click()
@@ -58,7 +61,7 @@ test('kilitliyken randevu ucu veri sizdirmaz', async ({ page, request }) => {
   await page.getByLabel('Danışan', { exact: true }).selectOption({ label: 'Zeynep Kaya' })
   await page.getByLabel('Ücret (TL)').fill('300')
   await page.getByRole('button', { name: 'Kaydet' }).click()
-  await expect(page.getByRole('button', { name: 'Zeynep Kaya', exact: true }).first()).toBeVisible()
+  await expect(page.getByTestId('takvim-izgara').getByRole('button', { name: '10:00 Zeynep Kaya', exact: true })).toBeVisible()
 
   await page.getByRole('button', { name: 'Kilitle' }).click()
   // BARIYER -- yoksa test bir YARIS olcerdi. `click()` yalnizca tiklamanin
@@ -105,7 +108,7 @@ test('mevcut randevunun ucreti guncellenir, kopya olusmaz', async ({ page }) => 
   await page.getByLabel('Ücret (TL)').fill('450')
   await page.getByRole('button', { name: 'Kaydet' }).click()
 
-  const bloklar = page.getByRole('button', { name: 'Elif Şahin', exact: true })
+  const bloklar = page.getByTestId('takvim-izgara').getByRole('button', { name: '11:00 Elif Şahin', exact: true })
   await expect(bloklar).toHaveCount(1)
 
   // Randevuyu ac, ucreti degistir, Guncelle'ye bas.
@@ -247,7 +250,7 @@ test('seri kurulur ve tek adimda iptal edilir', async ({ page }) => {
   await page.getByLabel('Kaç hafta').fill('3')
   await page.getByRole('button', { name: 'Kaydet' }).click()
 
-  const bloklar = page.getByRole('button', { name: 'Deniz Arslan', exact: true })
+  const bloklar = page.getByTestId('takvim-izgara').getByRole('button', { name: '12:00 Deniz Arslan', exact: true })
   await expect(bloklar).toHaveCount(1) // bu haftada serinin ilk uyesi
 
   await bloklar.first().click()

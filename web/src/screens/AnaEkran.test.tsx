@@ -6,6 +6,13 @@ import { borcaGirerMi } from '../borc'
 import { taslakOku, taslaklariUnut } from '../seans/taslak'
 import { AnaEkran } from './AnaEkran'
 
+/**
+ * Takvim bloğunun erişilebilir adı "SS:DD Ad Soyad": başlangıç saati her
+ * blokta görünür. Bu testler saati değil danışanı sorduğu için blok, ada
+ * göre bir desenle bulunur.
+ */
+const blokAdi = (ad: string) => new RegExp(`^\\d{2}:\\d{2} ${ad}$`)
+
 // Görev 10 inceleme Bulgu 1: RandevuPaneli, seçili randevu/boş saat değişince
 // yeniden mount edilecek bir `key` almadan önce, panel içindeki state
 // (silme onayı, doldurulmuş form alanları) bir seçimden diğerine sızıyordu.
@@ -340,13 +347,13 @@ describe('AnaEkran — panel kimliği (Görev 10 inceleme Bulgu 1)', () => {
   it('A için silme onayı açıkken B seçilince onay B üzerinde sızmaz', async () => {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
 
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
 
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
     expect(screen.getByText(/kalıcı olarak silinsin mi/i)).toBeDefined()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
 
     // Panel B'yi göstermeli; A'da açılmış silme onayı B'ye sızmamalı,
     // aksi hâlde kullanıcı sadece gezinirken "Evet, sil"e basıp B'yi silebilir.
@@ -358,9 +365,9 @@ describe('AnaEkran — panel kimliği (Görev 10 inceleme Bulgu 1)', () => {
   it('A\'da form alanları doldurulup boş bir saate geçilince alanlar temiz gelir', async () => {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
 
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
 
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await userEvent.clear(screen.getByLabelText('Süre (dakika)'))
     await userEvent.type(screen.getByLabelText('Süre (dakika)'), '45')
     expect((screen.getByLabelText('Süre (dakika)') as HTMLInputElement).value).toBe('45')
@@ -435,9 +442,9 @@ describe('AnaEkran — düzenleme kipi POST değil PUT üretir (C1)', () => {
 
   it('mevcut randevuda Güncelle PUT gönderir, POST göndermez', async () => {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
 
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await userEvent.clear(screen.getByLabelText('Ücret (TL)'))
     await userEvent.type(screen.getByLabelText('Ücret (TL)'), '500')
     await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
@@ -460,7 +467,7 @@ describe('AnaEkran — düzenleme kipi POST değil PUT üretir (C1)', () => {
 
   it('boş saatte Kaydet hâlâ POST gönderir (yeni kayıt kipi bozulmadı)', async () => {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
 
     const bosSaat = screen.getAllByLabelText(/boş$/).find((el) =>
       el.getAttribute('aria-label')?.includes('09:00'),
@@ -543,10 +550,10 @@ describe('AnaEkran — gereksiz yeniden yükleme yapmaz (Plan 3 Görev 2)', () =
 
   it('"Geldi" işaretlemek takvimi yeniden çekmez, ekranı yine de günceller', async () => {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
     expect(takvimGetSayisi()).toBe(1) // mount'taki tek yükleme
 
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await userEvent.click(screen.getByRole('button', { name: 'Geldi' }))
 
     const yazmalar = istekler.filter(
@@ -560,19 +567,19 @@ describe('AnaEkran — gereksiz yeniden yükleme yapmaz (Plan 3 Görev 2)', () =
     // bir kod da testi geçerdi.) `data-durum` görsel sınıfa değil semantik
     // duruma bağlıdır (bkz. RandevuBloku).
     expect(
-      screen.getByRole('button', { name: 'Ayşe Yılmaz' }).getAttribute('data-durum'),
+      screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }).getAttribute('data-durum'),
     ).toBe('geldi')
     expect(
-      screen.getByRole('button', { name: 'Mehmet Demir' }).getAttribute('data-durum'),
+      screen.getByRole('button', { name: blokAdi('Mehmet Demir') }).getAttribute('data-durum'),
     ).toBe('planlandi')
   })
 
   it('silme takvimi yeniden çekmez, randevu ekrandan kalkar', async () => {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
     expect(takvimGetSayisi()).toBe(1)
 
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
     await userEvent.click(screen.getByRole('button', { name: 'Evet, sil' }))
 
@@ -584,13 +591,13 @@ describe('AnaEkran — gereksiz yeniden yükleme yapmaz (Plan 3 Görev 2)', () =
     // bloğu ("Ayşe Yılmaz"), danışan listesindeki "Ayşe Yılmaz adlı danışanı
     // arşivle" düğmesi değil. Gevşek regex ikisini birbirine karıştırır ve
     // test "randevu ekrandan kalktı mı" sorusunu ölçmeyi bırakırdı.
-    expect(screen.queryByRole('button', { name: 'Ayşe Yılmaz' })).toBeNull()
-    expect(screen.getByRole('button', { name: 'Mehmet Demir' })).toBeDefined()
+    expect(screen.queryByRole('button', { name: blokAdi('Ayşe Yılmaz') })).toBeNull()
+    expect(screen.getByRole('button', { name: blokAdi('Mehmet Demir') })).toBeDefined()
   })
 
   it('mount tek bir takvim isteği atar, hafta değişimi tam olarak bir tane daha', async () => {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
     expect(takvimGetSayisi()).toBe(1)
 
     await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
@@ -673,7 +680,7 @@ describe('AnaEkran — danışan arşivleme (Plan 2 devri)', () => {
     // da düz danışan adıyla anılıyor; iki düğmenin adı çakışmamalı.
     expect(screen.queryByRole('button', { name: 'Arşivle' })).toBeNull()
     expect(arsivDugmesi('Ayşe Yılmaz')).not.toBe(
-      screen.queryByRole('button', { name: 'Ayşe Yılmaz' }),
+      screen.queryByRole('button', { name: blokAdi('Ayşe Yılmaz') }),
     )
   })
 
@@ -964,8 +971,8 @@ describe('AnaEkran — seçili randevu yeniden yüklemede bayatlamaz (Plan 2 dev
 
   async function randevuSec() {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     expect(screen.getByRole('heading', { name: 'Randevu' })).toBeDefined()
   }
 
@@ -1208,8 +1215,8 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
 
   async function seansAc(ad = 'Ayşe Yılmaz') {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: ad })
-    await userEvent.click(screen.getByRole('button', { name: ad }))
+    await screen.findByRole('button', { name: blokAdi(ad) })
+    await userEvent.click(screen.getByRole('button', { name: blokAdi(ad) }))
     await screen.findByLabelText('Seans notu')
   }
 
@@ -1244,7 +1251,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
 
   it('bos saat secilince seans paneli ACILMAZ', async () => {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
     const bosSaat = screen.getAllByLabelText(/boş$/).find((el) =>
       el.getAttribute('aria-label')?.includes('09:00'),
     )
@@ -1288,7 +1295,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
     expect(await screen.findByLabelText('Özel notum')).toBeDefined()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
     await screen.findByLabelText('Seans notu')
 
     expect(screen.getByRole('tab', { name: 'Seans Notu' }).getAttribute('aria-selected')).toBe(
@@ -1309,7 +1316,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
     await userEvent.type(await screen.findByLabelText('Özel notum'), '-A HIPOTEZI')
 
-    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
 
     await waitFor(() =>
       expect(yazmalar(`/api/randevular/${randevuA.id}/ozel-not`)).toHaveLength(1),
@@ -1370,7 +1377,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await screen.findByLabelText('Özel notum')
     expect(ozelGetleri()).toHaveLength(1)
 
-    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
     await screen.findByLabelText('Seans notu')
 
     // B'nin özel notu İSTENMEDİ: "istendi" bayrağı seans kimliği taşıyor.
@@ -1390,10 +1397,10 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await screen.findByLabelText('Özel notum')
     expect(ozelGetleri().filter((i) => i.yol.includes(String(randevuA.id)))).toHaveLength(1)
 
-    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
     await screen.findByLabelText('Seans notu')
 
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     // Panel RESMI sekmede acilir (key ile yeniden monte olur); ozel not
     // ekranda görünmüyor.
     await screen.findByLabelText('Seans notu')
@@ -1454,7 +1461,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await seansAc()
     await userEvent.type(screen.getByLabelText('Seans notu'), 'A seansinin metni')
 
-    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
 
     await waitFor(() => expect(yazmalar(`/api/randevular/${randevuA.id}/not`)).toHaveLength(1))
     // İçerik şablon başlıklarıyla birlikte gidiyor (yeni not); ölçülen şey
@@ -1553,7 +1560,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     // denetim kaydı testlerine bakın); "Geldi" de bunu değiştirmemeli.
     expect(ozelGetleri()).toHaveLength(0)
     // İşlem gerçekten yapıldı: "hiçbir şey yapmayan" kod da üsttekileri geçerdi.
-    expect(screen.getByRole('button', { name: 'Ayşe Yılmaz' }).getAttribute('data-durum')).toBe(
+    expect(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }).getAttribute('data-durum')).toBe(
       'geldi',
     )
   })
@@ -1610,7 +1617,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     // B'ye geç: B ödenmemiş. `key` olmasaydı panel yeniden mount edilmez ve
     // A'nın iyimser `true`'su B'nin kutusunda kalırdı — yanlış danışana
     // "ödendi" görünür.
-    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
     // İnceleme CRITICAL-1: danışan adı artık bir DÜĞME (bkz. `SeansPaneli`
     // "başlıktaki danışan adı"); `findByText` bir düzenli ifadeyi TEK bir
     // metin düğümünde arıyor ve ad ayrı bir öğede olduğu için "metin birden
@@ -1623,7 +1630,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
 
     // A'ya dön: takvim YENİDEN YÜKLENMEDİ, dolayısıyla A'nın `true`'su ancak
     // yerel listedeki kopya tazelendiyse görünür.
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await waitFor(() =>
       expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(/Ayşe Yılmaz — /),
     )
@@ -1662,11 +1669,11 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
 
     // Yerel liste de geri alındı: A'ya dönünce kutu `false` açılır (takvim
     // yeniden yüklenmiyor, değer listedeki kopyadan geliyor).
-    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
     await waitFor(() =>
       expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(/Mehmet Demir — /),
     )
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await waitFor(() =>
       expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(/Ayşe Yılmaz — /),
     )
@@ -1692,7 +1699,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
       async () => userEvent.click(screen.getByRole('button', { name: 'Geldi' })),
       () => {
         expect(screen.getByRole('button', { name: 'Geldi' }).getAttribute('aria-pressed')).toBe('true')
-        expect(screen.getByRole('button', { name: 'Ayşe Yılmaz' }).getAttribute('data-durum')).toBe('geldi')
+        expect(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }).getAttribute('data-durum')).toBe('geldi')
       },
       () => sunucuDurumu[randevuA.id] === 'geldi',
     ],
@@ -1724,7 +1731,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
       await waitFor(() => expect(sunucuYazdi()).toBe(true))
       haftayiBirak()
 
-      await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+      await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
       await waitFor(() =>
         expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(/Ayşe Yılmaz — /),
       )
@@ -1854,8 +1861,8 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     }
 
     const { unmount } = render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
-    await kullanici.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
+    await kullanici.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await screen.findByLabelText('Seans notu')
     await kullanici.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
     await kullanici.type(await screen.findByLabelText('Özel notum'), '-KAYBOLMAMALI')
@@ -1874,8 +1881,8 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     // Kilit açıldı: AnaEkran yeniden mount edildi, kullanıcı aynı seansı
     // ve aynı sekmeyi açtı.
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
-    await kullanici.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
+    await kullanici.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await screen.findByLabelText('Seans notu')
     await kullanici.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
 
@@ -1897,8 +1904,8 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
   it('not yuklenirken 401 gelirse panel kapanir', async () => {
     notYetkisiz = true
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
 
     // Kilit: ekranda danışan adı ve saati kalmamalı — ne seans paneli ne de
     // randevu paneli. Yazılmamış metin taslakta korunuyor.
@@ -1909,8 +1916,8 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
   it('not yuklenemezse panel ACILMAZ, hata ve yeniden deneme gosterilir', async () => {
     notSunucuHatasi = true
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
 
     // "yükleniyor…" yazan bir panel sonsuza kadar öyle kalırdı.
     const uyari = await screen.findByRole('alert')
@@ -1935,8 +1942,8 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     async (_ad, dusur, mesaj) => {
       dusur()
       render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-      await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
-      await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+      await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
+      await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
 
       const uyari = await screen.findByRole('alert')
       expect(uyari.textContent).toContain(mesaj)
@@ -1967,8 +1974,8 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     // Not ve özel not BAŞARIYLA geliyor; yalnızca geçmiş isteği düşüyor.
     gecmisSunucuHatasi = true
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
 
     const uyari = await screen.findByRole('alert')
     expect(uyari.textContent).toContain('Gecmis notlar okunamadi.')
@@ -2153,7 +2160,7 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
 
   async function seansAc(ad = 'Ayşe Yılmaz') {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await userEvent.click(await screen.findByRole('button', { name: ad }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi(ad) }))
     await screen.findByLabelText('Seans notu')
   }
 
@@ -2183,11 +2190,11 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
   it('10.1 izgarada randevuya tiklamak seans bolumunu BIR kez kaydirir; sekme donusu, Geldi ve Odendi kaydirmaz', async () => {
     const kaydir = vi.spyOn(Element.prototype, 'scrollIntoView')
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
     // Açılış (ve ilk hafta yüklemesi) kaydırmaz.
     expect(kaydir).not.toHaveBeenCalled()
 
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await screen.findByLabelText('Seans notu')
     expect(kaydir).toHaveBeenCalledTimes(1)
     // Kaydırılan öğe seans BÖLÜMÜ (form + not birlikte görünsün diye başı).
@@ -2213,7 +2220,7 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     expect(kaydir).toHaveBeenCalledTimes(1)
 
     // ARTI YÖN: her kullanıcı seçimi kaydırır, yalnızca ilki değil.
-    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
     await waitFor(() =>
       expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(/Mehmet Demir — /),
     )
@@ -2231,7 +2238,7 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
 
     // BARİYER: yeni haftanın listesi geldi — blok artık ızgarada (liste
     // gelmeden önce eski kopya "aralık dışı" satırında durur, adı farklı).
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
     expect(haftaBasligi()).toBe('14 – 20 Eylül 2026')
     expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(
       /Ayşe Yılmaz — 15 Eylül 2026, 10:00/,
@@ -2256,7 +2263,7 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
       { ...randevuB, id: 104, baslangic: '2026-09-22T10:00', bitis: '2026-09-22T11:00' },
     ]
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
     expect(haftaGetleri()).toHaveLength(1)
 
     const ikinciHafta = kapi()
@@ -2271,8 +2278,8 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
 
     // Görünen haftanın yanıtı ÖNCE döner.
     ucuncuHafta.ac()
-    await screen.findByRole('button', { name: 'Mehmet Demir' })
-    expect(screen.queryByRole('button', { name: 'Ayşe Yılmaz' })).toBeNull()
+    await screen.findByRole('button', { name: blokAdi('Mehmet Demir') })
+    expect(screen.queryByRole('button', { name: blokAdi('Ayşe Yılmaz') })).toBeNull()
 
     // Artık görünmeyen haftanın yanıtı SONRA döner.
     ikinciHafta.ac()
@@ -2284,7 +2291,7 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     })
 
     expect(haftaBasligi()).toBe('21 – 27 Eylül 2026')
-    expect(screen.getByRole('button', { name: 'Mehmet Demir' })).toBeDefined()
+    expect(screen.getByRole('button', { name: blokAdi('Mehmet Demir') })).toBeDefined()
     // Geç liste yazılsaydı 15 Eylül'deki Ayşe bu haftanın "aralık dışı"
     // satırına düşer, Mehmet ızgaradan kaybolurdu.
     expect(screen.queryByRole('region', { name: 'Görünen aralık dışındaki randevular' })).toBeNull()
@@ -2421,14 +2428,14 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
     await waitFor(() => expect(randevuPutlari(randevuA.id)).toHaveLength(1))
 
-    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
     await waitFor(() =>
       expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(/Mehmet Demir — /),
     )
     bekletme.ac()
     // BARİYER: PUT işlendi ve GÖRÜNEN hafta yeniden yüklendi — A bu haftadan
     // gitti (15 Eylül'e taşındı).
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Ayşe Yılmaz' })).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('button', { name: blokAdi('Ayşe Yılmaz') })).toBeNull())
 
     expect(haftaBasligi()).toBe('7 – 13 Eylül 2026')
     expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(/Mehmet Demir — /)
@@ -2441,7 +2448,7 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
   it('R12 not okunamazsa hata kutusunda "Seansi kapat" var ve bolumu kapatir', async () => {
     notOkumaHatasi = true
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     const uyari = await screen.findByRole('alert')
     expect(uyari.textContent).toContain('Seans notu yüklenemedi')
     const bolum = screen.getByTestId('seans-bolumu')
@@ -2464,7 +2471,7 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
   // kaydedilen randevu ekranda hiçbir yerde görünmüyordu ("kayboldu").
   it('R14 I3 bos saatten BASKA haftaya kaydedilen yeni randevu kaybolmaz: hafta ona gecer, blok izgarada; eski hafta yeniden YUKLENMEZ', async () => {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
     expect(haftaBasligi()).toBe('7 – 13 Eylül 2026')
 
     await userEvent.click(screen.getByLabelText('9 Eylül 09:00 boş'))
@@ -2480,7 +2487,7 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     await waitFor(() => expect(haftaBasligi()).toBe('14 – 20 Eylül 2026'))
     // BARİYER: yeni haftanın listesi geldi — blok ızgarada (liste gelmeden
     // eski haftanın kayıtları "aralık dışı" satırında, adları farklı).
-    await screen.findByRole('button', { name: 'Mehmet Demir' })
+    await screen.findByRole('button', { name: blokAdi('Mehmet Demir') })
     expect(screen.queryByLabelText('16 Eylül 09:00 boş')).toBeNull()
     expect(screen.getByLabelText('16 Eylül 10:00 boş')).toBeDefined()
     expect(screen.queryByRole('region', { name: 'Görünen aralık dışındaki randevular' })).toBeNull()
@@ -2495,7 +2502,7 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
   // hafta TEK kez yeniden yüklenir ve yeni blok ızgarada.
   it('R14 I3 AYNI haftaya kaydedilen yeni randevu: hafta degismez, gorunen hafta TEK kez yeniden yuklenir, blok izgarada', async () => {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
 
     await userEvent.click(screen.getByLabelText('9 Eylül 09:00 boş'))
     fireEvent.change(screen.getByLabelText('Tarih'), { target: { value: '2026-09-11' } })
@@ -2508,7 +2515,7 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     // BARİYER: yeniden yükleme ekrana yazıldı — 11 Eylül 09:00 artık dolu.
     await waitFor(() => expect(screen.queryByLabelText('11 Eylül 09:00 boş')).toBeNull())
     expect(haftaBasligi()).toBe('7 – 13 Eylül 2026')
-    expect(screen.getAllByRole('button', { name: 'Mehmet Demir' })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: blokAdi('Mehmet Demir') })).toHaveLength(2)
     const sonrakiler = haftaGetleri().slice(getlerOnce)
     expect(sonrakiler).toHaveLength(1)
     expect(sonrakiler[0].yol).toContain(`baslangic=${encodeURIComponent('2026-09-07T00:00')}`)
@@ -2520,7 +2527,7 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
   // düğmesi bu haftada zaten devre dışı; yol gün seçiciden ölçülüyor.
   it('R14 M8 gun secicide GORUNEN haftanin bir gunu secilince hafta listesi yeniden ISTENMEZ', async () => {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
     expect(haftaGetleri()).toHaveLength(1)
 
     await userEvent.click(screen.getByRole('button', { name: '7 – 13 Eylül 2026' }))
@@ -2601,15 +2608,15 @@ describe('AnaEkran — seans geçişi × uçuştaki istek (Görev 9)', () => {
   it('yeni seansin notu YUKLENIRKEN onceki seansin notu ekranda kalmaz', async () => {
     sunucuNotlari = { [randevuA.id]: { sablon: 'dap', icerik: 'A SEANSININ NOTU' } }
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await screen.findByLabelText('Seans notu')
     expect(alan().value).toBe('A SEANSININ NOTU')
 
     const b = kapi()
     gecikmeler[`GET /api/randevular/${randevuB.id}/not`] = b.bekle
 
-    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
 
     // B'nin verisi henüz gelmedi. Sıfırlama bir efekte bırakılsaydı, o
     // efekt çalışana kadar A'nın notu B'nin panelinde durur — yanlış
@@ -2627,8 +2634,8 @@ describe('AnaEkran — seans geçişi × uçuştaki istek (Görev 9)', () => {
       [randevuB.id]: { sablon: 'dap', icerik: 'B METNI' },
     }
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await screen.findByLabelText('Seans notu')
 
     // A'nın kaydı uçuşta kalsın: unmount tahliyesi bu isteği atacak. Kapı
@@ -2638,7 +2645,7 @@ describe('AnaEkran — seans geçişi × uçuştaki istek (Görev 9)', () => {
     gecikmeler[`PUT /api/randevular/${randevuA.id}/not`] = a.bekle
     await userEvent.type(alan(), ' EK')
 
-    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
     await waitFor(() => expect(alan().value).toBe('B METNI'))
 
     // BARİYER (eskiden sabit 20 ms): A'nın kaydı uçuştayken taslağı depoda;
@@ -3097,7 +3104,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
 
     async function seans202Ac() {
       await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
-      await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+      await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
       await screen.findByLabelText('Seans notu')
       // Ön bariyer: panelin gecikmeli çakışma sorgusu ölçüm penceresine düşmesin.
       await waitFor(() =>
@@ -3235,7 +3242,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     // Gelecek haftadaki "geldi", 450 TL, ödenmemiş seansı (202) aç.
     await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
     await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
-    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await screen.findByLabelText('Seans notu')
     // Ön bariyer: panelin gecikmeli çakışma sorgusu ölçüm penceresine düşmesin.
     const CAKISMA_202 =
@@ -3324,7 +3331,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     // Gelecek haftadaki "geldi", 450 TL, ödenmemiş seansı (202) aç.
     await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
     await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
-    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await screen.findByLabelText('Seans notu')
     await waitFor(() =>
       expect(istekYollari.filter((y) => y.startsWith('GET /api/cakisma?'))).toHaveLength(1),
@@ -3349,7 +3356,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
       render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
       // Gelecek haftadaki 202 (Ayşe, geldi, 450 TL, ödenmemiş) seçili.
       await userEvent.click(await screen.findByRole('button', { name: 'Sonraki hafta' }))
-      await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+      await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
       await screen.findByLabelText('Seans notu')
       await waitFor(() =>
         expect(istekYollari.filter((y) => y.startsWith('GET /api/cakisma?'))).toHaveLength(1),
@@ -3436,7 +3443,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
 
   it('seans paneli ve ozel not ACIKKEN rapor TEK POST /veri-raporu atar; govde yalniz parola+gun, not istegi YOK', async () => {
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
-    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await screen.findByLabelText('Seans notu')
     await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
     // Ön koşul: özel not kanaryası GERÇEKTEN belleğe alındı.
@@ -3761,7 +3768,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     // yalnızca kartın kendi state'ini değil, takvim seçimini de
     // kapattığının — kanıtı.
     await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
-    expect(screen.queryByRole('button', { name: 'Ayşe Yılmaz' })).toBeNull()
+    expect(screen.queryByRole('button', { name: blokAdi('Ayşe Yılmaz') })).toBeNull()
   })
 
   // GÖREV 7: eski test kartın Takvim'deki aramadan sonra KAPANDIĞINI

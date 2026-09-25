@@ -269,7 +269,9 @@ describe('TakvimSekmesi — bugün ve şimdi bilgi satırı (Görev 6)', () => {
     const satir = screen.getByTestId('bugun-bilgisi')
     expect(satir.textContent).toBe('Bugün 2 seans · sıradaki 14:00 Ayşe Kaya')
 
-    fireEvent.click(screen.getByRole('button', { name: '14:00 Ayşe Kaya' }))
+    // Izgaradaki blok da AYNI adı taşıyor ("14:00 Ayşe Kaya"); burada bilgi
+    // satırındaki bağlantı ölçülüyor.
+    fireEvent.click(within(satir).getByRole('button', { name: '14:00 Ayşe Kaya' }))
     // Plan A Görev 10: "sıradaki" bağlantısı bir KULLANICI seçimi (tasarım A6).
     expect(props.takvim.randevuSec).toHaveBeenCalledWith(props.takvim.randevular[0], { kaydir: true })
   })
@@ -370,7 +372,7 @@ describe('TakvimSekmesi — seans bölümü ve kaydırma (Plan A Görev 10)', ()
     props.takvim.randevular = [secili, gizli]
     render(<TakvimSekmesi {...props} />)
 
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(screen.getByRole('button', { name: '10:00 Ayşe Yılmaz' }))
     expect(props.takvim.randevuSec).toHaveBeenLastCalledWith(secili, { kaydir: true })
     await userEvent.click(
       screen.getByRole('button', { name: 'Ayşe Yılmaz — 08.09 07:30 (aralık dışı) randevusunu aç' }),

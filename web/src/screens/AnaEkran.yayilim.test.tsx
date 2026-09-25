@@ -8,6 +8,13 @@ import { taslaklariUnut } from '../seans/taslak'
 import { AnaEkran } from './AnaEkran'
 
 /**
+ * Takvim bloğunun erişilebilir adı "SS:DD Ad Soyad": başlangıç saati her
+ * blokta görünür. Bu testler saati değil danışanı sorduğu için blok, ada
+ * göre bir desenle bulunur.
+ */
+const blokAdi = (ad: string) => new RegExp(`^\\d{2}:\\d{2} ${ad}$`)
+
+/**
  * Son inceleme — takvim ile danışan dosyasının AYNI seansa bakması.
  *
  * Bu dosya `AnaEkran.test.tsx`'ten AYRI: o dosya 3600+ satır (bölünmesi ayrı
@@ -554,7 +561,7 @@ async function guncelleVeBekle(id: number) {
 /** Takvimde sonraki haftaya gider ve 202'nin seans panelini açar. */
 async function takvimde202Ac() {
   await userEvent.click(await screen.findByRole('button', { name: 'Sonraki hafta' }))
-  await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+  await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
   await screen.findByLabelText('Seans notu')
 }
 
@@ -752,7 +759,7 @@ describe('C1 — resmî not iki ekranda TEK yazma yolundan', () => {
     await userEvent.type(editor(), ' D')
     await takvimeDon()
     await userEvent.click(await screen.findByRole('button', { name: 'Sonraki hafta' }))
-    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     // BARİYER: takvimin GET'i sunucuda ESKİ metni okudu, yanıt yolda.
     await waitFor(() => expect(notGetleri(202).length).toBe(2))
     expect(notlar[202].icerik).toBe('ESKI')
@@ -951,7 +958,7 @@ describe('Görev 3 — "saklama süresi doldu" bayatlığı', () => {
 
     // Takvimde Zeynep'in bugünkü seansını "Geldi" işaretle.
     await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Zeynep Kaya' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Zeynep Kaya') }))
     await screen.findByLabelText('Seans notu')
     await userEvent.click(screen.getByRole('button', { name: 'Geldi' }))
     await waitFor(() => expect(durumlar[301]).toBe('geldi'))
@@ -990,7 +997,7 @@ describe('Görev 3 — "saklama süresi doldu" bayatlığı', () => {
     ciz()
 
     await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Zeynep Kaya' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Zeynep Kaya') }))
     await screen.findByLabelText('Seans notu')
     await userEvent.click(screen.getByRole('button', { name: 'Gelmedi' }))
     await waitFor(() => expect(durumlar[301]).toBe('gelmedi'))
@@ -1063,7 +1070,7 @@ describe('Görev 3 — "saklama süresi doldu" bayatlığı', () => {
     // Takvimde Zeynep'in bugünkü seansını "Geldi" işaretle — kartın GET'i
     // HÂLÂ uçuşta.
     await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Zeynep Kaya' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Zeynep Kaya') }))
     await screen.findByLabelText('Seans notu')
     await userEvent.click(screen.getByRole('button', { name: 'Geldi' }))
     await waitFor(() => expect(durumlar[301]).toBe('geldi'))
@@ -1132,7 +1139,7 @@ describe('Plan A Görev 9 — taşınan "geldi" seansı son temasını ilerletir
     await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
     await userEvent.click(screen.getByRole('button', { name: '7 – 13 Eylül 2026' }))
     fireEvent.change(screen.getByLabelText('Gidilecek gün'), { target: { value: '2017-01-10' } })
-    await userEvent.click(await screen.findByRole('button', { name: 'Zeynep Kaya' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Zeynep Kaya') }))
     await tarihiTasi(303, '2026-09-10')
 
     // (a) Kart yerelde yamandı: yeni saklama bitişi, "doldu" yok.
@@ -1159,7 +1166,7 @@ describe('Plan A Görev 9 — taşınan "geldi" seansı son temasını ilerletir
     await saklamaEkranlariniHazirla()
 
     await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
-    await userEvent.click(screen.getByRole('button', { name: 'Zeynep Kaya' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Zeynep Kaya') }))
     await tarihiTasi(301, '2026-09-10')
 
     await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
@@ -1204,7 +1211,7 @@ describe('Bayatlık — takvimin yamanamayan yazmaları dosyanın seans listesin
     notlar[300] = { sablon: 'serbest', icerik: 'BUGUNKU SEANS NOTU' }
 
     // Görünmeyen sekmeden liste isteği YOK (silinemez görüntüleme kaydı).
-    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await screen.findByLabelText('Seans notu')
     expect(listeGetleri()).toBe(oncekiGetler)
 
@@ -1399,7 +1406,7 @@ describe('Görev 2 — randevu yazmaları ay özetine ve kart bakiyesine yayıl�
 
     // Silme: 201 (7 Eylül), 202 sonraki adımda gerekiyor.
     await userEvent.click(await screen.findByRole('button', { name: 'Önceki hafta' }))
-    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
     await waitFor(() => expect(tumu().some((r) => r.id === 201)).toBe(false))
@@ -1752,10 +1759,10 @@ describe('Etiketler — geciken yanıt ve istek zamanlaması', () => {
     ciz()
     const k = kapi()
     sonraBekle['GET /api/randevular/201/etiketler'] = k.bekle
-    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     // BARİYER: 201'in etiket okuması sunucuda yapıldı, yanıt yolda.
     await waitFor(() => expect(etiketGetleri(201)).toHaveLength(1))
-    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
     await waitFor(() => expect(kaldirDugmesi('mehmet-etiketi')).not.toBeNull())
 
     await act(async () => {
@@ -1767,7 +1774,7 @@ describe('Etiketler — geciken yanıt ve istek zamanlaması', () => {
 
     // İki yön: geç yanıt ATILMADI, İSTENEN seansa yazıldı — 201'e dönünce
     // yeniden istek olmadan görünür.
-    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await waitFor(() => expect(kaldirDugmesi('AYSE_ETIKETI')).not.toBeNull())
     expect(etiketGetleri(201)).toHaveLength(1)
   })
@@ -1817,7 +1824,7 @@ describe('Etiketler — geciken yanıt ve istek zamanlaması', () => {
 
     // Başka bir seansta öneri listesi yeni etiketi içermeli.
     await userEvent.click(screen.getByRole('button', { name: 'Önceki hafta' }))
-    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await userEvent.click(await screen.findByLabelText('Etiket ekle'))
     await waitFor(() => expect(oneriler()).toEqual(expect.arrayContaining(['kaygı', 'yepyeni'])))
     // Sözlük yazmadan sonra yeniden OKUNDU (inceleme M1 — yerel yama yok):
@@ -1852,7 +1859,7 @@ describe('Etiketler — etiketli seanslar paneli', () => {
     const kaygi = etiketBagla(202, 'kaygı')
     etiketBagla(203, 'kaygı')
     ciz()
-    await userEvent.click(await screen.findByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Mehmet Demir') }))
     await userEvent.click(
       await screen.findByRole('button', { name: 'kaygı etiketli seansları göster' }),
     )
@@ -1884,7 +1891,7 @@ describe('Etiketler — etiketli seanslar paneli', () => {
     etiketBagla(202, 'kaygı')
     etiketBagla(203, 'kaygı')
     ciz()
-    await userEvent.click(await screen.findByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Mehmet Demir') }))
     await userEvent.click(
       await screen.findByRole('button', { name: 'kaygı etiketli seansları göster' }),
     )
@@ -1906,7 +1913,7 @@ describe('Etiketler — etiketli seanslar paneli', () => {
   it('401: açık etiketli seanslar paneli (sekme panellerinin dışında) KAPANIR; kilitten sonra etiketler önbellekten değil yeniden istenir', async () => {
     etiketBagla(203, 'kaygı')
     ciz()
-    await userEvent.click(await screen.findByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Mehmet Demir') }))
     await userEvent.click(
       await screen.findByRole('button', { name: 'kaygı etiketli seansları göster' }),
     )
@@ -1924,7 +1931,7 @@ describe('Etiketler — etiketli seanslar paneli', () => {
 
     yetkisiz = false
     await userEvent.click(screen.getByRole('button', { name: 'Önceki hafta' }))
-    await userEvent.click(await screen.findByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Mehmet Demir') }))
     await waitFor(() => expect(kaldirDugmesi('kaygı')).not.toBeNull())
     expect(etiketGetleri(203)).toHaveLength(2)
   })
@@ -1943,7 +1950,7 @@ describe('Etiketler — inceleme düzeltmeleri', () => {
     etiketBagla(202, 'aile')
     const kriz = etiketBagla(203, 'kriz')
     ciz()
-    await userEvent.click(await screen.findByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Mehmet Demir') }))
     await userEvent.click(
       await screen.findByRole('button', { name: 'kriz etiketli seansları göster' }),
     )
@@ -2017,7 +2024,7 @@ describe('Etiketler — inceleme düzeltmeleri', () => {
     etiketBagla(202, 'kaygı')
     etiketBagla(203, 'kaygı')
     ciz()
-    await userEvent.click(await screen.findByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Mehmet Demir') }))
     const k = kapi()
     sonraBekle['GET /api/etiketler/1/seanslar'] = k.bekle
     await userEvent.click(
@@ -2041,7 +2048,7 @@ describe('Etiketler — inceleme düzeltmeleri', () => {
   it('M4: etiketli seanslar paneli Ayarlar\'a geçince KAPANIR; Takvim <-> Danışanlar arasında açık kalır', async () => {
     etiketBagla(203, 'kaygı')
     ciz()
-    await userEvent.click(await screen.findByRole('button', { name: 'Mehmet Demir' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Mehmet Demir') }))
     await userEvent.click(
       await screen.findByRole('button', { name: 'kaygı etiketli seansları göster' }),
     )
@@ -2098,7 +2105,7 @@ const etiketliSeansIstekleri = () =>
 
 /** 203'ü (Mehmet, bu hafta) takvimde seçer ve "kriz" panelini açar. */
 async function krizPaneliAc() {
-  await userEvent.click(await screen.findByRole('button', { name: 'Mehmet Demir' }))
+  await userEvent.click(await screen.findByRole('button', { name: blokAdi('Mehmet Demir') }))
   await userEvent.click(
     await screen.findByRole('button', { name: 'kriz etiketli seansları göster' }),
   )
@@ -2198,12 +2205,12 @@ describe('Son inceleme I1 — randevu yazmaları açık etiketli seanslar paneli
     etiketBagla(203, 'kriz')
     ciz()
     // Hiç açılmamış panel, hiç istenmemiş sözlük: düzenle + sil.
-    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await screen.findByLabelText('Etiket ekle')
     // BARİYER: PUT yapıldı ve `randevuKaydet` (takvimin yeniden yüklenmesi ve
     // `etiketler.randevularDegisti()` dahil) bitti — bkz. `guncelleVeBekle`.
     await guncelleVeBekle(201)
-    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await userEvent.click(await screen.findByRole('button', { name: 'Sil' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
     await waitFor(() => expect(silinenRandevular.has(201)).toBe(true))

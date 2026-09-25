@@ -1,3 +1,4 @@
+import type { BlokKonumu, Sutun } from './blokYerlesimi'
 import type { Randevu } from './HaftalikTakvim'
 
 const DURUM_BICIMI: Record<string, string> = {
@@ -16,17 +17,37 @@ const DURUM_BICIMI: Record<string, string> = {
 const BILINMEYEN_DURUM_BICIMI =
   'bg-white text-slate-900 border-2 border-dashed border-red-400'
 
-export function RandevuBloku({ randevu, onSec }: { randevu: Randevu; onSec: () => void }) {
+type Props = {
+  randevu: Randevu
+  onSec: () => void
+  /**
+   * Izgaradaki yeri: üst kenar ve yükseklik (px, `blokYerlesimi.ts`) ile
+   * çakışan randevular arasındaki sütunu. Blok, başladığı saatin hücresine
+   * mutlak konumla oturur ve süresi kadar aşağı uzar.
+   */
+  konum: BlokKonumu & Sutun
+}
+
+export function RandevuBloku({ randevu, onSec, konum }: Props) {
   const stil = DURUM_BICIMI[randevu.durum] ?? BILINMEYEN_DURUM_BICIMI
+  const { ust, yukseklik, sutun, sutunSayisi } = konum
   return (
     <button
       onClick={onSec}
+      style={{
+        top: ust,
+        height: yukseklik,
+        // Kenarlarda 2 px pay: yan yana iki blok ve hücre çizgisi birbirine
+        // yapışmasın.
+        left: `calc(${(sutun / sutunSayisi) * 100}% + 2px)`,
+        width: `calc(${100 / sutunSayisi}% - 4px)`,
+      }}
       // data-durum: testlerin (ve olasi baska tuketicilerin) gorsel
       // sinif adina/renge degil, semantik duruma bagli kalabilmesi icin.
       // Renk ya da sinif adi degisirse bu oznitelik degismez.
       data-durum={randevu.durum}
       // data-ucret (kuruş): bir randevu GÜNCELLENDİĞİNDE ızgarada hiçbir şey
-      // değişmiyordu — blok yalnızca danışan adını gösteriyor, React de aynı
+      // değişmiyordu — blok yalnızca saati ve danışan adını gösteriyor, React de aynı
       // `key` ile aynı DOM'u üretiyor. Yani "güncelleme ekrana yansıdı"
       // diyebilecek gözlemlenebilir bir işaret yoktu ve e2e'deki
       // "kopya oluşmadı" sayımı, işlem BİTMEDEN, önceki durumu ölçüp geçiyordu
@@ -34,20 +55,19 @@ export function RandevuBloku({ randevu, onSec }: { randevu: Randevu; onSec: () =
       // sağlar. `data-durum` ile aynı gerekçe: görsele değil, semantik veriye
       // bağlı kalınsın. Ücret yoksa öznitelik hiç basılmaz.
       data-ucret={randevu.ucret ?? undefined}
-      className={`w-full truncate rounded px-1 py-0.5 text-left text-xs ${stil}`}
+      // `z-[5]`: blok bir sonraki saatin hücresine taştığında o hücrenin
+      // "boş saat" düğmesinin ÜSTÜNDE kalsın (yoksa bloğun alt yarısına
+      // tıklamak yeni randevu açardı); şimdi çizgisi (`z-10`) yine de üstte.
+      className={`absolute z-[5] flex items-start overflow-hidden rounded px-1 py-0.5 text-left text-xs leading-4 ${stil}`}
     >
-      {/* Görev 8 (R2): saat yalnızca TAM OLMAYAN (off-hour) randevularda
-          gösterilir — tam saatteki bloklar var olan e2e seçicilerinin
-          dayandığı "yalnızca isim" adını korur. Saat ile isim arasında
-          GERÇEK bir metin boşluğu (`{' '}`) var: yalnızca CSS margin
-          (`mr-1`) kullanılsaydı erişilebilir ad "10:50Ayşe Yılmaz" çıkardı
-          — erişilebilir ad hesaplaması CSS'i değil metni okur. */}
-      {randevu.baslangic.slice(14, 16) !== '00' && (
-        <>
-          <span className="tabular-nums">{randevu.baslangic.slice(11, 16)}</span>{' '}
-        </>
-      )}
-      {randevu.danisan_adi}
+      {/* Başlangıç saati HER blokta, tam saatte başlayanlarda da. Saat ile isim
+          arasında GERÇEK bir metin boşluğu (`{' '}`) var: yalnızca CSS margin
+          kullanılsaydı erişilebilir ad "10:50Ayşe Yılmaz" çıkardı —
+          erişilebilir ad hesaplaması CSS'i değil metni okur. */}
+      <span className="min-w-0 break-words">
+        <span className="tabular-nums">{randevu.baslangic.slice(11, 16)}</span>{' '}
+        {randevu.danisan_adi}
+      </span>
     </button>
   )
 }

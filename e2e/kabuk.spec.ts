@@ -45,7 +45,12 @@ async function danisanVeRandevu(page: Page, ad: string, saat: string) {
   await page.getByLabel('Danışan', { exact: true }).selectOption({ label: ad })
   await page.getByRole('button', { name: 'Kaydet' }).click()
 
-  const blok = page.getByRole('button', { name: ad, exact: true }).first()
+  // Blok adı "SS:DD Ad Soyad" (başlangıç saati her blokta). Izgarayla
+  // sınırlı: bugünün sıradaki seansıysa bilgi satırındaki bağlantı da aynı
+  // adı taşır.
+  const blok = page
+    .getByTestId('takvim-izgara')
+    .getByRole('button', { name: `${saat} ${ad}`, exact: true })
   await expect(blok).toBeVisible()
   return blok
 }

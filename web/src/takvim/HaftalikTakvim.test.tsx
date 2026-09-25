@@ -89,7 +89,7 @@ describe('HaftalikTakvim', () => {
   // erişilebilir ad "10:50Ayşe Yılmaz" olur, ekran okuyucu iki kelimeyi
   // birleştirirdi. Var olan e2e seçicileri tam saat bloklarının erişilebilir
   // adının yalnızca isim olmasına dayanıyor; o davranış burada da sabitleniyor.
-  it('8.12: off-hour randevu bloğunun erişilebilir adı "saat isim"; tam saat yalnızca isim', () => {
+  it('her bloğun erişilebilir adı "saat isim", tam saatte başlayanlarda da', () => {
     kur({
       randevular: [
         randevu,
@@ -100,7 +100,41 @@ describe('HaftalikTakvim', () => {
       ],
     })
     expect(screen.getByRole('button', { name: '10:50 Mehmet Demir' })).toBeDefined()
-    expect(screen.getByRole('button', { name: 'Ayşe Yılmaz' })).toBeDefined()
+    expect(screen.getByRole('button', { name: '14:00 Ayşe Yılmaz' })).toBeDefined()
+  })
+
+  // Satır yüksekliği pencereden ölçülüyor (tasarım A3); beklenen değer aynı
+  // ölçümden, hücrenin kendi yüksekliğinden türetilir.
+  function satirYuksekligi(): number {
+    return parseFloat(screen.getByLabelText('8 Eylül 10:00 boş').closest('td')!.style.height)
+  }
+
+  it('blok süresi kadar uzar: 50 dakikalık seans saatin 50 dakikasını kaplar', () => {
+    kur({ randevular: [{ ...randevu, baslangic: '2026-09-07T14:30', bitis: '2026-09-07T15:20' }] })
+    const blok = screen.getByRole('button', { name: '14:30 Ayşe Yılmaz' })
+    const s = satirYuksekligi()
+    expect(parseFloat(blok.style.top)).toBeCloseTo((30 / 60) * s)
+    expect(parseFloat(blok.style.height)).toBeCloseTo((50 / 60) * s - 2)
+  })
+
+  it('çakışan iki randevu yan yana yarım genişlikte durur', () => {
+    kur({
+      randevular: [
+        randevu,
+        { ...randevu, id: 11, danisan_adi: 'Mehmet Demir', baslangic: '2026-09-07T14:30', bitis: '2026-09-07T15:20' },
+      ],
+    })
+    const ilk = screen.getByRole('button', { name: '14:00 Ayşe Yılmaz' })
+    const ikinci = screen.getByRole('button', { name: '14:30 Mehmet Demir' })
+    expect(ilk.style.width).toBe('calc(50% - 4px)')
+    expect(ilk.style.left).toBe('calc(0% + 2px)')
+    expect(ikinci.style.width).toBe('calc(50% - 4px)')
+    expect(ikinci.style.left).toBe('calc(50% + 2px)')
+  })
+
+  it('çakışmayan randevu tam genişlikte kalır', () => {
+    kur()
+    expect(screen.getByRole('button', { name: '14:00 Ayşe Yılmaz' }).style.width).toBe('calc(100% - 4px)')
   })
 })
 

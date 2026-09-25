@@ -91,6 +91,23 @@ function bitisHesapla(baslangic: string, sureDk: number): string {
   return yerelZaman(d)
 }
 
+// Fix round 1 (R9): yeniden eşitleme efekti ücret alanını METİN olarak
+// (`ucretTl === esas.current.ucretTl`) karşılaştırıyordu. Bu, kaydetme
+// geri dönüşünde YANLIŞ "hâlâ kirli" sonucu veriyordu: kullanıcı serbest
+// metni "600" yazar, sunucu kuruşu onaylayıp `tlSayisi(60000)` = "600,00"
+// döner -- AYNI DEĞER, FARKLI METİN. `para.ts::ucretOku` bu yüzden burada
+// da TEK ayrıştırma kaynağı: karşılaştırma metin değil KURUŞ üzerinden.
+// Geçersiz (ayrıştırılamayan) metin `'gecersiz'` döner -- `esas` ve
+// `randevu.ucret` hiçbir zaman bu değeri taşımadığı için kullanıcı bozuk
+// bir şey yazmışken form ne "esas"a ne "yeni prop"a asla eşit çıkmaz
+// (doğru davranış: dal (c), hiçbir şey yapılmaz).
+type UcretKarsilastirma = number | null | 'gecersiz'
+
+function ucretKarsilastirmaDegeri(metin: string): UcretKarsilastirma {
+  const sonuc = ucretOku(metin)
+  return 'kurus' in sonuc ? sonuc.kurus : 'gecersiz'
+}
+
 export function RandevuPaneli({
   zaman, randevu, danisanlar, onKaydet, onSil, onSeriSil, seriSayisiAl,
   silinecekNotSayisiAl, onKapat, cakismaKontrol, gomulu,
@@ -149,34 +166,82 @@ export function RandevuPaneli({
   // çalışır -- `randevu?.id` YOK: panel zaten `key`li (bkz.
   // `TakvimSekmesi.tsx`), farklı bir randevuya geçiş bu bileşeni yeniden
   // MONTE eder, aynı bileşen örneği hiçbir zaman iki farklı id görmez.
-  const esas = useRef({ tarih, saat, sureDk, ucretTl, clientId })
+  //
+  // Fix round 1 (Ruling R9): efekt yalnızca "kullanıcı dokunmadıysa formu
+  // kur" dalını güncelliyordu -- `esas` YALNIZCA o dalda yazılıyordu.
+  // Kullanıcı bir alanı DEĞİŞTİRİP KAYDETTİĞİNDE (ör. ücreti 600 yazıp
+  // Güncelle'ye bastığında) sunucudan dönen taze `randevu` formdakiyle
+  // AYNI değeri taşısa bile `esas` hâlâ ESKİ (kaydetme öncesi) değerleri
+  // tutuyordu -- form bir daha ASLA "esas'a eşit" sayılmıyor, yani
+  // "kirli" damgası kalıcı oluyordu ve BUNDAN SONRAKİ hiçbir dış
+  // güncelleme (ör. başka bir pencereden yapılan değişiklik) forma hiç
+  // yansımıyordu. Üç durum ayrı ayrı ele alınmalı:
+  //   (a) form hâlâ `esas`'a eşit (kullanıcı hiç dokunmadı) -> form yeni
+  //       prop'tan kurulur, `esas` de yeni prop'a eşitlenir.
+  //   (b) form `esas`'a eşit DEĞİL ama YENİ prop'a eşit (kullanıcının
+  //       düzenlemesi kaydedildi ve AYNI değerle geri geldi) -> alanlara
+  //       dokunmaya gerek yok (zaten doğru değeri gösteriyorlar), yalnızca
+  //       `esas` yeni prop'a eşitlenir -- form artık "kirli" sayılmaz.
+  //   (c) form ne `esas`'a ne yeni prop'a eşit (kullanıcının hâlâ
+  //       kaydedilmemiş, sunucudakinden farklı bir değişikliği var) ->
+  //       hiçbir şey yapılmaz.
+  const esas = useRef({
+    tarih, saat, sureDk, ucretKurus: ucretKarsilastirmaDegeri(ucretTl), clientId,
+  })
   useEffect(() => {
     if (!randevu) return
-    const kullaniciDokunmadi =
-      tarih === esas.current.tarih &&
-      saat === esas.current.saat &&
-      sureDk === esas.current.sureDk &&
-      ucretTl === esas.current.ucretTl &&
-      clientId === esas.current.clientId
-    // Kullanıcı herhangi bir alana dokunduysa (esas'tan sapıldıysa) hiçbir
-    // şey yapılmaz -- kısmi eşitleme (yalnızca dokunulmamış alanları
-    // güncellemek) kullanıcının "şu an düzenlediğim kayıt" algısını
-    // bölerdi; ör. tarihi değiştirirken ücretin arkadan sessizce değişmesi.
-    if (!kullaniciDokunmadi) return
     const yeniTarih = randevu.baslangic.slice(0, 10)
     const yeniSaat = randevu.baslangic.slice(11, 16)
     const yeniSureDk = dakikaFarki(randevu.baslangic, randevu.bitis)
     const yeniUcretTl = randevu.ucret != null ? tlSayisi(randevu.ucret) : ''
     const yeniClientId = randevu.client_id
-    setTarih(yeniTarih)
-    setSaat(yeniSaat)
-    setSureDk(yeniSureDk)
-    setUcretTl(yeniUcretTl)
-    setClientId(yeniClientId)
-    esas.current = {
+    // Ücret KURUŞ üzerinden karşılaştırılıyor (bkz. `ucretKarsilastirmaDegeri`
+    // gerekçesi); formun GÜNCEL metni burada bir kez ayrıştırılıp hem (a) hem
+    // (b) karşılaştırmasında kullanılıyor.
+    const formUcretKurus = ucretKarsilastirmaDegeri(ucretTl)
+    const yeniEsas = {
       tarih: yeniTarih, saat: yeniSaat, sureDk: yeniSureDk,
-      ucretTl: yeniUcretTl, clientId: yeniClientId,
+      ucretKurus: randevu.ucret, clientId: yeniClientId,
     }
+
+    const esasIleAyni =
+      tarih === esas.current.tarih &&
+      saat === esas.current.saat &&
+      sureDk === esas.current.sureDk &&
+      formUcretKurus === esas.current.ucretKurus &&
+      clientId === esas.current.clientId
+
+    if (esasIleAyni) {
+      // (a) Kullanıcı dokunmadı: form yeni değerle kurulur.
+      setTarih(yeniTarih)
+      setSaat(yeniSaat)
+      setSureDk(yeniSureDk)
+      setUcretTl(yeniUcretTl)
+      setClientId(yeniClientId)
+      esas.current = yeniEsas
+      return
+    }
+
+    const yeniPropaEsit =
+      tarih === yeniTarih &&
+      saat === yeniSaat &&
+      sureDk === yeniSureDk &&
+      formUcretKurus === randevu.ucret &&
+      clientId === yeniClientId
+
+    if (yeniPropaEsit) {
+      // (b) Kaydetme geri döndü: alanlar zaten doğru, yalnızca "kirli"
+      // damgası kaldırılır ki SONRAKİ bir dış değişiklik yine (a) dalına
+      // düşebilsin.
+      esas.current = yeniEsas
+      return
+    }
+
+    // (c) Kullanıcının kaydedilmemiş bir değişikliği var: hiçbir şey
+    // yapılmaz -- kısmi eşitleme (yalnızca dokunulmamış alanları
+    // güncellemek) kullanıcının "şu an düzenlediğim kayıt" algısını
+    // bölerdi; ör. tarihi değiştirirken ücretin arkadan sessizce değişmesi.
+
     // eslint-disable-next-line react-hooks/exhaustive-deps -- kasıtlı: yalnızca
     // SUNUCUDAKİ değerler değişince tetiklenmeli, form state'i (tarih/saat/
     // sureDk/ucretTl/clientId) DEĞİL -- onlar efektin İÇİNDE okunuyor ama

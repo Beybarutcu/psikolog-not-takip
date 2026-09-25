@@ -657,4 +657,25 @@ describe('RandevuPaneli', () => {
     kur({ randevu: mevcut, gomulu: true })
     expect(screen.queryByRole('button', { name: 'Kapat' })).toBeNull()
   })
+
+  // --- Düzeltme turu 1 (R9): kaydetme geri dönüşü "kirli" damgasını -----
+  // kaldırmalı, yoksa SONRAKİ hiçbir dış değişiklik forma hiç yansımaz.
+  it('8.13: kaydetme geri dönüşü kirli damgasını kaldırır; SONRAKİ dış değişiklik uygulanır', () => {
+    const p = kur({ randevu: mevcut })
+    fireEvent.change(screen.getByLabelText('Ücret (TL)'), { target: { value: '600' } })
+    // Kaydetme geri dönüşü: sunucu kullanıcının yazdığı değeri AYNEN
+    // (kuruş cinsinden) onaylayarak döner -- forma dokunulmaz ama "kirli"
+    // damgası kalkmalı.
+    p.rerender({ randevu: { ...mevcut, ucret: 60000 } })
+    // SONRAKİ, GERÇEKTEN farklı bir dış değişiklik (ör. başka bir
+    // pencereden ya da yeniden yüklemeden gelen taze kayıt).
+    p.rerender({
+      randevu: {
+        ...mevcut, ucret: 70000,
+        baslangic: '2026-09-07T16:00', bitis: '2026-09-07T17:00',
+      },
+    })
+    expect((screen.getByLabelText('Ücret (TL)') as HTMLInputElement).value).toBe('700,00')
+    expect((screen.getByLabelText('Başlangıç') as HTMLInputElement).value).toBe('16:00')
+  })
 })

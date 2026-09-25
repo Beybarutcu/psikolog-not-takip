@@ -89,8 +89,9 @@ async fn kilit_ac(s: &AppState, govde: serde_json::Value) -> StatusCode {
 /// Denetim kaydını okur: `eylem|varlik|varlik_id|ayrinti`.
 async fn log_satirlari(s: &AppState) -> Vec<String> {
     use psikolog_server::guard::acik_baglanti_ile;
-    let conn = acik_baglanti_ile(s, std::time::Instant::now(), std::time::SystemTime::now())
-        .expect("log okumak icin oturum acik olmali");
+    let conn =
+        acik_baglanti_ile(s, || (std::time::Instant::now(), std::time::SystemTime::now()))
+            .expect("log okumak icin oturum acik olmali");
     psikolog_core::store::audit::son_kayitlar(&conn, 200)
         .unwrap()
         .into_iter()

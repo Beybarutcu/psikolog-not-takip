@@ -136,6 +136,26 @@ export function useSeansNotlari({
   // seansın panelinde göstermek olurdu.
   const seans = seansVerisi.id === seansId ? seansVerisi : BOS_SEANS
 
+  // Özel not isteği HANGİ seans için geçerli -- seans kimliği DEĞİŞİNCE
+  // sıfırlanır (Görev 10b, Bulgu 2). Bu kanca `AnaEkran`'da YAŞIYOR
+  // (`SeansPaneli`nin `key`'iyle yeniden monte OLMUYOR), yani A -> özel
+  // sekme -> B -> A dönüşünde `ozelNotIstenen` eskiden HAYATTA kalıyordu:
+  // panel A için yeniden monte olup varsayılan "Seans Notu" sekmesinde
+  // açılır (özel not ekranda görünmez) ama eski `ozelNotIstenen === A`
+  // değeri özel not efektini SESSİZCE yeniden tetikliyordu -- terapistin
+  // BAKMADIĞI bir not için silinemez bir `Goruntuleme` satırı düşüyordu.
+  // Render sırasında karşılaştırılıyor (`seans` ile aynı desen, bkz.
+  // yukarısı): bir efekte bırakmak, seçim değişimiyle efektin çalışması
+  // arasındaki karede eski `ozelNotIstenen`in hâlâ geçerliymiş gibi
+  // okunmasına izin verirdi. AYNI seansın başlangıcı değişince (taşıma,
+  // Görev 10 Tasarım A6) bu SIFIRLANMAZ: karşılaştırma yalnızca
+  // `seansId`nin KENDİSİYLE, `seansBaslangici` ile değil.
+  const oncekiOzelSeansIdRef = useRef(seansId)
+  if (oncekiOzelSeansIdRef.current !== seansId) {
+    oncekiOzelSeansIdRef.current = seansId
+    if (ozelNotIstenen !== null) setOzelNotIstenen(null)
+  }
+
   useEffect(() => {
     if (seansId === null || seansDanisanId === null || seansBaslangici === null) return
     let iptal = false

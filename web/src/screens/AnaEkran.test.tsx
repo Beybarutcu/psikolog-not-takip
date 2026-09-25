@@ -1378,6 +1378,37 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     expect(ozelGetleri()).toHaveLength(1)
   })
 
+  // Görev 10b (Bulgu 2): `ozelNotIstenen` A'nın kimliğine kurulup hiç
+  // sıfırlanmıyordu. A -> özel sekme -> B -> A dönüşünde `SeansPaneli` A için
+  // YENİDEN MONTE olur (panel varsayılan "Seans Notu" sekmesinde açılır,
+  // özel not ekranda GÖRÜNMEZ) ama `ozelNotIstenen` hâlâ A olduğu için özel
+  // not efekti A'nın özel notunu SESSİZCE yeniden ister -- terapistin
+  // BAKMADIĞI bir not için silinemez bir `Goruntuleme` satırı düşer.
+  it('B den A ya donulunce ozel not SESSIZCE yeniden istenmez; sekmeye yeniden girilince ister', async () => {
+    await seansAc()
+    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+    await screen.findByLabelText('Özel notum')
+    expect(ozelGetleri().filter((i) => i.yol.includes(String(randevuA.id)))).toHaveLength(1)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await screen.findByLabelText('Seans notu')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    // Panel RESMI sekmede acilir (key ile yeniden monte olur); ozel not
+    // ekranda görünmüyor.
+    await screen.findByLabelText('Seans notu')
+    expect(screen.queryByLabelText('Özel notum')).toBeNull()
+
+    // Terapist özel sekmeye HİÇ bakmadı: A için ikinci bir GET atılmamalı.
+    expect(ozelGetleri().filter((i) => i.yol.includes(String(randevuA.id)))).toHaveLength(1)
+
+    // Sekmeye YENİDEN geçilince -- kullanıcı gerçekten bakınca -- istek
+    // atılır ve sayı 2'ye çıkar.
+    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+    await screen.findByLabelText('Özel notum')
+    expect(ozelGetleri().filter((i) => i.yol.includes(String(randevuA.id)))).toHaveLength(2)
+  })
+
   it('resmi sekmede yazilan metin YALNIZCA /not adresine PUT edilir', async () => {
     await seansAc()
     await userEvent.type(screen.getByLabelText('Seans notu'), 'resmi ek')

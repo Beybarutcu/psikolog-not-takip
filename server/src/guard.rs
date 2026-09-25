@@ -219,8 +219,22 @@ fn istek_sorgusu_hatasi() -> ApiHata {
 /// `Instant::now()`/`SystemTime::now()` geçen ince bir sarmalayıcı -- gerçek
 /// istekler bunu kullanır. İkisi birden geçilir çünkü `Oturum` artık ikisini
 /// birden okuyor (bkz. `core::session::ZamanDamgasi`: uyku/duvar saati bulgusu).
+///
+/// # Saat NEDEN kilit alındıktan SONRA okunuyor (Görev 10b)
+///
+/// Saat eskiden `acik_baglanti_ile(state, Instant::now(), SystemTime::now())`
+/// çağrısında -- yani `state.oturum.lock()` alınmadan ÖNCE -- okunuyordu.
+/// Paralel iki istekte (A, B) A saati `t1`'de okur; B `t2 > t1`'de okur, kilidi
+/// ÖNCE alır ve `dokun(t2)` ile son işlemi `t2` yapar; sonra A kilidi `t1` ile
+/// alır. `ZamanDamgasi::sinir_asildi_mi` duvar saatini "geri gitmiş" görür
+/// (`t1 < t2` → `duration_since` `Err`) ve Plan 7 kuralı gereği oturumu
+/// KİLİTLİ sayar -- A'ya sahte bir `401`. Anahtar silinmiyor (sonraki istek
+/// geçer) ama arayüz 401'i görünce açık danışan dosyasını kapatıyor. Kural
+/// GEVŞETİLMEDİ (`sinir_asildi_mi` aynen kalıyor); yalnızca ölçüm sırası
+/// düzeltildi -- saat artık kilit tutulurken okunuyor, dolayısıyla iki isteğin
+/// gördüğü saat de kilidi aldıkları sırayla monoton artıyor.
 pub fn acik_baglanti(state: &AppState) -> Result<Connection, ApiHata> {
-    acik_baglanti_ile(state, Instant::now(), SystemTime::now())
+    acik_baglanti_ile(state, || (Instant::now(), SystemTime::now()))
 }
 
 /// `acik_baglanti`'nin zamanı dışarıdan enjekte edilebilen hali. `core::session::Oturum`
@@ -228,12 +242,17 @@ pub fn acik_baglanti(state: &AppState) -> Result<Connection, ApiHata> {
 /// testler gerçekten beklemek zorunda kalmaz (bkz. Bulgu 2). Gerçek istekler
 /// `acik_baglanti` üzerinden `Instant::now()`/`SystemTime::now()` ile çağırır;
 /// testler bu fonksiyonu doğrudan, kendi ürettikleri değerlerle çağırabilir.
+///
+/// Zaman DEĞERLERİ yerine bir saat SAĞLAYICISI (`FnOnce`) alır (Görev 10b):
+/// sağlayıcı kilit ALINDIKTAN SONRA çağrılır. Kilitten önce okunan bir saat,
+/// paralel iki istekte "duvar saati geri gitti" gibi görünür ve Plan 7 kuralı
+/// oturumu yanlışlıkla kilitli sayar (bkz. yukarıdaki fonksiyon dokümantasyonu).
 pub fn acik_baglanti_ile(
     state: &AppState,
-    now: Instant,
-    now_duvar: SystemTime,
+    saat: impl FnOnce() -> (Instant, SystemTime),
 ) -> Result<Connection, ApiHata> {
     let mut oturum = state.oturum.lock().unwrap_or_else(|e| e.into_inner());
+    let (now, now_duvar) = saat();
 
     let anahtar = oturum.anahtar(now, now_duvar).ok_or((
         StatusCode::UNAUTHORIZED,
@@ -279,6 +298,29 @@ mod tests {
     use psikolog_core::store::{db::open_encrypted, schema::migrate};
     use std::time::Duration;
 
+    /// Görev 10b: bu modülün testlerinin (ölçüm + kilit/paralellik) ortak
+    /// kurulumu -- açık oturumlu, göç edilmiş boş bir veritabanına sahip
+    /// `AppState`. Anahtarı ayrıca döndürmüyor: ihtiyacı olan çağıran
+    /// `state.acik_anahtar()` ile (oturum zaten açık) kendi alır.
+    fn acik_oturumlu_state() -> (tempfile::TempDir, AppState) {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::yeni(
+            dir.path().to_path_buf(),
+            KdfParams { m_cost: 8, t_cost: 1, p_cost: 1 },
+        );
+        let anahtar = generate_data_key();
+        {
+            let c = open_encrypted(&state.db_yolu(), &anahtar).unwrap();
+            migrate(&c).unwrap();
+        }
+        state
+            .oturum
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .ac(anahtar, Instant::now(), SystemTime::now());
+        (dir, state)
+    }
+
     /// Ölçümdeki ek dosyanın boyutu — sınırın (`AZAMI_DOSYA_BOYUTU`, 20 MB)
     /// hemen altı. "20 MB'a kadar BLOB" koşulunun EN KÖTÜ hâli ölçülmeli;
     /// küçük bir dosyayla yapılan ölçüm soruyu yanıtlamazdı.
@@ -301,21 +343,8 @@ mod tests {
     /// doğrular -- yoksa boş bir döngüyü ölçüyor olabilirdik.
     #[test]
     fn baglanti_omru_olcumu() {
-        let dir = tempfile::tempdir().unwrap();
-        let state = AppState::yeni(
-            dir.path().to_path_buf(),
-            KdfParams { m_cost: 8, t_cost: 1, p_cost: 1 },
-        );
-        let anahtar = generate_data_key();
-        {
-            let c = open_encrypted(&state.db_yolu(), &anahtar).unwrap();
-            migrate(&c).unwrap();
-        }
-        state
-            .oturum
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .ac(anahtar.clone(), Instant::now(), SystemTime::now());
+        let (_dir, state) = acik_oturumlu_state();
+        let anahtar = state.acik_anahtar().expect("kurulumdan sonra oturum acik olmali");
 
         const YAZMA: usize = 30;
 
@@ -588,6 +617,57 @@ mod tests {
         assert!(
             olcum.contains("attachments::ekle") && olcum.contains("BLOB_BOYUTU"),
             "BLOB senaryosu etiketi var ama gercek bir ek yazmiyor"
+        );
+    }
+
+    /// Görev 10b: saat kilitten SONRA okunmali. Saglayici, kilit tutulurken
+    /// cagrildigini kanitlar: kilit aliniyken `try_lock` basarisiz olmali.
+    #[test]
+    fn saat_oturum_kilidi_alindiktan_sonra_okunur() {
+        let (_d, s) = acik_oturumlu_state();
+        let mut kilit_tutuluyordu = false;
+        let _ = acik_baglanti_ile(&s, || {
+            kilit_tutuluyordu = s.oturum.try_lock().is_err();
+            (Instant::now(), SystemTime::now())
+        });
+        assert!(kilit_tutuluyordu, "saat, oturum kilidi ALINMADAN okundu");
+    }
+
+    /// **Paralellik bekçisi (Görev 10b).** Eski sırada (saat kilitten ÖNCE
+    /// okunur) bu test KARARSIZ kırmızıydı: iki iş parçacığı yakın anlarda
+    /// saati okuyup, kilidi TERS sırayla alabilir -- geç okunan saat erken
+    /// alınan kilitle `Oturum::dokun`'e yazılır, sonra erken okunan saatle
+    /// gelen istek `sinir_asildi_mi`'ye "duvar saati geri gitti" gibi görünür
+    /// ve sahte bir `401` alır. `saat_oturum_kilidi_alindiktan_sonra_okunur`
+    /// bunu KESİN olarak yakalıyor (yukarıdaki test), bu test gerçek çok iş
+    /// parçacıklı davranışın bekçisi: en az 8 iş parçacığı açık oturumla aynı
+    /// anda `acik_baglanti` çağırır, hiçbiri 401 almamalı.
+    #[test]
+    fn paralel_istekler_sahte_401_almaz() {
+        let (_d, s) = acik_oturumlu_state();
+        let state = std::sync::Arc::new(s);
+
+        const IS_PARCACIGI: usize = 8;
+        const CAGRI_BASINA: usize = 20;
+
+        let mut kollar = Vec::with_capacity(IS_PARCACIGI);
+        for _ in 0..IS_PARCACIGI {
+            let state = std::sync::Arc::clone(&state);
+            kollar.push(std::thread::spawn(move || {
+                let mut basarisiz = 0usize;
+                for _ in 0..CAGRI_BASINA {
+                    if acik_baglanti(&state).is_err() {
+                        basarisiz += 1;
+                    }
+                }
+                basarisiz
+            }));
+        }
+
+        let toplam_basarisiz: usize = kollar.into_iter().map(|k| k.join().unwrap()).sum();
+        assert_eq!(
+            toplam_basarisiz, 0,
+            "acik oturumda paralel istekler sahte 401 almamali (saat kilit alindiktan once okunuyor olabilir)"
         );
     }
 }

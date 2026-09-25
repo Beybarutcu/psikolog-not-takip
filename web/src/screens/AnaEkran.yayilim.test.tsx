@@ -1,6 +1,7 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { borcaGirerMi } from '../borc'
 import { etiketAdiNormallestir, etiketAnahtari, etiketSirasi } from '../etiket/etiketAdi'
 import { notOnizlemesi } from '../seans/onizleme'
 import { taslaklariUnut } from '../seans/taslak'
@@ -310,7 +311,13 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
     // sunucuyu GERÇEKTEN sorguluyor olmalı.
     const kayit202 = tumu().find((r) => r.id === 202)
     const anlik202 = kayit202 ? randevuAnlik(kayit202) : null
-    const borclu = anlik202 !== null && anlik202.durum === 'geldi' && !anlik202.odendi
+    // Borc kurali TEK yerde (`../borc`, tasarim S5.1): Gorev 2 incelemesi
+    // bu sahte sunucunun eski kurali (yalnizca "geldi") elle tekrarladigini
+    // buldu — `AnaEkran.test.tsx`'teki kardes sahte sunucu gibi GERCEK
+    // `borcaGirerMi`yi cagiriyor, boylece "gelmedi" burada da borca girer.
+    const borclu =
+      anlik202 !== null &&
+      borcaGirerMi({ durum: anlik202.durum, odendi: anlik202.odendi, ucret: anlik202.ucret })
     const ucret = anlik202?.ucret ?? 0
     return json({
       ay: '2026-09', seans_sayisi: 3, tahsilat_kurus: 0,

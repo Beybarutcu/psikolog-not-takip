@@ -554,7 +554,8 @@ pub struct GuncellemeSonucu {
 /// dahil/hariç kalır -- kesmeden sonraya taşınan üye "bu ve sonrakiler"
 /// silinirken gider, kesmeden önceye taşınan üye kalır. Testle korunur:
 /// `seri_silme_zamana_gore_ileri_tasinmis_uye_kesmeden_sonraysa_silinir`,
-/// `seri_silme_zamana_gore_geri_tasinmis_uye_kesmeden_onceyse_korunur`.
+/// `seri_silme_zamana_gore_geri_tasinmis_uye_kesmeden_onceyse_korunur`,
+/// `seri_silinecek_not_sayisi_tasinmis_uyeyi_yeni_tarihine_gore_sayar`.
 ///
 /// # Loga ne yazılır
 /// `Eylem::Duzenleme` + `varlik_id` = randevu kimliği, `ayrinti` YOK
@@ -591,6 +592,9 @@ pub fn guncelle(
 /// Testler: `geldi_seansi_ileri_tasininca_son_temas_ilerler`,
 /// `geldi_seansi_geri_tasininca_son_temas_gerilemez`,
 /// `planli_seansi_tasimak_son_temasa_dokunmaz`, `tasima_tek_log_satiri_yazar`.
+/// Taşıma danışanı da değiştirirse son temas TAŞINAN kaydın (UPDATE sonrası)
+/// danışanına yazılır, eski danışanınki değişmez:
+/// `geldi_seansi_baska_danisana_tasininca_yeni_danisan_ilerler_eskisi_degismez`.
 ///
 /// Son temas güncellemesi taşımayla AYNI transaction'dadır (log satırından
 /// sonra, `commit`'ten önce): son temas yazılamazsa taşıma ve log satırı da
@@ -2394,6 +2398,44 @@ mod tests {
         assert_eq!(danisanin_son_temasi(&c, cid).0, None, "planli seans temas degildir");
     }
 
+    /// Son inceleme T9 (kontrolor R14): tasima danisani da degistirebilir.
+    /// Son temas TASINAN kaydin (UPDATE sonrasi) danisanindan okunur: yeni
+    /// danisanin son temasi ilerler, eski danisaninki OLDUGU GIBI kalir
+    /// (ileri tasima eski danisani da ilerletseydi hic gorusulmemis bir
+    /// tarihi "son temas" sayardi).
+    #[test]
+    fn geldi_seansi_baska_danisana_tasininca_yeni_danisan_ilerler_eskisi_degismez() {
+        let (_d, c, cid) = kurulum();
+        let ikinci = danisan_ekle(
+            &c,
+            &YeniDanisan { ad_soyad: "Mehmet Demir".into(), telefon: None },
+            Cihaz::Masaustu,
+        )
+        .unwrap();
+        let r = olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), Cihaz::Masaustu).unwrap();
+        durum_guncelle(&c, r.id, "geldi", Cihaz::Masaustu).unwrap();
+        let eski_once = danisanin_son_temasi(&c, cid);
+        assert_eq!(eski_once.0.as_deref(), Some("2026-09-07"), "on kosul: eski danisanin son temasi var");
+        assert_eq!(danisanin_son_temasi(&c, ikinci.id), (None, None), "on kosul: yeni danisan hic gorulmedi");
+
+        // Hem danisan hem tarih (ileri) degisiyor: eski danisana yazilsaydi
+        // onun son temasi da 10 Eylul'e ilerlerdi.
+        let s = guncelle_ve_son_temas(
+            &c, r.id, &guncelleme(ikinci.id, "2026-09-10T14:00", "2026-09-10T15:00", Some(45000)), Cihaz::Masaustu,
+        ).unwrap();
+
+        assert_eq!(s.randevu.client_id, ikinci.id);
+        assert_eq!(s.randevu.durum, "geldi", "tasima durumu korur");
+        let st = s.son_temas.expect("yeni danisanin son temasi ilerledi: yanit bildirmeli");
+        assert_eq!(st.client_id, ikinci.id, "yanit YENI danisani bildirir");
+        assert_eq!(st.son_temas, "2026-09-10");
+        assert_eq!(
+            danisanin_son_temasi(&c, ikinci.id),
+            (Some("2026-09-10".to_string()), Some(st.saklama_bitis.clone())),
+        );
+        assert_eq!(danisanin_son_temasi(&c, cid), eski_once, "eski danisanin son temasi ve saklamasi degismez");
+    }
+
     #[test]
     fn tasima_tek_log_satiri_yazar() {
         // "geldi" seansi tasimak tek bir kullanici eylemi: bir Duzenleme
@@ -2686,6 +2728,40 @@ mod tests {
             2,
             "kesme geriye alininca ayni not sayiliyor -- kesme gercekten tarihe bagli"
         );
+    }
+
+    /// Son inceleme T9 (kontrolor R14): onay metnindeki NOT sayisi,
+    /// `seri_sayisi`/`seriyi_sil` ile AYNI zaman kesmesini kullanir (tasarim
+    /// A4). Tasinmis uyeler YENI tarihlerine gore sayilir. Kurulum asimetrik:
+    /// kesmeden sonraya tasinan uyenin 2 notu, kesmeden onceye tasinan uyenin
+    /// 1 notu var -- seri SIRASIYLA (ya da kimlikle) kesen bir uygulama 1 ya
+    /// da 3 sayardi, zamanla kesen 2.
+    #[test]
+    fn seri_silinecek_not_sayisi_tasinmis_uyeyi_yeni_tarihine_gore_sayar() {
+        let (_d, c, cid) = kurulum();
+        // 7, 14, 21, 28 Eylul.
+        let seri =
+            seri_olustur(&c, &yeni(cid, "2026-09-07T14:00", "2026-09-07T15:00"), 4, Cihaz::Masaustu)
+                .unwrap();
+        let sid = seri[0].seri_id.clone().unwrap();
+        // 14 Eylul'deki uye (resmi + ozel not) kesmenin SONRASINA tasiniyor.
+        not_yaz(&c, seri[1].id);
+        guncelle(&c, seri[1].id, &guncelleme(cid, "2026-10-05T14:00", "2026-10-05T15:00", Some(45000)), Cihaz::Masaustu)
+            .unwrap();
+        // 28 Eylul'deki uye (yalnizca resmi not) kesmenin ONCESINE tasiniyor.
+        crate::store::notes::not_kaydet(&c, seri[3].id, "dap", "SEANS NOTU", Cihaz::Masaustu).unwrap();
+        guncelle(&c, seri[3].id, &guncelleme(cid, "2026-09-01T14:00", "2026-09-01T15:00", Some(45000)), Cihaz::Masaustu)
+            .unwrap();
+
+        let kesme = "2026-09-21T14:00";
+        // 21 Eylul (notsuz) + 5 Ekim'e tasinan (2 not) silinecek.
+        assert_eq!(seri_sayisi(&c, &sid, kesme).unwrap(), 2);
+        assert_eq!(seri_silinecek_not_sayisi(&c, &sid, kesme).unwrap(), 2);
+
+        // Sayi, silmenin GERCEKTEN goturdugu notlarla ayni: 1 Eylul'e tasinan
+        // uyenin resmi notu kalir.
+        assert_eq!(seriyi_sil(&c, &sid, kesme, Cihaz::Masaustu).unwrap(), 2);
+        assert_eq!(not_sayilari(&c), (1, 0));
     }
 
     #[test]

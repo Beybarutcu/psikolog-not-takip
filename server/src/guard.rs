@@ -216,9 +216,11 @@ fn istek_sorgusu_hatasi() -> ApiHata {
 
 /// Açık oturumun anahtarıyla veritabanı bağlantısı verir; kilitliyse `401`.
 /// Başarılı her çağrı `Oturum::dokun()`'u tetikler (bkz. modül dokümantasyonu).
-/// `Instant::now()`/`SystemTime::now()` geçen ince bir sarmalayıcı -- gerçek
-/// istekler bunu kullanır. İkisi birden geçilir çünkü `Oturum` artık ikisini
-/// birden okuyor (bkz. `core::session::ZamanDamgasi`: uyku/duvar saati bulgusu).
+/// `acik_baglanti_ile`'yi gerçek saat SAĞLAYICISIYLA
+/// (`|| (Instant::now(), SystemTime::now())`) çağıran ince bir sarmalayıcı --
+/// gerçek istekler bunu kullanır. Sağlayıcı ikisini birden döndürür çünkü
+/// `Oturum` ikisini birden okuyor (bkz. `core::session::ZamanDamgasi`:
+/// uyku/duvar saati bulgusu).
 ///
 /// # Saat NEDEN kilit alındıktan SONRA okunuyor (Görev 10b)
 ///
@@ -237,16 +239,22 @@ pub fn acik_baglanti(state: &AppState) -> Result<Connection, ApiHata> {
     acik_baglanti_ile(state, || (Instant::now(), SystemTime::now()))
 }
 
-/// `acik_baglanti`'nin zamanı dışarıdan enjekte edilebilen hali. `core::session::Oturum`
-/// da aynı gerekçeyle `Instant` VE `SystemTime`'ı parametre alır: böylece
-/// testler gerçekten beklemek zorunda kalmaz (bkz. Bulgu 2). Gerçek istekler
-/// `acik_baglanti` üzerinden `Instant::now()`/`SystemTime::now()` ile çağırır;
-/// testler bu fonksiyonu doğrudan, kendi ürettikleri değerlerle çağırabilir.
+/// `acik_baglanti`'nin saati dışarıdan enjekte edilebilen hali: saat bir
+/// SAĞLAYICIDIR (`FnOnce() -> (Instant, SystemTime)`), zaman değerleri değil
+/// (Görev 10b). `core::session::Oturum` da aynı gerekçeyle `Instant` VE
+/// `SystemTime`'ı parametre alır: böylece testler gerçekten beklemek zorunda
+/// kalmaz (bkz. Bulgu 2). Gerçek istekler `acik_baglanti` üzerinden gerçek
+/// saati döndüren sağlayıcıyla çağırır; testler bu fonksiyonu doğrudan, kendi
+/// ürettikleri değerleri döndüren bir sağlayıcıyla
+/// (`|| (simdi, simdi_duvar)`) çağırabilir.
 ///
-/// Zaman DEĞERLERİ yerine bir saat SAĞLAYICISI (`FnOnce`) alır (Görev 10b):
-/// sağlayıcı kilit ALINDIKTAN SONRA çağrılır. Kilitten önce okunan bir saat,
-/// paralel iki istekte "duvar saati geri gitti" gibi görünür ve Plan 7 kuralı
-/// oturumu yanlışlıkla kilitli sayar (bkz. yukarıdaki fonksiyon dokümantasyonu).
+/// Sağlayıcı kilit ALINDIKTAN SONRA, kilit tutulurken çağrılır. Kilitten önce
+/// okunan bir saat, paralel iki istekte "duvar saati geri gitti" gibi görünür
+/// ve Plan 7 kuralı oturumu yanlışlıkla kilitli sayar (bkz. yukarıdaki
+/// fonksiyon dokümantasyonu). Sağlayıcı `state.oturum`'u KİLİTLEMEMELİDİR:
+/// `std::sync::Mutex` yeniden girişli değildir, aynı iş parçacığında ikinci
+/// `lock()` kilitlenir (ya da panikler). (`try_lock` ile yoklamak engellemez;
+/// `saat_oturum_kilidi_alindiktan_sonra_okunur` testi bunu yapıyor.)
 pub fn acik_baglanti_ile(
     state: &AppState,
     saat: impl FnOnce() -> (Instant, SystemTime),

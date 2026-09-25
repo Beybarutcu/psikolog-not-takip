@@ -67,6 +67,18 @@ describe('cakismaSutunlari', () => {
     expect(s.get(2)).toEqual({ sutun: 0, sutunSayisi: 1 })
   })
 
+  it('çakışan bir çift biter bitmez başlayan randevu tam genişliğe döner', () => {
+    // 1 ve 2 çakışıyor (yarım genişlik); 3, 2'nin bittiği dakikada başlıyor ve
+    // o kümeye KATILMAMALI — katılsaydı boş bir saatte yarım genişlikte kalırdı.
+    const s = cakismaSutunlari([
+      r(1, '10:00', '10:50'),
+      r(2, '10:30', '11:00'),
+      r(3, '11:00', '11:50'),
+    ])
+    expect(s.get(2)).toEqual({ sutun: 1, sutunSayisi: 2 })
+    expect(s.get(3)).toEqual({ sutun: 0, sutunSayisi: 1 })
+  })
+
   it('çakışan iki randevu yan yana yarım genişlikte', () => {
     const s = cakismaSutunlari([r(1, '10:00', '10:50'), r(2, '10:30', '11:20')])
     expect(s.get(1)).toEqual({ sutun: 0, sutunSayisi: 2 })

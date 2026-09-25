@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { AYLAR, GUN_ADLARI, haftaGunleri, yerelZaman, zamandanDate } from './hafta'
 import { RandevuBloku } from './RandevuBloku'
 
@@ -110,18 +110,47 @@ export function HaftalikTakvim({
 
   // Tasarım A3: satır yüksekliği pencereden türetilir, en az 36px.
   // max(36, (pencere yüksekliği − tbody'nin üst kenarı − alt boşluk) / satır sayısı)
+  //
+  // HER render'da yeniden ölçülür (deps dizisi YOK, aşağıdaki `useLayoutEffect`
+  // her render'dan sonra çalışır): ızgaranın ÜSTÜNDEKİ içerik yükseklik
+  // değiştirdiğinde tbody'nin üst kenarı bir PENCERE `resize`'I OLMADAN da
+  // kayar -- `TakvimSekmesi`'ndeki hata banner'ı açılıp kapanması, "Bugün N
+  // seans" bilgi satırının hafta değişince görünüp kaybolması, ya da aşağıdaki
+  // "aralık dışı randevular" kutusunun 1'den 3 öğeye büyümesi hep üst
+  // bileşenin yeniden render'ı, resize OLAYI değil. Eski hâl yalnızca mount'ta
+  // ve `resize`'da ölçüyordu; bu üç durumda ölçüm BAYATLIYOR ve A3'ün
+  // "1200×760/1280×800'de kaydırma yok" garantisi ilk çizimden SONRA
+  // bozulabiliyordu.
+  //
+  // `setSatirYuksekligi` yalnızca değer GERÇEKTEN değiştiyse state'i
+  // güncelliyor (fonksiyonel güncelleme + eşitlik kontrolü) -- aksi hâlde her
+  // render yeni bir render tetikleyip sonsuz döngü olurdu.
   const tbodyRef = useRef<HTMLTableSectionElement>(null)
   const [satirYuksekligi, setSatirYuksekligi] = useState(40)
+
+  const olcRef = useRef<() => void>(() => {})
+  olcRef.current = () => {
+    const ust = tbodyRef.current?.getBoundingClientRect().top ?? 0
+    const kalan = window.innerHeight - ust - 16
+    const yeni = Math.max(36, Math.floor(kalan / saatler.length))
+    setSatirYuksekligi((onceki) => (onceki === yeni ? onceki : yeni))
+  }
+
   useLayoutEffect(() => {
-    function olc() {
-      const ust = tbodyRef.current?.getBoundingClientRect().top ?? 0
-      const kalan = window.innerHeight - ust - 16
-      setSatirYuksekligi(Math.max(36, Math.floor(kalan / saatler.length)))
+    olcRef.current()
+  })
+
+  // Yalnızca `resize` dinleyicisini mount'ta bir kez kurar/söker; dinleyici
+  // AYNI ölçüm fonksiyonunu (yukarıdaki `olcRef`, her render'da güncellenir)
+  // çağırıyor, yani mount'ta kurulmuş olsa da her zaman GÜNCEL değerleri
+  // kullanır.
+  useEffect(() => {
+    function dinleyici() {
+      olcRef.current()
     }
-    olc()
-    window.addEventListener('resize', olc)
-    return () => window.removeEventListener('resize', olc)
-  }, [saatler.length, gizliRandevular.length > 0])
+    window.addEventListener('resize', dinleyici)
+    return () => window.removeEventListener('resize', dinleyici)
+  }, [])
 
   function hucreRandevulari(gun: Date, saat: number): Randevu[] {
     return (

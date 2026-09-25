@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { HaftalikTakvim } from './HaftalikTakvim'
 import { haftaninBasi } from './hafta'
 
@@ -222,5 +222,105 @@ describe('HaftalikTakvim — bugün ve şimdi (Görev 6)', () => {
     expect(ipucu?.getAttribute('aria-hidden')).toBe('true')
     expect(ipucu?.className).toContain('opacity-0')
     expect(ipucu?.className).toContain('group-hover:opacity-100')
+  })
+})
+
+// Görev 7 düzeltme (R6): satır yüksekliği eskiden yalnızca mount'ta ve
+// pencere `resize`'ında ölçülüyordu (deps: [saatler.length,
+// gizliRandevular.length > 0]). Bu, ızgaranın ÜSTÜNDEKİ içerik (hata
+// banner'ı, "Bugün N seans" bilgi satırı, aralık dışı randevular kutusunun
+// büyümesi) bir RESIZE OLMADAN yükseklik değiştirdiğinde ölçümü BAYATLATIYOR
+// -- ne `saatler.length` (sabit 13) ne de "gizli randevu var mı" (boole)
+// değişmediği için eski efekt yeniden ÇALIŞMIYORDU. Düzeltme: ölçüm artık
+// deps dizisi OLMAYAN bir `useLayoutEffect` ile HER render'dan sonra
+// yapılıyor; `resize` dinleyicisi ayrı, mount'ta kurulan bir efekt ve AYNI
+// ölçüm fonksiyonunu tetikliyor.
+//
+// `window.innerHeight` ve `Element.prototype.getBoundingClientRect`
+// sahteleniyor: jsdom hiçbir zaman gerçek bir yerleşim (layout) hesaplamıyor,
+// yani gerçek pikselleri yalnızca e2e (bkz. `e2e/yerlesim.spec.ts`)
+// ölçebilir. Bu testler jsdom'da SAHTE bir ölçümle formülü ve "her render'da
+// yeniden hesapla" davranışını sabitliyor.
+describe('HaftalikTakvim — satır yüksekliği HER render\'da yeniden ölçülür (Görev 7 düzeltme)', () => {
+  const SAAT_SAYISI = 13 // CALISMA_BITIS (21) - CALISMA_BASLANGIC (8)
+  const orijinalInnerHeight = window.innerHeight
+  const orijinalGetBoundingClientRect = Element.prototype.getBoundingClientRect
+
+  afterEach(() => {
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: orijinalInnerHeight,
+    })
+    Element.prototype.getBoundingClientRect = orijinalGetBoundingClientRect
+  })
+
+  function sahteDikdortgen(ust: number): DOMRect {
+    return {
+      x: 0, y: ust, width: 0, height: 0,
+      top: ust, right: 0, bottom: ust, left: 0,
+      toJSON() {
+        return this
+      },
+    }
+  }
+
+  /** `tbody`nin `getBoundingClientRect().top`'unu sabitler; başka hiçbir
+   * öğe bu formülde kullanılmadığı için diğerlerine 0 dönmesi yeterli. */
+  function tbodyUstunuSabitle(ust: number) {
+    Element.prototype.getBoundingClientRect = function (this: Element) {
+      return this.tagName === 'TBODY' ? sahteDikdortgen(ust) : sahteDikdortgen(0)
+    }
+  }
+
+  function beklenenYukseklik(ust: number, pencereYuksekligi: number): number {
+    return Math.max(36, Math.floor((pencereYuksekligi - ust - 16) / SAAT_SAYISI))
+  }
+
+  /** İlk saat satırının ilk GÜN hücresi (0. td saat etiketi, style TAŞIMIYOR;
+   * stil yalnızca gün hücrelerinde). */
+  function ilkGunHucresi(): HTMLElement {
+    const hucre = document.querySelector('tbody tr td:nth-child(2)')
+    if (!hucre) throw new Error('gün hücresi bulunamadı')
+    return hucre as HTMLElement
+  }
+
+  it('mount anında pencereden türetilen formüle göre ölçülür', () => {
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 760 })
+    tbodyUstunuSabitle(100)
+    kur()
+    expect(ilkGunHucresi().style.height).toBe(`${beklenenYukseklik(100, 760)}px`)
+  })
+
+  it('RESIZE olmadan, RERENDER sonrası tbody kayarsa yeniden ölçülür (eski deps dizisi bunu kaçırırdı)', () => {
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 760 })
+    tbodyUstunuSabitle(100)
+    const ortakProps = {
+      haftaBasi: haftaninBasi(new Date(2026, 8, 7)),
+      simdi: '2026-09-09T14:30',
+      onRandevuSec: vi.fn(),
+      onBosSaatSec: vi.fn(),
+    }
+    const { rerender } = render(<HaftalikTakvim randevular={[randevu]} {...ortakProps} />)
+    const ilkBeklenen = beklenenYukseklik(100, 760)
+    expect(ilkGunHucresi().style.height).toBe(`${ilkBeklenen}px`)
+
+    // tbody'nin ÜSTÜNDEKİ bir bileşen büyüyüp onu aşağı ittiğinde bu olur:
+    // `randevular` YENİ bir dizi ama AYNI tek randevu -- `saatler.length`
+    // (sabit) ve `gizliRandevular.length > 0` (ikisinde de false, 0 gizli
+    // randevu) DEĞİŞMİYOR. Eski deps dizisiyle efekt bu render'da yeniden
+    // ÇALIŞMAZ, ölçüm 100'deki `ilkBeklenen` değerinde BAYAT kalırdı.
+    tbodyUstunuSabitle(204)
+    rerender(<HaftalikTakvim randevular={[{ ...randevu }]} {...ortakProps} />)
+    const yeniBeklenen = beklenenYukseklik(204, 760)
+    expect(yeniBeklenen).not.toBe(ilkBeklenen) // ÖN KOŞUL: senaryo gerçekten farklı bir değer üretiyor
+    expect(ilkGunHucresi().style.height).toBe(`${yeniBeklenen}px`)
+  })
+
+  it('hesaplanan değer 36 altına düşerse 36 pikselde sabitlenir (alt sınır)', () => {
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 760 })
+    tbodyUstunuSabitle(600)
+    expect(beklenenYukseklik(600, 760)).toBe(36) // ÖN KOŞUL: senaryo gerçekten alt sınıra çarpıyor
+    kur()
+    expect(ilkGunHucresi().style.height).toBe('36px')
   })
 })

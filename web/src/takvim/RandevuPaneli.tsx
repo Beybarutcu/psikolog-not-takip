@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Danisan, SeriCakismasi, SeriSilmeOnizlemesi } from '../api'
 import { tlMetni, tlSayisi, ucretOku } from '../para'
+import { simdiYerel } from '../screens/anaEkranKancalari/yerelGun'
 import type { Randevu } from './HaftalikTakvim'
 import { dakikaFarki, okunurAralik, yerelZaman, zamandanDate } from './hafta'
 
@@ -34,6 +35,10 @@ const VARSAYILAN_SURE_DK = 60
 // basarken tek istek gitmesi için değişiklik bu kadar süre sessiz kalınca
 // gönderiliyor.
 const CAKISMA_GECIKME_MS = 300
+// Tarih alanının penceresi: danışan kartının randevu penceresiyle aynı
+// (tasarım A4). Hem `min`/`max` hem `kaydet()`teki denetim buradan okur.
+const TARIH_MIN = '2000-01-01'
+const TARIH_MAX = '2099-12-31'
 
 type Kayit = {
   client_id: number
@@ -139,6 +144,20 @@ export function RandevuPaneli({
   // silmedeki iki adımlı onay deseni burada da uygulanıyor.
   const [seriSilOnayi, setSeriSilOnayi] = useState<SeriSilmeOnizlemesi | null>(null)
   const [islemSuruyor, setIslemSuruyor] = useState(false)
+  // Son inceleme I2: başarılı "Güncelle"nin saati (`SS:DD`), yoksa `null`.
+  // Görev 10'dan beri bölüm Güncelle'de açık kalıyor ve özet satırı form
+  // state'inden kuruluyor — yalnızca ücret değişince ekranda hiçbir şey
+  // değişmiyordu. Kullanıcı bir alanı düzenlediği anda silinir (artık
+  // ekrandaki değerler kaydedilmiş değil); yeni randevuda hiç kurulmaz
+  // (o form kaydedince kapanıyor).
+  const [guncellendi, setGuncellendi] = useState<string | null>(null)
+
+  // Form alanlarının kullanıcı düzenlemesi: "Güncellendi" artık doğru değil.
+  // Yeniden eşitleme efekti (aşağıda) bunu ÇAĞIRMAZ — sunucudan gelen değer
+  // kullanıcının düzenlemesi değil.
+  function duzenlendi() {
+    setGuncellendi(null)
+  }
 
   // onKaydet/onSil (ör. kayıt işlemi) tamamlanmadan panel başka
   // bir randevuya/boş saate geçiş sonucu kaldırılırsa (kaydet çağrısı
@@ -301,12 +320,24 @@ export function RandevuPaneli({
   }
 
   async function kaydet() {
+    // Yeni bir deneme eski başarıyı geçersiz kılar: reddedilirse ya da
+    // doğrulamada durursa "Güncellendi" hata metninin yanında yanlış bir
+    // güvence olarak kalmasın.
+    setGuncellendi(null)
     if (clientId === '') {
       setHata('Lütfen bir danışan seçin.')
       return
     }
     if (!zamanTamam) {
       setHata('Tarih ve başlangıç saatini girin.')
+      return
+    }
+    // Son inceleme M1: `min`/`max` yalnızca tarayıcının seçicisini sınırlar,
+    // elle yazılan değeri doğrulamaz. Yıl rakam rakam yazılırken "0002-…"
+    // gibi TAM bir değer forma girer ve kaydedilirdi. Pencere danışan
+    // kartınınkiyle aynı (`YYYY-AA-GG` sözlük sırası = takvim sırası).
+    if (tarih < TARIH_MIN || tarih > TARIH_MAX) {
+      setHata('Tarih 2000 ile 2099 arasında olmalı.')
       return
     }
     if ('hata' in ucretOkuma) {
@@ -325,15 +356,19 @@ export function RandevuPaneli({
       setHata(`Tekrar sayısı 2 ile ${AZAMI_TEKRAR} arasında bir tam sayı olmalı.`)
       return
     }
-    await islemCalistir(() =>
-      onKaydet({
+    await islemCalistir(async () => {
+      await onKaydet({
         client_id: Number(clientId),
         baslangic,
         bitis,
         ucret: ucretOkuma.kurus,
         ...(sorulacakTekrar !== undefined ? { tekrar_sayisi: sorulacakTekrar } : {}),
-      }),
-    )
+      })
+      // Yalnızca BAŞARIDA (ret buraya gelmez, `islemCalistir` yakalar) ve
+      // yalnızca var olan randevuda. Saat uygulamanın tek "şimdi"
+      // kaynağından (tasarım A2).
+      if (randevu && gecerli.current) setGuncellendi(simdiYerel().slice(11, 16))
+    })
   }
 
   return (
@@ -358,7 +393,10 @@ export function RandevuPaneli({
         id="danisan"
         className="mt-1 w-full rounded border p-2"
         value={clientId}
-        onChange={(e) => setClientId(e.target.value === '' ? '' : Number(e.target.value))}
+        onChange={(e) => {
+          duzenlendi()
+          setClientId(e.target.value === '' ? '' : Number(e.target.value))
+        }}
       >
         <option value="">Seçiniz…</option>
         {danisanlar.map((d) => (
@@ -371,15 +409,15 @@ export function RandevuPaneli({
       <div className="mt-3 flex gap-2">
         <div className="flex-1">
           <label className="block text-sm" htmlFor="tarih">Tarih</label>
-          <input id="tarih" type="date" min="2000-01-01" max="2099-12-31"
+          <input id="tarih" type="date" min={TARIH_MIN} max={TARIH_MAX}
             className="mt-1 w-full rounded border p-2" value={tarih}
-            onChange={(e) => setTarih(e.target.value)} />
+            onChange={(e) => { duzenlendi(); setTarih(e.target.value) }} />
         </div>
         <div className="w-28">
           <label className="block text-sm" htmlFor="baslangic">Başlangıç</label>
           <input id="baslangic" type="time" step={300}
             className="mt-1 w-full rounded border p-2" value={saat}
-            onChange={(e) => setSaat(e.target.value)} />
+            onChange={(e) => { duzenlendi(); setSaat(e.target.value) }} />
         </div>
       </div>
       {randevu?.seri_id && (
@@ -396,7 +434,10 @@ export function RandevuPaneli({
         step={5}
         className="mt-1 w-full rounded border p-2"
         value={sureDk}
-        onChange={(e) => setSureDk(Number(e.target.value))}
+        onChange={(e) => {
+          duzenlendi()
+          setSureDk(Number(e.target.value))
+        }}
       />
       {/* Hazır süreler (tasarım A4): en sık kullanılan dört değer tek
           tıkla kurulur — süre alanına elle 45/50/60/90 yazmak, özellikle
@@ -411,7 +452,10 @@ export function RandevuPaneli({
             type="button"
             aria-pressed={sureDk === dk}
             className="rounded border px-2 py-0.5 text-xs"
-            onClick={() => setSureDk(dk)}
+            onClick={() => {
+              duzenlendi()
+              setSureDk(dk)
+            }}
           >
             {dk} dk
           </button>
@@ -427,7 +471,10 @@ export function RandevuPaneli({
         inputMode="decimal"
         className="mt-1 w-full rounded border p-2"
         value={ucretTl}
-        onChange={(e) => setUcretTl(e.target.value)}
+        onChange={(e) => {
+          duzenlendi()
+          setUcretTl(e.target.value)
+        }}
       />
       {'kurus' in ucretOkuma && ucretOkuma.kurus !== null && (
         <p data-testid="ucret-onizleme" className="mt-1 text-xs text-slate-500">
@@ -489,6 +536,16 @@ export function RandevuPaneli({
       >
         {randevu ? 'Güncelle' : 'Kaydet'}
       </button>
+      {/* Son inceleme I2: "Güncelle" kaydettiğini söyler. `NotEditoru`'nun
+          "Kaydedildi 14:32"siyle aynı kibar canlı bölge ve görünüm; bölge
+          metin boşken de DOM'da kalır (sonradan eklenen canlı bölgeler
+          ekran okuyucularda güvenilir biçimde duyurulmaz). Yeni randevuda
+          yok: o form kaydedince kapanıyor. */}
+      {randevu && (
+        <p className="mt-2 text-sm text-slate-500" role="status">
+          {guncellendi !== null ? `Güncellendi ${guncellendi}` : ''}
+        </p>
+      )}
 
       {/* Durum düğmeleri (Geldi/Gelmedi/İptal) Plan 4 Görev 2'de SEANS
           PANELİNİN alt satırına taşındı (tasarım §6). İki panel aynı anda

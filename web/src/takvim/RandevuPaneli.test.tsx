@@ -678,4 +678,105 @@ describe('RandevuPaneli', () => {
     expect((screen.getByLabelText('Ücret (TL)') as HTMLInputElement).value).toBe('700,00')
     expect((screen.getByLabelText('Başlangıç') as HTMLInputElement).value).toBe('16:00')
   })
+
+  // --- Son inceleme I2 (kontrolör R14): "Güncelle" kaydettiğini söyler ---
+  //
+  // Görev 10'dan beri bölüm Güncelle'de AÇIK kalıyor ve özet satırı form
+  // state'inden kuruluyor: yalnızca ücret değişince ekranda HİÇBİR şey
+  // değişmiyordu — kullanıcı kaydın gidip gitmediğini bilemiyordu.
+
+  const durum = () => screen.getByRole('status').textContent
+
+  it('R14 I2: Guncelle basariyla donunce "Guncellendi SS:DD" gorunur; HER form alani duzenlenince kalkar', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 9, 14, 32))
+    const props = kur({ randevu: mevcut })
+    // Canlı bölge baştan DOM'da ve boş (sonradan eklenen bölge duyurulmaz).
+    expect(durum()).toBe('')
+
+    // Her alan için: kaydet -> durum görünür -> alanı düzenle -> durum kalkar.
+    // Tek tek sınanıyor: bir alanın işleyicisi temizlemeyi unutursa o satır
+    // kırılır. Saat her turda ilerliyor: metin gerçekten O ANKİ saatten.
+    const duzenlemeler: [string, () => void | Promise<void>][] = [
+      ['ücret', () => { fireEvent.change(screen.getByLabelText('Ücret (TL)'), { target: { value: '600' } }) }],
+      ['tarih', () => { fireEvent.change(screen.getByLabelText('Tarih'), { target: { value: '2026-09-08' } }) }],
+      ['başlangıç', () => { fireEvent.change(screen.getByLabelText('Başlangıç'), { target: { value: '15:00' } }) }],
+      ['süre', () => { fireEvent.change(screen.getByLabelText('Süre (dakika)'), { target: { value: '55' } }) }],
+      ['hazır süre', () => userEvent.click(screen.getByRole('button', { name: '45 dk' }))],
+      ['danışan', () => userEvent.selectOptions(screen.getByLabelText('Danışan'), '2')],
+    ]
+    for (const [i, [alan, duzenle]] of duzenlemeler.entries()) {
+      vi.setSystemTime(new Date(2026, 8, 9, 14, 32 + i))
+      await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+      await waitFor(() => expect(durum(), alan).toBe(`Güncellendi 14:${32 + i}`))
+      await duzenle()
+      expect(durum(), `${alan} düzenlenince durum kalkmalı`).toBe('')
+    }
+    expect(props.onKaydet).toHaveBeenCalledTimes(duzenlemeler.length)
+  })
+
+  it('R14 I2: basarisiz Guncelle durum GOSTERMEZ; onceki basarinin durumu da kalmaz', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 9, 14, 32))
+    const onKaydet = vi.fn().mockRejectedValueOnce(new Error('Sunucu yanıt vermedi.'))
+    kur({ randevu: mevcut, onKaydet })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    // BARİYER: ret panelin hata alanına yazıldı (işlem bitti).
+    expect(await screen.findByText('Sunucu yanıt vermedi.')).toBeDefined()
+    expect(durum()).toBe('')
+
+    // Başarılı bir kayıttan SONRA gelen ret: eski "Güncellendi" yanlış
+    // bir güvence olarak hata metninin yanında kalmamalı.
+    onKaydet.mockResolvedValueOnce(undefined)
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    await waitFor(() => expect(durum()).toBe('Güncellendi 14:32'))
+    onKaydet.mockRejectedValueOnce(new Error('İkinci ret.'))
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    expect(await screen.findByText('İkinci ret.')).toBeDefined()
+    expect(durum()).toBe('')
+  })
+
+  it('R14 I2: yeni randevuda Kaydet sonrasi durum satiri YOK (form kapanir)', async () => {
+    const props = kur()
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    await waitFor(() => expect(props.onKaydet).toHaveBeenCalledTimes(1))
+    // BARİYER: işlem bitti (düğmenin kilidi kalktı).
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Kaydet' }) as HTMLButtonElement).disabled).toBe(false),
+    )
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.queryByText(/Güncellendi/)).toBeNull()
+  })
+
+  // --- Son inceleme M1 (kontrolör R14): yıl penceresi kaydetmede de ------
+  //
+  // `min`/`max` yalnızca tarayıcının seçicisini sınırlar; elle yazılan
+  // değeri DOĞRULAMAZ. Yıl rakam rakam yazılırken "0002-09-07" gibi tam bir
+  // değer forma girer ve Güncelle onu (1902 olarak) kaydederdi.
+  for (const tarih of ['1999-12-31', '2100-01-01', '0002-09-07']) {
+    it(`R14 M1: pencere disindaki tarih (${tarih}) kaydedilmez ve soylenir`, async () => {
+      const props = kur({ randevu: mevcut })
+      fireEvent.change(screen.getByLabelText('Tarih'), { target: { value: tarih } })
+      await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+      expect(screen.getByText('Tarih 2000 ile 2099 arasında olmalı.')).toBeDefined()
+      expect(props.onKaydet).not.toHaveBeenCalled()
+    })
+  }
+
+  it('R14 M1: pencerenin iki ucu (2000-01-01, 2099-12-31) kaydedilir', async () => {
+    const props = kur({ randevu: mevcut })
+    for (const tarih of ['2000-01-01', '2099-12-31']) {
+      fireEvent.change(screen.getByLabelText('Tarih'), { target: { value: tarih } })
+      await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+      await waitFor(() =>
+        expect(props.onKaydet).toHaveBeenLastCalledWith(
+          expect.objectContaining({ baslangic: `${tarih}T14:00` }),
+        ),
+      )
+    }
+    expect(props.onKaydet).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText('Tarih 2000 ile 2099 arasında olmalı.')).toBeNull()
+  })
 })

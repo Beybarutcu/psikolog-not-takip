@@ -344,3 +344,115 @@ describe('HaftalikTakvim — satır yüksekliği HER render\'da yeniden ölçül
     expect(ilkGunHucresi().style.height).toBe('36px')
   })
 })
+
+// Görev 7 düzeltme turu 2 (R7): `getBoundingClientRect().top` PENCEREYE
+// (viewport) görelidir, SAYFAYA değil. Sayfa aşağı kaydırılmışken (ör. bir
+// randevuya tıklayıp "Seans durumu" grubuna erişmek için Playwright'ın
+// otomatik kaydırması -- Görev 10'da HER randevu tıklamasında olacak) eski
+// ölçüm bu viewport-göreli değeri doğrudan kullanıyordu: satırlar büyüyor,
+// sayfa uzuyor, tarayıcının "scroll anchoring"i tıklanan öğeyi ekranda
+// tutmak için `scrollY`'yi kaydırıyor, bir sonraki render'da `top` yine
+// değişiyor -- ölçüm ↔ scroll DÖNGÜSÜ. Gerçek ortamda bu React "Maximum
+// update depth exceeded" (üretimde küçültülmüş hata #185) fırlatıp AĞACI
+// SÖKÜYORDU: `e2e/odeme.spec.ts`'teki dört testin dördü de "Geldi"ye
+// basınca PATCH başarıyla dönmesine rağmen "Seans durumu" grubunun DOM'dan
+// KAYBOLMASIYLA kırılıyordu (kontrolör R7, `page.on('pageerror', ...)` ile
+// yakalanan kanıt: "Minified React error #185").
+//
+// Düzeltme: `top`'u SAYFA (döküman) koordinatına çevir (`+ window.scrollY`).
+// A3 ölçütü zaten KAYDIRILMAMIŞ sayfa için tanımlı; tbody'nin sayfadaki
+// mutlak konumu kaydırma sırasında SABİT kalır. Bu testler `window.scrollY`'yi
+// de sahteleyip ölçümün SAYFA konumuna göre sabit kaldığını (viewport
+// konumuna göre DEĞİL) doğruluyor.
+describe('HaftalikTakvim — satır yüksekliği kaydırma (scrollY) konumundan BAĞIMSIZDIR (Görev 7 düzeltme turu 2)', () => {
+  const SAAT_SAYISI = 13 // CALISMA_BITIS (21) - CALISMA_BASLANGIC (8)
+  const orijinalInnerHeight = window.innerHeight
+  const orijinalGetBoundingClientRect = Element.prototype.getBoundingClientRect
+  const orijinalScrollY = window.scrollY
+
+  afterEach(() => {
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: orijinalInnerHeight,
+    })
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: orijinalScrollY })
+    Element.prototype.getBoundingClientRect = orijinalGetBoundingClientRect
+  })
+
+  function sahteDikdortgen(viewportUst: number): DOMRect {
+    return {
+      x: 0, y: viewportUst, width: 0, height: 0,
+      top: viewportUst, right: 0, bottom: viewportUst, left: 0,
+      toJSON() {
+        return this
+      },
+    }
+  }
+
+  /** `tbody`nin `getBoundingClientRect().top`'unu (VIEWPORT'a göre, kaydırma
+   * dâhil) sabitler. */
+  function tbodyViewportUstunuSabitle(viewportUst: number) {
+    Element.prototype.getBoundingClientRect = function (this: Element) {
+      return this.tagName === 'TBODY' ? sahteDikdortgen(viewportUst) : sahteDikdortgen(0)
+    }
+  }
+
+  function scrollYSabitle(deger: number) {
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: deger })
+  }
+
+  /** Formül artık SAYFA (döküman) üst kenarını kullanıyor: viewport top +
+   * scrollY. Testler bu SAYFA değerini sabit tutup viewport/scrollY'yi
+   * değiştiriyor. */
+  function beklenenYukseklikSayfaKoordinatiyla(sayfaUstu: number, pencereYuksekligi: number): number {
+    return Math.max(36, Math.floor((pencereYuksekligi - sayfaUstu - 16) / SAAT_SAYISI))
+  }
+
+  function ilkGunHucresi(): HTMLElement {
+    const hucre = document.querySelector('tbody tr td:nth-child(2)')
+    if (!hucre) throw new Error('gün hücresi bulunamadı')
+    return hucre as HTMLElement
+  }
+
+  it('sayfa AŞAĞI KAYDIRILMIŞKEN bile ölçüm SAYFA konumuna göre doğru hesaplanır', () => {
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 760 })
+    const SAYFA_UST = 100 // tbody'nin sayfadaki (döküman) mutlak üst kenarı
+    scrollYSabitle(400)
+    // viewport top = sayfa top − scrollY = 100 − 400 = −300 (tbody viewport'un
+    // ÜSTÜNE kaymış: sayfa aşağı kaydırılmış durumu simüle ediyor).
+    tbodyViewportUstunuSabitle(SAYFA_UST - 400)
+    kur()
+    const beklenen = beklenenYukseklikSayfaKoordinatiyla(SAYFA_UST, 760)
+    // ÖN KOŞUL: eski (viewport-göreli, `scrollY` eklemeyen) formül burada
+    // FARKLI bir değer (80px) üretirdi -- senaryo gerçekten ayırt edici.
+    expect(beklenen).not.toBe(Math.max(36, Math.floor((760 - (SAYFA_UST - 400) - 16) / SAAT_SAYISI)))
+    expect(ilkGunHucresi().style.height).toBe(`${beklenen}px`)
+  })
+
+  it('AYNI sayfa konumunda FARKLI scrollY ile rerender edilince yükseklik DEĞİŞMEZ', () => {
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 760 })
+    const SAYFA_UST = 100
+    scrollYSabitle(400)
+    tbodyViewportUstunuSabitle(SAYFA_UST - 400)
+    const ortakProps = {
+      haftaBasi: haftaninBasi(new Date(2026, 8, 7)),
+      simdi: '2026-09-09T14:30',
+      onRandevuSec: vi.fn(),
+      onBosSaatSec: vi.fn(),
+    }
+    const { rerender } = render(<HaftalikTakvim randevular={[randevu]} {...ortakProps} />)
+    const beklenen = beklenenYukseklikSayfaKoordinatiyla(SAYFA_UST, 760)
+    expect(ilkGunHucresi().style.height).toBe(`${beklenen}px`)
+
+    // `scrollY` DEĞİŞTİ (400 -> 0) ama tbody'nin SAYFA konumu (SAYFA_UST=100)
+    // AYNI kaldı -- viewport top da buna göre değişti (100 − 0 = 100). Eski
+    // (viewport-göreli) formül bunu FARKLI bir yükseklik olarak okurdu (ve
+    // gerçek tarayıcıda tam olarak bu, scroll-anchoring geri beslemesini
+    // başlatan adımdı); yeni formül SAYFA konumu değişmediği için AYNI
+    // yüksekliği üretmeli.
+    scrollYSabitle(0)
+    tbodyViewportUstunuSabitle(SAYFA_UST - 0)
+    rerender(<HaftalikTakvim randevular={[{ ...randevu }]} {...ortakProps} />)
+    expect(ilkGunHucresi().style.height).toBe(`${beklenen}px`)
+  })
+})

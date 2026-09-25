@@ -109,7 +109,8 @@ export function HaftalikTakvim({
   )
 
   // Tasarım A3: satır yüksekliği pencereden türetilir, en az 36px.
-  // max(36, (pencere yüksekliği − tbody'nin üst kenarı − alt boşluk) / satır sayısı)
+  // max(36, (pencere yüksekliği − tbody'nin SAYFA (döküman) üst kenarı − alt
+  // boşluk) / satır sayısı)
   //
   // HER render'da yeniden ölçülür (deps dizisi YOK, aşağıdaki `useLayoutEffect`
   // her render'dan sonra çalışır): ızgaranın ÜSTÜNDEKİ içerik yükseklik
@@ -122,6 +123,22 @@ export function HaftalikTakvim({
   // "1200×760/1280×800'de kaydırma yok" garantisi ilk çizimden SONRA
   // bozulabiliyordu.
   //
+  // `getBoundingClientRect().top` PENCEREYE (viewport) görelidir, SAYFAYA
+  // değil. Sayfa aşağı kaydırılmışken (ör. Görev 10'da her randevu tıklaması
+  // sayfayı seans bölümüne kaydıracak) bu değer küçülür/eksiye düşer, satır
+  // yüksekliği büyür; satırlar büyüyünce sayfa uzar ve tarayıcının "scroll
+  // anchoring"i tıklanan öğeyi ekranda tutmak için `scrollY`'yi KAYDIRIR --
+  // bu da bir SONRAKİ render'da `top`'u yeniden değiştirir. Sonuç: ölçüm →
+  // scroll → ölçüm → scroll döngüsü, React "Maximum update depth exceeded"
+  // (üretimde küçültülmüş hata #185) fırlatıp AĞACI SÖKÜYORDU -- "Geldi"ye
+  // basınca PATCH başarıyla dönüyor ama "Seans durumu" grubu DOM'dan
+  // KAYBOLUYORDU (Görev 7 düzeltme turu 2, kontrolör R7).
+  //
+  // Çözüm: `top`'u SAYFA (döküman) koordinatına çevir (`+ window.scrollY`).
+  // A3 ölçütü zaten KAYDIRILMAMIŞ sayfa için tanımlı; tbody'nin sayfadaki
+  // mutlak konumu kaydırma sırasında SABİT kalır, yani ölçüm artık
+  // `scrollY`'den BAĞIMSIZ -- döngünün girdisi ortadan kalkıyor.
+  //
   // `setSatirYuksekligi` yalnızca değer GERÇEKTEN değiştiyse state'i
   // güncelliyor (fonksiyonel güncelleme + eşitlik kontrolü) -- aksi hâlde her
   // render yeni bir render tetikleyip sonsuz döngü olurdu.
@@ -130,7 +147,7 @@ export function HaftalikTakvim({
 
   const olcRef = useRef<() => void>(() => {})
   olcRef.current = () => {
-    const ust = tbodyRef.current?.getBoundingClientRect().top ?? 0
+    const ust = (tbodyRef.current?.getBoundingClientRect().top ?? 0) + window.scrollY
     const kalan = window.innerHeight - ust - 16
     const yeni = Math.max(36, Math.floor(kalan / saatler.length))
     setSatirYuksekligi((onceki) => (onceki === yeni ? onceki : yeni))

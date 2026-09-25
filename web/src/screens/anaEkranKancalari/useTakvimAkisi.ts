@@ -166,8 +166,14 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
 
   // Mutlak gezinme: "Bugün" düğmesi ve gün seçici (tasarım A1). Göreli
   // `haftaDegis(±1)` yanında durur; ikisi de aynı state'i kurar.
+  //
+  // Son inceleme M8: hedef hafta görünen haftaysa state DEĞİŞMEZ (aynı nesne
+  // döner, React render'ı atlar). Yeni bir `Date` — aynı an da olsa — `yukle`
+  // kimliğini değiştirir ve efekt görünen haftayı boşuna yeniden isterdi
+  // (ölçen test: `AnaEkran.test.tsx` > "R14 M8").
   function haftayaGit(tarih: Date) {
-    setHaftaBasi(haftaninBasi(tarih))
+    const hedef = haftaninBasi(tarih)
+    setHaftaBasi((onceki) => (onceki.getTime() === hedef.getTime() ? onceki : hedef))
   }
 
   function randevuSec(randevu: Randevu, secenek?: { kaydir?: boolean }) {
@@ -278,7 +284,18 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
       await takvimApi.randevuOlustur(kayit)
       setHata(null)
       panelKapat()
-      await yukle()
+      // Son inceleme I3: formda Tarih başka bir haftaya çekilmiş olabilir.
+      // Eski kapanıştaki `yukle` GÖRÜNEN haftayı yükler; yeni kayıt orada
+      // yok ve ekranda hiçbir yerde görünmüyordu. PUT dalıyla AYNI mekanizma:
+      // o haftaya geçilir, `yukle` ÇAĞRILMAZ, yeni haftayı efekt yükler
+      // (hafta koruması `gorunenHafta` render'da tazelenir). Serinin ilk
+      // üyesi isteğin `baslangic`ı; sonraki üyeler zaten sonraki haftalarda.
+      const yeniHafta = haftaninBasi(zamandanDate(kayit.baslangic))
+      if (yeniHafta.getTime() !== haftaBasi.getTime()) {
+        setHaftaBasi(yeniHafta)
+      } else {
+        await yukle()
+      }
       return null
     } catch (e) {
       // Üstteki bant dar bir sayfada gözden kaçabilir (bkz. Görev 10 inceleme
@@ -414,7 +431,6 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
     hata,
     seciliRandevu,
     seciliBosSaat,
-    panelAcik: seciliRandevu !== null || seciliBosSaat !== null,
     oturumKapandi,
     haftaDegis,
     haftayaGit,

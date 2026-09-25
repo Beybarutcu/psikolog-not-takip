@@ -40,7 +40,6 @@ function bosTakvim(): ReturnType<typeof useTakvimAkisi> {
     hata: null,
     seciliRandevu: null,
     seciliBosSaat: null,
-    panelAcik: false,
     oturumKapandi: vi.fn(),
     haftaDegis: vi.fn(),
     // Görev 5: mutlak gezinme ("Bugün" düğmesi, gün seçici). Sonraki
@@ -309,7 +308,6 @@ describe('TakvimSekmesi — seans bölümü ve kaydırma (Plan A Görev 10)', ()
       ...props.takvim,
       randevular: [secili],
       seciliRandevu: secili,
-      panelAcik: true,
       ...ozel,
     }
     return props

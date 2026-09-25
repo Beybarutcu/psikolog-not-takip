@@ -1809,7 +1809,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     },
   )
 
-  it('bos notta sablon basliklari gorunur ama HICBIR yazma uretilmez', async () => {
+  it('bos not basliksiz acilir ve HICBIR yazma uretilmez', async () => {
     await seansAc()
     const alan = screen.getByLabelText('Seans notu') as HTMLTextAreaElement
     // Varsayılan şablon Serbest olduğundan (tasarım A7), boş not başlıksız açılır.
@@ -2452,6 +2452,90 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     await userEvent.click(within(uyari).getByRole('button', { name: 'Seansı kapat' }))
     expect(screen.queryByTestId('seans-bolumu')).toBeNull()
     expect(screen.queryByRole('heading', { name: 'Randevu' })).toBeNull()
+  })
+
+  // --- Son inceleme (kontrolör R14) ------------------------------------
+
+  const randevuPostlari = () =>
+    istekler.filter((i) => i.method === 'POST' && i.yol === '/api/randevular')
+
+  // I3: POST dalı `panelKapat(); await yukle()` yapıyordu — eski kapanışın
+  // `yukle`'si GÖRÜNEN haftayı yükler; formda Tarih'i başka haftaya çekip
+  // kaydedilen randevu ekranda hiçbir yerde görünmüyordu ("kayboldu").
+  it('R14 I3 bos saatten BASKA haftaya kaydedilen yeni randevu kaybolmaz: hafta ona gecer, blok izgarada; eski hafta yeniden YUKLENMEZ', async () => {
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    expect(haftaBasligi()).toBe('7 – 13 Eylül 2026')
+
+    await userEvent.click(screen.getByLabelText('9 Eylül 09:00 boş'))
+    fireEvent.change(screen.getByLabelText('Tarih'), { target: { value: '2026-09-16' } })
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '2')
+    const getlerOnce = haftaGetleri().length
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+
+    await waitFor(() => expect(randevuPostlari()).toHaveLength(1))
+    expect(randevuPostlari()[0].govde).toMatchObject({ client_id: 2, baslangic: '2026-09-16T09:00' })
+    // Form yine KAPANIR (yeni randevunun var olan davranışı).
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Yeni randevu' })).toBeNull())
+    await waitFor(() => expect(haftaBasligi()).toBe('14 – 20 Eylül 2026'))
+    // BARİYER: yeni haftanın listesi geldi — blok ızgarada (liste gelmeden
+    // eski haftanın kayıtları "aralık dışı" satırında, adları farklı).
+    await screen.findByRole('button', { name: 'Mehmet Demir' })
+    expect(screen.queryByLabelText('16 Eylül 09:00 boş')).toBeNull()
+    expect(screen.getByLabelText('16 Eylül 10:00 boş')).toBeDefined()
+    expect(screen.queryByRole('region', { name: 'Görünen aralık dışındaki randevular' })).toBeNull()
+    // Eski kapanışın `yukle`'si ÇAĞRILMADI: POST'tan sonra TEK hafta GET'i,
+    // o da YENİ haftanın.
+    const sonrakiler = haftaGetleri().slice(getlerOnce)
+    expect(sonrakiler).toHaveLength(1)
+    expect(sonrakiler[0].yol).toContain(`baslangic=${encodeURIComponent('2026-09-14T00:00')}`)
+  })
+
+  // I3'ün öbür yönü: aynı haftada bugünkü davranış — hafta değişmez, görünen
+  // hafta TEK kez yeniden yüklenir ve yeni blok ızgarada.
+  it('R14 I3 AYNI haftaya kaydedilen yeni randevu: hafta degismez, gorunen hafta TEK kez yeniden yuklenir, blok izgarada', async () => {
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+
+    await userEvent.click(screen.getByLabelText('9 Eylül 09:00 boş'))
+    fireEvent.change(screen.getByLabelText('Tarih'), { target: { value: '2026-09-11' } })
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '2')
+    const getlerOnce = haftaGetleri().length
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+
+    await waitFor(() => expect(randevuPostlari()).toHaveLength(1))
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Yeni randevu' })).toBeNull())
+    // BARİYER: yeniden yükleme ekrana yazıldı — 11 Eylül 09:00 artık dolu.
+    await waitFor(() => expect(screen.queryByLabelText('11 Eylül 09:00 boş')).toBeNull())
+    expect(haftaBasligi()).toBe('7 – 13 Eylül 2026')
+    expect(screen.getAllByRole('button', { name: 'Mehmet Demir' })).toHaveLength(2)
+    const sonrakiler = haftaGetleri().slice(getlerOnce)
+    expect(sonrakiler).toHaveLength(1)
+    expect(sonrakiler[0].yol).toContain(`baslangic=${encodeURIComponent('2026-09-07T00:00')}`)
+  })
+
+  // M8: `haftayaGit` aynı haftada da YENİ bir `Date` kuruyordu — `yukle`nin
+  // kimliği değişiyor, efekt görünen haftayı boşuna yeniden istiyordu
+  // (silinemez `goruntuleme` satırı birleşse de istek gereksiz). "Bugün"
+  // düğmesi bu haftada zaten devre dışı; yol gün seçiciden ölçülüyor.
+  it('R14 M8 gun secicide GORUNEN haftanin bir gunu secilince hafta listesi yeniden ISTENMEZ', async () => {
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    expect(haftaGetleri()).toHaveLength(1)
+
+    await userEvent.click(screen.getByRole('button', { name: '7 – 13 Eylül 2026' }))
+    fireEvent.change(screen.getByLabelText('Gidilecek gün'), { target: { value: '2026-09-10' } })
+    // Ön koşul: seçim gerçekten `haftayaGit`e ulaştı (alan kapandı).
+    expect(screen.queryByLabelText('Gidilecek gün')).toBeNull()
+    expect(haftaBasligi()).toBe('7 – 13 Eylül 2026')
+
+    // BARİYER: sonraki haftanın GET'i geldi. Hafta GET'i efektte eşzamanlı
+    // atılıyor; gereksiz bir yeniden yükleme olsaydı ondan ÖNCE sayılmıştı.
+    await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
+    await waitFor(() =>
+      expect(haftaGetleri().at(-1)!.yol).toContain(`baslangic=${encodeURIComponent('2026-09-14T00:00')}`),
+    )
+    expect(haftaGetleri()).toHaveLength(2)
   })
 })
 

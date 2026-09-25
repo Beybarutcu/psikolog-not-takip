@@ -153,9 +153,10 @@ enjeksiyon mekanizması eklenmez. "Geçmiş" her yerde aynı tanımdır:
   transaction'da var olan `son_temasi_isaretle`'yi çağırır. Bu işlev yalnızca
   ileri gider: seans ileri taşınırsa son temas ve saklama bitişi ilerler; geri
   taşınırsa gerilemez (saklama en kötü ihtimalle uzun kalır, asla kısa değil).
-  PUT yanıtı `Randevu`'ya ek olarak isteğe bağlı `client_id`/`son_temas`/
-  `saklama_bitis` alanlarını taşır — üçü birlikte ya var ya yok
-  (`DurumYaniti` emsali, Plan 7 Görev 3). Arayüz bunları durum değişikliğiyle
+  PUT yanıtı `Randevu`'ya ek olarak isteğe bağlı `son_temas` ve
+  `saklama_bitis` alanlarını taşır — ikisi birlikte ya var ya yok; danışan
+  kimliği zaten `Randevu.client_id`'dedir (`DurumYaniti` emsali, Plan 7
+  Görev 3). Arayüz bunları durum değişikliğiyle
   aynı yoldan yayar (dosya alanlarını yerel yama, saklama listesinden düşme).
   Son temas güncellemesi ayrı denetim satırı yazmaz (bugünkü durum
   değişikliğiyle aynı).
@@ -219,8 +220,10 @@ kuruş = 1.000.000 TL) aşarsa → "Ücret en fazla 1.000.000 TL olabilir."
 **Yerleşim (kullanıcı kararı).** Var olan bir randevu seçilince randevu formu
 ile seans paneli takvimin altında **tek bir seans bölümü** olarak açılır. DOM
 sırası: takvim → [randevu formu + seans paneli] → ay özeti. "Takvim, ay
-özetinden önce gelir" sırası korunur. Boş bir saate tıklayınca açılan yeni
-randevu formu bugünkü gibi takvimin yanında durur (A3).
+özetinden önce gelir" sırası korunur. Bölümün içinde form solda dar bir
+kolon, seans paneli sağda; pencere ikisini yan yana sığdırmıyorsa form üstte,
+not altında (`flex-wrap`). Boş bir saate tıklayınca açılan yeni randevu formu
+bugünkü gibi takvimin yanında durur (A3).
 
 **Kaydırma.**
 - Kullanıcı bir randevu seçtiğinde sayfa seans bölümünün başına kayar
@@ -248,10 +251,12 @@ randevu formu bugünkü gibi takvimin yanında durur (A3).
 - `yukle()`'ye **hafta koruması** eklenir: yanıt, istek anındaki hafta hâlâ
   görünen haftaysa yazılır. Bu, var olan hızlı hafta gezinmesi yarışını da
   kapatır.
-- Aynı seansın başlangıcı değişince `useSeansNotlari` resmî notu ve özel notu
-  **yeniden istemez ve sıfırlamaz** (ikisi kimliğe bağlıdır); yalnızca geçmiş
-  notlar (başlangıca göre "önceki seanslar") yeniden istenir. Aksi hâlde özel
-  not sekmesi açıkken taşıma "Özel not yükleniyor…" yazısında takılı kalırdı.
+- Aynı seansın başlangıcı değişince `useSeansNotlari` **özel notu ne yeniden
+  ister ne sıfırlar**; aksi hâlde özel not sekmesi açıkken taşıma "Özel not
+  yükleniyor…" yazısında takılı kalırdı. Geçmiş notlar (başlangıca göre
+  "önceki seanslar") yeniden istenir; resmî not da aynı istekle bir kez daha
+  okunur (not okuması `OturumBasi` ile birleşir, yeni denetim satırı düşmez;
+  editör yeniden monte edilmez, yazılmamış metin korunur).
 - Yeni randevu formundaki "Kaydet" bugünkü gibi formu kapatır.
 - Seans bölümünün başlığında "Takvime dön" bağlantısı (sayfayı takvimin başına
   kaydırır). Bölümdeki "Kapat" seçimi kapatır (bugünkü `panelKapat`).

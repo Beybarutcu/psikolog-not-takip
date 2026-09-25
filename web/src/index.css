@@ -30,3 +30,9 @@
 body {
   margin: 0;
 }
+
+/* Tasarım A6: randevuya tıklayınca seans bölümüne yumuşak kaydırma;
+   hareketi azaltma tercihinde animasyonsuz. */
+@media (prefers-reduced-motion: no-preference) {
+  html { scroll-behavior: smooth; }
+}

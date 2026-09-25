@@ -828,6 +828,30 @@ describe('SeansPaneli — kapatma', () => {
     expect(onKapat).toHaveBeenCalledTimes(1)
   })
 
+  // Plan A Görev 10 (tasarım A6): seans bölümü takvimin ALTINDA; başlıktaki
+  // "Takvime dön" sayfayı takvimin başına kaydırır. Seçimi KAPATMAZ (o iş
+  // "Seansı kapat"ın) ve "Seansı kapat"ın solunda durur.
+  it('"Takvime don" Seansi kapat in solunda; takvim izgarasini kaydirir, seansi kapatmaz', async () => {
+    const izgara = document.createElement('div')
+    izgara.setAttribute('data-testid', 'takvim-izgara')
+    document.body.appendChild(izgara)
+    const kaydir = vi.spyOn(Element.prototype, 'scrollIntoView')
+    try {
+      const { onKapat } = kur()
+      const don = screen.getByRole('button', { name: 'Takvime dön' })
+      const kapat = screen.getByRole('button', { name: 'Seansı kapat' })
+      expect(don.compareDocumentPosition(kapat) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+      await userEvent.click(don)
+      expect(kaydir).toHaveBeenCalledTimes(1)
+      expect(kaydir.mock.contexts[0]).toBe(izgara)
+      expect(kaydir).toHaveBeenCalledWith({ block: 'start' })
+      expect(onKapat).not.toHaveBeenCalled()
+    } finally {
+      izgara.remove()
+    }
+  })
+
   it('baslikta danisan adi ve saat gorunur', () => {
     kur()
     const baslik = screen.getByRole('region', { name: 'Seans' })

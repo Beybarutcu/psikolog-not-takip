@@ -225,9 +225,27 @@ export function SeansPaneli({
             — {zamanMetni(randevu.baslangic)}
           </p>
         </div>
-        <button type="button" className="rounded border px-3 py-1 text-sm" onClick={onKapat}>
-          Seansı kapat
-        </button>
+        <div className="flex shrink-0 items-center gap-3">
+          {/* Tasarım A6: seans bölümü takvimin ALTINDA; bu bağlantı sayfayı
+              takvimin başına kaydırır. Seçimi KAPATMAZ (o iş "Seansı
+              kapat"ın) ve odak vermez. Paneli yalnızca Takvim sekmesi
+              kullanıyor (danışan dosyası kendi editörünü çiziyor), bu yüzden
+              ızgara DOM kancasıyla aranıyor; yoksa hiçbir şey olmaz. */}
+          <button
+            type="button"
+            className="text-sm underline"
+            onClick={() =>
+              document
+                .querySelector('[data-testid="takvim-izgara"]')
+                ?.scrollIntoView({ block: 'start' })
+            }
+          >
+            Takvime dön
+          </button>
+          <button type="button" className="rounded border px-3 py-1 text-sm" onClick={onKapat}>
+            Seansı kapat
+          </button>
+        </div>
       </div>
 
       {/* Mobilde tek sütun ve geçmiş ÜSTTE (DOM sırası da öyle: ekran

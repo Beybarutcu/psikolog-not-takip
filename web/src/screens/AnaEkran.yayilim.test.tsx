@@ -527,6 +527,30 @@ function ciz() {
   render(<AnaEkran kilitle={kilitle} onGeriYukle={vi.fn()} />)
 }
 
+/**
+ * Açık randevu formunda "Güncelle"ye basar ve kaydetme zincirinin BİTMESİNİ
+ * bekler.
+ *
+ * BARİYER (altıncı biçim): PUT sunucuya ulaştı VE düğmenin kilidi kalktı.
+ * Kilit `RandevuPaneli.islemCalistir`in `finally`sinde, yani `onKaydet`
+ * (`AnaEkran.randevuKaydet`: `await takvim.kaydet` + ardından gelen bütün
+ * yayılım/yama satırları) çözüldükten SONRA kalkıyor. Plan A Görev 10'dan
+ * önce buradaki bariyer "Güncelle düğmesi kayboldu"ydu; tasarım A6'dan beri
+ * "Güncelle" seans bölümünü KAPATMIYOR, düğme ekranda kalıyor.
+ */
+async function guncelleVeBekle(id: number) {
+  const putSayisi = () =>
+    istekler.filter((i) => i.method === 'PUT' && i.yol === `/api/randevular/${id}`).length
+  const once = putSayisi()
+  await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+  await waitFor(() => expect(putSayisi()).toBe(once + 1))
+  await waitFor(() =>
+    expect((screen.getByRole('button', { name: 'Güncelle' }) as HTMLButtonElement).disabled).toBe(
+      false,
+    ),
+  )
+}
+
 /** Takvimde sonraki haftaya gider ve 202'nin seans panelini açar. */
 async function takvimde202Ac() {
   await userEvent.click(await screen.findByRole('button', { name: 'Sonraki hafta' }))
@@ -1076,16 +1100,17 @@ describe('Plan A Görev 9 — taşınan "geldi" seansı son temasını ilerletir
     await waitFor(() => expect(saklamaMetni()).toContain('Saklama süresi doldu (10.01.2024)'))
   }
 
-  /** Açık randevu panelinde Tarih'i değiştirip "Güncelle"ye basar; PUT bitene kadar bekler. */
+  /**
+   * Açık randevu panelinde Tarih'i değiştirip "Güncelle"ye basar; kaydetme
+   * zinciri BİTENE kadar bekler (`guncelleVeBekle`): yama/yayılım satırları
+   * `await takvim.kaydet(...)`in ARDINDAN koştu. Bu bekleme iki yönün de
+   * dayanağı — ters yöndeki "DEĞİŞTİRMEZ" iddiaları, alanlara bakmadan yamalayan
+   * bir uygulamanın yamayı yapmış olacağı ANDAN sonra ölçülür.
+   */
   async function tarihiTasi(id: number, yeniTarih: string) {
     fireEvent.change(screen.getByLabelText('Tarih'), { target: { value: yeniTarih } })
-    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
-    await waitFor(() =>
-      expect(tumu().find((r) => r.id === id)!.baslangic.slice(0, 10)).toBe(yeniTarih),
-    )
-    // BARİYER: kaydetme bitti (panel bu görevde hâlâ kapanıyor) — yayılım
-    // `await takvim.kaydet(...)`in ARDINDAN koştu.
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Güncelle' })).toBeNull())
+    await guncelleVeBekle(id)
+    expect(tumu().find((r) => r.id === id)!.baslangic.slice(0, 10)).toBe(yeniTarih)
   }
 
   // Senaryo: Zeynep'in bir seansının YILI yanlış girilmiş (2017) ve seans
@@ -2175,10 +2200,9 @@ describe('Son inceleme I1 — randevu yazmaları açık etiketli seanslar paneli
     // Hiç açılmamış panel, hiç istenmemiş sözlük: düzenle + sil.
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
     await screen.findByLabelText('Etiket ekle')
-    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
-    // BARİYER: PUT yapıldı ve takvim yeniden yüklendi (panel kapandı).
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Güncelle' })).toBeNull())
-    expect(istekler.some((i) => i.method === 'PUT' && i.yol === '/api/randevular/201')).toBe(true)
+    // BARİYER: PUT yapıldı ve `randevuKaydet` (takvimin yeniden yüklenmesi ve
+    // `etiketler.randevularDegisti()` dahil) bitti — bkz. `guncelleVeBekle`.
+    await guncelleVeBekle(201)
     await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Sil' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
@@ -2193,8 +2217,7 @@ describe('Son inceleme I1 — randevu yazmaları açık etiketli seanslar paneli
     const bolge = await krizPaneliAc()
     await userEvent.click(within(bolge).getByRole('button', { name: 'Kapat' }))
     expect(screen.queryByRole('region', { name: 'kriz etiketli seanslar' })).toBeNull()
-    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Güncelle' })).toBeNull())
+    await guncelleVeBekle(203)
     await act(async () => {
       await new Promise((r) => setTimeout(r, 30))
     })

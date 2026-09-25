@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { yerelGun } from '../screens/anaEkranKancalari/yerelGun'
@@ -54,6 +54,9 @@ function bosTakvim(): ReturnType<typeof useTakvimAkisi> {
     odemeDegis: vi.fn(async () => {}),
     sil: vi.fn(async () => {}),
     seriSil: vi.fn(async () => {}),
+    // Plan A Görev 10 (tasarım A6): kullanıcı seçiminin kaydırma isteği.
+    kaydirmaIstegi: null,
+    kaydirmaTamam: vi.fn(),
   }
 }
 
@@ -237,7 +240,8 @@ describe('TakvimSekmesi — bugün ve şimdi bilgi satırı (Görev 6)', () => {
     expect(satir.textContent).toBe('Bugün 2 seans · sıradaki 14:00 Ayşe Kaya')
 
     fireEvent.click(screen.getByRole('button', { name: '14:00 Ayşe Kaya' }))
-    expect(props.takvim.randevuSec).toHaveBeenCalledWith(props.takvim.randevular[0])
+    // Plan A Görev 10: "sıradaki" bağlantısı bir KULLANICI seçimi (tasarım A6).
+    expect(props.takvim.randevuSec).toHaveBeenCalledWith(props.takvim.randevular[0], { kaydir: true })
   })
 
   it('6.7 sıradaki yoksa yalnızca "Bugün N seans" gösterir', () => {
@@ -251,5 +255,110 @@ describe('TakvimSekmesi — bugün ve şimdi bilgi satırı (Görev 6)', () => {
     render(<TakvimSekmesi {...props} />)
 
     expect(screen.getByTestId('bugun-bilgisi').textContent).toBe('Bugün 2 seans')
+  })
+})
+
+// Plan A Görev 10 (tasarım A6): var olan bir randevu seçilince form ve seans
+// paneli takvimin ALTINDA tek bir "seans bölümü"; boş saatin yeni randevu
+// formu takvimin YANINDA kalır. Kaydırma isteği kancada (`kaydirmaIstegi`),
+// burada yalnızca uygulanır ve tüketilir.
+describe('TakvimSekmesi — seans bölümü ve kaydırma (Plan A Görev 10)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  const secili: Randevu = {
+    id: 101, client_id: 1, danisan_adi: 'Ayşe Yılmaz',
+    baslangic: '2026-09-07T10:00', bitis: '2026-09-07T11:00',
+    durum: 'planlandi', ucret: null, odendi: false, seri_id: null,
+  }
+
+  /** Var olan bir randevu SEÇİLİ; not verisi henüz yolda (panel "yükleniyor"). */
+  function seciliProplar(ozel: Partial<ReturnType<typeof useTakvimAkisi>> = {}) {
+    const props = varsayilanProplar()
+    props.takvim = {
+      ...props.takvim,
+      randevular: [secili],
+      seciliRandevu: secili,
+      panelAcik: true,
+      ...ozel,
+    }
+    return props
+  }
+
+  it('10.7 DOM sirasi izgara -> seans bolumu -> ay ozeti; Randevu formu bolumun ICINDE; bos saatte Yeni randevu formu izgaranin YANINDA', async () => {
+    // Özet açılacak: taklit, önceki bir testin (`ozetIstegi: vi.fn()`)
+    // bıraktığı `undefined` dönen hâlden bilerek geri kuruluyor.
+    taklit.ayOzeti = async (ay: string) => ({
+      ay, seans_sayisi: 0, tahsilat_kurus: 0, bekleyen_kurus: 0, borclular: [],
+    })
+    const props = seciliProplar()
+    const { rerender } = render(<TakvimSekmesi {...props} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Ay sonu özeti' }))
+
+    const izgara = screen.getByTestId('takvim-izgara')
+    const bolum = screen.getByTestId('seans-bolumu')
+    const ozetPaneli = screen.getByRole('region', { name: 'Ay sonu özeti' })
+    expect(izgara.compareDocumentPosition(bolum) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(bolum.compareDocumentPosition(ozetPaneli) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // Form ve seans paneli AYNI bölümde; form gömülü ("Kapat" yok — seçimi
+    // seans panelinin "Seansı kapat"ı kapatıyor).
+    expect(bolum.contains(screen.getByRole('heading', { name: 'Randevu' }))).toBe(true)
+    expect(bolum.contains(screen.getByRole('region', { name: 'Seans' }))).toBe(true)
+    expect(within(bolum).queryByRole('button', { name: 'Kapat' })).toBeNull()
+    expect(izgara.parentElement!.contains(bolum)).toBe(false)
+
+    // GEÇİŞ (dördüncü biçim): aynı bileşen, seçim boş bir saate döndü.
+    rerender(
+      <TakvimSekmesi
+        {...props}
+        takvim={{ ...props.takvim, seciliRandevu: null, seciliBosSaat: '2026-09-08T09:00' }}
+      />,
+    )
+    expect(screen.queryByTestId('seans-bolumu')).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Randevu' })).toBeNull()
+    const yeni = screen.getByRole('heading', { name: 'Yeni randevu' })
+    // Izgaranın YANINDA: ızgarayla aynı satır kabında, ızgaranın içinde değil.
+    expect(screen.getByTestId('takvim-izgara').parentElement!.contains(yeni)).toBe(true)
+    expect(screen.getByTestId('takvim-izgara').contains(yeni)).toBe(false)
+  })
+
+  it('10.8 kaydirmaIstegi secili randevununsa seans bolumu BIR kez kaydirilir ve istek tuketilir; null ise kaydirma yok', () => {
+    const kaydir = vi.spyOn(Element.prototype, 'scrollIntoView')
+    const props = seciliProplar({ kaydirmaIstegi: null })
+    const { rerender } = render(<TakvimSekmesi {...props} />)
+    expect(kaydir).not.toHaveBeenCalled()
+    expect(props.takvim.kaydirmaTamam).not.toHaveBeenCalled()
+
+    rerender(<TakvimSekmesi {...props} takvim={{ ...props.takvim, kaydirmaIstegi: secili.id }} />)
+    expect(kaydir).toHaveBeenCalledTimes(1)
+    expect(kaydir.mock.contexts[0]).toBe(screen.getByTestId('seans-bolumu'))
+    expect(kaydir).toHaveBeenCalledWith({ block: 'start' })
+    expect(props.takvim.kaydirmaTamam).toHaveBeenCalledTimes(1)
+  })
+
+  it('izgaradaki blok ve aralik disi dugmesi takvim.randevuSec\'i { kaydir: true } ile cagirir', async () => {
+    const props = varsayilanProplar()
+    const gizli: Randevu = { ...secili, id: 102, baslangic: '2026-09-08T07:30', bitis: '2026-09-08T08:30' }
+    props.takvim.randevular = [secili, gizli]
+    render(<TakvimSekmesi {...props} />)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    expect(props.takvim.randevuSec).toHaveBeenLastCalledWith(secili, { kaydir: true })
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Ayşe Yılmaz — 08.09 07:30 (aralık dışı) randevusunu aç' }),
+    )
+    expect(props.takvim.randevuSec).toHaveBeenLastCalledWith(gizli, { kaydir: true })
+  })
+
+  it('10.9 "Takvime dön" takvim izgarasini gorunur alana kaydirir, secimi kapatmaz', async () => {
+    const kaydir = vi.spyOn(Element.prototype, 'scrollIntoView')
+    const props = seciliProplar()
+    render(<TakvimSekmesi {...props} />)
+    expect(kaydir).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
+    expect(kaydir).toHaveBeenCalledTimes(1)
+    expect(kaydir.mock.contexts[0]).toBe(screen.getByTestId('takvim-izgara'))
+    expect(kaydir).toHaveBeenCalledWith({ block: 'start' })
+    expect(props.takvim.panelKapat).not.toHaveBeenCalled()
   })
 })

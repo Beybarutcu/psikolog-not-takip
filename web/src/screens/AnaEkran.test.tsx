@@ -414,6 +414,13 @@ describe('AnaEkran — düzenleme kipi POST değil PUT üretir (C1)', () => {
         if (method === 'GET') {
           return { ok: true, json: async () => [randevuA] } as unknown as Response
         }
+        // Plan A Görev 10: gerçek sunucu gibi PUT GÜNCELLENMİŞ KAYDI döndürür
+        // (`routes::appointments::guncelle`) — `takvim.kaydet` seçimi artık
+        // bu yanıtla yamıyor; `{}` dönen bir taklit seçimi alanları olmayan
+        // bir nesneye çevirirdi (üretimde olmayan bir durum).
+        if (method === 'PUT') {
+          return { ok: true, json: async () => ({ ...randevuA, ...(govde as object) }) } as unknown as Response
+        }
         return { ok: true, json: async () => ({}) } as unknown as Response
       }
       throw new Error(`beklenmeyen istek: ${yol}`)
@@ -1936,6 +1943,388 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     expect(uyari.textContent).toContain('Gecmis notlar okunamadi.')
     expect(screen.queryByText(/önceki seanslarından kayıtlı not yok/i)).toBeNull()
     expect(screen.queryByLabelText('Seans notu')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Plan A Görev 10 (tasarım A6): seans bölümü, "Güncelle" akışı ve kaydırma.
+//
+// Sunucu taklidi DURUMLU: PUT kaydı GERÇEKTEN değiştirir ve güncellenmiş
+// kaydı döndürür (gerçek `routes::appointments::guncelle` gibi), hafta GET'i
+// istenen aralığa göre süzer. "Başka haftaya taşındı" ancak böyle ölçülür:
+// aralığı yok sayan bir taklitte taşınan randevu eski haftada da görünür ve
+// "seçim korundu" iddiası hiçbir şey ölçmezdi.
+// ---------------------------------------------------------------------------
+describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10)', () => {
+  const gercekFetch = globalThis.fetch
+  let istekler: { yol: string; method: string; govde: unknown }[] = []
+  let sunucuRandevulari: (Omit<typeof randevuA, 'ucret'> & { ucret: number | null })[]
+  let sunucuOdendi: Record<number, boolean>
+  let sunucuDurumu: Record<number, string>
+  // Hafta GET'lerinin KAPILARI, geliş sırasına göre (1 = mount'taki yükleme).
+  // Kurulursa o sıradaki GET, anlık görüntüsünü aldıktan SONRA kapı açılana
+  // kadar yanıt vermez (10.3'ün sırası: ikinci önce, birinci sonra).
+  let haftaKapilari: Record<number, Promise<void>>
+  // Hangi sıradaki hafta yanıtının GÖVDESİ okundu (`json()` çağrıldı):
+  // "geç yanıt `yukle`ye ulaştı" bariyeri.
+  let haftaYanitiOkundu: Record<number, boolean>
+  let haftaGetSayaci = 0
+
+  function kapi() {
+    let ac!: () => void
+    const bekle = new Promise<void>((c) => {
+      ac = c
+    })
+    return { bekle, ac }
+  }
+
+  const haftaGetleri = () =>
+    istekler.filter((i) => i.method === 'GET' && i.yol.startsWith('/api/randevular?'))
+  const notGetSayisi = (id: number) =>
+    istekler.filter((i) => i.yol === `/api/randevular/${id}/not` && i.method === 'GET').length
+  const notYazmalari = (id: number) =>
+    istekler.filter((i) => i.yol === `/api/randevular/${id}/not` && i.method === 'PUT')
+  const ozelGetleri = () =>
+    istekler.filter((i) => /\/ozel-not$/.test(i.yol) && i.method === 'GET')
+  const gecmisIstekleri = () => istekler.filter((i) => /^\/api\/danisanlar\/\d+\/notlar/.test(i.yol))
+  const randevuPutlari = (id: number) =>
+    istekler.filter((i) => i.method === 'PUT' && i.yol === `/api/randevular/${id}`)
+  const haftaBasligi = () => document.querySelector('#hafta-basligi')?.textContent
+  const odendiKutusu = () => screen.getByRole('checkbox', { name: 'Ödendi' }) as HTMLInputElement
+  const gecmis = () => screen.getByRole('region', { name: 'Önceki seans notları' })
+
+  // A'nın 7 Eylül'deki seansından SONRA, 9 Eylül'den ÖNCE bir seansın notu:
+  // A 9 Eylül'e taşınınca "önceki seans notları"na GİRER. Listenin ekranda
+  // bir satır kazanması, taşıma sonrası geçmiş okumasının YENİ `once` ile
+  // gidip YANITININ EKRANA YAZILDIĞININ gözlemlenebilir kanıtı.
+  const ARADAKI_SEANS = {
+    appointment_id: 90, client_id: 1, seans_zamani: '2026-09-08T09:00',
+    sablon: 'serbest', icerik: 'ARADAKI SEANS', guncelleme_zamani: ZAMAN,
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 9, 12, 0))
+    istekler = []
+    sunucuRandevulari = [{ ...randevuA }, { ...randevuB }]
+    sunucuOdendi = {}
+    sunucuDurumu = {}
+    haftaKapilari = {}
+    haftaYanitiOkundu = {}
+    haftaGetSayaci = 0
+    sunucuOzelNotlari = { [randevuA.id]: GIZLI }
+
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
+      const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      const ekUc = ekUcYaniti(yol, secenekler)
+      if (ekUc) return ekUc
+      const method = secenekler?.method ?? 'GET'
+      const govde = secenekler?.body ? JSON.parse(String(secenekler.body)) : null
+      istekler.push({ yol, method, govde })
+
+      const notlar = notYaniti(yol, method, govde)
+      if (notlar) return notlar
+      if (yol.startsWith('/api/danisanlar')) return jsonYanit(danisanlar)
+      if (yol.startsWith('/api/cakisma')) {
+        return jsonYanit({ cakisanlar: [], cakisan_hafta_sayisi: 0, kontrol_edilen_hafta: 1 })
+      }
+      const tek = /^\/api\/randevular\/(\d+)$/.exec(yol)
+      if (tek && method === 'PUT') {
+        const id = Number(tek[1])
+        const g = govde as { client_id: number; baslangic: string; bitis: string; ucret: number | null }
+        sunucuRandevulari = sunucuRandevulari.map((r) =>
+          r.id === id
+            ? {
+                ...r,
+                client_id: g.client_id,
+                danisan_adi: danisanlar.find((d) => d.id === g.client_id)!.ad_soyad,
+                baslangic: g.baslangic,
+                bitis: g.bitis,
+                ucret: g.ucret,
+              }
+            : r,
+        )
+        const kayit = sunucuRandevulari.find((r) => r.id === id)!
+        return jsonYanit({
+          ...kayit,
+          odendi: sunucuOdendi[id] ?? kayit.odendi,
+          durum: sunucuDurumu[id] ?? kayit.durum,
+        })
+      }
+      if (tek && method === 'PATCH') {
+        sunucuDurumu[Number(tek[1])] = (govde as { durum: string }).durum
+        return jsonYanit({})
+      }
+      const odeme = /^\/api\/randevular\/(\d+)\/odeme$/.exec(yol)
+      if (odeme && method === 'PATCH') {
+        sunucuOdendi[Number(odeme[1])] = (govde as { odendi: boolean }).odendi
+        return { ok: true, status: 204, json: async () => ({}) } as unknown as Response
+      }
+      const aralik = /^\/api\/randevular\?baslangic=([^&]+)&bitis=([^&]+)/.exec(yol)
+      if (aralik && method === 'GET') {
+        haftaGetSayaci += 1
+        const sira = haftaGetSayaci
+        const bas = decodeURIComponent(aralik[1])
+        const bit = decodeURIComponent(aralik[2])
+        // ANLIK GÖRÜNTÜ istek anında: sunucu okumayı o an yaptı.
+        const anlik = sunucuRandevulari
+          .filter((r) => r.baslangic >= bas && r.baslangic < bit)
+          .map((r) => ({
+            ...r,
+            odendi: sunucuOdendi[r.id] ?? r.odendi,
+            durum: sunucuDurumu[r.id] ?? r.durum,
+          }))
+        const bekle = haftaKapilari[sira]
+        if (bekle) await bekle
+        return {
+          ok: true,
+          json: async () => {
+            haftaYanitiOkundu[sira] = true
+            return anlik
+          },
+        } as unknown as Response
+      }
+      if (yol === '/api/randevular' && method === 'POST') {
+        const g = govde as { client_id: number; baslangic: string; bitis: string; ucret: number | null }
+        const yeni = {
+          id: 300, client_id: g.client_id,
+          danisan_adi: danisanlar.find((d) => d.id === g.client_id)!.ad_soyad,
+          baslangic: g.baslangic, bitis: g.bitis, durum: 'planlandi', ucret: g.ucret,
+          odendi: false, seri_id: null,
+        }
+        sunucuRandevulari = [...sunucuRandevulari, yeni]
+        return jsonYanit([yeni])
+      }
+      throw new Error(`beklenmeyen istek: ${method} ${yol}`)
+    }) as unknown as typeof fetch
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    globalThis.fetch = gercekFetch
+    vi.restoreAllMocks()
+  })
+
+  async function seansAc(ad = 'Ayşe Yılmaz') {
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await userEvent.click(await screen.findByRole('button', { name: ad }))
+    await screen.findByLabelText('Seans notu')
+  }
+
+  /**
+   * Formdaki Tarih'i değiştirip "Güncelle"ye basar; kaydetme zinciri
+   * TAMAMEN bitene kadar bekler.
+   *
+   * BARİYER (altıncı biçim): PUT sunucuya ulaştı VE düğmenin kilidi kalktı.
+   * Kilit `RandevuPaneli.islemCalistir`in `finally`sinde, yani `onKaydet`
+   * (`AnaEkran.randevuKaydet` → `takvim.kaydet`) çözüldükten SONRA kalkıyor:
+   * bu noktada seçim yanıtla yamanmış, hafta değişmişse `setHaftaBasi`
+   * yapılmış, değişmediyse `yukle()` beklenmiş olur. Eskiden bu bariyer
+   * "Güncelle düğmesi kayboldu"ydu; Görev 10'dan beri bölüm AÇIK kalıyor.
+   */
+  async function tarihiTasiVeGuncelle(yeniTarih: string, id = randevuA.id) {
+    const oncekiPutlar = randevuPutlari(id).length
+    fireEvent.change(screen.getByLabelText('Tarih'), { target: { value: yeniTarih } })
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    await waitFor(() => expect(randevuPutlari(id)).toHaveLength(oncekiPutlar + 1))
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Güncelle' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    )
+  }
+
+  it('10.1 izgarada randevuya tiklamak seans bolumunu BIR kez kaydirir; sekme donusu, Geldi ve Odendi kaydirmaz', async () => {
+    const kaydir = vi.spyOn(Element.prototype, 'scrollIntoView')
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    // Açılış (ve ilk hafta yüklemesi) kaydırmaz.
+    expect(kaydir).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByLabelText('Seans notu')
+    expect(kaydir).toHaveBeenCalledTimes(1)
+    // Kaydırılan öğe seans BÖLÜMÜ (form + not birlikte görünsün diye başı).
+    expect(kaydir.mock.contexts[0]).toBe(screen.getByTestId('seans-bolumu'))
+    expect(kaydir).toHaveBeenLastCalledWith({ block: 'start' })
+
+    // Sekme dönüşü: `TakvimSekmesi` yeniden MONTE olur, seçim kancada durur.
+    // Kaydırma isteği ilk uygulamada tüketilmediyse burada ikinci kez koşar.
+    await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
+    // BARİYER: bölüm yeniden monte oldu (efektler koştu).
+    expect(screen.getByTestId('seans-bolumu')).toBeDefined()
+    expect(screen.getByLabelText('Seans notu')).toBeDefined()
+    expect(kaydir).toHaveBeenCalledTimes(1)
+
+    // Geldi ve Ödendi seçili nesneyi AYNI kimlikle tazeler: kaydırma yok.
+    const geldi = () => screen.getByRole('button', { name: 'Geldi' })
+    await userEvent.click(geldi())
+    await waitFor(() => expect(geldi().getAttribute('aria-pressed')).toBe('true'))
+    await userEvent.click(odendiKutusu())
+    await waitFor(() => expect(sunucuOdendi[randevuA.id]).toBe(true))
+    await waitFor(() => expect(odendiKutusu().disabled).toBe(false))
+    expect(kaydir).toHaveBeenCalledTimes(1)
+
+    // ARTI YÖN: her kullanıcı seçimi kaydırır, yalnızca ilki değil.
+    await userEvent.click(screen.getByRole('button', { name: 'Mehmet Demir' }))
+    await waitFor(() =>
+      expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(/Mehmet Demir — /),
+    )
+    expect(kaydir).toHaveBeenCalledTimes(2)
+  })
+
+  it('10.2 formdan SONRAKI haftaya tasininca hafta ona gecer; seans bolumu ve Randevu formu acik kalir, baslikta yeni tarih; tasima KAYDIRMAZ', async () => {
+    const kaydir = vi.spyOn(Element.prototype, 'scrollIntoView')
+    await seansAc()
+    expect(haftaBasligi()).toBe('7 – 13 Eylül 2026')
+    expect(kaydir).toHaveBeenCalledTimes(1)
+    const getlerOnce = haftaGetleri().length
+
+    await tarihiTasiVeGuncelle('2026-09-15')
+
+    // BARİYER: yeni haftanın listesi geldi — blok artık ızgarada (liste
+    // gelmeden önce eski kopya "aralık dışı" satırında durur, adı farklı).
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    expect(haftaBasligi()).toBe('14 – 20 Eylül 2026')
+    expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(
+      /Ayşe Yılmaz — 15 Eylül 2026, 10:00/,
+    )
+    const bolum = screen.getByTestId('seans-bolumu')
+    expect(within(bolum).getByRole('heading', { name: 'Randevu' })).toBeDefined()
+    // Eski haftanın yeniden yüklenmesi YOK: PUT'tan sonra TEK hafta GET'i ve
+    // o da YENİ haftanın (eski kapanıştaki `yukle()` çağrılmadı).
+    const sonrakiler = haftaGetleri().slice(getlerOnce)
+    expect(sonrakiler).toHaveLength(1)
+    expect(sonrakiler[0].yol).toContain(`baslangic=${encodeURIComponent('2026-09-14T00:00')}`)
+    // Taşıma sonrası tazeleme kaydırmaz (tasarım A6).
+    expect(kaydir).toHaveBeenCalledTimes(1)
+  })
+
+  it('10.3 hafta korumasi: GEC donen eski hafta yaniti izgaraya YAZILMAZ', async () => {
+    sunucuRandevulari = [
+      { ...randevuA },
+      { ...randevuB },
+      // 14–20 Eylül: yalnızca Ayşe. 21–27 Eylül: yalnızca Mehmet.
+      { ...randevuA, id: 103, baslangic: '2026-09-15T10:00', bitis: '2026-09-15T11:00' },
+      { ...randevuB, id: 104, baslangic: '2026-09-22T10:00', bitis: '2026-09-22T11:00' },
+    ]
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await screen.findByRole('button', { name: 'Ayşe Yılmaz' })
+    expect(haftaGetleri()).toHaveLength(1)
+
+    const ikinciHafta = kapi()
+    const ucuncuHafta = kapi()
+    haftaKapilari[2] = ikinciHafta.bekle
+    haftaKapilari[3] = ucuncuHafta.bekle
+    await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
+    await waitFor(() => expect(haftaGetleri()).toHaveLength(2))
+    await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
+    await waitFor(() => expect(haftaGetleri()).toHaveLength(3))
+    expect(haftaBasligi()).toBe('21 – 27 Eylül 2026')
+
+    // Görünen haftanın yanıtı ÖNCE döner.
+    ucuncuHafta.ac()
+    await screen.findByRole('button', { name: 'Mehmet Demir' })
+    expect(screen.queryByRole('button', { name: 'Ayşe Yılmaz' })).toBeNull()
+
+    // Artık görünmeyen haftanın yanıtı SONRA döner.
+    ikinciHafta.ac()
+    // BARİYER: geç yanıtın gövdesi okundu (`yukle` onu şimdi ya yazar ya
+    // atar); bir makro görev sonra yazma — olacaksa — çoktan olmuştur.
+    await waitFor(() => expect(haftaYanitiOkundu[2]).toBe(true))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    expect(haftaBasligi()).toBe('21 – 27 Eylül 2026')
+    expect(screen.getByRole('button', { name: 'Mehmet Demir' })).toBeDefined()
+    // Geç liste yazılsaydı 15 Eylül'deki Ayşe bu haftanın "aralık dışı"
+    // satırına düşer, Mehmet ızgaradan kaybolurdu.
+    expect(screen.queryByRole('region', { name: 'Görünen aralık dışındaki randevular' })).toBeNull()
+  })
+
+  it('10.4 yazilmamis not metni tasimada korunur: editor AYNI dugum, metin yerinde', async () => {
+    sunucuGecmisi = [ARADAKI_SEANS]
+    await seansAc()
+    // Ön koşul: 8 Eylül'deki seans 7 Eylül'deki bu seanstan SONRA — listede yok.
+    expect(within(gecmis()).queryAllByRole('button')).toHaveLength(0)
+    expect(notGetSayisi(randevuA.id)).toBe(1)
+
+    const editor = screen.getByLabelText('Seans notu') as HTMLTextAreaElement
+    // Kayıt gecikmesi (2 sn) DOLMADAN taşınıyor: metin yalnızca editörde.
+    fireEvent.change(editor, { target: { value: 'Yarım kalan cümle' } })
+    await tarihiTasiVeGuncelle('2026-09-09')
+
+    // BARİYER: resmî not ve geçmiş YENİ başlangıçla bir kez daha okundu ve
+    // yanıt EKRANA yazıldı (8 Eylül artık "önceki").
+    await waitFor(() => expect(within(gecmis()).getAllByRole('button')).toHaveLength(1))
+    expect(notGetSayisi(randevuA.id)).toBe(2)
+
+    // Editör yeniden MONTE edilmedi: aynı DOM düğümü, yazılmamış metin yerinde.
+    expect(screen.getByLabelText('Seans notu')).toBe(editor)
+    expect(editor.value).toBe('Yarım kalan cümle')
+    // Ön koşulun kanıtı: taşıma sırasında metin sunucuya HENÜZ yazılmamıştı
+    // (yeniden monte olsaydı unmount tahliyesi onu şimdiye kadar PUT ederdi).
+    expect(notYazmalari(randevuA.id)).toHaveLength(0)
+  })
+
+  it('10.5 Ozel Notlarim acikken tasima: ozel not gorunur kalir ve yeniden ISTENMEZ; gecmis YENI once ile istenir', async () => {
+    sunucuGecmisi = [ARADAKI_SEANS]
+    await seansAc()
+    await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
+    expect(((await screen.findByLabelText('Özel notum')) as HTMLTextAreaElement).value).toBe(GIZLI)
+    expect(ozelGetleri()).toHaveLength(1)
+    expect(within(gecmis()).queryAllByRole('button')).toHaveLength(0)
+
+    await tarihiTasiVeGuncelle('2026-09-09')
+
+    // BARİYER: taşıma sonrası geçmiş okumasının yanıtı ekrana yazıldı — özel
+    // notu sıfırlayacak olan AYNI `setSeansVerisi` çağrısı.
+    await waitFor(() => expect(within(gecmis()).getAllByRole('button')).toHaveLength(1))
+    expect(gecmisIstekleri().at(-1)!.yol).toContain(`once=${encodeURIComponent('2026-09-09T10:00')}`)
+
+    expect(screen.queryByText('Özel not yükleniyor…')).toBeNull()
+    expect((screen.getByLabelText('Özel notum') as HTMLTextAreaElement).value).toBe(GIZLI)
+    // Özel not efekti başlangıca bağlı değil: silinemez `goruntuleme |
+    // private_note` satırı taşıma yüzünden bir kez daha düşmez.
+    expect(ozelGetleri()).toHaveLength(1)
+  })
+
+  it('10.6 Guncelle sonrasi form ACIK kalir ve kaydedilen degerleri gosterir; yeni randevuda Kaydet formu kapatir', async () => {
+    await seansAc()
+    const tarihAlani = screen.getByLabelText('Tarih')
+    await userEvent.click(screen.getByRole('button', { name: '45 dk' }))
+    await userEvent.clear(screen.getByLabelText('Ücret (TL)'))
+    await userEvent.type(screen.getByLabelText('Ücret (TL)'), '500')
+    const getlerOnce = haftaGetleri().length
+
+    await tarihiTasiVeGuncelle('2026-09-08')
+
+    // Aynı hafta: görünen hafta TEK kez yeniden yüklendi (liste tazelenir).
+    await waitFor(() => expect(haftaGetleri()).toHaveLength(getlerOnce + 1))
+    expect(randevuPutlari(randevuA.id)[0].govde).toEqual({
+      client_id: 1, baslangic: '2026-09-08T10:00', bitis: '2026-09-08T10:45', ucret: 50000,
+    })
+    const bolum = screen.getByTestId('seans-bolumu')
+    expect(within(bolum).getByRole('heading', { name: 'Randevu' })).toBeDefined()
+    // Form yeniden monte edilmedi ve kaydedilen değerleri gösteriyor.
+    expect(screen.getByLabelText('Tarih')).toBe(tarihAlani)
+    expect((tarihAlani as HTMLInputElement).value).toBe('2026-09-08')
+    expect((screen.getByLabelText('Süre (dakika)') as HTMLInputElement).value).toBe('45')
+    expect(within(bolum).getByTestId('ucret-onizleme').textContent).toBe('= 500,00 TL')
+    expect(bolum.textContent).toContain('Salı, 8 Eylül · 10:00–10:45')
+    expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(
+      /Ayşe Yılmaz — 8 Eylül 2026, 10:00/,
+    )
+
+    // Var olan davranış: yeni randevunun "Kaydet"i formu KAPATIR.
+    await userEvent.click(screen.getByLabelText('9 Eylül 09:00 boş'))
+    expect(screen.queryByTestId('seans-bolumu')).toBeNull()
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '2')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Yeni randevu' })).toBeNull())
+    expect(istekler.some((i) => i.method === 'POST' && i.yol === '/api/randevular')).toBe(true)
   })
 })
 

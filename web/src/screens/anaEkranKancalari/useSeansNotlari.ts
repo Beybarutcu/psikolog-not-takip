@@ -160,23 +160,34 @@ export function useSeansNotlari({
           notApi.danisanNotlari(seansDanisanId, GECMIS_SEANS_SAYISI, seansBaslangici),
         ])
         if (iptal) return
-        setSeansVerisi({
+        setSeansVerisi((onceki) => ({
           id: seansId,
           // Okuma başladıktan SONRA biten bir kayıt yanıtın üstüne uygulanır
           // (bkz. `notSaati`).
+          //
+          // Tasarım A6: taşımada (AYNI seans, yeni başlangıç) resmî not bir
+          // kez daha okunur — not okuması sunucuda `OturumBasi(5 dk)` ile
+          // birleşir, yeni denetim satırı düşmez. Editör `not-${id}` ile
+          // key'li olduğu için yeniden MONTE EDİLMEZ; kirli editör gelen
+          // hâli benimsemez (`NotEditoru::sunucuHali`), yazılmamış metin
+          // yerinde kalır.
           not: notSaati.uygula([gelenNot], okumaDamgasi)[0] ?? gelenNot,
-          ozelNot: null,
-          ozelHata: null,
+          // Tasarım A6: AYNI seansın başlangıcı değişince (taşıma) özel not
+          // sıfırlanmaz — özel not efekti başlangıca bağlı değil ve yeniden
+          // koşmaz; sıfırlansaydı sekme "Özel not yükleniyor…"da kalırdı.
+          ozelNot: onceki.id === seansId ? onceki.ozelNot : null,
+          ozelHata: onceki.id === seansId ? onceki.ozelHata : null,
           // Bu seansın KENDİ notu geçmiş listesine girmez: üstte düzenlenen
           // metnin bayat bir kopyası, "geçen seansta ne konuşulmuştu"
           // sorusuna cevap değil. Bunu sağlayan tek şey sunucudaki `once`
           // kesmesidir ve o KESİN küçüktür. İstemcide ikinci bir süzgeç
           // YOK: vardı, hiçbir zaman bir şey elemiyordu ve gerekçesi
           // olmayan bir mekanizmayı tarif ediyordu (bkz.
-          // `GECMIS_SEANS_SAYISI`).
+          // `GECMIS_SEANS_SAYISI`). Taşımada liste YENİ başlangıçla
+          // yeniden istenir ("önceki seanslar" başlangıca göre).
           gecmisNotlar: gelenGecmis,
           hata: null,
-        })
+        }))
       } catch (e) {
         if (iptal) return
         if (e instanceof YetkisizHata) {

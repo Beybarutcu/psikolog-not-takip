@@ -26,3 +26,7 @@
 import { configure } from '@testing-library/react'
 
 configure({ asyncUtilTimeout: 5_000 })
+
+// jsdom `scrollIntoView` uygulamıyor. Tasarım A6'nın kaydırması bu casusla
+// SAYILIR (tıklamada 1, sekme dönüşünde/tazelemede 0).
+Element.prototype.scrollIntoView = function scrollIntoView() {}

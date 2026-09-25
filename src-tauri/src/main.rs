@@ -46,7 +46,9 @@ fn main() {
                 tauri::WebviewUrl::External(adres.parse().unwrap()),
             )
             .title("Terapi Notlari")
-            .inner_size(1280.0, 820.0)
+            .inner_size(1200.0, 760.0)
+            .min_inner_size(1024.0, 680.0)
+            .theme(Some(tauri::Theme::Light))
             .build()?;
             Ok(())
         })
@@ -126,5 +128,17 @@ mod tests {
                 "lisans paket icinde lisanslar/ altina metin olarak gitmeli: {hedef}"
             );
         }
+    }
+
+    /// Tasarim A3/A8: pencere 1200x760 acilir, 1024x680'den kucuk olmaz ve
+    /// macOS koyu modda bile ACIK temayla cizilir. Kabuk Rust tarafinda
+    /// calistirilamadigi icin kaynak okunarak sabitleniyor.
+    #[test]
+    fn pencere_boyutu_ve_tema_sabit() {
+        let kaynak = include_str!("main.rs");
+        let kurucu = kaynak.split("#[cfg(test)]").next().unwrap();
+        assert!(kurucu.contains(".inner_size(1200.0, 760.0)"), "varsayilan boyut");
+        assert!(kurucu.contains(".min_inner_size(1024.0, 680.0)"), "asgari boyut");
+        assert!(kurucu.contains(".theme(Some(tauri::Theme::Light))"), "acik tema");
     }
 }

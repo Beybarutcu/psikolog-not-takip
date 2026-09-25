@@ -187,18 +187,30 @@ describe('DosyaBilgileri — bakiye ne sayar, ne saymaz', () => {
     expect(screen.getByText('300,00 TL')).toBeDefined()
   })
 
-  it('planlanmis, iptal ve gelmedi durumlari bakiyeye GIRMEZ', () => {
-    // Gelecek bir randevu henüz borç değildir; iptal edilen de. "Gelmedi"
-    // ücretlendirmesi terapistin politikasına bağlı olduğu için bu ekran
-    // onu borç saymaz — etiket neyi saydığını açıkça yazar.
+  it('planlanmis ve iptal bakiyeye GIRMEZ', () => {
+    // Gelecek bir randevu henüz borç değildir; iptal edilen de — tasarım
+    // §5.1'de her iki durum da açıkça borç DIŞINDA bırakılıyor.
     kur({
       randevular: [
         randevu({ id: 1, durum: 'planlandi', odendi: false, ucret: 45000 }),
         randevu({ id: 2, durum: 'iptal', odendi: false, ucret: 45000 }),
-        randevu({ id: 3, durum: 'gelmedi', odendi: false, ucret: 45000 }),
       ],
     })
     expect(screen.getByText('0,00 TL')).toBeDefined()
+  })
+
+  it('gelmedi, ucretli ve odenmemis seans bakiyeye GIRER; ucretsizi girmez', () => {
+    // Kural değişikliği (tasarım §5.1, kullanıcı kararı 2026-09-25): terapist
+    // gelmeyen seansı ücretlendiriyor, bu yüzden "gelmedi" artık İÇERİDE —
+    // ama yalnızca ücreti > 0 olan satırlar (0 ve NULL hâlâ dışarıda).
+    kur({
+      randevular: [
+        randevu({ id: 1, durum: 'gelmedi', odendi: false, ucret: 45000 }),
+        randevu({ id: 2, durum: 'gelmedi', odendi: false, ucret: 0 }),
+        randevu({ id: 3, durum: 'gelmedi', odendi: false, ucret: null }),
+      ],
+    })
+    expect(screen.getByText('450,00 TL')).toBeDefined()
   })
 
   it('ucreti girilmemis seans bakiyeyi bozmaz', () => {
@@ -215,16 +227,14 @@ describe('DosyaBilgileri — bakiye ne sayar, ne saymaz', () => {
     // "Bakiye: 0,00 TL" tek başına, ücreti hiç girilmemiş bir dosyada
     // "borcu yok" diye okunur. Etiket kapsamı yazmazsa sayı yanıltıcıdır.
     kur()
-    expect(screen.getByText(/gelinmiş ve ödenmemiş seanslar/i)).toBeDefined()
+    expect(screen.getByText(/gelinen ya da gelinmeyen seanslar/i)).toBeDefined()
   })
 
   it('bakiye NEYI SAYMADIGINI da soyler', () => {
-    // Neyi saydığını yazmak yetmiyor: "gelmedi" işaretli seanslar sayının
-    // dışında ve bu, gelmeyen seansları ücretlendiren bir terapist için
-    // sessizce eksik bir bakiyedir. Ekran o dışlamayı açıkça yazmalı.
+    // Neyi saydığını yazmak yetmiyor: kuralın dışında kalan tek durum
+    // (iptal) açıkça yazılmalı — "gelmedi" artık İÇERİDE (tasarım §5.1).
     kur()
-    expect(screen.getByText(/'Gelmedi' olarak işaretlenen seanslar bu sayıya girmez/i))
-      .toBeDefined()
+    expect(screen.getByText(/İptal edilenler girmez/i)).toBeDefined()
   })
 
   it('Plan 4: etiket GERCEGI soyler -- odeme isaretleme yolu artik VAR', () => {
@@ -236,12 +246,18 @@ describe('DosyaBilgileri — bakiye ne sayar, ne saymaz', () => {
     kur()
     expect(
       screen.getByText(
-        "Bakiye: gelinmiş ve ödenmemiş seanslar. 'Gelmedi' olarak işaretlenen seanslar bu sayıya girmez.",
+        'Bakiye: ücreti girilmiş ve ödenmemiş, gelinen ya da gelinmeyen seanslar. İptal edilenler girmez.',
       ),
     ).toBeDefined()
-    // EKSI YON: artık yanlış olan eski ibare ekranda KALMAMALI.
+    // EKSI YON: artık yanlış olan eski ibareler ekranda KALMAMALI.
     expect(document.body.textContent).not.toContain('işaretleme yolu henüz yok')
     expect(document.body.textContent).not.toContain('bu tutardan düşmez')
+    // EKSI YON (kural değişikliği): eski dışlama cümlesi de ARTIK YANLIŞ —
+    // "gelmedi" artık borca giriyor, bu yüzden onu dışarıda bırakan eski
+    // cümle ekranda KALMAMALI.
+    expect(document.body.textContent).not.toContain(
+      "'Gelmedi' olarak işaretlenen seanslar bu sayıya girmez",
+    )
   })
 })
 

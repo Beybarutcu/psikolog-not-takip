@@ -59,6 +59,27 @@ export function dakikaFarki(baslangic: string, bitis: string): number {
   return (zamandanDate(bitis).getTime() - zamandanDate(baslangic).getTime()) / 60000
 }
 
+// Görev 8: `RandevuPaneli`nin okunur özeti (`okunurAralik`) ve haftaGunleri
+// dışındaki gün adı ihtiyaçları için. `GUN_ADLARI` (kısa, ızgara başlıkları)
+// zaten vardı; burada TAM adlar — kısa adları büyük harfe çevirip uzatmak
+// yerine ayrı bir liste, çünkü "Çar" -> "Çarşamba" gibi bazı kısaltmalar
+// birebir önek değil (bkz. Türkçe ay adlarındaki AYLAR ile aynı desen).
+export const GUN_TAM_ADLARI = [
+  'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar',
+]
+
+/** `haftaninBasi`'nin kullandığı pazartesi-başlangıçlı indeksleme (0 = Pazartesi). */
+export function haftaIndeksi(tarih: Date): number {
+  return (tarih.getDay() + 6) % 7
+}
+
+/** `"2026-09-24T14:00"`, `"2026-09-24T14:50"` → `"Perşembe, 24 Eylül · 14:00–14:50"`. */
+export function okunurAralik(baslangic: string, bitis: string): string {
+  const d = zamandanDate(baslangic)
+  return `${GUN_TAM_ADLARI[haftaIndeksi(d)]}, ${d.getDate()} ${AYLAR[d.getMonth()]} · ` +
+    `${baslangic.slice(11, 16)}–${bitis.slice(11, 16)}`
+}
+
 export function haftaBasligi(haftaBasi: Date): string {
   const gunler = haftaGunleri(haftaBasi)
   const ilk = gunler[0]

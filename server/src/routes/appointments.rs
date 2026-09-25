@@ -7,13 +7,13 @@ use axum::{
     Json,
 };
 use psikolog_core::store::appointments::{
-    aralik_getir, cakisanlari_bul, durum_guncelle, guncelle as depo_guncelle,
-    odeme_guncelle, olustur as tekil_olustur, seri_cakisanlari_bul, seri_olustur, seri_sayisi,
+    aralik_getir, cakisanlari_bul, durum_guncelle, guncelle_ve_son_temas, odeme_guncelle,
+    olustur as tekil_olustur, seri_cakisanlari_bul, seri_olustur, seri_sayisi,
     seri_silinecek_not_sayisi, seriyi_sil, sil, silinecek_not_sayisi, Randevu, RandevuGuncelleme,
     SeriCakismasi, SonTemasSonucu, YeniRandevu,
 };
 use psikolog_core::store::audit::Cihaz;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 #[derive(Deserialize)]
@@ -109,7 +109,7 @@ pub async fn olustur(
 /// gösteriyordu. İkisi de sunucuda `LogHacmi::HerCagri` (silinemez satır)
 /// olduğu için istemci onları YENİDEN ÇEKEMEZ; bu yüzden yanıt genişletildi
 /// -- yeni bir uç nokta değil, zaten dönen `{}` yanıtı `son_guncelleme`
-/// alanı `Some` olduğunda üç alanla büyüyor. `depo_guncelle`nin `None`
+/// alanı `Some` olduğunda üç alanla büyüyor. `durum_guncelle`nin `None`
 /// döndürdüğü her durumda (gelmedi/iptal/planlandi, ya da geriye dönük bir
 /// "geldi") yanıt bugünkü gibi boş `{}` -- istemci de o zaman hiçbir şeyi
 /// yamamaz (bkz. `useDanisanDosyasi.dosyaAlanlariniYama` /
@@ -166,11 +166,20 @@ pub async fn odeme(
 ///
 /// İlk satırda `acik_baglanti` -- diğer dokuz rotayla aynı kapı: kilitli
 /// oturumda 401 döner ve gövdede hiçbir veri taşımaz.
+///
+/// # Yanıt: `Randevu` + `son_temas`/`saklama_bitis` -- yalnızca GERÇEKTEN ilerlediyse
+/// Plan A Görev 9 (tasarım A4): "geldi" işaretli bir seans taşınınca
+/// `appointments::guncelle_ve_son_temas` danışanın son temasını ileri
+/// taşıyabilir. Gerekçe `durum` handler'ındakiyle (Plan 7 Görev 3) aynı:
+/// istemci kartı ve saklama listesini YENİDEN ÇEKEMEZ (ikisi de
+/// `LogHacmi::HerCagri`), bu yüzden değişen iki alan yanıta eklenir. Yanıt
+/// bugünkü `Randevu` şeklini AYNEN korur (`#[serde(flatten)]`); iki alan
+/// ikisi birlikte ya vardır ya yoktur (`client_id` zaten `Randevu`'da).
 pub async fn guncelle(
     State(s): State<AppState>,
     Path(id): Path<i64>,
     istek: Result<Json<GuncellemeIstegi>, JsonRejection>,
-) -> Result<Json<Randevu>, ApiHata> {
+) -> Result<Json<GuncellemeYaniti>, ApiHata> {
     let conn = acik_baglanti(&s)?;
     let istek = govde_coz(istek)?;
     let yeni = RandevuGuncelleme {
@@ -179,8 +188,26 @@ pub async fn guncelle(
         bitis: istek.bitis,
         ucret: istek.ucret,
     };
-    let randevu = depo_guncelle(&conn, id, &yeni, Cihaz::Masaustu).map_err(depo_hatasi)?;
-    Ok(Json(randevu))
+    let sonuc = guncelle_ve_son_temas(&conn, id, &yeni, Cihaz::Masaustu).map_err(depo_hatasi)?;
+    Ok(Json(GuncellemeYaniti {
+        randevu: sonuc.randevu,
+        son_temas: sonuc.son_temas.as_ref().map(|t| t.son_temas.clone()),
+        saklama_bitis: sonuc.son_temas.map(|t| t.saklama_bitis),
+    }))
+}
+
+/// `PUT /randevular/{id}` yanıtı (bkz. `guncelle` handler'ı): kaydın kendisi
+/// ve -- taşınan "geldi" seansı son temasını GERÇEKTEN ilerlettiyse -- yeni
+/// son temas ile saklama bitişi. İki alan tek bir `Option<SonTemasSonucu>`'dan
+/// türetildiği için ayrı ayrı `Some`/`None` olamaz.
+#[derive(Serialize)]
+pub struct GuncellemeYaniti {
+    #[serde(flatten)]
+    pub randevu: Randevu,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub son_temas: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub saklama_bitis: Option<String>,
 }
 
 /// Bir randevu silinirse **kaç notun** yok olacağını söyler

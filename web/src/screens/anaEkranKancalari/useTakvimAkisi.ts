@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { takvimApi, YetkisizHata } from '../../api'
+import { takvimApi, YetkisizHata, type GuncellemeYaniti } from '../../api'
 import type { Randevu } from '../../takvim/HaftalikTakvim'
-import { haftaGunleri, haftaninBasi, yerelZaman } from '../../takvim/hafta'
+import { haftaGunleri, haftaninBasi, yerelZaman, zamandanDate } from '../../takvim/hafta'
+import { simdiYerel } from './yerelGun'
 import { randevuSaatiOlustur } from './yazmaSaati'
 
 /**
@@ -24,14 +25,41 @@ import { randevuSaatiOlustur } from './yazmaSaati'
  * kimliklerle sınırlı tutmanın bedeli sıfır olan yoludur.
  */
 export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
-  const [haftaBasi, setHaftaBasi] = useState(() => haftaninBasi(new Date()))
+  // Açılış haftası uygulamadaki TEK "şimdi" kaynağından (`yerelGun.ts::
+  // simdiYerel`, tasarım A2) — ikinci bir `new Date()` çağrısı bu ekranın
+  // "şimdi"sini danışan dosyasınınkinden testlerde sessizce ayrıştırırdı.
+  const [haftaBasi, setHaftaBasi] = useState(() => haftaninBasi(zamandanDate(simdiYerel())))
   const [randevular, setRandevular] = useState<Randevu[]>([])
   const [hata, setHata] = useState<string | null>(null)
   const [seciliRandevu, setSeciliRandevu] = useState<Randevu | null>(null)
   const [seciliBosSaat, setSeciliBosSaat] = useState<string | null>(null)
+  // Kaydırma isteği (tasarım A6): KULLANICI bir randevu seçtiğinde seçilen
+  // randevunun kimliği; seans bölümü onu uygulayınca `kaydirmaTamam` ile
+  // temizlenir. Bileşende değil burada, çünkü `TakvimSekmesi` sekme dönüşünde
+  // yeniden monte oluyor — bileşenin kendi durumu olsaydı ya hiç kaydırmaz ya
+  // her montajda yeniden kaydırırdı. Liste tazelemesi, hafta değişimi ve
+  // taşıma sonrası tazeleme bu isteği KURMAZ.
+  const [kaydirmaIstegi, setKaydirmaIstegi] = useState<number | null>(null)
 
   const yetkisizRef = useRef(onYetkisiz)
   yetkisizRef.current = onYetkisiz
+
+  // Hafta koruması (tasarım A6): yanıt, istek anındaki hafta HÂLÂ görünen
+  // haftaysa yazılır. Ref render'da tazelenir; efekt yeni hafta için
+  // `yukle`'yi çağırmadan önce ref zaten yenidir. Kapattığı yarış: hızlı hafta
+  // gezinmesinde (ya da taşımada) önce istenip SONRA dönen eski haftanın
+  // listesi, görünen haftanın ızgarasını eziyordu (ölçen test:
+  // `AnaEkran.test.tsx` > "10.3 hafta korumasi").
+  const gorunenHafta = useRef(haftaBasi.getTime())
+  gorunenHafta.current = haftaBasi.getTime()
+
+  // Seçimin ŞU ANKİ kimliği (düzeltme turu 1, kontrolör R11). `kaydet`in PUT
+  // dalı `await`ten SONRA "A hâlâ seçili mi?" diye sormalı ve o soru eski
+  // kapanıştaki `seciliRandevu`ya sorulamaz: ızgara PUT uçuştayken
+  // tıklanabilir. Ref seçimi değiştiren HER yerde, `setSeciliRandevu`nun
+  // yanında güncelleniyor (render'ı beklemeden); kimliği koruyan tazelemeler
+  // (`durumDegis`/`odemeDegis`) ona dokunmaz.
+  const seciliIdRef = useRef<number | null>(null)
 
   // # Uçuştaki yazma × liste yüklemesi (Görev 2 inceleme M7)
   //
@@ -55,11 +83,13 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
    */
   const oturumKapandi = useCallback(() => {
     setRandevular([])
+    seciliIdRef.current = null
     setSeciliRandevu(null)
     setSeciliBosSaat(null)
   }, [])
 
   const yukle = useCallback(async () => {
+    const istenen = haftaBasi.getTime()
     const gunler = haftaGunleri(haftaBasi)
     const baslangic = yerelZaman(gunler[0])
     const sonGun = gunler[6]
@@ -69,6 +99,9 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
     const okumaDamgasi = yazmaSaati.okumaBasladi()
     try {
       const sunucudan = await takvimApi.randevulariGetir(baslangic, bitis)
+      // Hafta koruması (bkz. `gorunenHafta`): bu arada başka bir haftaya
+      // geçildiyse yanıt ATILIR — liste de seçim de o haftanın yüklemesine ait.
+      if (gorunenHafta.current !== istenen) return
       // Bu yükleme başladığında henüz bitmemiş yazmalar yanıttan önce gelir
       // (bkz. `yazmaSaati.ts`).
       const gelen = yazmaSaati.uygula(sunucudan, okumaDamgasi)
@@ -86,6 +119,12 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
       // iptali bu randevuyu da kapsadı) ya da başka bir haftaya bakılıyordur.
       // Her iki durumda da ekranda görünmeyen bir randevuya bağlı bir not
       // editörü açık tutmak, kaydı belirsiz bir kimliğe göndermek olurdu.
+      //
+      // Ref aşağıdaki güncelleyiciyle AYNI kararı verir (seçim, ref'in
+      // taşıdığı kimlikle aynı; listede yoksa kapanır).
+      if (seciliIdRef.current !== null && !gelen.some((r) => r.id === seciliIdRef.current)) {
+        seciliIdRef.current = null
+      }
       setSeciliRandevu((secili) => {
         if (secili === null) return null
         return gelen.find((r) => r.id === secili.id) ?? null
@@ -104,8 +143,13 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
         // temizlemek tek başına ekranı boşaltmıyordu. Kartın state'i
         // `useDanisanDosyasi`'nde, bu yüzden çağıranın verdiği geri çağrı
         // üzerinden kapatılıyor.
+        //
+        // Hafta korumasından ÖNCE ve koşulsuz: kilit hangi haftanın isteğinde
+        // gelirse gelsin ekran boşalmalı.
         yetkisizRef.current()
       }
+      // Eski bir haftanın hatası, görünen haftanın bandına yazılmaz.
+      if (gorunenHafta.current !== istenen) return
       setHata(e instanceof Error ? e.message : 'Randevular yüklenemedi.')
     }
   }, [haftaBasi, oturumKapandi, yazmaSaati])
@@ -120,28 +164,64 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
     })
   }
 
-  function randevuSec(randevu: Randevu) {
+  // Mutlak gezinme: "Bugün" düğmesi ve gün seçici (tasarım A1). Göreli
+  // `haftaDegis(±1)` yanında durur; ikisi de aynı state'i kurar.
+  //
+  // Son inceleme M8: hedef hafta görünen haftaysa state DEĞİŞMEZ (aynı nesne
+  // döner, React render'ı atlar). Yeni bir `Date` — aynı an da olsa — `yukle`
+  // kimliğini değiştirir ve efekt görünen haftayı boşuna yeniden isterdi
+  // (ölçen test: `AnaEkran.test.tsx` > "R14 M8").
+  function haftayaGit(tarih: Date) {
+    const hedef = haftaninBasi(tarih)
+    setHaftaBasi((onceki) => (onceki.getTime() === hedef.getTime() ? onceki : hedef))
+  }
+
+  function randevuSec(randevu: Randevu, secenek?: { kaydir?: boolean }) {
     setSeciliBosSaat(null)
+    seciliIdRef.current = randevu.id
     setSeciliRandevu(randevu)
+    // Kaydırma YALNIZCA kullanıcı seçiminde (tasarım A6); istek burada, sekme
+    // yeniden monte olunca tekrar çalışmasın diye bileşenin DIŞINDA tutulur.
+    if (secenek?.kaydir) setKaydirmaIstegi(randevu.id)
+  }
+
+  /** Seans bölümü kaydırmayı uyguladı: istek tüketildi (bkz. `kaydirmaIstegi`). */
+  function kaydirmaTamam() {
+    setKaydirmaIstegi(null)
   }
 
   function bosSaatSec(zaman: string) {
+    seciliIdRef.current = null
     setSeciliRandevu(null)
     setSeciliBosSaat(zaman)
   }
 
   function panelKapat() {
+    seciliIdRef.current = null
     setSeciliRandevu(null)
     setSeciliBosSaat(null)
   }
 
+  /**
+   * Paneldeki kaydı yazar. Dönüş: düzenlemede (PUT) sunucunun yanıtı, yeni
+   * kayıtta (POST) `null`.
+   *
+   * Plan A Görev 9 (tasarım A4): taşınan "geldi" seansı son temasını
+   * ilerlettiyse PUT yanıtı `son_temas`/`saklama_bitis` taşır. `durumDegis`
+   * ile AYNI karar: bu kanca yanıtı yalnızca YUKARI iletir; kartı ve saklama
+   * listesini `AnaEkran.randevuKaydet` yamar (o iki önbellek bu kancada
+   * değil).
+   *
+   * Plan A Görev 10 (tasarım A6): "Güncelle" seans bölümünü KAPATMAZ; yeni
+   * randevunun "Kaydet"i bugünkü gibi kapatır.
+   */
   async function kaydet(kayit: {
     client_id: number
     baslangic: string
     bitis: string
     ucret: number | null
     tekrar_sayisi?: number
-  }) {
+  }): Promise<GuncellemeYaniti | null> {
     try {
       // İki kip: panel mevcut bir randevuyla açıldıysa DÜZENLEME (PUT),
       // yalnızca boş bir saatle açıldıysa YENİ KAYIT (POST). Bu ayrım
@@ -152,18 +232,71 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
         // `tekrar_sayisi` bilerek geçirilmiyor: düzenleme kipinde panel o
         // alanı zaten göstermiyor ve mevcut bir randevuyu "8 hafta
         // tekrarla" ile kaydetmek anlamsız olurdu.
-        await takvimApi.randevuGuncelle(seciliRandevu.id, {
+        const yanit = await takvimApi.randevuGuncelle(seciliRandevu.id, {
           client_id: kayit.client_id,
           baslangic: kayit.baslangic,
           bitis: kayit.bitis,
           ucret: kayit.ucret,
         })
-      } else {
-        await takvimApi.randevuOlustur(kayit)
+        setHata(null)
+        // Tasarım A6: Güncelle seans bölümünü KAPATMAZ. Seçim yanıttaki taze
+        // kayıtla yamanır (kimlik aynı: not/özel not efektleri yeniden
+        // koşmaz, editör yeniden monte edilmez). Kayıt AÇIKÇA kuruluyor:
+        // yanıtın `son_temas`/`saklama_bitis`i randevunun alanı değil (onları
+        // `AnaEkran.randevuKaydet` tüketiyor).
+        const randevu: Randevu = {
+          id: yanit.id,
+          client_id: yanit.client_id,
+          danisan_adi: yanit.danisan_adi,
+          baslangic: yanit.baslangic,
+          bitis: yanit.bitis,
+          durum: yanit.durum,
+          ucret: yanit.ucret,
+          odendi: yanit.odendi,
+          seri_id: yanit.seri_id,
+        }
+        // Düzeltme turu 1 (kontrolör R11): ızgara PUT uçuştayken
+        // tıklanabilir. Kullanıcı bu arada boş bir saate, başka bir randevuya
+        // ya da "Seansı kapat"a bastıysa yanıt O SEÇİMİ EZMEZ. Koşulsuz
+        // yamada A geri seçiliyor, boş saat seçimi de yerinde kalıyordu: iki
+        // form birden açılıyor ve "Yeni randevu"nun Kaydet'i A'yı yeni
+        // saatin danışanına PUT ediyordu (A ve notu sessizce başka danışana).
+        // Yama bu yüzden işlevsel ve kimlik koşullu; karar ÖNCEKİ render'ın
+        // kapanışına değil, şu anki seçimi taşıyan `seciliIdRef`e soruluyor.
+        const halaSecili = seciliIdRef.current === randevu.id
+        setSeciliRandevu((secili) => (secili?.id === randevu.id ? randevu : secili))
+        const yeniHafta = haftaninBasi(zamandanDate(randevu.baslangic))
+        if (halaSecili && yeniHafta.getTime() !== haftaBasi.getTime()) {
+          // Başka haftaya taşındı: eski kapanıştaki `yukle` ÇAĞRILMAZ (eski
+          // haftayı yükler, taşınan randevuyu orada bulamaz ve seçimi
+          // KAPATIRDI); yeni haftayı efekt yükler, seçim listede bulunduğu
+          // için korunur. Seçim artık A değilse hafta ATLAMAZ: kullanıcı
+          // başka bir şeye bakıyor.
+          setHaftaBasi(yeniHafta)
+        } else {
+          // Aynı hafta ya da A artık seçili değil: görünen hafta tazelenir
+          // (taşınan blok eski yerinde kalmasın); seçimi yalnızca listeyle
+          // eşitler, A'yı geri SEÇMEZ.
+          await yukle()
+        }
+        return yanit
       }
+      await takvimApi.randevuOlustur(kayit)
       setHata(null)
       panelKapat()
-      await yukle()
+      // Son inceleme I3: formda Tarih başka bir haftaya çekilmiş olabilir.
+      // Eski kapanıştaki `yukle` GÖRÜNEN haftayı yükler; yeni kayıt orada
+      // yok ve ekranda hiçbir yerde görünmüyordu. PUT dalıyla AYNI mekanizma:
+      // o haftaya geçilir, `yukle` ÇAĞRILMAZ, yeni haftayı efekt yükler
+      // (hafta koruması `gorunenHafta` render'da tazelenir). Serinin ilk
+      // üyesi isteğin `baslangic`ı; sonraki üyeler zaten sonraki haftalarda.
+      const yeniHafta = haftaninBasi(zamandanDate(kayit.baslangic))
+      if (yeniHafta.getTime() !== haftaBasi.getTime()) {
+        setHaftaBasi(yeniHafta)
+      } else {
+        await yukle()
+      }
+      return null
     } catch (e) {
       // Üstteki bant dar bir sayfada gözden kaçabilir (bkz. Görev 10 inceleme
       // bulgusu) — burada set edilip yeniden fırlatılıyor ki panel de kendi
@@ -298,10 +431,12 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
     hata,
     seciliRandevu,
     seciliBosSaat,
-    panelAcik: seciliRandevu !== null || seciliBosSaat !== null,
     oturumKapandi,
     haftaDegis,
+    haftayaGit,
     randevuSec,
+    kaydirmaIstegi,
+    kaydirmaTamam,
     bosSaatSec,
     panelKapat,
     kaydet,

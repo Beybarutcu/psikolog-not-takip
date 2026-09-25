@@ -496,9 +496,10 @@ kullanılmaz.
 ## 8. Değişmeyenler ve kapsam dışı
 
 **Değişmeyenler:** veritabanı şeması; sunucu uçlarının listesi (PUT yanıtına
-isteğe bağlı üç alan eklenir, uç aynı); `127.0.0.1` kısıtı; SQLCipher ve
-anahtar sarmalama; özel notların ayrı tabloda kalması ve hiçbir aramaya/rapora
-girmemesi; `audit_log`'un değişmezliği ve içine içerik girmemesi (liste süzme,
+isteğe bağlı iki alan — `son_temas`, `saklama_bitis` — eklenir; danışan
+kimliği zaten `Randevu.client_id`'de, bkz. A4; uç aynı); `127.0.0.1`
+kısıtı; SQLCipher ve anahtar sarmalama; özel notların ayrı tabloda kalması
+ve hiçbir aramaya/rapora girmemesi; `audit_log`'un değişmezliği ve içine içerik girmemesi (liste süzme,
 özet satırı ve Oku/Yaz hiç satır üretmez; taşıma var olan "randevu düzenleme"
 satırını yazar, son temas güncellemesi ek satır yazmaz); DAP/SOAP şablonları.
 

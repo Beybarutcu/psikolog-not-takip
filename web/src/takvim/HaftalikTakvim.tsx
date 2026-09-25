@@ -1,4 +1,5 @@
-import { AYLAR, GUN_ADLARI, haftaBasligi, haftaGunleri, yerelZaman, zamandanDate } from './hafta'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { AYLAR, GUN_ADLARI, haftaGunleri, yerelZaman, zamandanDate } from './hafta'
 import { RandevuBloku } from './RandevuBloku'
 
 export type Randevu = {
@@ -49,14 +50,26 @@ function hucreAnahtari(tarih: Date): string {
 type Props = {
   randevular: Randevu[]
   haftaBasi: Date
-  onHaftaDegis: (yon: number) => void
   onRandevuSec: (randevu: Randevu) => void
   onBosSaatSec: (zaman: string) => void
+  /**
+   * Uygulamadaki TEK "şimdi" kaynağı (`yerelGun.ts::simdiYerel`,
+   * `TakvimSekmesi`'nde `useDakikalikSimdi` ile dakikada bir yenilenir).
+   * Bu görevde yalnızca geçiriliyor; Görev 6 bugün vurgusu ve şimdi
+   * çizgisi için kullanacak.
+   */
+  simdi: string
 }
 
 export function HaftalikTakvim({
-  randevular, haftaBasi, onHaftaDegis, onRandevuSec, onBosSaatSec,
+  randevular, haftaBasi, onRandevuSec, onBosSaatSec, simdi,
 }: Props) {
+  // Bugün vurgusu ve şimdi çizgisi (tasarım A2) — üçü de AYNI `simdi`
+  // dizgisinden (duvar saati, 16 karakter) türüyor: ikinci bir kaynak iki
+  // hesaplamanın sessizce ayrışabileceği yer demekti.
+  const bugunGunu = simdi.slice(0, 10)
+  const simdiSaat = Number(simdi.slice(11, 13))
+  const simdiDakika = Number(simdi.slice(14, 16))
   const gunler = haftaGunleri(haftaBasi)
   const saatler = Array.from(
     { length: CALISMA_BITIS - CALISMA_BASLANGIC },
@@ -95,6 +108,67 @@ export function HaftalikTakvim({
     (r) => !izgaraAnahtarlari.has(hucreAnahtari(zamandanDate(r.baslangic))),
   )
 
+  // Tasarım A3: satır yüksekliği pencereden türetilir, en az 36px.
+  // max(36, (pencere yüksekliği − tbody'nin SAYFA (döküman) üst kenarı − alt
+  // boşluk) / satır sayısı)
+  //
+  // HER render'da yeniden ölçülür (deps dizisi YOK, aşağıdaki `useLayoutEffect`
+  // her render'dan sonra çalışır): ızgaranın ÜSTÜNDEKİ içerik yükseklik
+  // değiştirdiğinde tbody'nin üst kenarı bir PENCERE `resize`'I OLMADAN da
+  // kayar -- `TakvimSekmesi`'ndeki hata banner'ı açılıp kapanması, "Bugün N
+  // seans" bilgi satırının hafta değişince görünüp kaybolması, ya da aşağıdaki
+  // "aralık dışı randevular" kutusunun 1'den 3 öğeye büyümesi hep üst
+  // bileşenin yeniden render'ı, resize OLAYI değil. Eski hâl yalnızca mount'ta
+  // ve `resize`'da ölçüyordu; bu üç durumda ölçüm BAYATLIYOR ve A3'ün
+  // "1200×760/1280×800'de kaydırma yok" garantisi ilk çizimden SONRA
+  // bozulabiliyordu.
+  //
+  // `getBoundingClientRect().top` PENCEREYE (viewport) görelidir, SAYFAYA
+  // değil. Sayfa aşağı kaydırılmışken (ör. Görev 10'da her randevu tıklaması
+  // sayfayı seans bölümüne kaydıracak) bu değer küçülür/eksiye düşer, satır
+  // yüksekliği büyür; satırlar büyüyünce sayfa uzar ve tarayıcının "scroll
+  // anchoring"i tıklanan öğeyi ekranda tutmak için `scrollY`'yi KAYDIRIR --
+  // bu da bir SONRAKİ render'da `top`'u yeniden değiştirir. Sonuç: ölçüm →
+  // scroll → ölçüm → scroll döngüsü, React "Maximum update depth exceeded"
+  // (üretimde küçültülmüş hata #185) fırlatıp AĞACI SÖKÜYORDU -- "Geldi"ye
+  // basınca PATCH başarıyla dönüyor ama "Seans durumu" grubu DOM'dan
+  // KAYBOLUYORDU (Görev 7 düzeltme turu 2, kontrolör R7).
+  //
+  // Çözüm: `top`'u SAYFA (döküman) koordinatına çevir (`+ window.scrollY`).
+  // A3 ölçütü zaten KAYDIRILMAMIŞ sayfa için tanımlı; tbody'nin sayfadaki
+  // mutlak konumu kaydırma sırasında SABİT kalır, yani ölçüm artık
+  // `scrollY`'den BAĞIMSIZ -- döngünün girdisi ortadan kalkıyor.
+  //
+  // `setSatirYuksekligi` yalnızca değer GERÇEKTEN değiştiyse state'i
+  // güncelliyor (fonksiyonel güncelleme + eşitlik kontrolü) -- aksi hâlde her
+  // render yeni bir render tetikleyip sonsuz döngü olurdu.
+  const tbodyRef = useRef<HTMLTableSectionElement>(null)
+  const [satirYuksekligi, setSatirYuksekligi] = useState(40)
+
+  const olcRef = useRef<() => void>(() => {})
+  olcRef.current = () => {
+    const ust = (tbodyRef.current?.getBoundingClientRect().top ?? 0) + window.scrollY
+    const kalan = window.innerHeight - ust - 16
+    const yeni = Math.max(36, Math.floor(kalan / saatler.length))
+    setSatirYuksekligi((onceki) => (onceki === yeni ? onceki : yeni))
+  }
+
+  useLayoutEffect(() => {
+    olcRef.current()
+  })
+
+  // Yalnızca `resize` dinleyicisini mount'ta bir kez kurar/söker; dinleyici
+  // AYNI ölçüm fonksiyonunu (yukarıdaki `olcRef`, her render'da güncellenir)
+  // çağırıyor, yani mount'ta kurulmuş olsa da her zaman GÜNCEL değerleri
+  // kullanır.
+  useEffect(() => {
+    function dinleyici() {
+      olcRef.current()
+    }
+    window.addEventListener('resize', dinleyici)
+    return () => window.removeEventListener('resize', dinleyici)
+  }, [])
+
   function hucreRandevulari(gun: Date, saat: number): Randevu[] {
     return (
       hucreler.get(
@@ -106,22 +180,9 @@ export function HaftalikTakvim({
   const bicimliAralik = (saat: number) => `${saat.toString().padStart(2, '0')}:00`
 
   return (
-    <div className="p-4">
-      <div className="mb-4 flex items-center gap-3">
-        <button
-          className="rounded border px-3 py-1"
-          onClick={() => onHaftaDegis(-1)}
-        >
-          Önceki hafta
-        </button>
-        <h2 className="text-lg font-semibold">{haftaBasligi(haftaBasi)}</h2>
-        <button
-          className="rounded border px-3 py-1"
-          onClick={() => onHaftaDegis(1)}
-        >
-          Sonraki hafta
-        </button>
-      </div>
+    <div className="p-2">
+      {/* Hafta başlığı ve gezinme okları Görev 5'te `TakvimSekmesi`'nin tek
+          araç çubuğuna taşındı (tasarım §4 A1/A2, "tek araç çubuğu"). */}
 
       {/* GÖRÜNEN ARALIK DIŞINDAKİ RANDEVULAR.
           Bu randevular sunucudan çekiliyor ama ızgarada hiçbir hücreye
@@ -161,15 +222,30 @@ export function HaftalikTakvim({
           <thead>
             <tr>
               <th className="w-14" />
-              {gunler.map((g, i) => (
-                <th key={i} className="border-b p-1 text-xs font-medium text-slate-600">
-                  <div>{GUN_ADLARI[i]}</div>
-                  <div className="text-sm text-slate-900">{g.getDate()}</div>
-                </th>
-              ))}
+              {gunler.map((g, i) => {
+                const bugunMu = yerelZaman(g).slice(0, 10) === bugunGunu
+                return (
+                  <th
+                    key={i}
+                    aria-current={bugunMu ? 'date' : undefined}
+                    className="border-b p-1 text-xs font-medium text-slate-600"
+                  >
+                    <div>{GUN_ADLARI[i]}</div>
+                    <div
+                      className={
+                        bugunMu
+                          ? 'inline-flex rounded-full bg-slate-900 px-2 text-sm text-white'
+                          : 'text-sm text-slate-900'
+                      }
+                    >
+                      {g.getDate()}
+                    </div>
+                  </th>
+                )
+              })}
             </tr>
           </thead>
-          <tbody>
+          <tbody ref={tbodyRef}>
             {saatler.map((saat) => (
               <tr key={saat}>
                 <td className="border-r p-1 text-right align-top text-xs text-slate-500">
@@ -180,8 +256,23 @@ export function HaftalikTakvim({
                   const zaman = yerelZaman(
                     new Date(gun.getFullYear(), gun.getMonth(), gun.getDate(), saat, 0),
                   )
+                  const bugunMu = yerelZaman(gun).slice(0, 10) === bugunGunu
                   return (
-                    <td key={i} className="h-10 border border-slate-100 p-0.5 align-top">
+                    <td
+                      key={i}
+                      className={`relative border border-slate-100 p-0.5 align-top ${
+                        bugunMu ? 'bg-sky-50/60' : ''
+                      }`}
+                      style={{ height: satirYuksekligi }}
+                    >
+                      {bugunMu && saat === simdiSaat && (
+                        <div
+                          aria-hidden="true"
+                          data-testid="simdi-cizgisi"
+                          className="pointer-events-none absolute inset-x-0 z-10 h-0.5 bg-rose-500"
+                          style={{ top: `${(simdiDakika / 60) * 100}%` }}
+                        />
+                      )}
                       {hucredekiler.length > 0 ? (
                         hucredekiler.map((r) => (
                           <RandevuBloku key={r.id} randevu={r} onSec={() => onRandevuSec(r)} />
@@ -191,9 +282,16 @@ export function HaftalikTakvim({
                           aria-label={`${gun.getDate()} ${AYLAR[gun.getMonth()]} ${saat
                             .toString()
                             .padStart(2, '0')}:00 boş`}
-                          className="h-full w-full"
+                          className="group h-full w-full text-left"
                           onClick={() => onBosSaatSec(zaman)}
-                        />
+                        >
+                          <span
+                            aria-hidden="true"
+                            className="px-1 text-xs text-slate-400 opacity-0 group-hover:opacity-100"
+                          >
+                            + {saat.toString().padStart(2, '0')}:00
+                          </span>
+                        </button>
                       )}
                     </td>
                   )

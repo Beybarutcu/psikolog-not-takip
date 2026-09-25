@@ -593,7 +593,7 @@ async fn notu_olmayan_randevu_bos_not_dondurur_404_degil() {
     let (kod, not) = cagir(&s, "GET", &format!("/api/randevular/{rid}/not"), None).await;
     assert_eq!(kod, StatusCode::OK, "editor acilirken 404 gosterilmemeli");
     assert_eq!(not["icerik"], "");
-    assert_eq!(not["sablon"], "dap", "varsayilan sablon DAP");
+    assert_eq!(not["sablon"], "serbest", "varsayilan sablon Serbest olmali (analitik calisma, tasarim A7)");
 }
 
 #[tokio::test]
@@ -2643,8 +2643,9 @@ fn indirme_koku_tarayicisi_yardimci_zincirini_izler() {
 /// uclusunu dondurur (en yeni once). Testler dogrudan veriye bakar.
 async fn log_satirlari(s: &AppState) -> Vec<String> {
     use psikolog_server::guard::acik_baglanti_ile;
-    let conn = acik_baglanti_ile(s, std::time::Instant::now(), std::time::SystemTime::now())
-        .expect("log okumak icin oturum acik olmali");
+    let conn =
+        acik_baglanti_ile(s, || (std::time::Instant::now(), std::time::SystemTime::now()))
+            .expect("log okumak icin oturum acik olmali");
     psikolog_core::store::audit::son_kayitlar(&conn, 100_000)
         .unwrap()
         .into_iter()
@@ -2656,7 +2657,8 @@ async fn log_satirlari(s: &AppState) -> Vec<String> {
 /// ayrinti) tek metin olarak -- sizinti taramasi icin. En yeni satir once.
 async fn audit_dokumu(s: &AppState) -> String {
     use psikolog_server::guard::acik_baglanti_ile;
-    let conn = acik_baglanti_ile(s, std::time::Instant::now(), std::time::SystemTime::now()).expect("oturum acik olmali");
+    let conn = acik_baglanti_ile(s, || (std::time::Instant::now(), std::time::SystemTime::now()))
+        .expect("oturum acik olmali");
     psikolog_core::store::audit::son_kayitlar(&conn, 100_000)
         .unwrap()
         .into_iter()
@@ -3018,7 +3020,9 @@ async fn kayit_yazilamazsa_500_doner_ve_pdf_verilmez() {
 
     {
         use psikolog_server::guard::acik_baglanti_ile;
-        let conn = acik_baglanti_ile(&s, std::time::Instant::now(), std::time::SystemTime::now()).unwrap();
+        let conn =
+            acik_baglanti_ile(&s, || (std::time::Instant::now(), std::time::SystemTime::now()))
+                .unwrap();
         conn.execute_batch("DROP TABLE audit_log").unwrap();
     }
 

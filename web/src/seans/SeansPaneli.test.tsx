@@ -518,6 +518,17 @@ describe('SeansPaneli — yeni notun şablon başlıkları', () => {
     await userEvent.click(ozelSekme())
     expect((screen.getByLabelText('Özel notum') as HTMLTextAreaElement).value).toBe('')
   })
+
+  it('sunucudan Serbest sablonlu bos not gelmece gosterilir', () => {
+    // Varsayılan şablon Serbest olduğunda, boş not Serbest başlıkları
+    // (yani başlık yok) ile açılır. Alan değeri boş olur.
+    kur({ not: { ...resmiNot, sablon: 'serbest', icerik: '' } })
+    const alan = screen.getByLabelText('Seans notu') as HTMLTextAreaElement
+    expect(alan.value).toBe('')
+    // Şablon seçici Serbest seçili gösterir
+    const sablonSecici = screen.getByLabelText('Şablon') as HTMLSelectElement
+    expect(sablonSecici.value).toBe('serbest')
+  })
 })
 
 // Sekme değişimi giden editörü gerçekten unmount eder; bekleyen metin
@@ -815,6 +826,30 @@ describe('SeansPaneli — kapatma', () => {
     const { onKapat } = kur()
     await userEvent.click(screen.getByRole('button', { name: 'Seansı kapat' }))
     expect(onKapat).toHaveBeenCalledTimes(1)
+  })
+
+  // Plan A Görev 10 (tasarım A6): seans bölümü takvimin ALTINDA; başlıktaki
+  // "Takvime dön" sayfayı takvimin başına kaydırır. Seçimi KAPATMAZ (o iş
+  // "Seansı kapat"ın) ve "Seansı kapat"ın solunda durur.
+  it('"Takvime don" Seansi kapat in solunda; takvim izgarasini kaydirir, seansi kapatmaz', async () => {
+    const izgara = document.createElement('div')
+    izgara.setAttribute('data-testid', 'takvim-izgara')
+    document.body.appendChild(izgara)
+    const kaydir = vi.spyOn(Element.prototype, 'scrollIntoView')
+    try {
+      const { onKapat } = kur()
+      const don = screen.getByRole('button', { name: 'Takvime dön' })
+      const kapat = screen.getByRole('button', { name: 'Seansı kapat' })
+      expect(don.compareDocumentPosition(kapat) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+
+      await userEvent.click(don)
+      expect(kaydir).toHaveBeenCalledTimes(1)
+      expect(kaydir.mock.contexts[0]).toBe(izgara)
+      expect(kaydir).toHaveBeenCalledWith({ block: 'start' })
+      expect(onKapat).not.toHaveBeenCalled()
+    } finally {
+      izgara.remove()
+    }
   })
 
   it('baslikta danisan adi ve saat gorunur', () => {

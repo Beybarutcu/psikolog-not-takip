@@ -6,26 +6,20 @@
 
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
 
-  font: 18px/145% var(--sans);
+  /* Tasarım A3: tek temel boy. 18px (Vite şablonundan kalma) haftayı
+     1280x800'e sığdırmıyordu; dar pencerede yazıyı birden küçülten kural da
+     kaldırıldı. 16 ile 17 arasındaki son karar Mac'te kullanıcının. */
+  font: 16px/145% var(--sans);
   letter-spacing: 0.18px;
-  color-scheme: light dark;
+  /* Tasarım A8: yalnızca açık tema. Bileşenler koyu zemine göre
+     tasarlanmadı; gerçek bir koyu tema ayrı bir iş. */
+  color-scheme: light;
   color: var(--text);
   background: var(--bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --text: #9ca3af;
-    --bg: #16171d;
-  }
 }
 
 #root {
@@ -35,4 +29,10 @@
 
 body {
   margin: 0;
+}
+
+/* Tasarım A6: randevuya tıklayınca seans bölümüne yumuşak kaydırma;
+   hareketi azaltma tercihinde animasyonsuz. */
+@media (prefers-reduced-motion: no-preference) {
+  html { scroll-behavior: smooth; }
 }

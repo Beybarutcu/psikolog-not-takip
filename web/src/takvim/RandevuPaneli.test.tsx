@@ -40,8 +40,15 @@ function kur(ozel = {}) {
     cakismaKontrol: vi.fn().mockResolvedValue(temizCakisma),
     ...ozel,
   }
-  render(<RandevuPaneli {...props} />)
-  return props
+  const r = render(<RandevuPaneli {...props} />)
+  return {
+    ...props,
+    // Görev 8 (8.9/8.10): "kirli değilken prop değişince eşitlenir" ve
+    // "kullanıcı dokunduysa ezilmez" testleri AYNI örneği yeni prop'larla
+    // yeniden render etmeli (temiz mount başlangıç durumunu ölçer, geçişi
+    // DEĞİL — bkz. docs/test-yesil-ama-korumuyor.md madde 4).
+    rerender: (yeni: Record<string, unknown>) => r.rerender(<RandevuPaneli {...props} {...yeni} />),
+  }
 }
 
 describe('RandevuPaneli', () => {
@@ -276,7 +283,7 @@ describe('RandevuPaneli', () => {
     await userEvent.type(screen.getByLabelText('Ücret (TL)'), 'abc')
     await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
 
-    expect(screen.getByText(/ücret.*sayısal/i)).toBeDefined()
+    expect(screen.getByText('Ücreti ör. 1.250 ya da 450,50 biçiminde yazın.')).toBeDefined()
     expect(props.onKaydet).not.toHaveBeenCalled()
   })
 
@@ -287,6 +294,57 @@ describe('RandevuPaneli', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
 
     expect(props.onKaydet).toHaveBeenCalledWith(expect.objectContaining({ ucret: null }))
+  })
+
+  // --- Görev 1: ücret alanı Türkçe yazımı doğru okur (tasarım A5) ------
+
+  it('1.1: "1.250" 1.250 TL olarak kaydedilir (eski hata: 1,25 TL)', async () => {
+    const props = kur()
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.type(screen.getByLabelText('Ücret (TL)'), '1.250')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    expect(props.onKaydet).toHaveBeenCalledWith(expect.objectContaining({ ucret: 125000 }))
+  })
+
+  it('1.2: "450,50" kabul edilir (eski hata: sayısal değil)', async () => {
+    const props = kur()
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.type(screen.getByLabelText('Ücret (TL)'), '450,50')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    expect(props.onKaydet).toHaveBeenCalledWith(expect.objectContaining({ ucret: 45050 }))
+  })
+
+  it('1.3: alanın altında neyin kaydedileceği görünür', async () => {
+    kur()
+    expect(screen.queryByTestId('ucret-onizleme')).toBeNull()
+    await userEvent.type(screen.getByLabelText('Ücret (TL)'), '1250,5')
+    expect(screen.getByTestId('ucret-onizleme').textContent).toBe('= 1.250,50 TL')
+  })
+
+  it('1.4: geçersiz yazımda önizleme yok, kaydet hatayı söyler', async () => {
+    const props = kur()
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.type(screen.getByLabelText('Ücret (TL)'), '1.250.50')
+    expect(screen.queryByTestId('ucret-onizleme')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    expect(screen.getByText('Ücreti ör. 1.250 ya da 450,50 biçiminde yazın.')).toBeDefined()
+    expect(props.onKaydet).not.toHaveBeenCalled()
+  })
+
+  it('1.5: üst sınırı aşan ücret kaydedilmez', async () => {
+    const props = kur()
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.type(screen.getByLabelText('Ücret (TL)'), '1.000.000,01')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    expect(screen.getByText('Ücret en fazla 1.000.000 TL olabilir.')).toBeDefined()
+    expect(props.onKaydet).not.toHaveBeenCalled()
+  })
+
+  it('1.6 (inceleme odağı 4): kuruşlu kayıt "450,50" açılır, dokunmadan Güncelle ücreti değiştirmez', async () => {
+    const props = kur({ randevu: { ...mevcut, ucret: 45050 } })
+    expect((screen.getByLabelText('Ücret (TL)') as HTMLInputElement).value).toBe('450,50')
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    expect(props.onKaydet).toHaveBeenCalledWith(expect.objectContaining({ ucret: 45050 }))
   })
 
   // --- Dal incelemesi I4a: seri silme ---------------------------------
@@ -483,7 +541,7 @@ describe('RandevuPaneli', () => {
 
     // Düzenleme kipi: alanlar mevcut kayıttan doluyor.
     expect((screen.getByLabelText('Danışan') as HTMLSelectElement).value).toBe('1')
-    expect((screen.getByLabelText('Ücret (TL)') as HTMLInputElement).value).toBe('450')
+    expect((screen.getByLabelText('Ücret (TL)') as HTMLInputElement).value).toBe('450,00')
 
     await userEvent.clear(screen.getByLabelText('Ücret (TL)'))
     await userEvent.type(screen.getByLabelText('Ücret (TL)'), '500')
@@ -515,5 +573,210 @@ describe('RandevuPaneli', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
 
     expect(await screen.findByText('Ücret negatif olamaz.')).toBeDefined()
+  })
+
+  // --- Görev 8: tarih, saat, süre, özet, yeniden eşitleme (tasarım A4) --
+
+  it('8.1: yeni randevu tıklanan hücreyle dolu açılır; 10:30 seçilebilir', async () => {
+    const props = kur({ zaman: '2026-09-07T10:00' })
+    expect((screen.getByLabelText('Tarih') as HTMLInputElement).value).toBe('2026-09-07')
+    expect((screen.getByLabelText('Başlangıç') as HTMLInputElement).value).toBe('10:00')
+    fireEvent.change(screen.getByLabelText('Başlangıç'), { target: { value: '10:30' } })
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    expect(props.onKaydet).toHaveBeenCalledWith(
+      expect.objectContaining({ baslangic: '2026-09-07T10:30', bitis: '2026-09-07T11:30' }))
+  })
+
+  it('8.2: hazır süre düğmeleri süreyi kurar; alan 5 dakika adımlı', async () => {
+    const props = kur()
+    expect(screen.getByLabelText('Süre (dakika)').getAttribute('step')).toBe('5')
+    await userEvent.click(screen.getByRole('button', { name: '50 dk' }))
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    expect(props.onKaydet).toHaveBeenCalledWith(expect.objectContaining({ bitis: '2026-09-07T14:50' }))
+  })
+
+  it('8.3: okunur özet', () => {
+    kur({ randevu: mevcut })
+    expect(screen.getByText('Pazartesi, 7 Eylül · 14:00–15:00')).toBeDefined()
+  })
+
+  it('8.4: var olan randevuyu başka güne taşımak AYNI kaydı günceller', async () => {
+    const props = kur({ randevu: mevcut })
+    fireEvent.change(screen.getByLabelText('Tarih'), { target: { value: '2026-09-10' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    expect(props.onKaydet).toHaveBeenCalledWith(expect.objectContaining({
+      baslangic: '2026-09-10T14:00', bitis: '2026-09-10T15:00', client_id: 1 }))
+  })
+
+  it('8.5: tarih ya da saat boşsa kaydetmez', async () => {
+    const props = kur({ randevu: mevcut })
+    fireEvent.change(screen.getByLabelText('Tarih'), { target: { value: '' } })
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    expect(screen.getByText('Tarih ve başlangıç saatini girin.')).toBeDefined()
+    expect(props.onKaydet).not.toHaveBeenCalled()
+  })
+
+  it('8.6: tarih alanı kartın penceresiyle sınırlı (2000–2099)', () => {
+    kur()
+    const alan = screen.getByLabelText('Tarih')
+    expect(alan.getAttribute('min')).toBe('2000-01-01')
+    expect(alan.getAttribute('max')).toBe('2099-12-31')
+  })
+
+  it('8.7: tarih/saat değişince çakışma kontrolü YENİ aralık ve randevunun kendi id si ile sorulur', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const props = kur({ randevu: mevcut })
+    fireEvent.change(screen.getByLabelText('Başlangıç'), { target: { value: '16:00' } })
+    await act(async () => { vi.advanceTimersByTime(400) })
+    expect(props.cakismaKontrol).toHaveBeenLastCalledWith('2026-09-07T16:00', '2026-09-07T17:00', 7, undefined)
+    vi.useRealTimers()
+  })
+
+  it('8.8: seri üyesinde "Yalnızca bu randevu taşınır." yazar', () => {
+    kur({ randevu: { ...mevcut, seri_id: 's1' } })
+    expect(screen.getByText('Yalnızca bu randevu taşınır.')).toBeDefined()
+  })
+
+  it('8.9: kirli değilken prop değişince form sunucudaki yeni değerle eşitlenir', () => {
+    const p = kur({ randevu: mevcut })
+    p.rerender({ randevu: { ...mevcut, baslangic: '2026-09-07T16:00', bitis: '2026-09-07T17:00', ucret: 50000 } })
+    expect((screen.getByLabelText('Başlangıç') as HTMLInputElement).value).toBe('16:00')
+    expect((screen.getByLabelText('Ücret (TL)') as HTMLInputElement).value).toBe('500,00')
+  })
+
+  it('8.10: kullanıcı alanı değiştirdiyse prop değişimi yazdığını EZMEZ', () => {
+    const p = kur({ randevu: mevcut })
+    fireEvent.change(screen.getByLabelText('Ücret (TL)'), { target: { value: '600' } })
+    p.rerender({ randevu: { ...mevcut, ucret: 50000 } })
+    expect((screen.getByLabelText('Ücret (TL)') as HTMLInputElement).value).toBe('600')
+  })
+
+  it('8.11: gomulu kipte Kapat düğmesi yok', () => {
+    kur({ randevu: mevcut, gomulu: true })
+    expect(screen.queryByRole('button', { name: 'Kapat' })).toBeNull()
+  })
+
+  // --- Düzeltme turu 1 (R9): kaydetme geri dönüşü "kirli" damgasını -----
+  // kaldırmalı, yoksa SONRAKİ hiçbir dış değişiklik forma hiç yansımaz.
+  it('8.13: kaydetme geri dönüşü kirli damgasını kaldırır; SONRAKİ dış değişiklik uygulanır', () => {
+    const p = kur({ randevu: mevcut })
+    fireEvent.change(screen.getByLabelText('Ücret (TL)'), { target: { value: '600' } })
+    // Kaydetme geri dönüşü: sunucu kullanıcının yazdığı değeri AYNEN
+    // (kuruş cinsinden) onaylayarak döner -- forma dokunulmaz ama "kirli"
+    // damgası kalkmalı.
+    p.rerender({ randevu: { ...mevcut, ucret: 60000 } })
+    // SONRAKİ, GERÇEKTEN farklı bir dış değişiklik (ör. başka bir
+    // pencereden ya da yeniden yüklemeden gelen taze kayıt).
+    p.rerender({
+      randevu: {
+        ...mevcut, ucret: 70000,
+        baslangic: '2026-09-07T16:00', bitis: '2026-09-07T17:00',
+      },
+    })
+    expect((screen.getByLabelText('Ücret (TL)') as HTMLInputElement).value).toBe('700,00')
+    expect((screen.getByLabelText('Başlangıç') as HTMLInputElement).value).toBe('16:00')
+  })
+
+  // --- Son inceleme I2 (kontrolör R14): "Güncelle" kaydettiğini söyler ---
+  //
+  // Görev 10'dan beri bölüm Güncelle'de AÇIK kalıyor ve özet satırı form
+  // state'inden kuruluyor: yalnızca ücret değişince ekranda HİÇBİR şey
+  // değişmiyordu — kullanıcı kaydın gidip gitmediğini bilemiyordu.
+
+  const durum = () => screen.getByRole('status').textContent
+
+  it('R14 I2: Guncelle basariyla donunce "Guncellendi SS:DD" gorunur; HER form alani duzenlenince kalkar', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 9, 14, 32))
+    const props = kur({ randevu: mevcut })
+    // Canlı bölge baştan DOM'da ve boş (sonradan eklenen bölge duyurulmaz).
+    expect(durum()).toBe('')
+
+    // Her alan için: kaydet -> durum görünür -> alanı düzenle -> durum kalkar.
+    // Tek tek sınanıyor: bir alanın işleyicisi temizlemeyi unutursa o satır
+    // kırılır. Saat her turda ilerliyor: metin gerçekten O ANKİ saatten.
+    const duzenlemeler: [string, () => void | Promise<void>][] = [
+      ['ücret', () => { fireEvent.change(screen.getByLabelText('Ücret (TL)'), { target: { value: '600' } }) }],
+      ['tarih', () => { fireEvent.change(screen.getByLabelText('Tarih'), { target: { value: '2026-09-08' } }) }],
+      ['başlangıç', () => { fireEvent.change(screen.getByLabelText('Başlangıç'), { target: { value: '15:00' } }) }],
+      ['süre', () => { fireEvent.change(screen.getByLabelText('Süre (dakika)'), { target: { value: '55' } }) }],
+      ['hazır süre', () => userEvent.click(screen.getByRole('button', { name: '45 dk' }))],
+      ['danışan', () => userEvent.selectOptions(screen.getByLabelText('Danışan'), '2')],
+    ]
+    for (const [i, [alan, duzenle]] of duzenlemeler.entries()) {
+      vi.setSystemTime(new Date(2026, 8, 9, 14, 32 + i))
+      await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+      await waitFor(() => expect(durum(), alan).toBe(`Güncellendi 14:${32 + i}`))
+      await duzenle()
+      expect(durum(), `${alan} düzenlenince durum kalkmalı`).toBe('')
+    }
+    expect(props.onKaydet).toHaveBeenCalledTimes(duzenlemeler.length)
+  })
+
+  it('R14 I2: basarisiz Guncelle durum GOSTERMEZ; onceki basarinin durumu da kalmaz', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 9, 14, 32))
+    const onKaydet = vi.fn().mockRejectedValueOnce(new Error('Sunucu yanıt vermedi.'))
+    kur({ randevu: mevcut, onKaydet })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    // BARİYER: ret panelin hata alanına yazıldı (işlem bitti).
+    expect(await screen.findByText('Sunucu yanıt vermedi.')).toBeDefined()
+    expect(durum()).toBe('')
+
+    // Başarılı bir kayıttan SONRA gelen ret: eski "Güncellendi" yanlış
+    // bir güvence olarak hata metninin yanında kalmamalı.
+    onKaydet.mockResolvedValueOnce(undefined)
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    await waitFor(() => expect(durum()).toBe('Güncellendi 14:32'))
+    onKaydet.mockRejectedValueOnce(new Error('İkinci ret.'))
+    await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+    expect(await screen.findByText('İkinci ret.')).toBeDefined()
+    expect(durum()).toBe('')
+  })
+
+  it('R14 I2: yeni randevuda Kaydet sonrasi durum satiri YOK (form kapanir)', async () => {
+    const props = kur()
+    await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
+    await userEvent.click(screen.getByRole('button', { name: 'Kaydet' }))
+    await waitFor(() => expect(props.onKaydet).toHaveBeenCalledTimes(1))
+    // BARİYER: işlem bitti (düğmenin kilidi kalktı).
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Kaydet' }) as HTMLButtonElement).disabled).toBe(false),
+    )
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.queryByText(/Güncellendi/)).toBeNull()
+  })
+
+  // --- Son inceleme M1 (kontrolör R14): yıl penceresi kaydetmede de ------
+  //
+  // `min`/`max` yalnızca tarayıcının seçicisini sınırlar; elle yazılan
+  // değeri DOĞRULAMAZ. Yıl rakam rakam yazılırken "0002-09-07" gibi tam bir
+  // değer forma girer ve Güncelle onu (1902 olarak) kaydederdi.
+  for (const tarih of ['1999-12-31', '2100-01-01', '0002-09-07']) {
+    it(`R14 M1: pencere disindaki tarih (${tarih}) kaydedilmez ve soylenir`, async () => {
+      const props = kur({ randevu: mevcut })
+      fireEvent.change(screen.getByLabelText('Tarih'), { target: { value: tarih } })
+      await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+      expect(screen.getByText('Tarih 2000 ile 2099 arasında olmalı.')).toBeDefined()
+      expect(props.onKaydet).not.toHaveBeenCalled()
+    })
+  }
+
+  it('R14 M1: pencerenin iki ucu (2000-01-01, 2099-12-31) kaydedilir', async () => {
+    const props = kur({ randevu: mevcut })
+    for (const tarih of ['2000-01-01', '2099-12-31']) {
+      fireEvent.change(screen.getByLabelText('Tarih'), { target: { value: tarih } })
+      await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
+      await waitFor(() =>
+        expect(props.onKaydet).toHaveBeenLastCalledWith(
+          expect.objectContaining({ baslangic: `${tarih}T14:00` }),
+        ),
+      )
+    }
+    expect(props.onKaydet).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText('Tarih 2000 ile 2099 arasında olmalı.')).toBeNull()
   })
 })

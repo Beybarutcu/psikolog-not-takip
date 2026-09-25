@@ -289,7 +289,7 @@ async fn danisan_arsivlenir_ve_listeden_dusser_ama_silinmez() {
     // Arsivleme FIZIKSEL SILME DEGILDIR: kayit duruyor, yalnizca durumu
     // degisti. Arayuz metni de bunu soyluyor -- burada dogrulanan sey o
     // metnin dogru oldugudur.
-    let conn = acik_baglanti_ile(&s, Instant::now(), SystemTime::now()).unwrap();
+    let conn = acik_baglanti_ile(&s, || (Instant::now(), SystemTime::now())).unwrap();
     let (sayi, durum): (i64, String) = conn
         .query_row(
             "SELECT (SELECT COUNT(*) FROM clients), durum FROM clients WHERE id = ?1",
@@ -540,6 +540,66 @@ async fn randevu_guncellenir_ve_kopya_uretmez() {
         "guncelleme KOPYA uretmemeli (dal incelemesi C1)"
     );
     assert_eq!(hafta[0]["ucret"], 50000);
+}
+
+// Plan A Gorev 9 (tasarim A4): "geldi" seansi PUT ile tasininca son temas
+// ilerleyebilir (`appointments::guncelle_ve_son_temas`). PATCH `durum`
+// yanitiyla AYNI gerekce: istemci karti ve saklama listesini bu yanittan
+// YEREL yamar, `clients::getir`/`saklama_suresi_dolanlar`i (ikisi de
+// `HerCagri`) yeniden CEKMEZ. Yanit `Randevu` alanlarini AYNEN tasir (var
+// olan istemci sekli bozulmaz), iki alan yalnizca GERCEKTEN ilerlediyse eklenir.
+#[tokio::test]
+async fn geldi_randevu_tasininca_yanit_son_temas_ve_saklama_bitisini_tasir() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let cid = d["id"].as_i64().unwrap();
+    let (_, olusan) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": cid, "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00",
+        "ucret": 45000
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+    let (kod, _) =
+        cagir(&s, "PATCH", &format!("/api/randevular/{id}"), Some(json!({"durum":"geldi"}))).await;
+    assert_eq!(kod, StatusCode::OK, "on kosul: seans geldi isaretlendi");
+
+    let (kod, yanit) = cagir(&s, "PUT", &format!("/api/randevular/{id}"), Some(json!({
+        "client_id": cid, "baslangic": "2026-09-10T14:00", "bitis": "2026-09-10T15:00",
+        "ucret": 45000
+    }))).await;
+    assert_eq!(kod, StatusCode::OK);
+    // `Randevu` alanlari duz (flatten) -- ic ice bir `randevu` nesnesi degil.
+    assert_eq!(yanit["id"].as_i64().unwrap(), id, "ayni kayit donmeli: {yanit}");
+    assert_eq!(yanit["client_id"], cid);
+    assert_eq!(yanit["baslangic"], "2026-09-10T14:00", "yanit YENI zamani tasimali");
+    assert_eq!(yanit["durum"], "geldi", "tasima durumu korur");
+    assert_eq!(yanit["son_temas"], "2026-09-10");
+    assert_eq!(yanit["saklama_bitis"], "2033-09-10");
+    assert!(yanit.get("randevu").is_none(), "Randevu duz olmali, ic ice degil: {yanit}");
+}
+
+// Ters yon: planli seans temas degil -- yanit bugunku `Randevu` sekliyle
+// AYNI kalir, iki anahtar HIC yoktur (`null` degil). Istemci o zaman hicbir
+// seyi yamamaz.
+#[tokio::test]
+async fn planli_randevu_tasininca_yanitta_son_temas_alani_yok() {
+    let (_d, s) = kurulu_state().await;
+    let (_, d) = cagir(&s, "POST", "/api/danisanlar", Some(json!({"ad_soyad":"Ayse"}))).await;
+    let cid = d["id"].as_i64().unwrap();
+    let (_, olusan) = cagir(&s, "POST", "/api/randevular", Some(json!({
+        "client_id": cid, "baslangic": "2026-09-07T14:00", "bitis": "2026-09-07T15:00"
+    }))).await;
+    let id = olusan[0]["id"].as_i64().unwrap();
+
+    let (kod, yanit) = cagir(&s, "PUT", &format!("/api/randevular/{id}"), Some(json!({
+        "client_id": cid, "baslangic": "2026-09-10T14:00", "bitis": "2026-09-10T15:00"
+    }))).await;
+    assert_eq!(kod, StatusCode::OK);
+    // Pozitif bariyer: yanit gercekten dolu bir `Randevu` nesnesi (bos `{}`
+    // ya da dizi uzerinde `get` totolojik olurdu, bkz. dosya basi Bulgu 4).
+    assert_eq!(yanit["id"].as_i64().unwrap(), id, "ayni kayit donmeli: {yanit}");
+    assert_eq!(yanit["baslangic"], "2026-09-10T14:00");
+    assert!(yanit.get("son_temas").is_none(), "planli seans temas degil: {yanit}");
+    assert!(yanit.get("saklama_bitis").is_none(), "planli seans temas degil: {yanit}");
 }
 
 // PATCH sozlesmesi PUT eklendikten sonra da AYNEN calisiyor: govdesi
@@ -909,12 +969,12 @@ async fn basarili_istek_oturuma_dokunur_ve_sureyi_uzatir() {
 
     let orta = t + Duration::from_millis(1500);
     let orta_td = td + Duration::from_millis(1500);
-    let sonuc1 = acik_baglanti_ile(&s, orta, orta_td);
+    let sonuc1 = acik_baglanti_ile(&s, || (orta, orta_td));
     assert!(sonuc1.is_ok(), "ilk istek kilit suresi dolmadan yapilmali");
 
     let sonra = orta + Duration::from_millis(1500);
     let sonra_td = orta_td + Duration::from_millis(1500);
-    let sonuc2 = acik_baglanti_ile(&s, sonra, sonra_td);
+    let sonuc2 = acik_baglanti_ile(&s, || (sonra, sonra_td));
     assert!(
         sonuc2.is_ok(),
         "basarili istek oturuma dokunmadiysa toplam 3sn gecmis olur ve 2sn'lik kilit suresi asilirdi"
@@ -1250,7 +1310,8 @@ async fn ozet_icin_borclu(s: &AppState) -> i64 {
 }
 
 async fn ozet_log_satirlari(s: &AppState) -> Vec<String> {
-    let conn = acik_baglanti_ile(s, Instant::now(), SystemTime::now()).expect("oturum acik olmali");
+    let conn =
+        acik_baglanti_ile(s, || (Instant::now(), SystemTime::now())).expect("oturum acik olmali");
     psikolog_core::store::audit::son_kayitlar(&conn, 200)
         .unwrap()
         .into_iter()

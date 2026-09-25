@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ekIndir, ekIndirmeYolu, EK_TURLERI, type DanisanDosyasi, type EkBilgisi } from '../api'
 import type { Randevu } from '../takvim/HaftalikTakvim'
+import { borcToplami } from '../borc'
 import { tlMetni } from '../para'
 import { boyutBicimle, kalanGun, tarihBicimle } from './bicim'
 import { RizaBolumu } from './RizaBolumu'
@@ -33,15 +34,15 @@ import { RizaBolumu } from './RizaBolumu'
  *
  * # Bakiye neyi sayar
  *
- * **Gelinmiş** (`durum === 'geldi'`) ve **ödenmemiş** seansların ücreti.
- * Kural İÇEREN biçimde yazıldı; `durum != 'iptal'` gibi dışlayıcı bir
- * desen kopyalanmadı (kod tabanındaki tek örneği `cakisanlari_bul` ve o
- * desenin buraya yayılmaması bilinçli bir karar). Sonuç olarak gelecekteki
- * bir randevu borç sayılmaz, iptal sayılmaz; "gelmedi" de sayılmaz çünkü
- * ücretlendirilip ücretlendirilmeyeceği terapistin politikasına bağlıdır ve
- * uygulama o politikayı bilmiyor. Etiket neyi saydığını **yazar**: kapsamı
- * söylemeyen bir "Bakiye: 0,00 TL", ücreti hiç girilmemiş bir dosyada
- * "borcu yok" diye okunur.
+ * Borç kuralı tek bir yerde yazılı: `web/src/borc.ts::borcaGirerMi` (tasarım
+ * §5.1). Bir seans borca girer ⇔ durumu `geldi` YA DA `gelmedi` ∧ ödenmemiş
+ * ∧ ücreti > 0 — terapist gelmeyen seansı ücretlendiriyor (kullanıcı kararı
+ * 2026-09-25), bu artık uygulamanın bilmediği bir politika değil. `iptal` ve
+ * `planlandi` hiçbir zaman sayılmaz. Bu bileşen kuralı KENDİ YAZMAZ,
+ * `borcToplami(randevular)` çağırır — sunucudaki eşi (`ozet.rs`) ve Plan
+ * B'deki dosya başlığı özeti aynı işlevi kullanacak. Etiket neyi saydığını
+ * **yazar**: kapsamı söylemeyen bir "Bakiye: 0,00 TL", ücreti hiç girilmemiş
+ * bir dosyada "borcu yok" diye okunur.
  *
  * # "Ödenmemiş" artık gerçek (Plan 4 Görev 2)
  *
@@ -245,11 +246,9 @@ export function DosyaBilgileri({
       ? ekFormu
       : { danisanId: danisan.id, dosya: null, tur: 'diger', hata: null }
 
-  // Gelinmiş VE ödenmemiş (bkz. modül başlığı). `odendi` seans panelinin
-  // alt satırından yazılıyor (Plan 4 Görev 2).
-  const bakiyeKurus = randevular
-    .filter((r) => r.durum === 'geldi' && !r.odendi)
-    .reduce((toplam, r) => toplam + (r.ucret ?? 0), 0)
+  // Borç kuralı TEK yerde (bkz. modül başlığı, `../borc`). `odendi` seans
+  // panelinin alt satırından yazılıyor (Plan 4 Görev 2).
+  const bakiyeKurus = borcToplami(randevular)
 
   const kalan = danisan.saklama_bitis === null ? null : kalanGun(bugun, danisan.saklama_bitis)
 
@@ -378,16 +377,16 @@ export function DosyaBilgileri({
         <dd>{tlMetni(bakiyeKurus)}</dd>
       </dl>
       {/* Açıklama hem neyi SAYDIĞINI hem neyi SAYMADIĞINI yazıyor; çıplak
-          "Bakiye" yanıltıcı olurdu. "Gelmedi" işaretli bir seansın
-          ücretlendirilip ücretlendirilmeyeceği terapistin politikasına bağlı
-          ve uygulama o politikayı bilmiyor; sayının dışında bırakıldığını
-          söylememek, gelmeyen seansları ücretlendiren bir terapiste sessizce
-          eksik bir bakiye göstermek olurdu.
+          "Bakiye" yanıltıcı olurdu. Tasarım §5.1 (kullanıcı kararı
+          2026-09-25): terapist gelmeyen seansı ücretlendiriyor, dolayısıyla
+          "gelmedi" artık İÇERİDE — dışarıda kalan yalnızca `iptal`. Cümle
+          `borcaGirerMi` ile AYNI kuralı Türkçe anlatıyor; ikisi ayrışırsa
+          `DosyaBilgileri.test.tsx` kırılır.
           "ödenmemiş" ibaresi I1'de kaldırılmıştı (o gün işaretleme yolu
           yoktu); Plan 4 Görev 2 seans panelinin alt satırına "Ödendi"
           kutusunu ekledi ve ibare GERİ GELDİ — artık doğru. */}
       <p className="mt-1 text-xs text-slate-500">
-        {"Bakiye: gelinmiş ve ödenmemiş seanslar. 'Gelmedi' olarak işaretlenen seanslar bu sayıya girmez."}
+        {'Bakiye: ücreti girilmiş ve ödenmemiş, gelinen ya da gelinmeyen seanslar. İptal edilenler girmez.'}
       </p>
 
       <div className="mt-3">

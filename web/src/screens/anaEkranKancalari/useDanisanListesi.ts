@@ -70,7 +70,8 @@ export function useDanisanListesi({ ayarlarGorunur }: { ayarlarGorunur: boolean 
   // İÇİNDE bir danışanı bu listeden düşürebilir (süresi dolmuş bir danışan
   // terapiye döner, seansı "Geldi" işaretlenir). Yeniden ÇEKMEK yine de
   // YASAK (yukarıdaki `HerCagri` maliyeti); bunun yerine düşürme YERELDE
-  // yapılıyor -- bkz. `saklamaDolandanDus`, tek çağıran `AnaEkran.durumDegis`.
+  // yapılıyor -- bkz. `saklamaDolandanDus` (çağıranlar orada). Plan A Görev 9:
+  // taşınan "geldi" seansı da aynı yoldan düşürebilir.
   //
   // Hata YUTULUYOR: hatırlatma ikincil bir bilgi; alınamadığında ana ekranı
   // hata bandıyla kaplamak, terapistin takvimini görmesini engellerdi.
@@ -97,9 +98,10 @@ export function useDanisanListesi({ ayarlarGorunur }: { ayarlarGorunur: boolean 
    * "Geldi" işaretlemesi bir danışanın saklama süresini ileri taşıdığında
    * (Görev 3) o danışanı Ayarlar > "Saklama süresi dolan dosyalar"
    * listesinden YERELDE düşürür. Liste YENİDEN ÇEKİLMEZ (yukarıdaki modül
-   * başlığı) -- tek çağıran `AnaEkran.durumDegis`, yalnızca sunucunun PATCH
-   * yanıtı `son_temas`/`saklama_bitis` taşıdığında (yani GERÇEKTEN ileri
-   * taşındığında) çağırır.
+   * başlığı) -- iki çağıran var: `AnaEkran.durumDegis` (PATCH yanıtı) ve
+   * `AnaEkran.randevuKaydet` (taşınan "geldi" seansının PUT yanıtı, Plan A
+   * Görev 9); ikisi de yalnızca yanıt `son_temas`/`saklama_bitis` taşıdığında
+   * (yani GERÇEKTEN ileri taşındığında) çağırır.
    *
    * # İNCELEME DÜZELTMESİ (IMPORTANT-1) — koşulsuz düşürme YANLIŞTI
    * İlk sürüm `saklamaBitis`e hiç bakmadan düşürüyordu. Kenar durum: zaten

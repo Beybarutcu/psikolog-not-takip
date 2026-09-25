@@ -110,7 +110,7 @@ test('mevcut randevunun ucreti guncellenir, kopya olusmaz', async ({ page }) => 
 
   // Randevuyu ac, ucreti degistir, Guncelle'ye bas.
   await bloklar.first().click()
-  await expect(page.getByLabel('Ücret (TL)')).toHaveValue('450')
+  await expect(page.getByLabel('Ücret (TL)')).toHaveValue('450,00')
   await page.getByLabel('Ücret (TL)').fill('500')
   await page.getByRole('button', { name: 'Güncelle' }).click()
 
@@ -134,8 +134,98 @@ test('mevcut randevunun ucreti guncellenir, kopya olusmaz', async ({ page }) => 
   await expect(bloklar).toHaveCount(1)
 
   // (b) UCRET GERCEKTEN DEGISTI: paneli yeniden ac ve alani oku.
+  // Plan A Gorev 10 (tasarim A6): "Guncelle" seans bolumunu KAPATMIYOR; ayni
+  // bloga tekrar tiklamak ayni secimi yeniden secer ve form yeniden MONTE
+  // OLMAZ -- alan ekrandaki (kullanicinin yazdigi) degeri gosterirdi. Once
+  // "Seansi kapat": form yeniden monte olsun, deger sunucudan okunsun.
+  await page.getByRole('button', { name: 'Seansı kapat' }).click()
+  await expect(page.getByTestId('seans-bolumu')).toHaveCount(0)
   await bloklar.first().click()
-  await expect(page.getByLabel('Ücret (TL)')).toHaveValue('500')
+  await expect(page.getByLabel('Ücret (TL)')).toHaveValue('500,00')
+})
+
+// Plan A Gorev 10 (tasarim A4/A6) uctan uca: randevu SILINMEDEN baska gune
+// tasinir ve seans notu onunla gider (not `appointment_id`ye bagli). Eskiden
+// tasimanin tek yolu silip yeniden kurmakti ve silme notu da goturuyordu
+// (`ON DELETE CASCADE`).
+test('randevu silinmeden baska gune tasinir, notu onunla gider', async ({ page }) => {
+  await kurulumYap(page)
+  const ad = 'Tasima Deneme'
+  const AYLAR = [
+    'Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran',
+    'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık',
+  ]
+
+  await page.getByRole('tab', { name: 'Danışanlar', exact: true }).click()
+  await page.getByRole('button', { name: 'Danışan ekle' }).click()
+  await page.getByLabel('Ad soyad').fill(ad)
+  await page.getByRole('button', { name: 'Ekle', exact: true }).click()
+  await expect(page.getByText(ad, { exact: true }).first()).toBeVisible()
+
+  await page.getByRole('tab', { name: 'Takvim', exact: true }).click()
+  await page.locator('button[aria-label$="10:00 boş"]').first().click()
+  await page.getByLabel('Danışan', { exact: true }).selectOption({ label: ad })
+  await page.getByLabel('Başlangıç', { exact: true }).fill('10:30')
+  await page.getByRole('button', { name: 'Kaydet', exact: true }).click()
+
+  // 10:30 tam saat degil: blok adi saatle baslar (`RandevuBloku`).
+  const bloklar = page.getByRole('button', { name: `10:30 ${ad}`, exact: true })
+  await expect(bloklar).toHaveCount(1)
+  await bloklar.first().click()
+
+  const not = 'Tasima oncesi not'
+  await page.getByLabel('Seans notu', { exact: true }).fill(not)
+  // SENKRONIZASYON BARIYERI: not sunucuya yazildi (otomatik kaydin
+  // `role="status"` bolgesi). Olmasaydi asagidaki "not onunla gitti" iddiasi
+  // editorun ekranda tuttugu metni olcerdi.
+  await expect(
+    page.getByRole('status').filter({ hasText: /^Kaydedildi \d{2}:\d{2}$/ }),
+  ).toBeVisible()
+
+  // Ertesi gun: tarih formdan okunur (hangi gunun ilk bos 10:00'i oldugu
+  // dosyadaki onceki testlere bagli).
+  const tarihAlani = page.getByLabel('Tarih', { exact: true })
+  const [yil, ay, gun] = (await tarihAlani.inputValue()).split('-').map(Number)
+  const eski = new Date(Date.UTC(yil, ay - 1, gun))
+  const yeni = new Date(Date.UTC(yil, ay - 1, gun + 1))
+  const yeniMetin = yeni.toISOString().slice(0, 10)
+  const hucreAdi = (d: Date) => `${d.getUTCDate()} ${AYLAR[d.getUTCMonth()]} 10:00 boş`
+  // Ertesi gun Pazartesi ise tasima hafta sinirini asar: gorunen hafta yeni
+  // haftaya gecer (tasarim A6) ve eski gun ekranda olmaz.
+  const ayniHafta = yeni.getUTCDay() !== 1
+  if (ayniHafta) {
+    // On kosul (altinci bicim): ertesi gunun 10:00 hucresi su an BOS.
+    await expect(page.getByRole('button', { name: hucreAdi(yeni), exact: true })).toHaveCount(1)
+  }
+
+  await tarihAlani.fill(yeniMetin)
+  await page.getByRole('button', { name: 'Güncelle', exact: true }).click()
+
+  // Blok ertesi gunun sutununda: o gunun 10:00 hucresi artik BOS DEGIL (ve
+  // ayni haftadaysa eski gununku yeniden bos).
+  await expect(page.getByRole('button', { name: hucreAdi(yeni), exact: true })).toHaveCount(0)
+  // ...ve o gun GERCEKTEN ekranda (yukaridaki "0" gorunmeyen bir gunle
+  // tatmin olmasin): ayni gunun 11:00 hucresi gorunur ve bos.
+  const yeniGun11 = `${yeni.getUTCDate()} ${AYLAR[yeni.getUTCMonth()]} 11:00 boş`
+  await expect(page.getByRole('button', { name: yeniGun11, exact: true })).toHaveCount(1)
+  if (ayniHafta) {
+    await expect(page.getByRole('button', { name: hucreAdi(eski), exact: true })).toHaveCount(1)
+  }
+  // Izgarada bu adla TEK blok: tasima kopya uretmedi, eskisi silinip
+  // yenisi kurulmadi.
+  await expect(bloklar).toHaveCount(1)
+
+  // Seans bolumu acik kaldi ve not onunla geldi.
+  const seansPaneli = page.getByRole('region', { name: 'Seans', exact: true })
+  await expect(seansPaneli).toContainText(`${yeni.getUTCDate()} ${AYLAR[yeni.getUTCMonth()]}`)
+  await expect(page.getByLabel('Seans notu', { exact: true })).toHaveValue(not)
+
+  // Not SUNUCUDAN da onunla geliyor: bolumu kapatip blogu yeniden ac (editor
+  // yeniden monte olur, metin `GET .../not` yanitindan okunur).
+  await page.getByRole('button', { name: 'Seansı kapat' }).click()
+  await expect(page.getByTestId('seans-bolumu')).toHaveCount(0)
+  await bloklar.first().click()
+  await expect(page.getByLabel('Seans notu', { exact: true })).toHaveValue(not)
 })
 
 // Dal incelemesi I4a: seri kurulabiliyor ama iptal edilemiyordu
@@ -175,7 +265,8 @@ test('seri kurulur ve tek adimda iptal edilir', async ({ page }) => {
 
 test('haftalar arasi gezinme calisir', async ({ page }) => {
   await kurulumYap(page)
-  const baslik = page.locator('h2').first()
+  // Görev 5: hafta başlığı tek araç çubuğunda `#hafta-basligi` (DOM kancası).
+  const baslik = page.locator('#hafta-basligi')
   const ilk = await baslik.textContent()
 
   await page.getByRole('button', { name: 'Sonraki hafta' }).click()

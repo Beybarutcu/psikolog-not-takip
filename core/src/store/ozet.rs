@@ -9,10 +9,17 @@
 //! Aşağıdakilerin her biri `tests` modülünde bir testle sabitlenmiştir; kural
 //! değişirse tek yer burasıdır.
 //!
-//! - **Seans sayısı ve borç** yalnızca `durum = 'geldi'` randevulardan
-//!   gelir. `gelmedi`, `iptal` ve `planlandi` ne seans sayısına ne borca
-//!   girer. ("Gelmedi" ücretlendirmesi psikoloğun politikasına bağlı bir
-//!   ürün kararıdır; ödenmemiş bir "gelmedi" borç sayılmaz.)
+//! - **Borç kuralı** (tasarım §5.1, kullanıcı kararı 2026-09-25): bir seans
+//!   borca girer ⇔ durumu `geldi` YA DA `gelmedi` ∧ ödenmemiş ∧ ücreti > 0.
+//!   Terapist gelmeyen seansı ücretlendiriyor — bu artık uygulamanın
+//!   bilmediği bir politika değil, ürün kararı. `iptal` ve `planlandi` hiçbir
+//!   zaman borca girmez; ücreti `NULL` ya da `0` olan seans da girmez. Kuralın
+//!   arayüzdeki eşi `web/src/borc.ts::borcaGirerMi`; ikisi
+//!   `core/src/store/borc_ornekleri.json` ortak örnekleriyle birbirine
+//!   bağlıdır (`tests::borc_ortak_ornekleri_saglar`).
+//! - **Seans sayısı** hâlâ yalnızca `durum = 'geldi'` randevulardan gelir —
+//!   bu, borç kuralından AYRI bir sayaçtır ve borç kuralı değişse de
+//!   değişmez.
 //! - **Tahsilat durumdan bağımsızdır** (dal incelemesi kararı D2): tahsilat
 //!   alınan paradır. İptal edilmiş ama ücreti alınmış bir seans (Görev 1
 //!   sözleşmesi: `odeme_iptal_edilmis_randevuda_da_isaretlenebilir`)
@@ -26,11 +33,14 @@
 //! - `seans_sayisi`: gelinen (`geldi`) seans sayısı, **ücretsiz seanslar dahil**.
 //! - `tahsilat_kurus`: ayın ödendi ∧ ücret girilmiş **bütün** seanslarının
 //!   toplamı, durum ne olursa olsun.
-//! - `bekleyen_kurus`: geldi ∧ ödenmedi ∧ ücret girilmiş toplamı.
-//! - `borclular`: geldi ∧ ödenmedi ∧ ücret > 0 seansların danışan başına
-//!   toplamı. **Arşivlenmiş danışanlar dahildir**: borç, dosyanın
-//!   arşivlenmesiyle kaybolmaz. Sıralama `borc_kurus DESC, ad_soyad COLLATE
-//!   NOCASE ASC, client_id ASC`.
+//! - `bekleyen_kurus`: borca giren (`geldi` ∨ `gelmedi`) ∧ ödenmedi ∧ ücret
+//!   > 0 seansların toplamı.
+//! - `borclular`: borca giren (`geldi` ∨ `gelmedi`) ∧ ödenmedi ∧ ücret > 0
+//!   seansların danışan başına toplamı; `borclular[].seans_sayisi` o
+//!   danışanın BORCA GİREN seans sayısıdır (`geldi` + `gelmedi`, üstteki
+//!   `seans_sayisi`'nden farklı bir sayım). **Arşivlenmiş danışanlar
+//!   dahildir**: borç, dosyanın arşivlenmesiyle kaybolmaz. Sıralama
+//!   `borc_kurus DESC, ad_soyad COLLATE NOCASE ASC, client_id ASC`.
 //! - Danışan adı yetkili kaynaktan (`clients`) okunur.
 //!
 //! # Denetim kaydı
@@ -146,13 +156,14 @@ pub fn ay_ozeti(conn: &Connection, ay: &str, cihaz: Cihaz) -> Result<AyOzeti, De
     let son = format!("{sonraki}-01T00:00");
 
     // Aralik tum durumlari kapsar; durum kosulu her kolonun KENDI kuralidir
-    // (modul basligi): seans sayisi ve bekleyen yalnizca `geldi`, tahsilat
-    // durumdan bagimsiz.
+    // (modul basligi): seans sayisi yalnizca `geldi`, bekleyen borc kuralini
+    // (`geldi` VEYA `gelmedi`) izler, tahsilat durumdan bagimsiz.
     let (seans_sayisi, tahsilat_kurus, bekleyen_kurus): (i64, i64, i64) = conn.query_row(
         "SELECT
              COALESCE(SUM(CASE WHEN durum = 'geldi' THEN 1 ELSE 0 END), 0),
              COALESCE(SUM(CASE WHEN odendi = 1 AND ucret IS NOT NULL THEN ucret END), 0),
-             COALESCE(SUM(CASE WHEN durum = 'geldi' AND odendi = 0 AND ucret IS NOT NULL
+             COALESCE(SUM(CASE WHEN durum IN ('geldi', 'gelmedi') AND odendi = 0
+                               AND ucret IS NOT NULL AND ucret > 0
                                THEN ucret END), 0)
            FROM appointments
           WHERE baslangic >= ?1 AND baslangic < ?2",
@@ -164,7 +175,7 @@ pub fn ay_ozeti(conn: &Connection, ay: &str, cihaz: Cihaz) -> Result<AyOzeti, De
         "SELECT a.client_id, c.ad_soyad, SUM(a.ucret) AS borc, COUNT(*)
            FROM appointments a
            JOIN clients c ON c.id = a.client_id
-          WHERE a.durum = 'geldi' AND a.odendi = 0
+          WHERE a.durum IN ('geldi', 'gelmedi') AND a.odendi = 0
             AND a.ucret IS NOT NULL AND a.ucret > 0
             AND a.baslangic >= ?1 AND a.baslangic < ?2
           GROUP BY a.client_id
@@ -260,8 +271,47 @@ mod tests {
             .collect()
     }
 
+    /// Tasarim §5.1: borc kurali IKI dilde yazili; bu dosyayi
+    /// `web/src/borc.test.ts` de okur. Her satir GERCEK yoldan gecer.
     #[test]
-    fn yalnizca_gelinmis_seanslar_sayilir_ve_tutarlar_kurusla_dogru() {
+    fn borc_ortak_ornekleri_saglar() {
+        let ornekler: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("borc_ornekleri.json")).unwrap();
+        assert!(ornekler.len() >= 24, "ornek dosyasi beklenenden kucuk");
+        let (_d, c) = kurulum();
+        let mut beklenen_bekleyen = 0i64;
+        let mut borclu_sayisi = 0usize;
+        for (i, o) in ornekler.iter().enumerate() {
+            let ad = o["ad"].as_str().unwrap();
+            let durum = o["durum"].as_str().unwrap();
+            let odendi = o["odendi"].as_bool().unwrap();
+            let ucret = o["ucret"].as_i64();
+            let girer = o["borca_girer"].as_bool().unwrap();
+            let cid = danisan(&c, &format!("Ornek {i}"));
+            seans(&c, cid, &format!("2026-09-{:02}T10:00", 1 + (i % 28)), ucret, durum, odendi);
+            if girer {
+                beklenen_bekleyen += ucret.unwrap();
+                borclu_sayisi += 1;
+            }
+            let o_ = ay_ozeti(&c, "2026-09", Cihaz::Masaustu).unwrap();
+            let borclu = o_.borclular.iter().find(|b| b.client_id == cid);
+            assert_eq!(borclu.is_some(), girer, "ornek: {ad}");
+            if let Some(b) = borclu {
+                assert_eq!(Some(b.borc_kurus), ucret, "ornek: {ad}");
+                assert_eq!(b.seans_sayisi, 1, "ornek: {ad}");
+            }
+        }
+        let son = ay_ozeti(&c, "2026-09", Cihaz::Masaustu).unwrap();
+        assert_eq!(son.bekleyen_kurus, beklenen_bekleyen);
+        assert_eq!(son.borclular.len(), borclu_sayisi);
+        // On kosul: iki kolu ayiran vaka (gelmedi) gercekten borclu uretti.
+        assert!(borclu_sayisi >= 2, "geldi ve gelmedi borclulari uretilmedi");
+    }
+
+    /// Kural (tasarim §5.1): `geldi` ve `gelmedi` AYNI biçimde borca girer;
+    /// `seans_sayisi` ise yalnızca gelinen seansları sayar (değişmez).
+    #[test]
+    fn seans_sayisi_yalnizca_geldi_borc_geldi_ve_gelmedi() {
         let (_d, c) = kurulum();
         let a = danisan(&c, "Ayse");
         let g = danisan(&c, "Gelmeyen");
@@ -275,7 +325,7 @@ mod tests {
         // TAHSILATTIR (karar D2) ama seans sayisina ve borca girmez.
         seans(&c, a, "2026-09-17T10:00", Some(7), "iptal", true);
         seans(&c, a, "2026-09-18T10:00", Some(11), "gelmedi", true);
-        // Yalnizca gelmedigi/iptal ettigi/planli seansi olan danisan borclu DEGIL.
+        // Gelmedigi, ODENMEMIS ve UCRETLI seansi olan danisan da borclu.
         seans(&c, g, "2026-09-03T10:00", Some(90000), "gelmedi", false);
         seans(&c, g, "2026-09-04T10:00", Some(90000), "iptal", false);
         seans(&c, g, "2026-09-05T10:00", Some(90000), "planlandi", false);
@@ -284,12 +334,21 @@ mod tests {
         assert_eq!(o.ay, "2026-09");
         assert_eq!(o.seans_sayisi, 3, "yalnizca geldi (ucretsiz dahil)");
         assert_eq!(o.tahsilat_kurus, 45018, "odenmis iptal/gelmedi seansin ucreti tahsilattir");
-        assert_eq!(o.bekleyen_kurus, 45000, "gelmedi/iptal/planlandi borca girmez");
-        assert_eq!(o.borclular.len(), 1, "yalnizca Ayse borclu: {:?}", ozet_adlari(&o));
+        assert_eq!(
+            o.bekleyen_kurus, 180000,
+            "gelmedi borca girer (kullanici karari 2026-09-25); iptal/planlandi girmez: \
+             Ayse'nin gelmedisi 45000 + Ayse'nin geldisi 45000 + Gelmeyen'in gelmedisi 90000"
+        );
+        assert_eq!(o.borclular.len(), 2, "Ayse VE Gelmeyen borclu: {:?}", ozet_adlari(&o));
+        // Ikisinin tutari esit (90000): sira ada gore (ORDER BY borc DESC, ad_soyad).
         assert_eq!(o.borclular[0].client_id, a);
         assert_eq!(o.borclular[0].ad_soyad, "Ayse");
-        assert_eq!(o.borclular[0].borc_kurus, 45000);
-        assert_eq!(o.borclular[0].seans_sayisi, 1, "ucretsiz (NULL) seans borc sayilmaz");
+        assert_eq!(o.borclular[0].borc_kurus, 90000, "geldi 45000 + gelmedi 45000");
+        assert_eq!(o.borclular[0].seans_sayisi, 2, "borca giren iki seans: geldi + gelmedi");
+        assert_eq!(o.borclular[1].client_id, g);
+        assert_eq!(o.borclular[1].ad_soyad, "Gelmeyen");
+        assert_eq!(o.borclular[1].borc_kurus, 90000);
+        assert_eq!(o.borclular[1].seans_sayisi, 1, "yalnizca gelmedi");
     }
 
     /// Karar D2'nin dogrudan vakasi (dal incelemesi I5): eski kuralda ekran
@@ -374,6 +433,9 @@ mod tests {
     /// odeme ve arsivleme. Ikinci esitlik su an tanim geregi tutar cunku
     /// "ucret > 0" kosulu toplamda notrdur; iki sorgudan biri ayri bir
     /// kosul/aralik kazanirsa (ör. yalnizca biri `>=`'yi `>` yaparsa) kirilir.
+    /// Kume ikiye bolunuyor (tasarim §5.1): `gelinen` yalnizca `seans_sayisi`
+    /// icin (degismez, yalnizca `geldi`), `borc_kumesi` ise `bekleyen_kurus`
+    /// ve `borclular` icin (`geldi` VE `gelmedi`).
     #[test]
     fn ozet_bagimsiz_hesapla_esit_ve_bekleyen_borclular_toplamidir() {
         const AYLAR: [(&str, u32); 3] = [("2026-08", 31), ("2026-09", 30), ("2026-10", 31)];
@@ -382,6 +444,10 @@ mod tests {
         let mut ay_basi_borcu_goruldu = false;
         let mut gelinmemis_tahsilat_goruldu = false;
         let mut borclu_goruldu = 0;
+        // On kosul (tasarim §5.1'in dogrudan sinama noktasi): "gelmedi" en az
+        // bir kez GERCEKTEN borclu satiri uretti. Uretmezse asagidaki tum
+        // esitlikler "gelmedi hala sayilmiyor" ile de saglanirdi.
+        let mut gelmedi_borcu_goruldu = false;
         for tohum in [1u64, 7, 42, 2026, 0xDEAD_BEEF] {
             let (_d, c) = kurulum();
             let mut r = Tohum(tohum);
@@ -419,21 +485,33 @@ mod tests {
                 // Ayin TUM seanslari; kural basina durum filtresi ayri
                 // uygulanir (karar D2: tahsilat durumdan bagimsiz).
                 let ayin_tumu: Vec<_> = kayitlar.iter().filter(|k| k.1.starts_with(ay)).collect();
-                let bu_ay: Vec<_> = ayin_tumu.iter().copied().filter(|k| k.3 == "geldi").collect();
-                let beklenen_seans = bu_ay.len() as i64;
+                let gelinen: Vec<_> = ayin_tumu.iter().copied().filter(|k| k.3 == "geldi").collect();
+                let borc_kumesi: Vec<_> = ayin_tumu
+                    .iter()
+                    .copied()
+                    .filter(|k| k.3 == "geldi" || k.3 == "gelmedi")
+                    .collect();
+                let beklenen_seans = gelinen.len() as i64;
                 let beklenen_tahsilat: i64 =
                     ayin_tumu.iter().filter(|k| k.4).filter_map(|k| k.2).sum();
                 if ayin_tumu.iter().any(|k| k.4 && k.3 != "geldi" && k.2.is_some_and(|u| u > 0)) {
                     gelinmemis_tahsilat_goruldu = true;
                 }
                 let toplam = |odendi: bool| -> i64 {
-                    bu_ay.iter().filter(|k| k.4 == odendi).filter_map(|k| k.2).sum()
+                    borc_kumesi
+                        .iter()
+                        .filter(|k| k.4 == odendi && k.2.is_some_and(|u| u > 0))
+                        .filter_map(|k| k.2)
+                        .sum()
                 };
                 let mut beklenen_borc: std::collections::BTreeMap<i64, (i64, i64)> =
                     Default::default();
-                for k in bu_ay.iter().filter(|k| !k.4 && k.2.is_some_and(|u| u > 0)) {
+                for k in borc_kumesi.iter().filter(|k| !k.4 && k.2.is_some_and(|u| u > 0)) {
                     ay_basi_borcu_goruldu |= k.1.ends_with("-01T00:00");
                     borclu_goruldu += 1;
+                    if k.3 == "gelmedi" {
+                        gelmedi_borcu_goruldu = true;
+                    }
                     let e = beklenen_borc.entry(k.0).or_default();
                     e.0 += k.2.unwrap();
                     e.1 += 1;
@@ -463,6 +541,7 @@ mod tests {
         // Tahsilat kuralinin iki kolunu ayiran vaka gercekten uretildi; yoksa
         // eski kurala donus (yalnizca geldi) bu testte gorunmezdi.
         assert!(gelinmemis_tahsilat_goruldu, "odenmis gelinmemis seans uretilmedi");
+        assert!(gelmedi_borcu_goruldu, "gelmedi hic borclu satiri uretmedi");
     }
 
     #[test]

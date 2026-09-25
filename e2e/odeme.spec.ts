@@ -173,9 +173,9 @@ async function haftaIlerle(page: Page, n: number) {
   }
 }
 
-/** Özetin kapsam cümlesi — `web/src/ozet/AyOzeti.tsx` `KAPSAM_CUMLESI` ile birebir (D2). */
+/** Özetin kapsam cümlesi — `web/src/ozet/AyOzeti.tsx` `KAPSAM_CUMLESI` ile birebir (D2, §5.1). */
 const KAPSAM_CUMLESI =
-  "Tahsilat, ödendi olarak işaretlenen bütün seansları içerir. Bekleyen ödemeye yalnızca 'geldi' olarak işaretlenen seanslar girer; 'gelmedi' ve 'iptal' borç sayılmaz."
+  "Tahsilat, ödendi olarak işaretlenen bütün seansları içerir. Bekleyen ödemeye 'geldi' ve 'gelmedi' olarak işaretlenen, ödenmemiş seanslar girer; 'iptal' borç sayılmaz."
 
 function deger(bolum: Locator, etiket: string): Locator {
   return bolum
@@ -207,7 +207,7 @@ test('geldi + odendi isaretlenen seans ay sonu ozetinde tahsilata, odenmeyen bor
   await expect(deger(ozet, 'Tahsilat')).toHaveText('450,00 TL')
   await expect(deger(ozet, 'Bekleyen')).toHaveText('300,00 TL')
   await expect(
-    ozet.getByRole('button', { name: 'Borçlu Burak — 300,00 TL (1 seans)', exact: true }),
+    ozet.getByRole('button', { name: 'Borçlu Burak — 300,00 TL (1 ödenmemiş seans)', exact: true }),
   ).toBeVisible()
   // Sayılar yüklendikten SONRA (yukarıdaki bariyerler): ödeyen borçlu değil.
   await expect(ozet.getByRole('listitem')).toHaveCount(1)
@@ -236,7 +236,7 @@ test('geldi + odendi isaretlenen seans ay sonu ozetinde tahsilata, odenmeyen bor
   await expect(ozet.getByRole('listitem')).toHaveCount(0)
 })
 
-test('gelmedi isaretlenen seans ne tahsilata ne borca girer', async ({ page }) => {
+test('gelmedi isaretlenen ucretli seans BEKLEYENE girer, tahsilata girmez', async ({ page }) => {
   await kurulumYap(page)
 
   await danisanEkle(page, 'Devamsız Cem')
@@ -250,25 +250,29 @@ test('gelmedi isaretlenen seans ne tahsilata ne borca girer', async ({ page }) =
   const satir = await seansAc(page, 'Devamsız Cem', '450,00 TL')
   await durumIsaretle(page, satir, r, 'Devamsız Cem', 'Gelmedi', 'gelmedi')
 
-  // Özet, Gelmedi yazması sunucuda TAMAMLANDIKTAN sonra açılıyor (bariyer
-  // yukarıda); sıfırlar işlem öncesi bir yanıttan gelemez.
+  // Kural (tasarım §5.1, kullanıcı kararı 2026-09-25): terapist gelmeyen
+  // seansı ücretlendiriyor, bu yüzden "gelmedi" BEKLEYENE ve borçlulara
+  // girer; "Gelinen seans" ve tahsilat yalnızca `geldi`den geldiği için
+  // sıfır kalır. Özet, Gelmedi yazması sunucuda TAMAMLANDIKTAN sonra
+  // açılıyor (bariyer yukarıda); sayılar işlem öncesi bir yanıttan gelemez.
   let ozet = await ozetAc(page, ay)
   await expect(deger(ozet, 'Gelinen seans')).toHaveText('0')
   await expect(deger(ozet, 'Tahsilat')).toHaveText('0,00 TL')
-  await expect(deger(ozet, 'Bekleyen')).toHaveText('0,00 TL')
-  await expect(ozet.getByText('Bu ay bekleyen ödeme yok.', { exact: true })).toBeVisible()
+  await expect(deger(ozet, 'Bekleyen')).toHaveText('450,00 TL')
+  await expect(
+    ozet.getByRole('button', {
+      name: 'Devamsız Cem — 450,00 TL (1 ödenmemiş seans)',
+      exact: true,
+    }),
+  ).toBeVisible()
   await ozetKapat(page)
 
-  // ARTI YÖN: aynı randevu Geldi olunca sayılır. Hiçbir şey saymayan bir özet
-  // yukarıdaki sıfırları da verirdi.
-  await durumIsaretle(page, satir, r, 'Devamsız Cem', 'Geldi', 'geldi')
+  // ARTI YÖN: iptal edilince borçtan düşer. Hiçbir şeyi ayırt etmeyen bir
+  // özet yukarıdaki bekleyeni de sıfır gösterirdi.
+  await durumIsaretle(page, satir, r, 'Devamsız Cem', 'İptal', 'iptal')
   ozet = await ozetAc(page, ay)
-  await expect(deger(ozet, 'Gelinen seans')).toHaveText('1')
-  await expect(deger(ozet, 'Bekleyen')).toHaveText('450,00 TL')
-  await expect(deger(ozet, 'Tahsilat')).toHaveText('0,00 TL')
-  await expect(
-    ozet.getByRole('button', { name: 'Devamsız Cem — 450,00 TL (1 seans)', exact: true }),
-  ).toBeVisible()
+  await expect(deger(ozet, 'Bekleyen')).toHaveText('0,00 TL')
+  await expect(ozet.getByText('Bu ay bekleyen ödeme yok.', { exact: true })).toBeVisible()
 })
 
 // Dal incelemesi D2 — TAHSİLAT ayın ödendi işaretli BÜTÜN seanslarıdır (iptal

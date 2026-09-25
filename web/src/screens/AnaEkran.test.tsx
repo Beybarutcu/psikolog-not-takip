@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DenetimKaydi } from '../api'
+import { borcaGirerMi } from '../borc'
 import { taslakOku, taslaklariUnut } from '../seans/taslak'
 import { AnaEkran } from './AnaEkran'
 
@@ -2267,11 +2268,14 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
       }
 
       // Ayşe'nin 202'si (geldi, 450 TL) yazmalara göre borçlu listesine girer
-      // ya da çıkar; tahsilat ve Zeynep sabit.
+      // ya da çıkar; tahsilat ve Zeynep sabit. Sahte hesap GERÇEK kuralı
+      // (`borcaGirerMi`) kullanıyor: durum "gelmedi" olsa da borca girer.
       if (yol.startsWith('/api/ay-ozeti')) {
-        const ayseBorclu =
-          (sunucuDurumlari[202] ?? gelecekHafta.durum) === 'geldi' &&
-          !(sunucuOdemeleri[202] ?? gelecekHafta.odendi)
+        const ayseBorclu = borcaGirerMi({
+          durum: sunucuDurumlari[202] ?? gelecekHafta.durum,
+          odendi: sunucuOdemeleri[202] ?? gelecekHafta.odendi,
+          ucret: 45000,
+        })
         return jsonYanit({
           ay: '2026-09', seans_sayisi: 4, tahsilat_kurus: 180000,
           bekleyen_kurus: 60000 + (ayseBorclu ? 45000 : 0),
@@ -2508,7 +2512,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
 
     it.each([
       ['odeme', async () => userEvent.click(odendiKutusu())],
-      ['durum', async () => userEvent.click(screen.getByRole('button', { name: 'Gelmedi' }))],
+      ['durum', async () => userEvent.click(screen.getByRole('button', { name: 'İptal' }))],
     ])(
       'ozet ACIKKEN %s yazmasi basarili olunca ozet TEK yeni istekle tazelenir; kart ve ozet AYNI borcu gosterir',
       async (_ad, yazmaEylemi) => {
@@ -2668,9 +2672,9 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     await waitFor(() => expect(kutu().disabled).toBe(false))
     expect(await bakiye()).toBe(BAKIYE_450)
 
-    // Durum da bakiyeyi etkiler: "gelmedi" sayılmaz.
+    // Durum da bakiyeyi etkiler: "iptal" sayılmaz.
     await takvimeDon()
-    await userEvent.click(screen.getByRole('button', { name: 'Gelmedi' }))
+    await userEvent.click(screen.getByRole('button', { name: 'İptal' }))
     expect(await bakiye()).toBe(BAKIYE_0)
 
     // Kart yeniden ÇEKİLMEDİ (GET /api/danisanlar/1 YOK), takvim listesi de
@@ -2696,6 +2700,37 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     ])
   })
 
+  it('takvimde "Gelmedi" isaretlenince kart bakiyesi DUSMEZ (gelmedi ucretlidir)', async () => {
+    // Kural değişikliği (tasarım §5.1, kullanıcı kararı 2026-09-25): terapist
+    // gelmeyen seansı ücretlendiriyor, bu yüzden "gelmedi" artık borca girer.
+    // Yukarıdaki testin eski hâli tam tersini (bakiye DÜŞER) ölçüyordu —
+    // sınırı ayıran vaka burada.
+    render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
+    await danisanlarSekmesineGec()
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
+    await dosyaBilgileriSekmesineGec()
+    await screen.findByText('0555 111 22 33')
+    async function bakiye() {
+      await danisanlarSekmesineGec()
+      await dosyaBilgileriSekmesineGec()
+      const dt = screen.getAllByRole('term').find((e) => e.textContent === 'Bakiye')
+      return dt?.nextElementSibling?.textContent
+    }
+    expect(await bakiye()).toBe(BAKIYE_450)
+
+    // Gelecek haftadaki "geldi", 450 TL, ödenmemiş seansı (202) aç.
+    await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Ayşe Yılmaz' }))
+    await screen.findByLabelText('Seans notu')
+    await waitFor(() =>
+      expect(istekYollari.filter((y) => y.startsWith('GET /api/cakisma?'))).toHaveLength(1),
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'Gelmedi' }))
+    expect(await bakiye()).toBe(BAKIYE_450)
+  })
+
   // Dal incelemesi (ledger KALAN): kartın uçuş yarışı. Kartın tüm-zaman
   // randevu okuması yazmadan ÖNCE başlar (sunucu ESKİ değeri okur — bu
   // taklitte liste GET'i yazmaları hiç yansıtmıyor) ve yazmadan SONRA döner.
@@ -2704,7 +2739,7 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
   // listesiyle AYNI mantıksal saat (`yazmaSaati.ts`) bunu kapatıyor.
   it.each([
     ['odeme', async () => userEvent.click(screen.getByRole('checkbox', { name: 'Ödendi' }))],
-    ['durum', async () => userEvent.click(screen.getByRole('button', { name: 'Gelmedi' }))],
+    ['durum', async () => userEvent.click(screen.getByRole('button', { name: 'İptal' }))],
   ])(
     'kart YUKLENIRKEN %s isaretlenirse gec donen kart yaniti ESKI bakiyeyi gostermez',
     async (_ad, yazmaEylemi) => {

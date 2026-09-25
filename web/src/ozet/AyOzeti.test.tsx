@@ -219,7 +219,7 @@ describe('AyOzeti', () => {
     const { unmount } = render(<AyOzeti bugun="2026-09-16" onDanisanAc={onDanisanAc} />, { ayOzeti })
     const ayse = await screen.findByRole('button', { name: /Ayşe Yılmaz/ })
     expect(ayse.textContent).toContain('900,00 TL')
-    expect(ayse.textContent).toContain('2 seans')
+    expect(ayse.textContent).toContain('2 ödenmemiş seans')
     // Borçlu varken "borç yok" cümlesi YOK (her zaman basan bir uygulama
     // aşağıdaki artı yönü de geçerdi).
     expect(screen.queryByText('Bu ay bekleyen ödeme yok.')).toBeNull()
@@ -242,7 +242,7 @@ describe('AyOzeti', () => {
     const cumle = () => screen.getByText(KAPSAM_CUMLESI)
 
     expect(KAPSAM_CUMLESI).toBe(
-      "Tahsilat, ödendi olarak işaretlenen bütün seansları içerir. Bekleyen ödemeye yalnızca 'geldi' olarak işaretlenen seanslar girer; 'gelmedi' ve 'iptal' borç sayılmaz.",
+      "Tahsilat, ödendi olarak işaretlenen bütün seansları içerir. Bekleyen ödemeye 'geldi' ve 'gelmedi' olarak işaretlenen, ödenmemiş seanslar girer; 'iptal' borç sayılmaz.",
     )
     expect(cumle()).toBeDefined() // yüklenirken
     eylul.coz(bosOzet('2026-09'))

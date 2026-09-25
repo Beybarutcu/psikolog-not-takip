@@ -880,8 +880,10 @@ export type Borclu = {
 /**
  * `GET /api/ay-ozeti?ay=YYYY-AA` yanıtı (sunucudaki `store::ozet::AyOzeti`).
  *
- * Yalnızca `geldi` olarak işaretlenen seanslar sayılır; `gelmedi`, `iptal` ve
- * `planlandi` hiçbir alana girmez. Tutarlar kuruştur.
+ * `seans_sayisi` yalnızca `geldi`yi sayar. `bekleyen_kurus` ve `borclular`
+ * borç kuralını izler (tasarım §5.1, bkz. `../borc`): `geldi` YA DA
+ * `gelmedi` ∧ ödenmemiş ∧ ücreti > 0. `iptal` ve `planlandi` hiçbir alana
+ * girmez. Tutarlar kuruştur.
  */
 export type AyOzeti = {
   ay: string

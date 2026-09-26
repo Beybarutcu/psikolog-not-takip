@@ -453,8 +453,9 @@ mod testler {
     /// girdiyle `onizleme_ornekleri.json`'da: istemcide eşi yok; bu test
     /// `SeansNotu::onizleme` (PUT yanıtı) ile liste önizlemesinin
     /// (`not_ilk_satiri`, bu modüldeki `onizleme`) AYNI fonksiyondan
-    /// geldiğini doğrular (yukarıdaki iki iddia). Her ornek GERCEK yoldan
-    /// gecer (not kaydet), yalnizca yardimci fonksiyondan degil.
+    /// geldiğini doğrular (yukarıdaki iki iddia — PUT yanıtı VE liste
+    /// sorgusu, ikisi de sınanır). Her ornek GERCEK yoldan gecer (not
+    /// kaydet -> liste), yalnizca yardimci fonksiyondan degil.
     #[test]
     fn onizleme_ortak_ornekleri_saglar() {
         let ornekler: Vec<serde_json::Value> = serde_json::from_str(include_str!(
@@ -476,6 +477,13 @@ mod testler {
                 Some(beklenen),
                 "PUT yaniti ayni onizlemeyi tasimali: {ad}"
             );
+            // İKİNCİ İDDİA: liste sorgusu (`danisan_seanslari` -> `p.duz_metin`
+            // -> bu moduldeki `onizleme`) PUT yanitiyla AYNI degeri vermeli.
+            // Bu satir olmadan test yalnizca bellek-ici `duz` degiskeninden
+            // gecen PUT yolunu sinar; depolanan sutun + liste sorgusu HIC
+            // olculmez (mutasyonla dogrulandi, Fix round 1 raporunda).
+            let liste = danisan_seanslari(&c, cid, Cihaz::Masaustu).unwrap();
+            assert_eq!(liste[0].not_ilk_satiri.as_deref(), Some(beklenen), "liste onizlemesi: {ad}");
         }
     }
 

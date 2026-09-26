@@ -509,3 +509,23 @@ dosyasından erişim; kilit sonrası kaldığın yere dönme; gerçek koyu tema;
 hazır süre dışındaki akıllı varsayılanlar (danışanın son ücreti/süresi);
 "+1 gün / +1 hafta" düğmeleri; seans durumunu "Planlandı"ya geri alma;
 arşivdeki danışanı liste aramasında bulma.
+
+## 9. Ek — Plan B güncellemesi (2026-09-26)
+
+Plan A'dan sonra seans notu sayfası ve biçimli editör işi
+(`docs/superpowers/specs/2026-09-26-seans-notu-sayfasi-ve-editor-design.md`)
+master'a birleşti. Plan B ona göre şöyle daraltıldı (kullanıcı: "plan b den
+devam et"):
+
+- **B4 kalkar.** Oku/Yaz kipi, eski notun ham Markdown işaretleriyle
+  okunmasını çözmek içindi. Editör artık biçimli (TipTap), Yaz/Önizle ayrımı
+  yok; not her zaman son hâliyle görünüyor. Editörün içerikle uzaması ve
+  asgari yüksekliği o işin 7. görevinde yapıldı. `NotGorunumu` da silindi
+  (yerini `NotOkuma` aldı). B4'ün hiçbir parçası bu plana girmez.
+- **B1, B2, B3 aynen geçerli.** Tek fark: §5.2'deki `katla` arayüzde zaten
+  var (`web/src/not/vurgu.ts`, önceki notlarda vurgu için). B1 onu ortak bir
+  modüle (`web/src/katla.ts`) taşır; vurgu ve danışan araması aynı işlevi
+  kullanır. §5.2'nin ortak örnek dosyası (`core/src/store/katlama_ornekleri.json`)
+  bu planda eklenir.
+- **Kapsam dışı (değişmedi):** danışan dosyasından takvimdeki not sayfasına
+  geçiş; danışan dosyasının kendi editörü aynı kalır.

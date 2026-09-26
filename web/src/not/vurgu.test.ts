@@ -1,44 +1,12 @@
 import { describe, expect, it } from 'vitest'
-// Sunucunun arama kuralı metin olarak (`?raw`, `vite.config.ts`
+// Sunucunun arama eşiği metin olarak (`?raw`, `vite.config.ts`
 // `server.fs.allow` bu dizini açıyor; emsal `seans/sablon.test.ts`).
 import aramaKaynagi from '../../../core/src/store/search.rs?raw'
-import { ASGARI_VURGU, eslesmeAraliklari, katla, vurguParcalari } from './vurgu'
+import { ASGARI_VURGU, eslesmeAraliklari, vurguParcalari } from './vurgu'
 
-// Sunucudaki `store::search::katla_karakter` ile AYNI küme (KATLANAN_HARFLER).
-const KATLANAN: Array<[string, string]> = [
-  ['ı', 'i'], ['İ', 'i'], ['I', 'i'], ['i', 'i'], ['ş', 's'], ['Ş', 's'], ['ğ', 'g'],
-  ['Ğ', 'g'], ['ü', 'u'], ['Ü', 'u'], ['ö', 'o'], ['Ö', 'o'], ['ç', 'c'], ['Ç', 'c'],
-]
-
-describe('katla', () => {
-  for (const [harf, ascii] of KATLANAN) it(`${harf} -> ${ascii}`, () => expect(katla(harf)).toBe(ascii))
-  it('ASCII büyük harf küçülür, diğerleri değişmez; uzunluk KORUNUR (konum eşlemesi buna dayanır)', () => {
-    expect(katla('KAYGI Âb')).toBe('kaygi Âb')
-    for (const m of ['Işık ÇAĞRI şĞüÜöÖçÇ', 'KAYGI kaygı', 'İstanbul', 'emoji 😀 x']) {
-      expect(katla(m).length).toBe(m.length)
-    }
-  })
-})
-
-// Preflight F21: istemci katlaması sunucununkinin KOPYASI; ikisi yalnızca
-// yorumla bağlı kalsaydı sunucuya eklenen bir harf (ya da değişen asgari
-// uzunluk) vurguyu sessizce aramadan ayırırdı — arama bulur, vurgu
-// işaretlemez. Sunucunun `katla_karakter` kolları ve `ASGARI_SORGU` kaynak
-// metninden okunup istemciyle karşılaştırılır.
-describe('sunucunun katlama kuralıyla aynı (core/src/store/search.rs)', () => {
-  const govde = /fn katla_karakter\(k: char\) -> char \{([\s\S]*?)\n\}/.exec(aramaKaynagi)?.[1] ?? ''
-  const sunucuEslemesi: Array<[string, string]> = [...govde.matchAll(/((?:'[^']'\s*\|\s*)*'[^']')\s*=>\s*'([^'])'/g)].flatMap(
-    ([, harfler, hedef]) => [...harfler.matchAll(/'([^'])'/g)].map(([, h]) => [h, hedef] as [string, string]),
-  )
-
-  it('sunucu kaynağı gerçekten okundu (boş okuma iddiaları yeşile çevirmesin)', () => {
-    expect(sunucuEslemesi.length).toBeGreaterThanOrEqual(14)
-    expect(govde).toContain('to_ascii_lowercase')
-  })
-  it('sunucunun her katlama kolu istemcide aynı sonucu verir; istemci tablosu sunucununkiyle aynı küme', () => {
-    for (const [harf, hedef] of sunucuEslemesi) expect(katla(harf), harf).toBe(hedef)
-    expect(new Set(sunucuEslemesi.map(([h]) => h))).toEqual(new Set(KATLANAN.map(([h]) => h)))
-  })
+// Katlama kuralının kendisi (harf tablosu, sunucu kolları, ortak örnekler)
+// `web/src/katla.test.ts`'te (tasarım §9: ortak modül).
+describe('sunucunun arama eşiğiyle aynı (core/src/store/search.rs)', () => {
   it('asgari vurgu uzunluğu sunucunun ASGARI_SORGU değeri', () => {
     const asgari = /const ASGARI_SORGU: usize = (\d+);/.exec(aramaKaynagi)?.[1]
     expect(asgari).toBeDefined()
@@ -56,6 +24,11 @@ describe('eslesmeAraliklari', () => {
     expect(eslesmeAraliklari('ab ab', ' ab ')).toEqual([[0, 2], [3, 5]])
   })
   it('eşleşmeler üst üste binmez', () => expect(eslesmeAraliklari('aaaa', 'aa')).toEqual([[0, 2], [2, 4]]))
+  it('emoji ve İ içeren metinde konumlar ham metinle hizalı (UTF-16 uzunluğu korunur)', () => {
+    const metin = '😀 İpek geldi'
+    const [[bas, son]] = eslesmeAraliklari(metin, 'ipek')
+    expect(metin.slice(bas, son)).toBe('İpek')
+  })
 })
 
 describe('vurguParcalari', () => {

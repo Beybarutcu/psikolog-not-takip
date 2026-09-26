@@ -203,6 +203,11 @@
 //! `katla_karakter` **1:1**'dir — her karakter tam olarak bir karaktere
 //! gider. `parca_cikar` bu değişmezliğe dayanır: katlanmış metindeki eşleşme
 //! konumu, ham metindeki karakter konumuyla aynıdır.
+//!
+//! İstemcide AYNI kural `web/src/katla.ts`'te (danışan listesi araması ve
+//! önceki notlar vurgusu; tasarım §5.2). İkisi `katlama_ornekleri.json`
+//! ortak örnekleriyle bağlı: `tests::katlama_ortak_ornekleri_saglar` ve
+//! `web/src/katla.test.ts` aynı dosyayı okur.
 
 use crate::store::audit::{kaydet, Cihaz, Eylem, LogHacmi, BIRLESTIRME_PENCERESI_DK};
 use crate::store::clients::DepoHatasi;
@@ -435,6 +440,7 @@ pub struct AramaYaniti {
 /// de aşağıdaki `d => d.to_ascii_lowercase()` kolu zaten `'i'`'ye götürür, bu
 /// yüzden onları silen bir mutasyon hiçbir testi kırmaz. Burada durmalarının
 /// nedeni okunabilirlik: "i ailesinin dört biçimi" tek satırda görünüyor.
+/// İstemci eşi `web/src/katla.ts`; ortak örnekler `katlama_ornekleri.json`.
 fn katla_karakter(k: char) -> char {
     match k {
         'ı' | 'İ' | 'I' | 'i' => 'i',
@@ -2029,6 +2035,28 @@ mod tests {
                 ornek.chars().count(),
                 "katlama 1:1 olmali: {ornek}"
             );
+        }
+    }
+
+    /// Tasarim §5.2: katlama kurali IKI dilde yazili; bu dosyayi
+    /// `web/src/katla.test.ts` de okur. SQL zinciri ile bu islevin esitligi
+    /// `her_katlanan_harf_*` testlerinde (tasarimin istedigi gibi).
+    #[test]
+    fn katlama_ortak_ornekleri_saglar() {
+        let ornekler: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("katlama_ornekleri.json")).unwrap();
+        assert!(ornekler.len() >= 22, "ornek dosyasi beklenenden kucuk");
+        for zorunlu in ["İpek", "IŞIK", "ŞAHİN ĞÜÖÇ", "Kâzım", "ÂDEM", "İstanbul"] {
+            assert!(
+                ornekler.iter().any(|o| o["girdi"] == zorunlu),
+                "zorunlu ornek eksik: {zorunlu}"
+            );
+        }
+        for o in &ornekler {
+            let girdi = o["girdi"].as_str().unwrap();
+            let katli = o["katli"].as_str().unwrap();
+            assert_eq!(katla(girdi), katli, "ornek: {girdi:?}");
+            assert_eq!(katla(girdi).chars().count(), girdi.chars().count(), "1:1 degil: {girdi:?}");
         }
     }
 

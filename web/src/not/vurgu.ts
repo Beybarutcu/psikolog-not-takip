@@ -2,26 +2,8 @@ import { Extension } from '@tiptap/core'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
-
-/**
- * Türkçe harf katlaması — sunucudaki `store::search::katla_karakter`'in
- * istemci eşi (yalnızca VURGU için; arama sunucuda yapılır). UTF-16
- * birimi başına 1:1: katlanmış metindeki konum ham metindeki konumdur.
- */
-const KATLAMA: Record<string, string> = {
-  ı: 'i', İ: 'i', I: 'i', ş: 's', Ş: 's', ğ: 'g', Ğ: 'g', ü: 'u', Ü: 'u', ö: 'o', Ö: 'o', ç: 'c', Ç: 'c',
-}
-
-export function katla(metin: string): string {
-  let sonuc = ''
-  for (const birim of metin.split('')) {
-    const eslesen = KATLAMA[birim]
-    if (eslesen !== undefined) sonuc += eslesen
-    else if (birim >= 'A' && birim <= 'Z') sonuc += birim.toLowerCase()
-    else sonuc += birim
-  }
-  return sonuc
-}
+// Türkçe katlama ortak modülde (tasarım §9): vurgu ve danışan araması AYNI işlevi kullanır.
+import { katla } from '../katla'
 
 /** Sunucudaki `ASGARI_SORGU` (2) ile aynı: daha kısa terim vurgulanmaz. */
 export const ASGARI_VURGU = 2

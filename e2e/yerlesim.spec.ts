@@ -140,9 +140,11 @@ test('not sayfasinda editor ekranin kalanini doldurur; danisan dosyasinda asgari
   // Asgari (16rem = 256 px) yükseklikte kalmış bir yüzey bu eşiği geçemez.
   expect(k!.height).toBeGreaterThan(boyut.height / 2)
   // Editör KALANI alır, sekme gövdesinin TAMAMINI değil: altındaki etiket
-  // satırı da ekranda ve sekme gövdesinin içinde kalır (`NotEditoru` kökü
-  // `h-full` olsaydı editör gövdenin tamamını alır, etiket satırı gövdenin
-  // dışına — ekranın altına — taşardı; mutasyonla ölçüldü).
+  // satırı editörün altında, sekme gövdesinin içinde ve ekranda kalır.
+  // (Not: `NotEditoru` kökünde `flex-1` yerine `h-full` Chromium'da EŞDEĞER
+  // çıktı — esnek küçülme etiket satırına yer açıyor; ölçüldü, bu satırlar o
+  // mutasyonu yakalamıyor. Yakalanan: kökte hiç büyüme yok, kapta `flex-1`
+  // yok, sayfada ekran boyu asgari yok.)
   const etiket = await sayfa.getByLabel('Etiket ekle', { exact: true }).boundingBox()
   const govde = await sayfa.getByRole('tabpanel').boundingBox()
   expect(etiket).not.toBeNull()

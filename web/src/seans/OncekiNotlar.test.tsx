@@ -51,6 +51,11 @@ const bolge = () => screen.getByRole('region', { name: 'Önceki seans notları' 
 const satirlar = () => within(bolge()).queryAllByRole('listitem')
 const kutu = () => screen.getByRole('searchbox', { name: 'Önceki notlarda ara' })
 
+type SanalKonsol = {
+  on(olay: 'jsdomError', dinleyici: (e: Error) => void): unknown
+  off(olay: 'jsdomError', dinleyici: (e: Error) => void): unknown
+}
+
 /** Elle çözülen söz: yanıtların GELİŞ SIRASINI test kurar. */
 function kapi<T>() {
   let coz!: (deger: T) => void
@@ -225,6 +230,16 @@ describe('OncekiNotlar (tasarım N5-N9)', () => {
     expect(t.seanslar).toHaveBeenCalledTimes(1)
   })
 
+  // `GecmisNotlar.test.tsx`'ten (Görev 8'de silindi) "seans tarihi zaman
+  // dilimine göre KAYMAZ" korumasının yerine: gece yarısına yakın bir seans
+  // `Date`'e çevrilip UTC'ye kayarsa (TZ Europe/Istanbul) bir gün önce görünür.
+  it('gece yarısına yakın seansın tarihi KAYMAZ (Date kullanılmıyor)', async () => {
+    t.seanslar.mockResolvedValue([seans({ appointment_id: 90, baslangic: '2026-08-31T00:30', not_ilk_satiri: 'gece' })])
+    kur()
+    await ilerle(0)
+    expect(satirlar()[0].textContent).toContain('31 Ağustos 2026, 00:30')
+  })
+
   it('liste yüklenemezse hata gösterilir, "önceki seans yok" DENMEZ', async () => {
     t.seanslar.mockRejectedValue(new Error('Veritabanı okunamadı.'))
     kur()
@@ -337,19 +352,29 @@ describe('OncekiNotlar — gerçek okumaPenceresiniAc ile (Tauri: window.open nu
     const gercek = await vi.importActual<typeof import('./okumaPenceresi')>('./okumaPenceresi')
     t.pencere.mockImplementation(gercek.okumaPenceresiniAc)
     const ac = vi.spyOn(window, 'open').mockReturnValue(null)
-    const konsol = vi.spyOn(console, 'error')
-    const adres = window.location.href
-    const p = kur()
-    await ilerle(0)
-    fireEvent.contextMenu(within(satirlar()[0]).getByRole('button'))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Yeni pencerede aç' }))
-    await ilerle(0)
-    expect(ac).toHaveBeenCalledWith('/?okuma=200', 'okuma-200')
-    expect(within(bolge()).queryByRole('alert')).toBeNull()
-    expect(screen.queryByRole('menu')).toBeNull()
-    expect(satirlar()).toHaveLength(2)
-    expect(p.onGenislikDegisti).not.toHaveBeenCalled()
-    expect(window.location.href).toBe(adres)
-    expect(konsol).not.toHaveBeenCalled()
+    // jsdom gezinmeyi uygulamaz, yalnızca KENDİ sanal konsoluna bildirir
+    // (testin `console`'u değil — bkz. `okumaPenceresi.test.ts`).
+    const dom = (globalThis as { jsdom?: { virtualConsole: SanalKonsol } }).jsdom
+    expect(dom, 'jsdom örneği yok: gezinme dinlenemez').toBeDefined()
+    const jsdomHatalari: string[] = []
+    const dinleyici = (e: Error) => jsdomHatalari.push(e.message)
+    dom!.virtualConsole.on('jsdomError', dinleyici)
+    try {
+      const adres = window.location.href
+      const p = kur()
+      await ilerle(0)
+      fireEvent.contextMenu(within(satirlar()[0]).getByRole('button'))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Yeni pencerede aç' }))
+      await ilerle(0)
+      expect(ac).toHaveBeenCalledWith('/?okuma=200', 'okuma-200')
+      expect(within(bolge()).queryByRole('alert')).toBeNull()
+      expect(screen.queryByRole('menu')).toBeNull()
+      expect(satirlar()).toHaveLength(2)
+      expect(p.onGenislikDegisti).not.toHaveBeenCalled()
+      expect(window.location.href).toBe(adres)
+      expect(jsdomHatalari).toEqual([])
+    } finally {
+      dom!.virtualConsole.off('jsdomError', dinleyici)
+    }
   })
 })

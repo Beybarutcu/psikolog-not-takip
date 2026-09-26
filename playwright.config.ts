@@ -35,6 +35,10 @@ const SUNUCULAR = [
   // Görev 7: hafta pencereye kaydırmadan sığar (tasarım A3) uçtan uca
   // ölçümü — gerçek tarayıcı yerleşimi gerektirir (bkz. yerlesim.spec.ts).
   { ad: 'yerlesim', spec: 'yerlesim.spec.ts', port: 7707 },
+  // Seans notu sayfası ve biçimli editör (tasarım 2026-09-26 §11): biçim
+  // kalıcılığı, Türkçe Q kısayolu, yapıştırma temizliği, önceki notlarda
+  // arama + geniş okuma, dış bağlantı, okuma penceresi ve kilit.
+  { ad: 'editor', spec: 'editor.spec.ts', port: 7708 },
 ] as const
 
 // Bir spec dosyası hiçbir projeye bağlı değilse Playwright onu SESSİZCE

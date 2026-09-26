@@ -28,7 +28,9 @@ test.use({ reducedMotion: 'reduce' })
 
 const SIMDI = new Date(2026, 8, 24, 7, 0)
 const UZUN_AD = 'ŞebnemÜnalKaraosmanoğlu'.repeat(6).slice(0, 120)
-const UZUN_ETIKET = 'kaygıuykusuzlukdikkat'.repeat(2).slice(0, 40)
+// Etiket en çok 40 karakter; geniş büyük harflerle en geniş hâli (~480 px):
+// 1024 px'te danışan dosyasının not sütunundan (~376 px) geniş.
+const UZUN_ETIKET = 'WMÜĞŞÖÇ'.repeat(6).slice(0, 40)
 const ILK_SATIR = 'Notbaşı' + 'ç'.repeat(220)
 /** Sunucu seans listesi önizlemesini 120 karakterde kırpar (`AZAMI_ONIZLEME`). */
 const ONIZLEME = ILK_SATIR.slice(0, 120)

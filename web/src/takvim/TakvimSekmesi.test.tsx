@@ -335,7 +335,9 @@ describe('TakvimSekmesi — not sayfası ve kaydırma (Görev 7, Plan A Görev 1
     rerender(<TakvimSekmesi {...props} takvim={{ ...props.takvim, seciliRandevu: null, seciliBosSaat: '2026-09-08T09:00' }} />)
     expect(screen.queryByTestId('seans-bolumu')).toBeNull()
     const yeni = screen.getByRole('heading', { name: 'Yeni randevu' })
+    // Izgaranın YANINDA: ızgarayla aynı satır kabında, ızgaranın içinde değil.
     expect(screen.getByTestId('takvim-izgara').parentElement!.contains(yeni)).toBe(true)
+    expect(screen.getByTestId('takvim-izgara').contains(yeni)).toBe(false)
   })
 
   it('7.12 "Takvime dön" takvim.panelKapat\'ı çağırır, haftaya DOKUNMAZ', async () => {

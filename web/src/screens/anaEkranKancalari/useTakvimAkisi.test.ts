@@ -7,12 +7,15 @@ const t = vi.hoisted(() => ({
   haftalar: {} as Record<string, unknown[]>,
   kapilar: {} as Record<string, Promise<void>>,
   hatalar: {} as Record<string, Error>,
+  sirayla: {} as Record<string, { kapi: Promise<void>; liste: unknown[] }[]>,
   cagrilar: [] as string[],
 }))
 
 // Hafta listesi haftanın ilk gününe göre (`YYYY-AA-GG`) verilir; bir hafta
 // için "kapı" kurulursa o yanıt kapı açılana kadar bekletilir; "hata"
-// kurulursa o haftanın isteği (kapıdan sonra) reddedilir.
+// kurulursa o haftanın isteği (kapıdan sonra) reddedilir. `sirayla`: AYNI
+// haftanın art arda istekleri için istek başına kapı ve liste (sırayla
+// tüketilir; boşalınca yukarıdaki kurallar geçerli).
 vi.mock('../../api', async (importOriginal) => {
   const gercek = await importOriginal<typeof import('../../api')>()
   return {
@@ -22,6 +25,11 @@ vi.mock('../../api', async (importOriginal) => {
       randevulariGetir: async (baslangic: string) => {
         const gun = baslangic.slice(0, 10)
         t.cagrilar.push(gun)
+        const sira = t.sirayla[gun]?.shift()
+        if (sira) {
+          await sira.kapi
+          return sira.liste
+        }
         const kapi = t.kapilar[gun]
         if (kapi) await kapi
         const hata = t.hatalar[gun]
@@ -44,6 +52,7 @@ beforeEach(() => {
   t.haftalar = {}
   t.kapilar = {}
   t.hatalar = {}
+  t.sirayla = {}
   t.cagrilar = []
 })
 afterEach(() => vi.useRealTimers())
@@ -192,6 +201,119 @@ describe('useTakvimAkisi.randevuyaGit (tasarım N8, inceleme odağı 4)', () => 
     expect(result.current.gecisBekliyor).toBe(false)
 
     await kapiyiAcVeBekle(hedefiAc)
+    expect(result.current.seciliRandevu).toBeNull()
+    expect(result.current.gecisBekliyor).toBe(false)
+  })
+
+  // Düzeltme turu 1 (inceleme): bekleyen geçiş, SONRAKİ bir kullanıcı
+  // seçimiyle iptal edilmeliydi. Etmezse hafta yüklenince hedef, kullanıcının
+  // daha yeni seçimini ezer — ör. aynı haftada listede olmayan hedef için
+  // yeniden yükleme sürerken bilgi satırındaki "sıradaki"ye tıklamak.
+  describe('7.4f bekleyen geçiş sırasında kullanıcı seçimi (son seçim kazanır)', () => {
+    const A2: Randevu = { ...A, id: 3, baslangic: '2026-09-10T10:00', bitis: '2026-09-10T11:00' }
+    // Aynı haftada, ilk listede YOK (yeniden yüklemede gelir).
+    const H: Randevu = { ...A, id: 5, baslangic: '2026-09-11T10:00', bitis: '2026-09-11T11:00' }
+
+    async function bekleyenKur() {
+      t.haftalar = { '2026-09-07': [A, A2] }
+      const r = kur()
+      await waitFor(() => expect(r.result.current.randevular).toHaveLength(2))
+      let ac!: () => void
+      t.sirayla = { '2026-09-07': [{ kapi: new Promise<void>((c) => { ac = c }), liste: [A, A2, H] }] }
+      act(() => r.result.current.randevuyaGit(H.id, H.baslangic))
+      // Ön koşul: gerçekten bekleyen bir geçiş ve yolda bir yeniden yükleme.
+      expect(r.result.current.gecisBekliyor).toBe(true)
+      expect(t.cagrilar).toEqual(['2026-09-07', '2026-09-07'])
+      return { ...r, ac }
+    }
+
+    it('randevuSec(B): hafta dönünce seçim B, hedef DEĞİL; geçiş biter', async () => {
+      const { result, ac } = await bekleyenKur()
+      act(() => result.current.randevuSec(A2, { kaydir: true }))
+      expect(result.current.gecisBekliyor).toBe(false)
+      await kapiyiAcVeBekle(ac)
+      expect(result.current.seciliRandevu?.id).toBe(A2.id)
+      expect(result.current.kaydirmaIstegi).toBe(A2.id)
+      expect(result.current.gecisBekliyor).toBe(false)
+    })
+
+    it('bosSaatSec: hafta dönünce boş saat seçili kalır, hedef AÇILMAZ', async () => {
+      const { result, ac } = await bekleyenKur()
+      act(() => result.current.bosSaatSec('2026-09-09T09:00'))
+      expect(result.current.gecisBekliyor).toBe(false)
+      await kapiyiAcVeBekle(ac)
+      expect(result.current.seciliRandevu).toBeNull()
+      expect(result.current.seciliBosSaat).toBe('2026-09-09T09:00')
+      expect(result.current.gecisBekliyor).toBe(false)
+    })
+
+    it('panelKapat: hafta dönünce hiçbir şey seçilmez', async () => {
+      const { result, ac } = await bekleyenKur()
+      act(() => result.current.panelKapat())
+      expect(result.current.gecisBekliyor).toBe(false)
+      await kapiyiAcVeBekle(ac)
+      expect(result.current.seciliRandevu).toBeNull()
+      expect(result.current.gecisBekliyor).toBe(false)
+    })
+
+    // ARTI YÖN: iptal yalnızca SONRAKİ seçimde — hiç dokunulmayan geçiş hâlâ
+    // hedefi açar (her şeyi iptal eden bir kanca üsttekileri de geçerdi).
+    it('kullanıcı hiçbir şey seçmezse hafta dönünce hedef seçilir', async () => {
+      const { result, ac } = await bekleyenKur()
+      await kapiyiAcVeBekle(ac)
+      expect(result.current.seciliRandevu?.id).toBe(H.id)
+      expect(result.current.gecisBekliyor).toBe(false)
+    })
+  })
+
+  // Düzeltme turu 1 (inceleme): AYNI hafta için geçişten ÖNCE yola çıkmış bir
+  // GET (ör. "Güncelle"nin yeniden yüklemesi) hafta korumasından geçer; onun
+  // bayat listesi bekleyen seçimi tüketip geçişi SESSİZCE bitirmemeli.
+  it('7.4g aynı haftada geçişten ÖNCE başlamış GET bekleyen seçimi tüketmez; geçişin kendi yüklemesi hedefi seçer', async () => {
+    const H: Randevu = { ...A, id: 5, baslangic: '2026-09-11T10:00', bitis: '2026-09-11T11:00' }
+    let eskiyiAc!: () => void
+    let yeniyiAc!: () => void
+    t.sirayla = {
+      '2026-09-07': [
+        { kapi: new Promise<void>((c) => { eskiyiAc = c }), liste: [A] },
+        { kapi: new Promise<void>((c) => { yeniyiAc = c }), liste: [A, H] },
+      ],
+    }
+    const { result } = kur()
+    act(() => result.current.randevuyaGit(H.id, H.baslangic))
+    // Ön koşul: aynı haftanın iki isteği yolda (açılış + geçişin yüklemesi).
+    expect(t.cagrilar).toEqual(['2026-09-07', '2026-09-07'])
+
+    await kapiyiAcVeBekle(eskiyiAc)
+    expect(result.current.gecisBekliyor).toBe(true)
+    expect(result.current.seciliRandevu).toBeNull()
+
+    await kapiyiAcVeBekle(yeniyiAc)
+    expect(result.current.seciliRandevu?.id).toBe(H.id)
+    expect(result.current.gecisBekliyor).toBe(false)
+  })
+
+  // Hafta koruması bekleyen seçim için hâlâ YÜK TAŞIYOR: geçiş beklerken
+  // kullanıcı hafta değiştirirse hedef haftanın (artık bayat) yanıtı, hedefi
+  // GÖRÜNMEYEN bir haftada seçmemeli.
+  it('7.4h seçim beklerken hafta değişirse bayat hedef hafta yanıtı hedefi SEÇMEZ; görünen haftanın yanıtı geçişi bitirir', async () => {
+    let hedefiAc!: () => void
+    let yeniHaftayiAc!: () => void
+    t.kapilar = {
+      '2026-08-24': new Promise<void>((c) => { hedefiAc = c }),
+      '2026-08-31': new Promise<void>((c) => { yeniHaftayiAc = c }),
+    }
+    t.haftalar = { '2026-09-07': [A], '2026-08-24': [B], '2026-08-31': [] }
+    const { result } = kur()
+    await waitFor(() => expect(result.current.randevular).toHaveLength(1))
+    act(() => result.current.randevuyaGit(B.id, B.baslangic))
+    act(() => result.current.haftaDegis(1))
+    expect(result.current.haftaBasi.getTime()).toBe(new Date(2026, 7, 31).getTime())
+
+    await kapiyiAcVeBekle(hedefiAc)
+    expect(result.current.seciliRandevu).toBeNull()
+
+    await kapiyiAcVeBekle(yeniHaftayiAc)
     expect(result.current.seciliRandevu).toBeNull()
     expect(result.current.gecisBekliyor).toBe(false)
   })

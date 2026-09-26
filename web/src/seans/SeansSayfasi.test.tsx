@@ -78,6 +78,7 @@ describe('SeansSayfasi (tasarım N1-N4)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     expect(p.onTakvimeDon).toHaveBeenCalledTimes(1)
     await userEvent.click(screen.getByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' }))
+    expect(p.onDanisanAc).toHaveBeenCalledTimes(1)
     expect(p.onDanisanAc).toHaveBeenCalledWith(1)
   })
 
@@ -86,13 +87,22 @@ describe('SeansSayfasi (tasarım N1-N4)', () => {
     expect(screen.queryByRole('heading', { name: 'Randevu' })).toBeNull()
     const dugme = screen.getByRole('button', { name: 'Randevuyu düzenle' })
     expect(dugme.getAttribute('aria-expanded')).toBe('false')
+    // Kapalıyken `aria-controls` YOK: form çizilmiyor, var olmayan bir id'yi
+    // göstermek ekran okuyucuya kırık bir bağ verir (`SeansPaneli` sekme kuralı).
+    expect(dugme.getAttribute('aria-controls')).toBeNull()
     await userEvent.click(dugme)
     expect(screen.getByRole('heading', { name: 'Randevu' })).toBeDefined()
     expect(screen.getByRole('button', { name: 'Güncelle' })).toBeDefined()
     const kapat = screen.getByRole('button', { name: 'Kapat' })
     expect(kapat.getAttribute('aria-expanded')).toBe('true')
+    // Açıkken gerçek form kabını gösterir (ARTI YÖN: hiç `aria-controls`
+    // koymayan bir düğme de üstteki iddiayı geçerdi).
+    const hedef = kapat.getAttribute('aria-controls')
+    expect(hedef).toBe('seans-randevu-formu')
+    expect(document.getElementById(hedef!)!.contains(screen.getByRole('heading', { name: 'Randevu' }))).toBe(true)
     await userEvent.click(kapat)
     expect(screen.queryByRole('heading', { name: 'Randevu' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Randevuyu düzenle' }).getAttribute('aria-controls')).toBeNull()
   })
 
   it('7.7 N2: durum, ücret ve Ödendi üst satırda; yazma yolu çağıranın', async () => {

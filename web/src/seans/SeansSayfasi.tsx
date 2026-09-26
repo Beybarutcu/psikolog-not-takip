@@ -91,7 +91,10 @@ export function SeansSayfasi({
           type="button"
           className="ml-auto rounded border px-3 py-1 text-sm"
           aria-expanded={formAcik}
-          aria-controls="seans-randevu-formu"
+          // YALNIZCA açıkken: kapalı formun kabı DOM'da yok ve var olmayan bir
+          // id'yi göstermek ekran okuyucuya kırık bir bağ verir (`SeansPaneli`
+          // sekmelerindeki kural; ölçen test: `SeansSayfasi.test.tsx` > "7.6").
+          aria-controls={formAcik ? 'seans-randevu-formu' : undefined}
           onClick={() => setFormAcik((acik) => !acik)}
         >
           {formAcik ? 'Kapat' : 'Randevuyu düzenle'}

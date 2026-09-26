@@ -43,7 +43,14 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
   // "Bu seansa git" (tasarım N8): hedef başka haftadaysa seçim o haftanın
   // yüklemesi dönünce yapılır. Kimlik REF'te (yukle'nin bağımlılığı olmasın);
   // `gecisBekliyor` ızgaranın yerine "Seans açılıyor…" gösterilsin diye.
-  const bekleyenSecimRef = useRef<number | null>(null)
+  //
+  // `ilkYukleme`: bekleyen seçimi tüketebilecek İLK yüklemenin sıra numarası
+  // (`yuklemeSirasiRef`). Geçişten ÖNCE başlamış bir yükleme — hafta
+  // korumasından geçen AYNI haftanın uçuştaki GET'i — bayat listesiyle
+  // seçimi tüketip geçişi sessizce bitiremez (düzeltme turu 1; ölçen test:
+  // `useTakvimAkisi.test.ts` > "7.4g").
+  const bekleyenSecimRef = useRef<{ id: number; ilkYukleme: number } | null>(null)
+  const yuklemeSirasiRef = useRef(0)
   const [gecisBekliyor, setGecisBekliyor] = useState(false)
 
   const yetkisizRef = useRef(onYetkisiz)
@@ -101,6 +108,8 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
 
   const yukle = useCallback(async () => {
     const istenen = haftaBasi.getTime()
+    yuklemeSirasiRef.current += 1
+    const buYukleme = yuklemeSirasiRef.current
     const gunler = haftaGunleri(haftaBasi)
     const baslangic = yerelZaman(gunler[0])
     const sonGun = gunler[6]
@@ -143,13 +152,14 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
       // Bekleyen "Bu seansa git" (tasarım N8) BU haftanın yanıtıyla, hafta
       // korumasının ARKASINDA tüketilir: seçim beklerken dönen ESKİ bir
       // haftanın yanıtı hedefi orada bulamayıp geçişi bitirirdi (ölçen test:
-      // `useTakvimAkisi.test.ts` > "7.4"). Seçim tazeleme güncelleyicisinden
-      // SONRA — son yazan kazanır.
+      // `useTakvimAkisi.test.ts` > "7.4h") ve yalnızca geçişten SONRA başlamış
+      // bir yüklemeyle ("7.4g", bkz. `ilkYukleme`). Seçim tazeleme
+      // güncelleyicisinden SONRA — son yazan kazanır.
       const bekleyen = bekleyenSecimRef.current
-      if (bekleyen !== null) {
+      if (bekleyen !== null && buYukleme >= bekleyen.ilkYukleme) {
         bekleyenSecimRef.current = null
         setGecisBekliyor(false)
-        const hedef = gelen.find((r) => r.id === bekleyen)
+        const hedef = gelen.find((r) => r.id === bekleyen.id)
         // Listede yoksa (silinmiş) geçiş sessizce biter; ızgara görünür.
         if (hedef !== undefined) {
           seciliIdRef.current = hedef.id
@@ -183,7 +193,10 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
       // açılıyor…" sonsuza kadar kalmasın). Hafta korumasının ARKASINDA:
       // eski haftanın hatası, yolda olan hedef haftanın seçimini iptal
       // etmemeli (ölçen testler: `useTakvimAkisi.test.ts` > "7.4c", "7.4d").
-      if (bekleyenSecimRef.current !== null) {
+      // Başarı dalıyla aynı sıra kuralı: geçişten önce başlamış bir yüklemenin
+      // hatası da geçişi bitirmez.
+      const bekleyen = bekleyenSecimRef.current
+      if (bekleyen !== null && buYukleme >= bekleyen.ilkYukleme) {
         bekleyenSecimRef.current = null
         setGecisBekliyor(false)
       }
@@ -213,7 +226,19 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
     setHaftaBasi((onceki) => (onceki.getTime() === hedef.getTime() ? onceki : hedef))
   }
 
+  /**
+   * Bekleyen "Bu seansa git"i bırakır. Seçimi değiştiren HER kullanıcı eylemi
+   * (`randevuSec`, `bosSaatSec`, `panelKapat`) çağırır: yolda olan hafta
+   * yüklemesi kullanıcının daha YENİ seçimini hedefle ezmesin (düzeltme turu
+   * 1; ölçen test: `useTakvimAkisi.test.ts` > "7.4f").
+   */
+  function bekleyeniBirak() {
+    bekleyenSecimRef.current = null
+    setGecisBekliyor(false)
+  }
+
   function randevuSec(randevu: Randevu, secenek?: { kaydir?: boolean }) {
+    bekleyeniBirak()
     setSeciliBosSaat(null)
     seciliIdRef.current = randevu.id
     setSeciliRandevu(randevu)
@@ -242,8 +267,11 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
       randevuSec(listede, { kaydir: true })
       return
     }
+    // Sıra ÖNEMLİ: `panelKapat` bekleyeni bırakır; bu geçişin bekleyeni
+    // ONDAN SONRA kurulur. Onu tüketebilecek ilk yükleme bir sonraki
+    // (aşağıdaki `yukle` ya da yeni haftanın efekti).
     panelKapat()
-    bekleyenSecimRef.current = id
+    bekleyenSecimRef.current = { id, ilkYukleme: yuklemeSirasiRef.current + 1 }
     setGecisBekliyor(true)
     if (ayniHafta) void yukle()
     else setHaftaBasi(hedefHafta)
@@ -255,12 +283,14 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
   }
 
   function bosSaatSec(zaman: string) {
+    bekleyeniBirak()
     seciliIdRef.current = null
     setSeciliRandevu(null)
     setSeciliBosSaat(zaman)
   }
 
   function panelKapat() {
+    bekleyeniBirak()
     seciliIdRef.current = null
     setSeciliRandevu(null)
     setSeciliBosSaat(null)

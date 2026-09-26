@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Locator, type Page } from '@playwright/test'
+import { expect, test, type APIRequestContext, type Locator, type Page, type Response } from '@playwright/test'
 import { kurulumYap } from './yardimcilar'
 
 /**
@@ -488,10 +488,48 @@ test('okuma penceresi kilitte icerigi kaldirir: sag tik "Yeni pencerede ac", sal
   expect(context.pages()).toHaveLength(sayfaSayisi)
 
   // P4: ana pencerede Kilitle -> okuma penceresi 5 sn'lik yoklamayla kilit ekranına.
-  await page.getByRole('button', { name: 'Kilitle' }).click()
+  //
+  // # Süre neden duvar saatiyle değil, tarayıcının ağ zamanlarıyla ölçülüyor
+  //
+  // P4'ün ürün tarafı yoklamadır: pencere `/api/durum`'u 5 sn'de bir sorar
+  // ve "kilitli" yanıtında içeriği kaldırır. İlk sürüm bunu tek bir duvar
+  // saati bütçesiyle ölçüyordu (ana pencerede "Kilitli" + 7 sn) ve tam e2e
+  // koşusunda ara sıra kırıldı. Ölçüldü (tarayıcının kaynak zamanları):
+  // yoklama ZAMANINDA gitti (kilitten ~4,85 sn sonra) ama e2e sunucusu o
+  // `/api/durum`'u 2,6 sn'de yanıtladı. Bu sunucu dokuz spec dosyasına tek
+  // süreçten, hata ayıklama derlemesiyle hizmet veriyor; başka dosyaların
+  // kilit açma/kurulum Argon2id türetmeleri (hata ayıklamada 2-4 sn) o anda
+  // koşuyor. Gecikme ortamın, ürünün değil; yerel sunucu üretimde tek
+  // kullanıcıya milisaniyede yanıt verir.
+  //
+  // Bu yüzden iddia ikiye bölündü ve ürünün payı DAHA SIKI ölçülüyor:
+  // (1) kilitten sonraki ilk yoklama, kilit yanıtından en geç 5 sn (+0,5 sn
+  //     zamanlayıcı payı) sonra GÖNDERİLDİ — iki zaman da tarayıcının ağ
+  //     yığınından (`timing().startTime`, aynı duvar saati), yani test
+  //     sürecinin ve sunucunun gecikmesinden bağımsız; 6 sn'lik bir aralık
+  //     da, hiç yoklamamak da burada kırılır;
+  // (2) o yoklamanın yanıtı "kilitli" dedi ve kilit ekranı yanıttan en geç
+  //     3 sn sonra ekranda (çizim payı; yeni bir yoklamanın, 5 sn, altında).
+  const YOKLAMA_MS = 5_000
+  const ZAMANLAYICI_PAYI_MS = 500
+  const yoklamaYanitlari: Response[] = []
+  pencere.on('response', (yanit) => {
+    if (new URL(yanit.url()).pathname === '/api/durum') yoklamaYanitlari.push(yanit)
+  })
+  const [kilitYaniti] = await Promise.all([
+    page.waitForResponse((yanit) => new URL(yanit.url()).pathname === '/api/kilitle'),
+    page.getByRole('button', { name: 'Kilitle' }).click(),
+  ])
+  await kilitYaniti.finished()
+  const kilitZamani = kilitYaniti.request().timing().startTime + kilitYaniti.request().timing().responseEnd
   await expect(page.getByRole('heading', { name: 'Kilitli' })).toBeVisible()
-  // 5 sn yoklama + istek ve çizim payı; genel 15 sn bütçesinden BİLEREK dar.
-  await expect(pencere.getByRole('heading', { name: 'Kilitli' })).toBeVisible({ timeout: 7_000 })
+
+  const kilittenSonraki = () => yoklamaYanitlari.find((y) => y.request().timing().startTime >= kilitZamani)
+  await expect.poll(() => kilittenSonraki() !== undefined).toBe(true)
+  const yoklama = kilittenSonraki()!
+  expect(yoklama.request().timing().startTime - kilitZamani).toBeLessThanOrEqual(YOKLAMA_MS + ZAMANLAYICI_PAYI_MS)
+  expect(((await yoklama.json()) as { kilitli: boolean }).kilitli).toBe(true)
+  await expect(pencere.getByRole('heading', { name: 'Kilitli' })).toBeVisible({ timeout: 3_000 })
   await expect(pencere.getByText(kanarya)).toHaveCount(0)
   await expect(pencere.getByText(ad)).toHaveCount(0)
   await pencere.close()

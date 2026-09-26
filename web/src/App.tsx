@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, veritabaniBozukOlunca, yedekApi, yetkisizOlunca } from './api'
 import { useBostaKalmaKontrolu } from './bostaKalma'
+import { okumaKimligi, okumaParametresiVarMi } from './seans/okumaPenceresi'
 import { AnaEkran } from './screens/AnaEkran'
 import { GeriYuklemeEkrani, type GeriYuklemeSebebi } from './screens/GeriYuklemeEkrani'
 import { KeystoreBozukEkrani } from './screens/KeystoreBozukEkrani'
 import { KilitEkrani } from './screens/KilitEkrani'
 import { KurulumSihirbazi } from './screens/KurulumSihirbazi'
+import { OkumaPenceresi } from './screens/OkumaPenceresi'
 
 type Durum = {
   kurulum_gerekli: boolean
@@ -14,8 +16,39 @@ type Durum = {
   veri_dizini: string
 } | null
 
+/** Okuma penceresinin kilit yoklama aralığı (tasarım P4: içerik en geç 5 sn'de kalkar). */
+export const OKUMA_YOKLAMA_MS = 5_000
+
+/**
+ * Bir adresin bir okuma penceresi olması ile `okumaKimligi`'nin geçerli bir
+ * sayı dönmesi AYNI ŞEY DEĞİLDİR (carry-over F15, preflight.md — Rust
+ * `pencere.rs::okuma_kimligi` tam i64 aralığını kabul eder, 19 haneye kadar;
+ * buradaki TS grameri ≤15 hane). Tauri 16-19 haneli bir kimlikle GERÇEK bir
+ * `okuma-*` penceresi açabilir; o adres için `okumaKimligi` `null` döner ama
+ * pencere yine de bir okuma penceresidir — ana ekrana (danışan/randevu
+ * verisiyle `AnaEkran`) düşmek burada ASLA doğru yedek yol değildir. Ayrım
+ * adreste `okuma` anahtarının geçip geçmediğine bakılarak yapılır.
+ */
+function OkumaAdresiGecersiz() {
+  return (
+    <main className="mx-auto max-w-3xl p-6">
+      <p role="alert" className="rounded border border-red-300 bg-red-50 p-3 text-red-800">
+        Bu okuma penceresi adresi geçersiz. Pencereyi kapatıp not sayfasını yeniden açın.
+      </p>
+    </main>
+  )
+}
+
 export default function App() {
   const [durum, setDurum] = useState<Durum>(null)
+  // Tasarım P2: adres bir kez okunur; okuma penceresi ana ekranı HİÇ çizmez.
+  const [okumaId] = useState(() => okumaKimligi(window.location.search))
+  // F15: `okumaId === null` iken de bu bir okuma penceresi olabilir (bkz.
+  // yukarıdaki `OkumaAdresiGecersiz` başlığı) — anahtar var ama değeri bu
+  // grameri sağlamıyor.
+  const [okumaAdresiGecersiz] = useState(
+    () => okumaId === null && okumaParametresiVarMi(window.location.search),
+  )
   // Sunucu "veritabanı bozuk" dedi mi (tasarım §8: "bozuksa geri yükleme
   // ekranına düşer"). Bu bir `durum` alanı DEĞİL ve olamaz: bütünlük
   // kontrolü veritabanını açmayı, o da veri anahtarını gerektirir —
@@ -57,6 +90,22 @@ export default function App() {
     !durum.kilitli &&
     !geriYuklemeAcik
   useBostaKalmaKontrolu(oturumAcik, yenile)
+
+  // Tasarım P4: okuma penceresi hiç istek atmadan açık kalabilir; ana
+  // pencerede "Kilitle" ya da boşta kalma sonrası kilidi buraya ancak bir
+  // 401 ile ulaşırdı. `/api/durum` 5 sn'de bir sorulur (oturuma DOKUNMAZ,
+  // denetim satırı yazmaz); kilitliyse aşağıdaki koşullu render içeriği
+  // unmount eder. Ana pencere yoklamaz: orada her istek zaten 401 yoluyla
+  // kilide götürür. F15: gramer dışı ama yine de bir okuma penceresi olan
+  // adres (`okumaAdresiGecersiz`) de yoklar — o pencerede de kilit ekranı
+  // gerekir, yalnızca hata mesajı gösteriyor olması onu ayrıcalıklı kılmaz.
+  useEffect(() => {
+    if ((okumaId === null && !okumaAdresiGecersiz) || !oturumAcik) return
+    const zamanlayici = setInterval(() => {
+      void yenile()
+    }, OKUMA_YOKLAMA_MS)
+    return () => clearInterval(zamanlayici)
+  }, [okumaId, okumaAdresiGecersiz, oturumAcik, yenile])
 
   if (!durum) return <p className="p-8 text-slate-500">Yükleniyor…</p>
 
@@ -114,6 +163,11 @@ export default function App() {
     )
   }
   if (durum.kilitli) return <KilitEkrani kilitAc={api.kilitAc} onAcildi={yenile} />
+  if (okumaId !== null) return <OkumaPenceresi randevuId={okumaId} />
+  // F15: adreste `okuma` anahtarı var ama gramer dışı — AnaEkran'a düşmek
+  // YASAK (bkz. `OkumaAdresiGecersiz` başlığı); parametresiz gerçek ana
+  // pencere adresi bu daldan hiç geçmez.
+  if (okumaAdresiGecersiz) return <OkumaAdresiGecersiz />
   return (
     <AnaEkran
       kilitle={async () => {

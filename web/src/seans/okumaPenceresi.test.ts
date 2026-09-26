@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { okumaPenceresiniAc } from './okumaPenceresi'
+import { okumaKimligi, okumaParametresiVarMi, okumaPenceresiniAc } from './okumaPenceresi'
 
 afterEach(() => vi.restoreAllMocks())
 
@@ -65,5 +65,47 @@ describe('okumaPenceresiniAc (tasarım P2-P3)', () => {
     vi.spyOn(window, 'open').mockReturnValue({ focus: odak } as unknown as Window)
     okumaPenceresiniAc(7)
     expect(odak).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('okumaKimligi (tasarım P2)', () => {
+  it('geçerli kimlik', () => {
+    expect(okumaKimligi('?okuma=42')).toBe(42)
+    expect(okumaKimligi('?okuma=1')).toBe(1)
+  })
+  it('geçersiz ya da yok -> null (ana ekran)', () => {
+    for (const a of ['', '?', '?okuma=', '?okuma=0', '?okuma=007', '?okuma=-1', '?okuma=1.5', '?okuma=abc', '?okuma=1234567890123456', '?baska=4']) {
+      expect(okumaKimligi(a), a).toBeNull()
+    }
+  })
+})
+
+// Carry-over F15 (preflight.md, controller ruling Görev 6/9): Rust'taki
+// `pencere.rs::okuma_kimligi` tam i64 aralığını kabul ediyor (19 haneye
+// kadar), TS grameri burada yalnızca 15 hane. Tauri bu yüzden 16-19 haneli
+// bir kimlikle GERÇEK bir `okuma-*` penceresi açabilir; `okumaKimligi` o
+// adres için `null` döner ama bu bir "ana ekran" adresi DEĞİLDİR — adreste
+// `okuma` anahtarı zaten var. `App.tsx` bu ayrımı bu fonksiyonla yapar:
+// anahtar var + kimlik geçersizse ana ekrana ASLA düşmez (bkz. App.test.tsx
+// "9.6"/"9.7").
+describe('okumaParametresiVarMi (carry-over F15: id grameri Rust/TS uyuşmazlığı)', () => {
+  it('`okuma` anahtarı VAR (değeri gramer dışı olsa da) -> true', () => {
+    for (const a of [
+      '?okuma=42',
+      '?okuma=1234567890123456', // 16 hane: TS grameri dışı, Rust i64 içi
+      '?okuma=0',
+      '?okuma=-1',
+      '?okuma=abc',
+      '?okuma=',
+      '?okuma=1&okuma=2', // tekrarlanan parametre
+      '?x=1&okuma=4',
+    ]) {
+      expect(okumaParametresiVarMi(a), a).toBe(true)
+    }
+  })
+  it('`okuma` anahtarı hiç yok -> false (gerçek ana ekran adresi)', () => {
+    for (const a of ['', '?', '?baska=4']) {
+      expect(okumaParametresiVarMi(a), a).toBe(false)
+    }
   })
 })

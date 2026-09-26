@@ -359,3 +359,117 @@ describe('App — bozuk veritabani geri yukleme ekranina duser (§8)', () => {
     expect(cagrilar.some((c) => String(c[0]).startsWith('/api/kurulum'))).toBe(false)
   })
 })
+
+describe('App — okuma penceresi (tasarım P2, P4)', () => {
+  const gercekFetch = globalThis.fetch
+  afterEach(() => {
+    vi.useRealTimers()
+    globalThis.fetch = gercekFetch
+    window.history.replaceState({}, '', '/')
+    vi.restoreAllMocks()
+  })
+
+  function sunucu(kilitli: () => boolean) {
+    const cagrilar: string[] = []
+    globalThis.fetch = vi.fn(async (girdi: RequestInfo | URL) => {
+      const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      cagrilar.push(yol)
+      if (yol.startsWith('/api/durum')) {
+        return { ok: true, json: async () => ({ kurulum_gerekli: false, kilitli: kilitli(), keystore_bozuk: false, veri_dizini: '/veri' }) } as unknown as Response
+      }
+      if (yol === '/api/randevular/42/not') {
+        return {
+          ok: true,
+          json: async () => ({
+            appointment_id: 42, client_id: 1, danisan_adi: 'Ayşe Yılmaz', seans_zamani: '2026-09-07T10:00',
+            sablon: 'serbest', icerik: '<p>OKUMA-KANARYA</p>', onizleme: 'OKUMA-KANARYA', guncelleme_zamani: 'z',
+          }),
+        } as unknown as Response
+      }
+      if (yol.startsWith('/api/danisanlar') || yol.startsWith('/api/randevular')) {
+        return { ok: true, json: async () => [] } as unknown as Response
+      }
+      throw new Error(`beklenmeyen istek: ${yol}`)
+    }) as unknown as typeof fetch
+    return cagrilar
+  }
+  const durumSayisi = (c: string[]) => c.filter((y) => y.startsWith('/api/durum')).length
+
+  it('9.3 ?okuma=<id> ana ekranı ÇİZMEZ; yalnızca o not istenir', async () => {
+    window.history.replaceState({}, '', '/?okuma=42')
+    const cagrilar = sunucu(() => false)
+    render(<App />)
+    expect(await screen.findByText('OKUMA-KANARYA')).toBeDefined()
+    expect(screen.queryByRole('heading', { name: 'Terapi Notları' })).toBeNull()
+    expect(cagrilar.filter((y) => !y.startsWith('/api/durum'))).toEqual(['/api/randevular/42/not'])
+  })
+
+  it('9.4 P4: kilitlenince en geç 5 sn içinde not ve danışan adı ekrandan KALKAR, kilit ekranı gelir', async () => {
+    window.history.replaceState({}, '', '/?okuma=42')
+    let kilitli = false
+    const cagrilar = sunucu(() => kilitli)
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    render(<App />)
+    expect(await screen.findByText('OKUMA-KANARYA')).toBeDefined()
+    kilitli = true
+    const once = durumSayisi(cagrilar)
+    // Düz sayı, sabit DEĞİL: tasarım P4 "en geç 5 saniye"; sabit büyütülürse bu test kırılır.
+    await act(() => vi.advanceTimersByTimeAsync(4_999))
+    expect(durumSayisi(cagrilar)).toBe(once)
+    await act(() => vi.advanceTimersByTimeAsync(1))
+    expect(await screen.findByRole('heading', { name: 'Kilitli' })).toBeDefined()
+    expect(document.body.textContent).not.toContain('OKUMA-KANARYA')
+    expect(document.body.textContent).not.toContain('Ayşe Yılmaz')
+  })
+
+  it('9.5 ana pencerede (parametresiz) durum 5 sn\'de bir YOKLANMAZ', async () => {
+    const cagrilar = sunucu(() => false)
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    render(<App />)
+    expect(await screen.findByRole('heading', { name: 'Terapi Notları' })).toBeDefined()
+    const once = durumSayisi(cagrilar)
+    await act(() => vi.advanceTimersByTimeAsync(15_000))
+    expect(durumSayisi(cagrilar)).toBe(once)
+  })
+
+  // Carry-over F15 (preflight.md; controller ruling taşındı Görev 6 -> 9):
+  // Rust `okuma_kimligi` tam i64 aralığını kabul eder (19 haneye kadar), TS
+  // `okumaKimligi` yalnızca ≤15 hane. Tauri bu yüzden 16-19 haneli bir
+  // kimlikle GERÇEK bir `okuma-*` penceresi açabilir; bu adres `okumaKimligi`
+  // için `null` üretir ama "ana ekran" DEĞİLDİR — adreste `okuma` anahtarı
+  // zaten var. Ana ekrana (AnaEkran, danışan/randevu verisiyle) düşmek ya da
+  // çökmek yerine anlaşılır bir Türkçe mesaj gösterilmeli.
+  it('9.6 (F15) okuma parametresi var ama kimlik gramer dışı -> ana ekran ASLA çizilmez, anlaşılır mesaj gösterilir, not istenmez', async () => {
+    for (const arama of [
+      '?okuma=1234567890123456', // 16 hane: Rust i64 içi, TS grameri dışı
+      '?okuma=0',
+      '?okuma=-1',
+      '?okuma=abc',
+      '?okuma=',
+    ]) {
+      window.history.replaceState({}, '', `/${arama}`)
+      const cagrilar = sunucu(() => false)
+      const { unmount } = render(<App />)
+      expect(await screen.findByRole('alert'), arama).toBeDefined()
+      expect(document.body.textContent, arama).toMatch(/okuma penceresi adresi geçersiz/i)
+      expect(screen.queryByRole('heading', { name: 'Terapi Notları' }), arama).toBeNull()
+      expect(cagrilar.filter((y) => !y.startsWith('/api/durum')), arama).toEqual([])
+      unmount()
+    }
+  })
+
+  it('9.7 (F15) gramer dışı kimlikte de kilit yoklaması çalışır (adres yine bir okuma penceresidir)', async () => {
+    window.history.replaceState({}, '', '/?okuma=1234567890123456')
+    let kilitli = false
+    const cagrilar = sunucu(() => kilitli)
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    render(<App />)
+    await screen.findByRole('alert')
+    kilitli = true
+    const once = durumSayisi(cagrilar)
+    await act(() => vi.advanceTimersByTimeAsync(4_999))
+    expect(durumSayisi(cagrilar)).toBe(once)
+    await act(() => vi.advanceTimersByTimeAsync(1))
+    expect(await screen.findByRole('heading', { name: 'Kilitli' })).toBeDefined()
+  })
+})

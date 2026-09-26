@@ -1,6 +1,6 @@
 /**
  * Okuma penceresi adresi (tasarım P2). Açan yarı burada; okuyan yarı
- * (`okumaKimligi`) Görev 9'da aynı dosyaya eklenir.
+ * `okumaKimligi`, `App.tsx`'te.
  *
  * `window.open` bu kod tabanında YASAK (`istemciRaporUretimi.test.ts`: yeni
  * pencere/belge danışan verisini sunucunun güvencesi dışına çıkarabilir).
@@ -22,4 +22,38 @@
  */
 export function okumaPenceresiniAc(randevuId: number): void {
   window.open(`/?okuma=${randevuId}`, `okuma-${randevuId}`)?.focus()
+}
+
+/**
+ * `?okuma=<id>` (tasarım P2): pozitif tam sayı, başında sıfır yok, en fazla
+ * 15 hane (güvenli tam sayı); değilse `null` — pencere ana ekranı çizer.
+ *
+ * # F15 — bu gramer Rust'takiyle (`src-tauri/src/pencere.rs::okuma_kimligi`)
+ *   BİREBİR AYNI DEĞİL
+ *
+ * Rust tarafı `i64`'e sığan HER pozitif, başında sıfırsız tam sayıyı kabul
+ * eder (19 haneye kadar); burası tasarımın verdiği ≤15 hane sınırını korur
+ * (bkz. preflight.md F15, controller ruling — sınır Görev 6'dan buraya
+ * taşındı). Sonuç: 16-19 haneli bir `okuma=` değeriyle Tauri GERÇEK bir
+ * `okuma-*` penceresi açabilir ama bu fonksiyon o pencere için `null`
+ * döner. `App.tsx` bunu YALNIZ BAŞINA "ana ekran adresi" saymaz — adreste
+ * `okuma` anahtarı geçip geçmediğine `okumaParametresiVarMi` ile ayrıca
+ * bakar ve öyleyse ana ekrana asla düşmez (bkz. App.test.tsx "9.6"/"9.7").
+ */
+export function okumaKimligi(arama: string): number | null {
+  const deger = new URLSearchParams(arama).get('okuma')
+  if (deger === null || !/^[1-9]\d{0,14}$/.test(deger)) return null
+  return Number(deger)
+}
+
+/**
+ * Adreste `okuma` anahtarı VAR MI — değeri geçerli olsun olmasın (F15,
+ * yukarıdaki başlık). `okumaKimligi` ile birlikte kullanılır: anahtar var
+ * ama `okumaKimligi` `null` dönüyorsa (gramer dışı hane sayısı, `0`,
+ * negatif, tekrarlanan parametre, boş değer, vb.) bu adres yine de bir
+ * okuma penceresidir — ana ekrana ASLA düşmemeli, kilit yoklaması yine
+ * çalışmalı ve kullanıcıya kimliğin geçersiz olduğu söylenmeli.
+ */
+export function okumaParametresiVarMi(arama: string): boolean {
+  return new URLSearchParams(arama).has('okuma')
 }

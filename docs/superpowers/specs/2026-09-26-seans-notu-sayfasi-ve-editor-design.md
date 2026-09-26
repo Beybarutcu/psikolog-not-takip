@@ -45,7 +45,8 @@ okunsun, gerekirse ayrı bir pencerede yanda dursun.**
 ## 4. Takvim durum simgeleri (T)
 
 - **T1.** `RandevuBloku` saat ve adın yanına, bloğun sağ üstüne en fazla iki
-  simge koyar (lucide-react):
+  simge koyar (`lucide-react`, yeni bağımlılık; yalnızca kullanılan simgeler
+  pakete girer):
   - `durum === 'gelmedi'` → `UserX` ("Gelmedi").
   - `borcaGirerMi(r)` (`web/src/borc.ts`, ortak kural: geldi|gelmedi ∧
     !odendi ∧ ucret>0) → `TurkishLira` ("Ödeme alınmadı"). Kural yeniden
@@ -91,8 +92,9 @@ okunsun, gerekirse ayrı bir pencerede yanda dursun.**
 - **E5. Kısayollar.** TipTap'ın standartları: Cmd/Ctrl+B, I, U; başlıklar
   Cmd/Ctrl+Alt+1/2/3; listeler Cmd/Ctrl+Shift+7/8/9. Türkçe Q klavyede Cmd+I
   (`ı` üreten fiziksel I tuşu) çalışmalıdır (ProseMirror `keyCode`'a düşer;
-  e2e'de sınanır). Alt/AltGr ile yazılan `#`, `>` gibi karakterler yazılabilir
-  kalır.
+  e2e'de sınanır). Mac'te Option ile yazılan `#`, `>` gibi karakterler
+  yazılabilir kalır. (Windows'ta AltGr = Ctrl+Alt olduğu için AltGr+3 ile `#`
+  yazmak Başlık 3 kısayoluna takılabilir; hedef platform Mac, kabul edildi.)
 - **E6. Yazarken dönüşüm.** TipTap giriş kuralları açık: satır başında `## `
   başlık, `- ` madde, `1. ` numaralı liste, `> ` alıntı, `[ ] ` onay kutusu,
   `**x**` kalın olur; işaret kaybolur.
@@ -116,7 +118,7 @@ okunsun, gerekirse ayrı bir pencerede yanda dursun.**
   bunu kendiliğinden yapar); resim, betik, stil, bilinmeyen etiket düşer.
 - **E12. Kullanıldığı yerler.** Takvimden açılan not sayfası (resmî not ve
   Özel notlarım), danışan dosyasındaki not editörü. Salt okunur görünüm
-  (`NotGorunumu`'nun yerini alan) önceki notlar panelinde, okuma penceresinde
+  (`NotOkuma`, `NotGorunumu`'nun yerini alır) önceki notlar panelinde, okuma penceresinde
   ve danışan dosyasının okuma yerlerinde kullanılır; hepsi aynı tipografiyle.
 - **E13. Eski Markdown yığını kalkar.** `not/bicim.ts`, `not/BicimCubugu.tsx`,
   `not/markdown.tsx`, `not/desenler.ts` ve onların testleri, başka tüketicisi

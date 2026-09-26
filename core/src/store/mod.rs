@@ -10,6 +10,9 @@ pub mod attachments;
 pub mod search;
 pub mod ozet;
 pub mod veri_raporu;
+/// HTML not içeriğinden düz metin (tasarım 2026-09-26 S2-S3): arama,
+/// önizleme ve veri raporu bu metne bakar; istemcide eşi yoktur.
+pub mod duz_metin;
 /// Danışanın seans listesi (Plan 5 Görev 4): notu olsun olmasın TÜM
 /// seansları döndürür (bkz. modül başlığı -- `notes::danisan_notlari`
 /// yalnızca notu yazılmış seansları döndürüyordu).

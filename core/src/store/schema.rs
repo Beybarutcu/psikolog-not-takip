@@ -1,7 +1,7 @@
 use crate::store::appointments::ASGARI_UCRET;
 use rusqlite::{Connection, OptionalExtension};
 
-pub const CURRENT_VERSION: i64 = 5;
+pub const CURRENT_VERSION: i64 = 6;
 
 const V1: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -372,6 +372,28 @@ const V3_SUTUNLAR: &[(&str, &str)] = &[
     ("clients", "risk_notu TEXT"),
 ];
 
+/// Surum 6 (2026-09-26, tasarim S2): resmi notun duz metni. Sunucu her not
+/// yaziminda HTML'den turetir (`store::duz_metin`); arama, onizleme ve rapor
+/// bu sutuna bakar. Ozel not tablosuna EKLENMEZ.
+const V6_SUTUNLAR: &[(&str, &str)] = &[("progress_notes", "duz_metin TEXT NOT NULL DEFAULT ''")];
+
+/// V6 sutunu eklendikten sonra var olan notlarin duz metnini doldurur.
+/// Idempotent: her calismada `icerik`ten yeniden hesaplar.
+fn duz_metni_doldur(tx: &Connection) -> Result<(), MigrateHatasi> {
+    let satirlar: Vec<(i64, String)> = {
+        let mut ifade = tx.prepare("SELECT id, icerik FROM progress_notes")?;
+        let okunan = ifade
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        okunan
+    };
+    let mut yaz = tx.prepare("UPDATE progress_notes SET duz_metin = ?1 WHERE id = ?2")?;
+    for (id, icerik) in satirlar {
+        yaz.execute(rusqlite::params![crate::store::duz_metin::html_duz_metin(&icerik), id])?;
+    }
+    Ok(())
+}
+
 /// Bir tabloya sutun ekler; sutun zaten varsa sessizce basarili olur.
 ///
 /// YALNIZCA "duplicate column" hatasi yutulur -- olmayan tablo, bozuk tanim
@@ -548,6 +570,12 @@ fn adimlari_uygula(conn: &Connection, mevcut: i64) -> Result<(), MigrateHatasi> 
     if mevcut < 5 {
         tx.execute_batch(V5)?;
     }
+    if mevcut < 6 {
+        for (tablo, tanim) in V6_SUTUNLAR {
+            sutun_ekle(&tx, tablo, tanim)?;
+        }
+        duz_metni_doldur(&tx)?;
+    }
 
     tx.execute(
         "INSERT INTO app_meta (anahtar, deger) VALUES ('schema_version', ?1)
@@ -658,7 +686,7 @@ mod tests {
 
         let hata = migrate(&c).unwrap_err();
         assert!(
-            matches!(hata, MigrateHatasi::SurumDusuk { veritabani: 99, uygulama: 5 }),
+            matches!(hata, MigrateHatasi::SurumDusuk { veritabani: 99, uygulama: CURRENT_VERSION }),
             "ileri surumlu veritabani acilmamali: {hata:?}"
         );
 
@@ -689,18 +717,18 @@ mod tests {
     }
 
     #[test]
-    fn surum_bes_olarak_kaydedilir() {
-        // Gorev 4: CURRENT_VERSION 4 -> 5 (etiket semasi). Bu test onceden
-        // sabit "4" bekliyordu; surum degisince guncellendi -- ayni iddiayi
-        // (baglanti() sonrasi damga CURRENT_VERSION'dir) sembolik olarak
-        // zaten `migration_surumu_kaydeder` de kontrol ediyor, burasi sadece
-        // duz sayiyla PINLEME'dir.
+    fn surum_alti_olarak_kaydedilir() {
+        // Gorev 2 (2026-09-26): 5 -> 6 (`progress_notes.duz_metin`). Bu test
+        // onceden sabit "5" bekliyordu; surum degisince guncellendi -- ayni
+        // iddiayi (baglanti() sonrasi damga CURRENT_VERSION'dir) sembolik
+        // olarak zaten `migration_surumu_kaydeder` de kontrol ediyor, burasi
+        // sadece duz sayiyla PINLEME'dir.
         let (_d, c) = baglanti();
         // deger sutunu TEXT'tir; metin okuyup ayristir. Gerekce Plan 1 Gorev 6'da.
         let ham: String = c
             .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(ham.parse::<i64>().unwrap(), 5);
+        assert_eq!(ham.parse::<i64>().unwrap(), 6);
     }
 
     #[test]
@@ -1833,7 +1861,7 @@ mod tests {
         let ham: String = c
             .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(ham.parse::<i64>().unwrap(), 5);
+        assert_eq!(ham.parse::<i64>().unwrap(), CURRENT_VERSION);
 
         for tablo in ["tags", "progress_note_tags"] {
             let sayi: i64 = c
@@ -1914,7 +1942,7 @@ mod tests {
         let ham: String = c
             .query_row("SELECT deger FROM app_meta WHERE anahtar='schema_version'", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(ham.parse::<i64>().unwrap(), 5);
+        assert_eq!(ham.parse::<i64>().unwrap(), CURRENT_VERSION);
     }
 
     #[test]
@@ -1969,5 +1997,82 @@ mod tests {
 
         // V4'ten kalan VERI de bozulmamis olmali.
         assert_eq!(randevu_ve_not_sayilari(&c), (1, 1, 1));
+    }
+
+    // ---- Surum 6: `progress_notes.duz_metin` -------------------------------
+
+    #[test]
+    fn v5_veritabani_duz_metin_sutunuyla_doldurularak_guncel_surume_yukselir() {
+        let dir = tempfile::tempdir().unwrap();
+        let yol = dir.path().join("veri.db");
+        let key = crate::crypto::keyring::generate_data_key();
+        v4_veritabani(&yol, &key);
+        {
+            let c = crate::store::db::open_encrypted(&yol, &key).unwrap();
+            c.execute_batch(V5).unwrap();
+            c.execute("UPDATE app_meta SET deger='5' WHERE anahtar='schema_version'", []).unwrap();
+            c.execute(
+                "UPDATE progress_notes SET icerik = '<p>eski <strong>kalın</strong> &amp; not</p>' WHERE id = 1",
+                [],
+            )
+            .unwrap();
+            // ON KOSUL: sutun henuz YOK; yoksa asagidaki "dolduruldu" iddiasi
+            // onceki bir gocten gelmis olabilirdi.
+            let var: i64 = c
+                .query_row(
+                    "SELECT count(*) FROM pragma_table_info('progress_notes') WHERE name='duz_metin'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(var, 0, "on kosul: V5 veritabaninda duz_metin olmamali");
+        }
+        let c = crate::store::db::open_encrypted(&yol, &key).unwrap();
+        migrate(&c).unwrap();
+        assert_eq!(okunan_surum(&c).unwrap(), 6);
+        let (icerik, duz): (String, String) = c
+            .query_row("SELECT icerik, duz_metin FROM progress_notes WHERE id = 1", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(icerik, "<p>eski <strong>kalın</strong> &amp; not</p>", "goc icerige dokunmamali");
+        assert_eq!(duz, "eski kalın & not", "goc var olan notlarin duz metnini doldurmali");
+        // Tasarim S2: ozel notlara duz metin sutunu EKLENMEZ (aranmaz, raporlanmaz).
+        let ozel: i64 = c
+            .query_row(
+                "SELECT count(*) FROM pragma_table_info('private_notes') WHERE name='duz_metin'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(ozel, 0);
+        assert_eq!(randevu_ve_not_sayilari(&c), (1, 1, 1), "goc kayit kaybetmemeli");
+    }
+
+    #[test]
+    fn v6_ikinci_kez_calisinca_duz_metni_bozmaz() {
+        let (_d, c) = baglanti();
+        c.execute_batch(
+            "INSERT INTO clients (ad_soyad, durum, olusturma_zamani) VALUES ('A','aktif','z');
+             INSERT INTO appointments (client_id, baslangic, bitis, durum, odendi, olusturma_zamani, guncelleme_zamani)
+               VALUES (1,'2026-09-07T14:00','2026-09-07T15:00','planlandi',0,'z','z');
+             INSERT INTO progress_notes (appointment_id, client_id, sablon, icerik, duz_metin, guncelleme_zamani)
+               VALUES (1,1,'serbest','<p>x</p>','ELLE','z');",
+        )
+        .unwrap();
+        // ON KOSUL: `<p>x</p>`'in gercek duz metni ("x") ELLE yazilan
+        // degerden ("ELLE") FARKLI -- yoksa asagidaki "bozulmadi" iddiasi
+        // `if mevcut < 6` kapisi dussun ya da dusmesin ayni sonucu verirdi
+        // (ikisi de "x"e yeniden hesaplardi) ve mutasyon hicbir testi kirmazdi.
+        assert_ne!(
+            crate::store::duz_metin::html_duz_metin("<p>x</p>"),
+            "ELLE",
+            "on kosul: elle yazilan deger yeniden hesaplananla ayni olmamali"
+        );
+        migrate(&c).unwrap();
+        migrate(&c).unwrap();
+        let duz: String =
+            c.query_row("SELECT duz_metin FROM progress_notes WHERE id=1", [], |r| r.get(0)).unwrap();
+        assert_eq!(duz, "ELLE", "surum kapisi dusmemeli: V6 zaten uygulanmis notu yeniden hesaplamamali");
     }
 }

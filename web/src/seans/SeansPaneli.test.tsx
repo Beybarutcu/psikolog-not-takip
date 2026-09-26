@@ -22,9 +22,11 @@ const randevu: Randevu = {
 const resmiNot: SeansNotu = {
   appointment_id: 101,
   client_id: 1,
+  danisan_adi: 'Ayşe Yılmaz',
   seans_zamani: '2026-09-07T10:00',
   sablon: 'dap',
   icerik: 'bu seansin resmi notu',
+  onizleme: null,
   guncelleme_zamani: '2026-09-07T06:00:00Z',
 }
 
@@ -57,25 +59,31 @@ const gecmisNotlar: SeansNotu[] = [
   {
     appointment_id: 90,
     client_id: 1,
+    danisan_adi: 'Ayşe Yılmaz',
     seans_zamani: '2026-08-31T10:00',
     sablon: 'dap',
     icerik: 'gecen hafta konusulanlar',
+    onizleme: null,
     guncelleme_zamani: '2026-09-05T06:00:00Z',
   },
   {
     appointment_id: 80,
     client_id: 1,
+    danisan_adi: 'Ayşe Yılmaz',
     seans_zamani: '2026-08-24T10:00',
     sablon: 'soap',
     icerik: 'iki hafta onceki seans',
+    onizleme: null,
     guncelleme_zamani: '2026-08-31T06:00:00Z',
   },
   {
     appointment_id: 70,
     client_id: 1,
+    danisan_adi: 'Ayşe Yılmaz',
     seans_zamani: '2026-08-17T10:00',
     sablon: 'serbest',
     icerik: 'uc hafta onceki seans',
+    onizleme: null,
     guncelleme_zamani: '2026-09-20T06:00:00Z',
   },
 ]

@@ -1063,6 +1063,28 @@ async fn not_yanitlari_seans_zamanini_tasir() {
 }
 
 #[tokio::test]
+async fn not_yaniti_sunucunun_onizlemesini_ve_danisan_adini_tasir() {
+    let (_d, s, cid, rid) = dolu_state().await;
+    let (kod, yanit) = cagir(
+        &s,
+        "PUT",
+        &format!("/api/randevular/{rid}/not"),
+        Some(json!({"sablon":"dap","icerik":"<h2>Veri</h2><p><strong>Kaygı</strong> azaldı</p>"})),
+    )
+    .await;
+    assert_eq!(kod, StatusCode::OK);
+    assert_eq!(yanit["onizleme"], json!("Kaygı azaldı"));
+    assert_eq!(yanit["danisan_adi"], json!("Ayse Yilmaz"));
+    let (_, okunan) = cagir(&s, "GET", &format!("/api/randevular/{rid}/not"), None).await;
+    assert_eq!(okunan["onizleme"], json!("Kaygı azaldı"));
+    // Notu olmayan randevu: önizleme `null` (dosya listesindeki `not_ilk_satiri` ile aynı anlam).
+    let bos = randevu_ekle(&s, cid, "2026-09-08").await;
+    let (_, bos_not) = cagir(&s, "GET", &format!("/api/randevular/{bos}/not"), None).await;
+    assert!(bos_not["onizleme"].is_null(), "{bos_not}");
+    assert_eq!(bos_not["danisan_adi"], json!("Ayse Yilmaz"));
+}
+
+#[tokio::test]
 async fn arama_limiti_de_kirpilir() {
     // KURULUM AYRIMI TASIMALI. Bu testin onceki hali TEK eslesen kayit
     // yaratiyordu; `limit=-1` (SQLite'ta sinirsiz), 50 ve 1 ayni tek sonucu

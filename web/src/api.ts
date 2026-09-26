@@ -531,10 +531,19 @@ export type SeriCakismasi = {
 export type SeansNotu = {
   appointment_id: number
   client_id: number
+  /** Randevunun danışanı — okuma penceresinin başlığı (tasarım S5b). */
+  danisan_adi: string
   /** Randevunun başlangıcı — yerel naive biçim (`2026-09-07T10:00`). */
   seans_zamani: string
   sablon: string
+  /** HTML (tasarım S1). Boş dizge "not yok". */
   icerik: string
+  /**
+   * Sunucunun `duz_metin`'den hesapladığı önizleme (tasarım S5) — dosya
+   * listesindeki `not_ilk_satiri` ile AYNI fonksiyon. Not satırı yoksa
+   * `null`, boş notta `''`. İstemcide eşi YOK.
+   */
+  onizleme: string | null
   guncelleme_zamani: string
 }
 

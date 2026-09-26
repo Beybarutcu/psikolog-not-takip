@@ -3,7 +3,6 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { borcaGirerMi } from '../borc'
 import { etiketAdiNormallestir, etiketAnahtari, etiketSirasi } from '../etiket/etiketAdi'
-import { notOnizlemesi } from '../seans/onizleme'
 import { taslaklariUnut } from '../seans/taslak'
 import { AnaEkran } from './AnaEkran'
 
@@ -256,11 +255,17 @@ function sonTemasiIsaretle(r: RandevuKaydi): { son_temas: string; saklama_bitis:
   return { son_temas: gun, saklama_bitis: saklamaBitis }
 }
 
+// Sunucunun önizlemesinin TAKLİDİ (istemcide gerçek eşi yok, tasarım S5):
+// etiketleri at, ilk dolu satır. Yalnızca sahte sunucu yanıtı için.
+const onizlemeTaklidi = (icerik: string) =>
+  icerik.replace(/<[^>]*>/g, '\n').split('\n').map((s) => s.trim()).find((s) => s !== '') ?? ''
+
 function notYaniti(id: number) {
   const r = tumu().find((x) => x.id === id)!
   const k = notlar[id] ?? { sablon: 'serbest', icerik: '' }
   return {
     appointment_id: id, client_id: r.client_id, seans_zamani: r.baslangic,
+    danisan_adi: r.danisan_adi, onizleme: notlar[id] ? onizlemeTaklidi(notlar[id].icerik) : null,
     ...k, guncelleme_zamani: '2026-09-09T09:00:00Z',
   }
 }
@@ -452,7 +457,7 @@ function yanitUret(method: string, yol: string, govde: unknown): Response {
           return {
             appointment_id: a.id, baslangic: a.baslangic, durum: a.durum,
             ucret_kurus: a.ucret, odendi: a.odendi,
-            not_ilk_satiri: notlar[a.id] ? notOnizlemesi(notlar[a.id].icerik) : null,
+            not_ilk_satiri: notlar[a.id] ? onizlemeTaklidi(notlar[a.id].icerik) : null,
             etiketler: seansinEtiketleri(a.id).map((e) => e.ad),
           }
         }),

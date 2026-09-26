@@ -68,6 +68,11 @@ function jsonYanit(govde: unknown): Response {
   return { ok: true, json: async () => govde } as unknown as Response
 }
 
+// Sunucunun önizlemesinin TAKLİDİ (istemcide gerçek eşi yok, tasarım S5):
+// etiketleri at, ilk dolu satır. Yalnızca sahte sunucu yanıtı için.
+const onizlemeTaklidi = (icerik: string) =>
+  icerik.replace(/<[^>]*>/g, '\n').split('\n').map((s) => s.trim()).find((s) => s !== '') ?? ''
+
 // --- Dal incelemesi: ana ekranin iki YENI mount istegi -------------------
 //
 // `AnaEkran` artik mount'ta `GET /api/saklama-suresi-dolanlar` ve
@@ -199,8 +204,10 @@ function notYaniti(yol: string, method: string, govde: unknown): Response | null
     return jsonYanit({
       appointment_id: id,
       client_id: randevu.client_id,
+      danisan_adi: randevu.danisan_adi,
       seans_zamani: randevu.baslangic,
       ...kayit,
+      onizleme: id in sunucuNotlari ? onizlemeTaklidi(kayit.icerik) : null,
       guncelleme_zamani: ZAMAN,
     })
   }

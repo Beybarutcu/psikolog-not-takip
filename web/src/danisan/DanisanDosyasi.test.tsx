@@ -62,9 +62,11 @@ function not(oz: Partial<SeansNotu> = {}): SeansNotu {
   return {
     appointment_id: 1,
     client_id: 12,
+    danisan_adi: 'Ayşe Kaya',
     seans_zamani: '2026-09-14T10:00',
     sablon: 'serbest',
     icerik: '',
+    onizleme: null,
     guncelleme_zamani: '2026-09-14T10:05:00',
     ...oz,
   }

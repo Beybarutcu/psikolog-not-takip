@@ -263,11 +263,16 @@ const SORGU_DANISAN: &str = "SELECT id, ad_soyad FROM clients
 /// notundan bir parça, ekranda **A'nın adıyla** görünürdü. Aynı sınıf bulgu
 /// `notes::danisan_notlari` dokümanında ayrıntılı yazılıdır; burada da testle
 /// korunur (`randevu_baska_danisana_tasininca_arama_dogru_danisani_gosterir`).
-const SORGU_NOT: &str = "SELECT p.appointment_id, a.client_id, c.ad_soyad, a.baslangic, p.icerik
+///
+/// # Not metni `duz_metin`'den (HTML değil)
+/// Resmî not artık HTML saklar; arama HTML'e değil `store::duz_metin`'in
+/// ürettiği `progress_notes.duz_metin` sütununa bakar: biçim etiketi araya
+/// girse de metin bulunur, etiket adı ("strong") eşleşmez (tasarım S4).
+const SORGU_NOT: &str = "SELECT p.appointment_id, a.client_id, c.ad_soyad, a.baslangic, p.duz_metin
  FROM progress_notes p
  JOIN appointments a ON a.id = p.appointment_id
  JOIN clients c ON c.id = a.client_id
- WHERE replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(lower(p.icerik),'ı','i'),'İ','i'),'ş','s'),'Ş','s'),'ğ','g'),'Ğ','g'),'ü','u'),'Ü','u'),'ö','o'),'Ö','o'),'ç','c'),'Ç','c') LIKE ?1 ESCAPE '\\'
+ WHERE replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(lower(p.duz_metin),'ı','i'),'İ','i'),'ş','s'),'Ş','s'),'ğ','g'),'Ğ','g'),'ü','u'),'Ü','u'),'ö','o'),'Ö','o'),'ç','c'),'Ç','c') LIKE ?1 ESCAPE '\\'
  ORDER BY a.baslangic DESC, p.appointment_id DESC
  LIMIT ?2";
 
@@ -620,7 +625,7 @@ pub fn ara(
         });
     }
 
-    for (appointment_id, client_id, danisan_adi, tarih, icerik) in
+    for (appointment_id, client_id, danisan_adi, tarih, duz_metin) in
         notlar.into_iter().take(not_payi)
     {
         sonuclar.push(AramaSonucu {
@@ -629,7 +634,7 @@ pub fn ara(
             danisan_adi,
             appointment_id: Some(appointment_id),
             tarih: Some(tarih),
-            parca: parca_cikar(&icerik, &katli_sorgu),
+            parca: parca_cikar(&duz_metin, &katli_sorgu),
             tag_id: None,
             etiket_adi: None,
             kullanim: None,
@@ -866,6 +871,25 @@ mod tests {
                 );
                 assert!(kayit.ayrinti.is_none(), "arama satiri ayrinti tasimamali");
             }
+        }
+    }
+
+    #[test]
+    fn bicim_etiketleri_bolse_de_metin_bulunur_etiket_adi_bulunmaz() {
+        let (_d, c, _cid, rid) = kurulum();
+        not_kaydet(&c, rid, "serbest", "<p>çok <strong>önemli</strong> bir <em>konu</em></p>", Cihaz::Masaustu)
+            .unwrap();
+        // ARTI YON: etiketin böldüğü ifade Türkçe katlamayla bulunur; parça düz metin.
+        let bulunan = sonuclar_of(&c, "COK ONEMLI", 20, Cihaz::Masaustu).unwrap();
+        let not = bulunan.iter().find(|s| s.tur == "not").expect("bicimle bolunmus ifade bulunmali");
+        assert!(not.parca.contains("çok önemli bir konu"), "{}", not.parca);
+        assert!(!not.parca.contains('<'), "parca HTML tasimamali: {}", not.parca);
+        // EKSİ YÖN: etiket adı ve öznitelik metin değildir.
+        for terim in ["strong", "<em>", "p>"] {
+            assert!(
+                sonuclar_of(&c, terim, 20, Cihaz::Masaustu).unwrap().iter().all(|s| s.tur != "not"),
+                "{terim} not buldu"
+            );
         }
     }
 

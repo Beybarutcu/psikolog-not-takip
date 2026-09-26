@@ -1,137 +1,21 @@
 [
-  {
-    "ad": "duz tek satir",
-    "icerik": "Danışan bugün daha rahattı",
-    "beklenen": "Danışan bugün daha rahattı"
-  },
-  {
-    "ad": "bos satirla baslayan not ilk DOLU satiri verir",
-    "icerik": "\n\n   \nUyku düzeni iyileşmiş\nikinci satır",
-    "beklenen": "Uyku düzeni iyileşmiş"
-  },
-  {
-    "ad": "DAP sablonlu not baslik satirini atlar",
-    "icerik": "Veri:\n\nİş yerinde çatışma yaşamış\n\nDeğerlendirme:\n\nPlan:\n\n",
-    "beklenen": "İş yerinde çatışma yaşamış"
-  },
-  {
-    "ad": "SOAP sablonlu not, ilk bolum bos, sonraki bolum dolu",
-    "icerik": "Öznel:\n\nNesnel:\nGöz teması kurdu\n",
-    "beklenen": "Göz teması kurdu"
-  },
-  {
-    "ad": "baslikla ayni satirda metin baslik SAYILMAZ",
-    "icerik": "Veri: annesiyle görüşmüş\nPlan:\n",
-    "beklenen": "Veri: annesiyle görüşmüş"
-  },
-  {
-    "ad": "satir basi ve sonu bosluk kirpilir",
-    "icerik": "   Değerlendirme:   \n\t  kaygı azalmış  \n",
-    "beklenen": "kaygı azalmış"
-  },
-  {
-    "ad": "CRLF satir sonlari",
-    "icerik": "Veri:\r\n\r\nEvden çalışıyor\r\n",
-    "beklenen": "Evden çalışıyor"
-  },
-  {
-    "ad": "yalnizca sablon basliklari: bos DEGIL, ilk baslik doner",
-    "icerik": "Veri:\n\nDeğerlendirme:\n\nPlan:\n\n",
-    "beklenen": "Veri:"
-  },
-  {
-    "ad": "tamamen bos not",
-    "icerik": "",
-    "beklenen": ""
-  },
-  {
-    "ad": "yalnizca bosluk ve satir sonu",
-    "icerik": "  \n\t\n   \n",
-    "beklenen": ""
-  },
-  {
-    "ad": "cok baytli uzun satir KARAKTERDE kirpilir (120)",
-    "icerik": "Plan:\n\naşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşş\nikinci",
-    "beklenen": "aşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşş"
-  },
-  {
-    "ad": "yeni bicim sablon basligi atlanir, liste satiri onek ve isaretlerinden arinir",
-    "icerik": "## Veri\n\n- **Danışan** kaygılı",
-    "beklenen": "Danışan kaygılı"
-  },
-  {
-    "ad": "eski bicim sablon basligi hala taninir",
-    "icerik": "Veri:\nDanışan geldi",
-    "beklenen": "Danışan geldi"
-  },
-  {
-    "ad": "yeni bicimde yalnizca basliklardan olusan not ilk baslik adini doner",
-    "icerik": "## Veri\n\n## Değerlendirme\n\n## Plan\n\n",
-    "beklenen": "Veri"
-  },
-  {
-    "ad": "sablonda olmayan baslik onek atilir ama atlanmaz",
-    "icerik": "### Serbest başlık",
-    "beklenen": "Serbest başlık"
-  },
-  {
-    "ad": "cok baytli bicimli metin 120 karakterde kirpilir (bicim ayiklamasindan sonra)",
-    "icerik": "## Veri\n\n**şşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşş**",
-    "beklenen": "şşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşşş"
-  },
-  {
-    "ad": "tek basina carriage return (eski Mac) satir ayraci sayilir",
-    "icerik": "Veri:\rEvden çalışıyor",
-    "beklenen": "Evden çalışıyor"
-  },
-  {
-    "ad": "tek yildiz kapanmayan cift markdown sayilmaz (2*3=6)",
-    "icerik": "2*3=6",
-    "beklenen": "2*3=6"
-  },
-  {
-    "ad": "kapanmamis kalin isareti oldugu gibi kalir",
-    "icerik": "**kapanmamış",
-    "beklenen": "**kapanmamış"
-  },
-  {
-    "ad": "uc yildiz: kalin once esleşir, disarida kalan tek yildiz metin kalir",
-    "icerik": "***metin***",
-    "beklenen": "*metin*"
-  },
-  {
-    "ad": "bosluksuz # etiket baslik sayilmaz",
-    "icerik": "#etiket",
-    "beklenen": "#etiket"
-  },
-  {
-    "ad": "dort ve uzeri diyez baslik sayilmaz, oldugu gibi kalir",
-    "icerik": "####  dört diyez",
-    "beklenen": "####  dört diyez"
-  },
-  {
-    "ad": "onay kutusu oneki atilir",
-    "icerik": "- [x] tamam",
-    "beklenen": "tamam"
-  },
-  {
-    "ad": "parantezli numara kapali kumede degil, degismez",
-    "icerik": "1) parantezli",
-    "beklenen": "1) parantezli"
-  },
-  {
-    "ad": "BOM ile baslayan (yapistirilmis) not: BOM bosluk sayilir",
-    "icerik": "\ufeffUyku düzeni iyileşmiş",
-    "beklenen": "Uyku düzeni iyileşmiş"
-  },
-  {
-    "ad": "yalnizca BOM ve bosluk olan satir bos satirdir",
-    "icerik": "\ufeff\n \ufeff \nİkinci satır",
-    "beklenen": "İkinci satır"
-  },
-  {
-    "ad": "NEL (U+0085) iki tarafta da bosluk sayilir",
-    "icerik": "\u0085Plan: haftaya\u0085",
-    "beklenen": "Plan: haftaya"
-  }
+  { "ad": "duz paragraf", "icerik": "<p>Danışan bugün daha rahattı</p>", "beklenen": "Danışan bugün daha rahattı" },
+  { "ad": "bos paragraflardan sonra ilk dolu satir", "icerik": "<p></p><p>   </p><p>Uyku düzeni iyileşmiş</p><p>ikinci satır</p>", "beklenen": "Uyku düzeni iyileşmiş" },
+  { "ad": "DAP sablonlu not baslik satirlarini atlar", "icerik": "<h2>Veri</h2><p></p><p>İş yerinde çatışma yaşamış</p><h2>Değerlendirme</h2><p></p><h2>Plan</h2><p></p>", "beklenen": "İş yerinde çatışma yaşamış" },
+  { "ad": "SOAP ilk bolum bos, sonraki dolu", "icerik": "<h2>Öznel</h2><p></p><h2>Nesnel</h2><p>Göz teması kurdu</p>", "beklenen": "Göz teması kurdu" },
+  { "ad": "baslik adiyla baslayan metin baslik SAYILMAZ", "icerik": "<h2>Veri annesiyle görüşmüş</h2><h2>Plan</h2>", "beklenen": "Veri annesiyle görüşmüş" },
+  { "ad": "yalnizca sablon basliklari: ilk baslik doner", "icerik": "<h2>Veri</h2><p></p><h2>Değerlendirme</h2><p></p><h2>Plan</h2><p></p>", "beklenen": "Veri" },
+  { "ad": "tamamen bos not", "icerik": "", "beklenen": "" },
+  { "ad": "yalnizca bos paragraf", "icerik": "<p></p>", "beklenen": "" },
+  { "ad": "bicim etiketleri onizlemede gorunmez", "icerik": "<p><strong>Danışan</strong> <em>kaygılı</em> görünüyordu</p>", "beklenen": "Danışan kaygılı görünüyordu" },
+  { "ad": "liste maddesi", "icerik": "<ul><li><p>İlk madde</p></li><li><p>ikinci</p></li></ul>", "beklenen": "İlk madde" },
+  { "ad": "onay listesi isaret tasimaz", "icerik": "<ul data-type=\"taskList\"><li data-checked=\"true\" data-type=\"taskItem\"><label><input type=\"checkbox\" checked=\"checked\"><span></span></label><div><p>ödev tamam</p></div></li></ul>", "beklenen": "ödev tamam" },
+  { "ad": "varliklar cozulmus gorunur", "icerik": "<p>Tom &amp; Jerry &quot;tanışma&quot;</p>", "beklenen": "Tom & Jerry \"tanışma\"" },
+  { "ad": "br ile bolunmus paragrafin ilk satiri", "icerik": "<p>Birinci satır<br>ikinci satır</p>", "beklenen": "Birinci satır" },
+  { "ad": "BOM bosluk sayilir", "icerik": "<p>﻿Uyku düzeni iyileşmiş</p>", "beklenen": "Uyku düzeni iyileşmiş" },
+  { "ad": "sablonda olmayan baslik atlanmaz", "icerik": "<h3>Serbest başlık</h3><p>metin</p>", "beklenen": "Serbest başlık" },
+  { "ad": "kod blogu", "icerik": "<pre><code>let x = 1;</code></pre>", "beklenen": "let x = 1;" },
+  { "ad": "etiketsiz eski duz not", "icerik": "Danışan geldi\nikinci", "beklenen": "Danışan geldi" },
+  { "ad": "baslik eslesmesi harf duyarlidir (tohumdaki bicim)", "icerik": "<h2>veri</h2><p>x</p>", "beklenen": "veri" },
+  { "ad": "alinti", "icerik": "<blockquote><p>Annesi: \"Yorgunum\"</p></blockquote>", "beklenen": "Annesi: \"Yorgunum\"" }
 ]

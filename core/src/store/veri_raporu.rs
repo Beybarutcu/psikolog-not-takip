@@ -79,6 +79,9 @@
 //! testi FARKLI adlı etiketlerle iki danışan kurup A'nın raporunda B'nin
 //! etiketinin hiç geçmediğini doğrular.
 //!
+//! # Not satırları düz metindir — `progress_notes.duz_metin` (tasarım S6);
+//! PDF'te HTML etiketi görünmez.
+//!
 //! # Ekler: ad ve üstveri — içerik ASLA
 //!
 //! Dosya adı, tür, eklenme tarihi, boyut. İçerik BLOB'u sorguya hiç girmez.
@@ -320,7 +323,7 @@ pub fn rapor_icerigi(conn: &Connection, client_id: i64) -> Result<RaporIcerigi, 
     // satirinda zaten var, ikinci kez tekrarlamak "tek yerde gorunur" kuralini
     // bozardi.
     let mut stmt = conn.prepare(
-        "SELECT a.baslangic, p.sablon, p.icerik
+        "SELECT a.baslangic, p.sablon, p.duz_metin
          FROM progress_notes p
          JOIN appointments a ON a.id = p.appointment_id
          WHERE a.client_id = ?1
@@ -337,13 +340,13 @@ pub fn rapor_icerigi(conn: &Connection, client_id: i64) -> Result<RaporIcerigi, 
     if notlar.is_empty() {
         not_satirlari.push("Kayıtlı seans notu yok.".to_string());
     }
-    for (baslangic, sablon, icerik) in &notlar {
+    for (baslangic, sablon, duz_metin) in &notlar {
         not_satirlari.push(format!(
             "Seans: {} · {}",
             seans_zamani_tr(baslangic),
             sablon_adi(sablon)
         ));
-        not_satirlari.push(icerik.clone());
+        not_satirlari.push(duz_metin.clone());
         not_satirlari.push(String::new());
     }
     let seans_notlari = RaporBolumu {
@@ -531,6 +534,21 @@ mod tests {
         assert!(metin.contains("Seans notları (2)"), "{metin}");
         assert!(!metin.contains("OZEL-KANARYA"), "ozel not rapora sizdi: {metin}");
         assert!(metin.contains("Ad soyad: Ayse Yilmaz"));
+    }
+
+    #[test]
+    fn not_satirlari_duz_metinden_gelir_html_etiketi_gorunmez() {
+        let (_d, c) = baglanti();
+        let cid = danisan(&c, "Ayse Yilmaz");
+        let r = randevu(&c, cid, "2026-09-01T10:00", "2026-09-01T11:00");
+        not_kaydet(&c, r, "dap", "<h2>Veri</h2><p><strong>HTMLKANARYA</strong> &amp; devam</p>", Cihaz::Masaustu)
+            .unwrap();
+        let metin = duz(&rapor_icerigi(&c, cid).unwrap());
+        assert!(metin.contains("HTMLKANARYA & devam"), "{metin}");
+        assert!(metin.contains("Veri"), "{metin}");
+        for etiket in ["<h2>", "<p>", "<strong>", "&amp;"] {
+            assert!(!metin.contains(etiket), "rapor HTML tasimamali: {etiket}\n{metin}");
+        }
     }
 
     // (a1) Görev 7: etiketler ada gore Turk alfabesiyle sirali, randevu

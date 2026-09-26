@@ -98,6 +98,8 @@
 
 use crate::store::audit::{kaydet, Cihaz, Eylem, LogHacmi, BIRLESTIRME_PENCERESI_DK};
 use crate::store::clients::DepoHatasi;
+use crate::store::danisan_seanslari::{onizleme, sablon_baslik_satirlari};
+use crate::store::duz_metin::html_duz_metin;
 use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -156,11 +158,19 @@ const VARLIK_OZEL: &str = "private_note";
 pub struct SeansNotu {
     pub appointment_id: i64,
     pub client_id: i64,
+    /// Randevunun danışanının adı (`clients.ad_soyad`, randevunun KENDİ
+    /// danışanı — notun kopyası değil). Okuma penceresinin başlığı ayrı bir
+    /// danışan isteği (ve denetim satırı) istemesin diye (tasarım S5b).
+    pub danisan_adi: String,
     /// Notun bağlı olduğu randevunun başlangıcı (`appointments.baslangic`,
     /// yerel naive biçim). Sıralama anahtarının ekrandaki karşılığı.
     pub seans_zamani: String,
     pub sablon: String,
     pub icerik: String,
+    /// Sunucunun `duz_metin`'den hesapladığı önizleme (tasarım S5):
+    /// `danisan_seanslari::onizleme` — dosya listesindeki `not_ilk_satiri`
+    /// ile AYNI fonksiyon. Not satırı yoksa `None`, boş notta `Some("")`.
+    pub onizleme: Option<String>,
     pub guncelleme_zamani: String,
 }
 
@@ -169,6 +179,7 @@ impl std::fmt::Debug for SeansNotu {
         f.debug_struct("SeansNotu")
             .field("appointment_id", &self.appointment_id)
             .field("client_id", &"<gizli>")
+            .field("danisan_adi", &"<gizli>")
             // Seans zamani da `<gizli>`: `client_id` ile ayni muhakeme --
             // "su kisi su saatte terapideydi" bilgisi, notun varligiyla
             // birlesince tek basina bir sizintidir (`Randevu::Debug` de
@@ -176,6 +187,7 @@ impl std::fmt::Debug for SeansNotu {
             .field("seans_zamani", &"<gizli>")
             .field("sablon", &self.sablon)
             .field("icerik", &"<gizli>")
+            .field("onizleme", &self.onizleme.as_ref().map(|_| "<gizli>"))
             .field("guncelleme_zamani", &self.guncelleme_zamani)
             .finish()
     }
@@ -211,19 +223,24 @@ fn simdi() -> String {
         .expect("zaman bicimlendirilemedi")
 }
 
-/// Randevunun danışanını ve başlangıcını bulur; randevu yoksa `Bulunamadi`.
+/// Randevunun danışanını, başlangıcını ve danışan adını bulur; randevu yoksa
+/// `Bulunamadi`.
 ///
-/// İkisi TEK sorguda okunuyor: `SeansNotu::seans_zamani` yetkili kaynaktan
-/// (`appointments.baslangic`) gelmeli ve zaten yapılan varlık kontrolü o
-/// satırı okuduğu için ikinci bir sorguya gerek yok.
+/// Üçü TEK sorguda okunuyor: `SeansNotu::seans_zamani` yetkili kaynaktan
+/// (`appointments.baslangic`) gelmeli, `danisan_adi` okuma penceresinin
+/// başlığı için ayrı bir danışan isteği (ve denetim satırı) istemesin diye
+/// (tasarım S5b) burada gelir; zaten yapılan varlık kontrolü o satırı
+/// okuduğu için ikinci bir sorguya gerek yok.
 fn randevunun_danisani(
     conn: &Connection,
     appointment_id: i64,
-) -> Result<(i64, String), DepoHatasi> {
+) -> Result<(i64, String, String), DepoHatasi> {
     conn.query_row(
-        "SELECT client_id, baslangic FROM appointments WHERE id = ?1",
+        "SELECT a.client_id, a.baslangic, c.ad_soyad
+           FROM appointments a JOIN clients c ON c.id = a.client_id
+          WHERE a.id = ?1",
         [appointment_id],
-        |r| Ok((r.get(0)?, r.get(1)?)),
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
     )
     .optional()?
     .ok_or(DepoHatasi::Bulunamadi)
@@ -239,15 +256,24 @@ pub fn not_getir(
     appointment_id: i64,
     cihaz: Cihaz,
 ) -> Result<SeansNotu, DepoHatasi> {
-    let (client_id, seans_zamani) = randevunun_danisani(conn, appointment_id)?;
+    let (client_id, seans_zamani, danisan_adi) = randevunun_danisani(conn, appointment_id)?;
 
     let mevcut = conn
         .query_row(
-            "SELECT sablon, icerik, guncelleme_zamani FROM progress_notes WHERE appointment_id = ?1",
+            "SELECT sablon, icerik, duz_metin, guncelleme_zamani FROM progress_notes WHERE appointment_id = ?1",
             [appointment_id],
-            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)),
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            },
         )
         .optional()?;
+
+    let basliklar = sablon_baslik_satirlari(conn)?;
 
     // Log yalnizca HANGI notun goruntulendigini tutar; icerik ASLA loglanmaz.
     kaydet(
@@ -261,20 +287,24 @@ pub fn not_getir(
     )?;
 
     Ok(match mevcut {
-        Some((sablon, icerik, zaman)) => SeansNotu {
+        Some((sablon, icerik, duz, zaman)) => SeansNotu {
             appointment_id,
             client_id,
+            danisan_adi,
             seans_zamani,
             sablon,
+            onizleme: Some(onizleme(&duz, &basliklar)),
             icerik,
             guncelleme_zamani: zaman,
         },
         None => SeansNotu {
             appointment_id,
             client_id,
+            danisan_adi,
             seans_zamani,
             sablon: VARSAYILAN_SABLON.to_string(),
             icerik: String::new(),
+            onizleme: None,
             guncelleme_zamani: simdi(),
         },
     })
@@ -299,19 +329,24 @@ pub fn not_kaydet(
         // Sablon adi loga girmez; yalnizca cagirana donen hata mesajinda yer alir.
         return Err(DepoHatasi::GecersizVeri(format!("Geçersiz not şablonu: {sablon}")));
     }
-    let (client_id, seans_zamani) = randevunun_danisani(conn, appointment_id)?;
+    let (client_id, seans_zamani, danisan_adi) = randevunun_danisani(conn, appointment_id)?;
     let zaman = simdi();
+    // Duz metin (`html_duz_metin`) AYNI islemde yazilir: log basarisizsa duz
+    // metin de geri alinir.
+    let duz = html_duz_metin(icerik);
+    let basliklar = sablon_baslik_satirlari(conn)?;
 
     let tx = conn.unchecked_transaction()?;
 
     tx.execute(
-        "INSERT INTO progress_notes (appointment_id, client_id, sablon, icerik, guncelleme_zamani)
-         VALUES (?1, ?2, ?3, ?4, ?5)
+        "INSERT INTO progress_notes (appointment_id, client_id, sablon, icerik, duz_metin, guncelleme_zamani)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT(appointment_id) DO UPDATE SET
              sablon = excluded.sablon,
              icerik = excluded.icerik,
+             duz_metin = excluded.duz_metin,
              guncelleme_zamani = excluded.guncelleme_zamani",
-        rusqlite::params![appointment_id, client_id, sablon, icerik, zaman],
+        rusqlite::params![appointment_id, client_id, sablon, icerik, duz, zaman],
     )?;
 
     // Otomatik kayit basina DEGIL, duzenleme oturumu basina bir satir.
@@ -330,9 +365,11 @@ pub fn not_kaydet(
     Ok(SeansNotu {
         appointment_id,
         client_id,
+        danisan_adi,
         seans_zamani,
         sablon: sablon.to_string(),
         icerik: icerik.to_string(),
+        onizleme: Some(onizleme(&duz, &basliklar)),
         guncelleme_zamani: zaman,
     })
 }
@@ -385,7 +422,7 @@ pub fn ozel_not_kaydet(
     icerik: &str,
     cihaz: Cihaz,
 ) -> Result<OzelNot, DepoHatasi> {
-    let (client_id, _) = randevunun_danisani(conn, appointment_id)?;
+    let (client_id, _, _) = randevunun_danisani(conn, appointment_id)?;
     let zaman = simdi();
 
     let tx = conn.unchecked_transaction()?;
@@ -506,15 +543,18 @@ pub fn danisan_notlari(
         return Err(DepoHatasi::Bulunamadi);
     }
 
+    let basliklar = sablon_baslik_satirlari(conn)?;
+
     // `once` NULL ise kesme yok: `?3 IS NULL OR a.baslangic < ?3` tek bir
     // hazir ifadeyle iki durumu da karsilar. Iki ayri SQL dizgesi
     // tutulsaydi, birine eklenen bir duzeltme (ornegin `client_id`'nin
     // `a.` uzerinden okunmasi kurali) otekinde unutulabilirdi.
     let mut stmt = conn.prepare(
-        "SELECT p.appointment_id, a.client_id, a.baslangic, p.sablon, p.icerik,
-                p.guncelleme_zamani
+        "SELECT p.appointment_id, a.client_id, c.ad_soyad, a.baslangic, p.sablon, p.icerik,
+                p.duz_metin, p.guncelleme_zamani
          FROM progress_notes p
          JOIN appointments a ON a.id = p.appointment_id
+         JOIN clients c ON c.id = a.client_id
          WHERE a.client_id = ?1 AND (?3 IS NULL OR a.baslangic < ?3)
          ORDER BY a.baslangic DESC, p.appointment_id DESC
          LIMIT ?2",
@@ -524,10 +564,12 @@ pub fn danisan_notlari(
             Ok(SeansNotu {
                 appointment_id: r.get(0)?,
                 client_id: r.get(1)?,
-                seans_zamani: r.get(2)?,
-                sablon: r.get(3)?,
-                icerik: r.get(4)?,
-                guncelleme_zamani: r.get(5)?,
+                danisan_adi: r.get(2)?,
+                seans_zamani: r.get(3)?,
+                sablon: r.get(4)?,
+                icerik: r.get(5)?,
+                onizleme: Some(onizleme(&r.get::<_, String>(6)?, &basliklar)),
+                guncelleme_zamani: r.get(7)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -1112,6 +1154,47 @@ mod tests {
             .unwrap();
         assert_eq!(icerik, "ilk hali", "log basarisiz oldugunda guncelleme geri alinmali");
         assert_eq!(sablon, "dap");
+        let duz: String = c
+            .query_row("SELECT duz_metin FROM progress_notes WHERE appointment_id = ?1", [rid], |r| r.get(0))
+            .unwrap();
+        assert_eq!(duz, "ilk hali", "duz metin de ayni islemde geri alinmali");
+    }
+
+    #[test]
+    fn not_kaydet_duz_metni_ayni_islemde_yazar_ve_onizlemeyi_dondurur() {
+        let (_d, c, _cid, rid) = kurulum();
+        let ilk = not_kaydet(&c, rid, "dap", "<h2>Veri</h2><p><strong>Kaygı</strong> &amp; uyku</p>", Cihaz::Masaustu)
+            .unwrap();
+        let duz = |c: &rusqlite::Connection| -> String {
+            c.query_row("SELECT duz_metin FROM progress_notes WHERE appointment_id = ?1", [rid], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(duz(&c), "Veri\n\nKaygı & uyku");
+        assert_eq!(ilk.onizleme.as_deref(), Some("Kaygı & uyku"));
+        assert_eq!(ilk.danisan_adi, "Ayse Yilmaz");
+        // UPSERT'in UPDATE dali da duz metni tazeler.
+        not_kaydet(&c, rid, "dap", "<p>ikinci hâl</p>", Cihaz::Masaustu).unwrap();
+        assert_eq!(duz(&c), "ikinci hâl");
+        let okunan = not_getir(&c, rid, Cihaz::Masaustu).unwrap();
+        assert_eq!(okunan.onizleme.as_deref(), Some("ikinci hâl"));
+        assert_eq!(okunan.danisan_adi, "Ayse Yilmaz");
+    }
+
+    #[test]
+    fn notu_olmayan_randevunun_onizlemesi_yoktur_bos_notunki_bos_dizgidir() {
+        let (_d, c, _cid, rid) = kurulum();
+        assert_eq!(not_getir(&c, rid, Cihaz::Masaustu).unwrap().onizleme, None);
+        not_kaydet(&c, rid, "serbest", "", Cihaz::Masaustu).unwrap();
+        assert_eq!(not_getir(&c, rid, Cihaz::Masaustu).unwrap().onizleme, Some(String::new()));
+    }
+
+    #[test]
+    fn danisan_notlari_danisan_adini_ve_onizlemeyi_tasir() {
+        let (_d, c, cid, rid) = kurulum();
+        not_kaydet(&c, rid, "serbest", "<p>liste <em>önizlemesi</em></p>", Cihaz::Masaustu).unwrap();
+        let liste = danisan_notlari(&c, cid, 10, None, Cihaz::Masaustu).unwrap();
+        assert_eq!(liste[0].danisan_adi, "Ayse Yilmaz");
+        assert_eq!(liste[0].onizleme.as_deref(), Some("liste önizlemesi"));
     }
 
     #[test]
@@ -1390,17 +1473,21 @@ mod tests {
         let not = SeansNotu {
             appointment_id: 481_516,
             client_id: 42,
+            danisan_adi: "GIZLI_DANISAN_ADI".into(),
             // Seans zamani da hassas: "su kisi su saatte terapideydi".
             // Yil rakamlari `appointment_id` ile karismasin diye 1999.
             seans_zamani: "1999-03-23T19:30".into(),
             sablon: "dap".into(),
             icerik: "COK_GIZLI_SEANS_ICERIGI".into(),
+            onizleme: Some("GIZLI_ONIZLEME".into()),
             guncelleme_zamani: "2026-09-07T10:00:00Z".into(),
         };
         let metin = format!("{not:?}");
         assert!(!metin.contains("COK_GIZLI_SEANS_ICERIGI"), "Debug icerigi basmamali: {metin}");
         assert!(!metin.contains("42"), "Debug client_id'yi basmamali: {metin}");
         assert!(!metin.contains("1999"), "Debug seans zamanini basmamali: {metin}");
+        assert!(!metin.contains("GIZLI_DANISAN_ADI"), "Debug danisan adini basmamali: {metin}");
+        assert!(!metin.contains("GIZLI_ONIZLEME"), "Debug onizlemeyi basmamali: {metin}");
         assert!(metin.contains("<gizli>"));
         assert!(
             metin.contains("appointment_id: 481516"),

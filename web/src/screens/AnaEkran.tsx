@@ -7,7 +7,6 @@ import { EtiketliSeanslar } from '../etiket/EtiketliSeanslar'
 import type { EtiketBaglami } from '../etiket/EtiketSatiri'
 import { Sekmeler } from '../kabuk/Sekmeler'
 import { ACILIS_SEKMESI, type SekmeKodu } from '../kabuk/sekme'
-import { notOnizlemesi } from '../seans/onizleme'
 import { TakvimSekmesi } from '../takvim/TakvimSekmesi'
 import { useDanisanDosyasi } from './anaEkranKancalari/useDanisanDosyasi'
 import { useDanisanListesi } from './anaEkranKancalari/useDanisanListesi'
@@ -418,7 +417,8 @@ export function AnaEkran({
    *   - `seansAkisi.notYansit` — takvimde bu seans açıksa editörün notu,
    *   - `dosyaNotu.notYansit`  — dosyada bu seans seçiliyse editörün notu,
    *   - `seanslar.yamala`      — dosya listesindeki önizleme (`not_ilk_satiri`,
-   *                              sunucuyla AYNI kural: `seans/onizleme.ts`).
+   *                              PUT yanıtının sunucuda hesaplanan
+   *                              `onizleme`'si — istemcide eşi yok).
    *
    * Reddedilen kayıt hiçbir şeyi yamamaz: ret `await`ten fırlar ve editöre
    * ulaşır (editör hatayı gösterir, metin taslakta kalır).
@@ -431,7 +431,7 @@ export function AnaEkran({
     const yeni = await notApi.notKaydet(id, kayit.sablon, kayit.icerik)
     seansAkisi.notYansit(id, yeni)
     dosyaNotu.notYansit(id, yeni)
-    seanslar.yamala(id, { not_ilk_satiri: notOnizlemesi(yeni.icerik) })
+    seanslar.yamala(id, { not_ilk_satiri: yeni.onizleme })
   }
 
   /**

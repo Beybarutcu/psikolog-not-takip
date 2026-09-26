@@ -7,8 +7,10 @@ function not(ozel: Partial<SeansNotu> = {}): SeansNotu {
   return {
     appointment_id: 1,
     client_id: 1,
+    danisan_adi: 'Ayşe Yılmaz',
     sablon: 'dap',
     icerik: '## Veri\n\nDanışan geldi.',
+    onizleme: null,
     guncelleme_zamani: '2026-09-01T12:00:00Z',
     seans_zamani: '2026-09-01T10:00',
     ...ozel,

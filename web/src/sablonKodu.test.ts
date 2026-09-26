@@ -61,7 +61,10 @@ describe('şablon kodu dışarı bağlanmaz, koyu tema ve resim taşımaz', () =
   it('kodda uzak adres yok (SVG ad alanı hariç), resim/tema bileşeni yok', () => {
     const ihlal: string[] = []
     for (const [yol, metin] of Object.entries(kod)) {
-      if (/https?:\/\//.test(metin.replaceAll('http://www.w3.org/2000/svg', ''))) ihlal.push(`${yol}: uzak adres`)
+      // Uzak adres = şema + `//` + ana makine karakteri. Yalın şema öneki
+      // (`not/uzantilar.ts::baglantiAdresi` şemasız adrese `https://`
+      // ekler) bir adres değildir ve hiçbir yere bağlanmaz.
+      if (/https?:\/\/[\w.[-]/.test(metin.replaceAll('http://www.w3.org/2000/svg', ''))) ihlal.push(`${yol}: uzak adres`)
       if (/image-upload|ImageUpload|extension-image|theme-toggle|ThemeToggle/.test(metin)) ihlal.push(`${yol}: resim/tema`)
     }
     expect(ihlal).toEqual([])

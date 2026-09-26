@@ -45,6 +45,33 @@ export function baglantiIzinliMi(adres: string): boolean {
   return IZINLI_BAGLANTI.test(adres.trim())
 }
 
+// `ad@alan.uzanti`: boşluk, `/` ya da `:` yok (yol ya da şema taşıyan bir
+// adres e-posta sayılmaz).
+const EPOSTA = /^[^\s@/:]+@[^\s@/:]+\.[^\s@/:]+$/
+// Şema: harfle başlar, `:` ile biter. İçinde nokta olan "şema" aslında
+// port taşıyan bir alan adıdır (`ornek.com:8080`), şema değil.
+const SEMA = /^([a-z][a-z0-9+.-]*):/i
+
+/**
+ * Bağlantı penceresine YAZILAN adresi izinli bir bağlantı adresine çevirir
+ * (tasarım E10, dal sonu incelemesi M2); çevrilemezse `null`.
+ *
+ * Kullanıcı çoğu zaman şemasız yazar ("www.ornek.com"): bu, şemanın
+ * süzgecinde (`baglantiIzinliMi`) sessizce reddediliyordu. Şemasız adres
+ * `https://`, e-posta adresi `mailto:` alır. İzinli üç şema dışındaki her
+ * şema (`javascript:`, `file:`, `data:`, `tel:`, `ftp:` …) `null` döner;
+ * önek eklenerek bağlantıya ÇEVRİLMEZ.
+ */
+export function baglantiAdresi(girdi: string): string | null {
+  const adres = girdi.trim()
+  if (adres === '') return null
+  if (baglantiIzinliMi(adres)) return adres
+  if (EPOSTA.test(adres)) return `mailto:${adres}`
+  const sema = SEMA.exec(adres)
+  if (sema !== null && !sema[1].includes('.')) return null
+  return `https://${adres}`
+}
+
 const BAGLANTI_HEDEFI = '_blank'
 const BAGLANTI_ILISKISI = 'noopener noreferrer'
 

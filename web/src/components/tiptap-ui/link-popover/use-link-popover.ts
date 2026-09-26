@@ -9,6 +9,7 @@ import { LinkIcon } from "@/components/tiptap-icons/link-icon"
 
 // --- Lib ---
 import { isMarkInSchema, isNodeTypeSelected } from "@/lib/tiptap-utils"
+import { baglantiAdresi } from "@/not/uzantilar"
 
 /**
  * Configuration for the link popover functionality
@@ -133,15 +134,22 @@ export function useLinkHandler(props: LinkHandlerProps) {
   const setLink = useCallback(() => {
     if (!url || !editor) return
 
+    // Şemasız adres `https://`, e-posta `mailto:` alır; izinsiz şema
+    // (`javascript:`, `file:` …) hiçbir şey yapmaz — şablon onu seçim
+    // yokken DÜZ METİN olarak ekliyordu (dal sonu incelemesi M2).
+    const href = baglantiAdresi(url)
+    if (href === null) return
+
     const { selection } = editor.state
     const isEmpty = selection.empty
 
     let chain = editor.chain().focus()
 
-    chain = chain.extendMarkRange("link").setLink({ href: url })
+    chain = chain.extendMarkRange("link").setLink({ href })
 
     if (isEmpty) {
-      chain = chain.insertContent({ type: "text", text: url })
+      // Görünen metin kullanıcının yazdığı (önek eklenmemiş) adres.
+      chain = chain.insertContent({ type: "text", text: url.trim() })
     }
 
     chain.run()

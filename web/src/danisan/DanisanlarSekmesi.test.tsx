@@ -118,7 +118,7 @@ function sahteListe(danisanlar: Danisan[] = []): ReturnType<typeof useDanisanLis
     arsivSuruyor: false,
     saklamaDolanlar: [],
     saklamaDolandanDus: () => {},
-    ekle: async () => {},
+    ekle: async () => null,
     arsivle: async () => {},
   }
 }
@@ -550,5 +550,185 @@ describe('useDanisanSeanslari — bayatlık', () => {
     await waitFor(() => expect(result.current.yuklendi).toBe(true))
     expect(result.current.seanslar.map((s) => s.appointment_id)).toEqual([21, 7])
     expect(result.current.seciliSeansId).toBe(21)
+  })
+})
+
+/**
+ * Tasarım B1. `liste` form alanları GERÇEK durumla sürülür (`useState`):
+ * `sahteListe`'nin no-op ayarlayıcılarıyla formun açılıp kapanması
+ * ölçülemezdi.
+ */
+describe('DanisanlarSekmesi — arama ve ekleme (tasarım B1)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  const UC: Danisan[] = [
+    { id: 1, ad_soyad: 'Ayşe Kaya', telefon: null, durum: 'aktif' },
+    { id: 2, ad_soyad: 'Ipek Sahin', telefon: null, durum: 'aktif' },
+    { id: 3, ad_soyad: 'İpek Işık', telefon: null, durum: 'aktif' },
+  ]
+
+  function DurumluSekme({
+    ekle = async () => null,
+    onDanisanSec = () => {},
+    baslangicFormAcik = false,
+  }: {
+    ekle?: () => Promise<Danisan | null>
+    onDanisanSec?: (id: number) => void
+    baslangicFormAcik?: boolean
+  }) {
+    const [formAcik, setFormAcik] = useState(baslangicFormAcik)
+    const [yeniAdSoyad, setYeniAdSoyad] = useState('')
+    const [yeniTelefon, setYeniTelefon] = useState('')
+    const liste = {
+      ...sahteListe(UC),
+      formAcik,
+      setFormAcik,
+      yeniAdSoyad,
+      setYeniAdSoyad,
+      yeniTelefon,
+      setYeniTelefon,
+      ekle,
+    }
+    return (
+      <DanisanlarSekmesi
+        liste={liste}
+        dosya={sahteDosya(null)}
+        seanslar={bosSeanslar()}
+        dosyaNotu={bosDosyaNotu()}
+        altSekme="seanslar"
+        onAltSekme={() => {}}
+        {...ILGISIZ}
+        onDanisanSec={onDanisanSec}
+      />
+    )
+  }
+
+  const aramaKutusu = () => screen.getByRole('searchbox', { name: 'Danışan ara' }) as HTMLInputElement
+  const acmaDugmeleri = () =>
+    screen.queryAllByRole('button', { name: /dosyasını aç$/ }).map((b) => b.textContent)
+  const vurgulu = () => document.querySelector('li[data-vurgulu="evet"] button')?.textContent ?? null
+  const BILGI = 'Arşivlenmiş danışanlar bu listede aranmaz; ⌘K hızlı arama arşivi de tarar.'
+
+  it('kutu imleci KENDİLİĞİNDEN almaz; yazdıkça Türkçe katlamayla süzer; sunucuya istek gitmez', async () => {
+    const fetchCasusu = vi.spyOn(globalThis, 'fetch')
+    render(<DurumluSekme />)
+    expect(document.activeElement).toBe(document.body)
+    expect(aramaKutusu().getAttribute('placeholder')).toBe('Danışan ara…')
+
+    await userEvent.type(aramaKutusu(), 'IŞIK')
+    expect(acmaDugmeleri()).toEqual(['İpek Işık'])
+    await userEvent.clear(aramaKutusu())
+    await userEvent.type(aramaKutusu(), 'ipek')
+    expect(acmaDugmeleri()).toEqual(['Ipek Sahin', 'İpek Işık'])
+    await userEvent.clear(aramaKutusu())
+    await userEvent.type(aramaKutusu(), '  ayşe ')
+    expect(acmaDugmeleri()).toEqual(['Ayşe Kaya'])
+    expect(fetchCasusu).not.toHaveBeenCalled()
+  })
+
+  it('yazınca ilk eşleşme vurgulu; ↑/↓ vurguyu taşır (uçlarda durur); Enter vurgulu dosyayı açar, imleç kutuda kalır', async () => {
+    const onDanisanSec = vi.fn()
+    render(<DurumluSekme onDanisanSec={onDanisanSec} />)
+    await userEvent.type(aramaKutusu(), 'ipek')
+    expect(vurgulu()).toBe('Ipek Sahin')
+    const etkin = aramaKutusu().getAttribute('aria-activedescendant')
+    expect(document.getElementById(etkin ?? '')?.textContent).toBe('Ipek Sahin')
+
+    await userEvent.keyboard('{ArrowDown}')
+    expect(vurgulu()).toBe('İpek Işık')
+    await userEvent.keyboard('{ArrowDown}')
+    expect(vurgulu()).toBe('İpek Işık')
+    await userEvent.keyboard('{ArrowUp}{ArrowUp}')
+    expect(vurgulu()).toBe('Ipek Sahin')
+    await userEvent.keyboard('{ArrowDown}{Enter}')
+    expect(onDanisanSec).toHaveBeenCalledExactlyOnceWith(3)
+    expect(document.activeElement).toBe(aramaKutusu())
+  })
+
+  it('boş kutuda vurgu yok, ↓ ilk danışanı vurgular; Esc kutuyu temizler ve vurguyu kaldırır', async () => {
+    render(<DurumluSekme />)
+    await userEvent.click(aramaKutusu())
+    expect(vurgulu()).toBeNull()
+    await userEvent.keyboard('{ArrowDown}')
+    expect(vurgulu()).toBe('Ayşe Kaya')
+
+    await userEvent.type(aramaKutusu(), 'ayşe')
+    expect(acmaDugmeleri()).toEqual(['Ayşe Kaya'])
+    await userEvent.keyboard('{Escape}')
+    expect(aramaKutusu().value).toBe('')
+    expect(acmaDugmeleri()).toHaveLength(3)
+    expect(vurgulu()).toBeNull()
+    expect(aramaKutusu().getAttribute('aria-activedescendant')).toBeNull()
+  })
+
+  it('oklarla vurgulanan satır görünür alana getirilir; açılış KAYDIRMAZ', async () => {
+    const kaydir = vi.spyOn(Element.prototype, 'scrollIntoView')
+    render(<DurumluSekme />)
+    expect(kaydir).not.toHaveBeenCalled()
+    await userEvent.click(aramaKutusu())
+    await userEvent.keyboard('{ArrowDown}{ArrowDown}')
+    expect(kaydir).toHaveBeenLastCalledWith({ block: 'nearest' })
+    expect(kaydir.mock.contexts.at(-1)).toBe(document.querySelector('li[data-vurgulu="evet"]'))
+  })
+
+  it('eşleşme yoksa kısayol ve sabit bilgi satırı; kısayol formu o adla açar, imleç ad alanında; Enter kaydeder, dosya YENİ kimlikle açılır, arama temizlenir', async () => {
+    const yeni: Danisan = { id: 9, ad_soyad: 'Zeynep Ak', telefon: null, durum: 'aktif' }
+    const ekle = vi.fn(async () => yeni)
+    const onDanisanSec = vi.fn()
+    render(<DurumluSekme ekle={ekle} onDanisanSec={onDanisanSec} />)
+
+    // Eşleşme varken kısayol ve bilgi satırı YOK (boş sorguda da).
+    expect(screen.queryByText(BILGI)).toBeNull()
+    await userEvent.type(aramaKutusu(), 'ayş')
+    expect(screen.queryByRole('button', { name: /adıyla yeni danışan ekle$/ })).toBeNull()
+
+    await userEvent.clear(aramaKutusu())
+    await userEvent.type(aramaKutusu(), '  Zeynep Ak ')
+    expect(acmaDugmeleri()).toEqual([])
+    expect(screen.getByText(BILGI)).toBeDefined()
+
+    await userEvent.click(screen.getByRole('button', { name: "'Zeynep Ak' adıyla yeni danışan ekle" }))
+    const ad = screen.getByLabelText('Ad soyad') as HTMLInputElement
+    expect(ad.value).toBe('Zeynep Ak')
+    expect(document.activeElement).toBe(ad)
+
+    await userEvent.keyboard('{Enter}')
+    expect(ekle).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(onDanisanSec).toHaveBeenCalledExactlyOnceWith(9))
+    expect(aramaKutusu().value).toBe('')
+  })
+
+  it('ekleme başarısızsa (ekle null) dosya AÇILMAZ, arama korunur', async () => {
+    const onDanisanSec = vi.fn()
+    render(<DurumluSekme ekle={async () => null} onDanisanSec={onDanisanSec} />)
+    await userEvent.type(aramaKutusu(), 'Zeynep Ak')
+    await userEvent.click(screen.getByRole('button', { name: "'Zeynep Ak' adıyla yeni danışan ekle" }))
+    await userEvent.click(screen.getByRole('button', { name: 'Ekle' }))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(onDanisanSec).not.toHaveBeenCalled()
+    expect(aramaKutusu().value).toBe('Zeynep Ak')
+  })
+
+  it('form: "Danışan ekle" ile açılınca imleç ad alanında; Esc kapatır; form AÇIK monte olunca imleç kendiliğinden GİTMEZ', async () => {
+    const { unmount } = render(<DurumluSekme />)
+    await userEvent.click(screen.getByRole('button', { name: 'Danışan ekle' }))
+    expect(document.activeElement).toBe(screen.getByLabelText('Ad soyad'))
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByLabelText('Ad soyad')).toBeNull()
+    unmount()
+
+    // Sekmeye dönüş (yeniden monte) form açıkken olur: odak isteği YOK.
+    render(<DurumluSekme baslangicFormAcik />)
+    expect(screen.getByLabelText('Ad soyad')).toBeDefined()
+    expect(document.activeElement).toBe(document.body)
+  })
+
+  it('sol kolon kendi içinde kayar (sticky + self-start + 100dvh + overflow)', () => {
+    render(<DurumluSekme />)
+    const sutun = screen.getByTestId('danisan-listesi-sutunu')
+    for (const sinif of ['sticky', 'top-0', 'self-start', 'max-h-[100dvh]', 'overflow-y-auto']) {
+      expect(sutun.className, sinif).toContain(sinif)
+    }
+    expect(sutun.contains(aramaKutusu())).toBe(true)
   })
 })

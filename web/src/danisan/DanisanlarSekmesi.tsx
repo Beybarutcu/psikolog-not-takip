@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState, type KeyboardEvent as TusOlayi } from 'react'
 import { yerelGun } from '../screens/anaEkranKancalari/yerelGun'
 import type { useDanisanDosyasi } from '../screens/anaEkranKancalari/useDanisanDosyasi'
 import type { useDanisanListesi } from '../screens/anaEkranKancalari/useDanisanListesi'
@@ -5,6 +6,7 @@ import type { useDanisanSeanslari } from '../screens/anaEkranKancalari/useDanisa
 import type { useDosyaNotu } from '../screens/anaEkranKancalari/useDosyaNotu'
 import type { EtiketBaglami } from '../etiket/EtiketSatiri'
 import { DanisanDosyasi, type DosyaAltSekme } from './DanisanDosyasi'
+import { danisanSuz } from './danisanAramasi'
 
 /**
  * Danışanlar sekmesi: solda danışan listesi, sağda açık danışanın dosyası
@@ -18,13 +20,32 @@ import { DanisanDosyasi, type DosyaAltSekme } from './DanisanDosyasi'
  * bileşen ikisini `grid grid-cols-[18rem_1fr]` ile YAN YANA koyar: liste
  * her zaman görünür kalır, kart onun yanında açılır.
  *
- * # Sol kolonun JSX'i AnaEkran'dan TAŞINDI, DAVRANIŞI DEĞİŞMEDİ
+ * # Sol kolon: arama, ekleme, liste (tasarım B1)
  *
- * Arama kutusu, "Danışan ekle" formu ve iki adımlı arşiv onayı bugünkü
- * `AnaEkran.tsx`'teki ile birebir aynı; yalnızca kapsayıcı bileşen
- * değişti. `liste` kancası (`useDanisanListesi`) hâlâ `AnaEkran`'da
- * çağrılıyor — bu bileşen yalnızca SONUCU görüyor (bkz. `AnaEkran.tsx`
- * modül başlığı "Kancalar AnaEkran.tsx'te çağrılır, bileşene prop iner").
+ * Liste yalnızca AKTİF danışanlar (sunucu arşivi göndermez). Tepedeki
+ * "Danışan ara…" kutusu ekrandaki listeyi `danisanAramasi.ts::danisanSuz`
+ * ile (tasarım §5.2 Türkçe katlama, `katla.ts`) süzer: istek YOK, denetim
+ * satırı YOK. Kutudayken ↑/↓ vurguyu taşır, Enter vurgulu dosyayı açar, Esc
+ * temizler. Eşleşme yoksa "'<ad>' adıyla yeni danışan ekle" kısayolu formu o
+ * adla açar; altındaki sabit satır arşivin burada aranmadığını, ⌘K'nın
+ * taradığını söyler.
+ *
+ * Bilinen sınır: kutunun `aria-activedescendant`'ı düz bir `<ul>` içindeki
+ * açma düğmesini gösteriyor (listbox/option değil); ekran okuyucular vurgu
+ * değişimini duyurmayabilir. Listbox rolü, listeyi `getByRole('list')` ile
+ * bulan testleri (ör. `AnaEkran.test.tsx` arşiv testleri) ve düğmelerin
+ * kendi rollerini değiştirirdi; bilerek yapılmadı.
+ *
+ * İmleç arama kutusuna KENDİLİĞİNDEN gitmez (A6 kullanıcı kararı). Ekleme
+ * formunun ad alanına yalnızca kullanıcı formu AÇINCA gider
+ * (`adOdakIstegi`). Enter kaydeder, Esc kapatır. `ekle()` POST yanıtındaki
+ * danışanı döndürür ve dosya o kimlikle açılır.
+ *
+ * Kolon kendi içinde kayar (`sticky top-0 self-start max-h-[100dvh]
+ * overflow-y-auto`). `liste` kancası (`useDanisanListesi`) hâlâ `AnaEkran`'da
+ * çağrılıyor ve bu bileşen yalnızca SONUCU görüyor. Arama ve vurgu bu
+ * bileşenin yerel durumu: sekmeden çıkınca sıfırlanır; dönüşte liste
+ * "eksik" görünmez.
  *
  * # Sağ kolon: `DanisanDosyasi` (Seanslar/Bilgiler alt sekmeleri, Görev 6)
  *
@@ -86,29 +107,125 @@ export function DanisanlarSekmesi({
   // metniyle "Evet, arşivle"nin AYNI danışanı görmesi bu satırla garanti).
   const { arsivOnayi } = liste
 
+  // Arama (tasarım B1). `vurgu`: vurgulu satırın süzülmüş listedeki sırası.
+  const [sorgu, setSorgu] = useState('')
+  const [vurgu, setVurgu] = useState<number | null>(null)
+  const suzulmus = danisanSuz(liste.danisanlar, sorgu)
+  const etkinVurgu =
+    vurgu === null || suzulmus.length === 0 ? null : Math.min(vurgu, suzulmus.length - 1)
+  const vurguluId = etkinVurgu === null ? null : suzulmus[etkinVurgu].id
+  const vurguluSatirRef = useRef<HTMLLIElement>(null)
+  // Oklarla gezilen satır kendi içinde kayan kolonda görünür kalır. Açılışta
+  // vurgu yok, yani sekmeye gelmek KAYDIRMAZ.
+  useEffect(() => {
+    if (vurguluId !== null) vurguluSatirRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [vurguluId])
+
+  // Ad alanına odak YALNIZCA kullanıcı formu açınca ("Danışan ekle" ya da
+  // kısayol). Sayaç bileşenle birlikte sıfırlanır: form açıkken sekmeye geri
+  // dönmek (yeniden monte) imleci kendiliğinden bir alana GÖTÜRMEZ. `autoFocus`
+  // bu ayrımı yapamazdı.
+  const [adOdakIstegi, setAdOdakIstegi] = useState(0)
+  const adAlaniRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (adOdakIstegi > 0) adAlaniRef.current?.focus()
+  }, [adOdakIstegi])
+
+  function sorguDegisti(yeni: string) {
+    setSorgu(yeni)
+    // Yazınca ilk eşleşme vurgulanır: "ayşe" + Enter ilk Ayşe'yi açar.
+    setVurgu(yeni.trim() === '' ? null : 0)
+  }
+
+  function aramaTusu(olay: TusOlayi<HTMLInputElement>) {
+    const n = suzulmus.length
+    if (olay.key === 'ArrowDown') {
+      olay.preventDefault()
+      if (n > 0) setVurgu(etkinVurgu === null ? 0 : Math.min(etkinVurgu + 1, n - 1))
+    } else if (olay.key === 'ArrowUp') {
+      olay.preventDefault()
+      if (n > 0) setVurgu(etkinVurgu === null ? n - 1 : Math.max(etkinVurgu - 1, 0))
+    } else if (olay.key === 'Enter') {
+      olay.preventDefault()
+      if (vurguluId !== null) onDanisanSec(vurguluId)
+    } else if (olay.key === 'Escape') {
+      olay.preventDefault()
+      setSorgu('')
+      setVurgu(null)
+    }
+  }
+
+  function formuAc(ad?: string) {
+    if (ad !== undefined) liste.setYeniAdSoyad(ad)
+    liste.setFormAcik(true)
+    setAdOdakIstegi((n) => n + 1)
+  }
+
+  // `ekle()` POST yanıtındaki danışanı döndürür; dosya O kimlikle açılır ve
+  // arama temizlenir (yeni danışan, düzeltilmiş adla da görünür kalsın).
+  async function ekleVeAc() {
+    const yeni = await liste.ekle()
+    if (yeni === null) return
+    setSorgu('')
+    setVurgu(null)
+    onDanisanSec(yeni.id)
+  }
+
   return (
     <div className="grid grid-cols-[18rem_1fr] gap-6" data-testid="danisanlar-sekmesi">
-      {/* SOL KOLON — AnaEkran.tsx'teki eski danışan listesi bölümüyle
-          birebir aynı JSX, yalnızca `liste`/`onDanisanSec` prop üzerinden. */}
-      <div>
+      {/* SOL KOLON — arama (tasarım B1), ekleme formu, liste. Kendi içinde
+          kayar: uzun listede sağdaki dosya yerinde kalır. `self-start`
+          ZORUNLU: ızgara hücresi varsayılan olarak satır boyuna gerilir ve
+          gerilen öğenin yapışacak yeri kalmaz. */}
+      <div
+        data-testid="danisan-listesi-sutunu"
+        className="sticky top-0 self-start max-h-[100dvh] overflow-y-auto"
+      >
         <div className="flex items-center gap-3">
           <span className="text-sm font-medium text-slate-600">Danışanlar</span>
           <button
+            type="button"
             className="rounded border px-3 py-1 text-sm"
-            onClick={() => liste.setFormAcik((acik) => !acik)}
+            onClick={() => (liste.formAcik ? liste.setFormAcik(false) : formuAc())}
           >
             Danışan ekle
           </button>
         </div>
 
+        {/* İmleç buraya KENDİLİĞİNDEN gelmez; süzme yalnızca ekranda. */}
+        <input
+          type="search"
+          aria-label="Danışan ara"
+          placeholder="Danışan ara…"
+          aria-controls={suzulmus.length > 0 ? 'danisan-listesi' : undefined}
+          aria-activedescendant={vurguluId === null ? undefined : `danisan-ac-${vurguluId}`}
+          className="mt-3 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+          value={sorgu}
+          onChange={(olay) => sorguDegisti(olay.target.value)}
+          onKeyDown={aramaTusu}
+        />
+
         {liste.formAcik && (
-          <div className="mt-2 flex flex-col items-start gap-2">
+          // `<form>`: Enter iki alanda da kaydeder (örtük gönderim), Esc kapatır.
+          <form
+            className="mt-2 flex flex-col items-start gap-2"
+            onSubmit={(olay) => {
+              olay.preventDefault()
+              void ekleVeAc()
+            }}
+            onKeyDown={(olay) => {
+              if (olay.key !== 'Escape') return
+              olay.preventDefault()
+              liste.setFormAcik(false)
+            }}
+          >
             <div>
               <label className="block text-sm" htmlFor="yeni-danisan-ad-soyad">
                 Ad soyad
               </label>
               <input
                 id="yeni-danisan-ad-soyad"
+                ref={adAlaniRef}
                 className="mt-1 w-full rounded border p-2"
                 value={liste.yeniAdSoyad}
                 onChange={(e) => liste.setYeniAdSoyad(e.target.value)}
@@ -125,13 +242,10 @@ export function DanisanlarSekmesi({
                 onChange={(e) => liste.setYeniTelefon(e.target.value)}
               />
             </div>
-            <button
-              className="rounded bg-slate-900 px-3 py-2 text-sm text-white"
-              onClick={() => void liste.ekle()}
-            >
+            <button type="submit" className="rounded bg-slate-900 px-3 py-2 text-sm text-white">
               Ekle
             </button>
-          </div>
+          </form>
         )}
 
         {liste.hata && <p className="mt-1 text-sm text-red-600">{liste.hata}</p>}
@@ -144,55 +258,73 @@ export function DanisanlarSekmesi({
           </p>
         )}
 
-        {liste.danisanlar.length > 0 && (
-          <ul className="mt-2 flex flex-col gap-2 text-sm text-slate-700">
-            {liste.danisanlar.map((d) => (
-              <li
-                key={d.id}
-                // Son inceleme I2: açık dosyanın danışanı GÖRSEL olarak da
-                // vurgulanır — eskiden yalnızca `aria-current` taşıyordu ve
-                // gören bir kullanıcı hangi dosyanın açık olduğunu listeden
-                // okuyamıyordu.
-                data-secili={d.id === seciliDanisanId ? 'evet' : undefined}
-                className={
-                  'flex items-center justify-between gap-2 rounded border-l-4 px-3 py-1 ' +
-                  (d.id === seciliDanisanId
-                    ? 'border-slate-900 bg-slate-200 font-semibold'
-                    : 'border-transparent bg-slate-100')
-                }
-              >
-                {/* Erişilebilir ad "Ayşe Yılmaz dosyasını aç": takvimdeki
-                    randevu bloğunun adı düz "Ayşe Yılmaz" ve iki özdeş adlı
-                    düğme hem ekran okuyucu kullanıcısını hem de ada göre
-                    arayan testleri belirsiz bırakırdı. */}
-                <button
-                  type="button"
-                  className="underline"
-                  aria-label={`${d.ad_soyad} dosyasını aç`}
-                  aria-current={d.id === seciliDanisanId ? 'true' : undefined}
-                  onClick={() => onDanisanSec(d.id)}
+        {suzulmus.length > 0 && (
+          <ul id="danisan-listesi" className="mt-2 flex flex-col gap-2 text-sm text-slate-700">
+            {suzulmus.map((d) => {
+              const vurgulu = d.id === vurguluId
+              return (
+                <li
+                  key={d.id}
+                  ref={vurgulu ? vurguluSatirRef : undefined}
+                  // Son inceleme I2: açık dosyanın danışanı GÖRSEL olarak da
+                  // vurgulanır — eskiden yalnızca `aria-current` taşıyordu.
+                  data-secili={d.id === seciliDanisanId ? 'evet' : undefined}
+                  // Klavye vurgusu (B1) seçimden AYRI: halka ile gösterilir.
+                  data-vurgulu={vurgulu ? 'evet' : undefined}
+                  className={
+                    'flex items-center justify-between gap-2 rounded border-l-4 px-3 py-1 ' +
+                    (d.id === seciliDanisanId
+                      ? 'border-slate-900 bg-slate-200 font-semibold'
+                      : 'border-transparent bg-slate-100') +
+                    (vurgulu ? ' ring-2 ring-sky-400' : '')
+                  }
                 >
-                  {d.ad_soyad}
-                </button>
-                {/* Erişilebilir ad danışanın ADINI taşır (bkz. AnaEkran'daki
-                    aynı gerekçe: on özdeş "Arşivle" düğmesi ekran okuyucu
-                    kullanıcısı için ayırt edilemezdi). */}
-                <button
-                  type="button"
-                  className="text-slate-500 underline disabled:opacity-50"
-                  aria-label={`${d.ad_soyad} adlı danışanı arşivle`}
-                  title="Danışanı arşivle"
-                  disabled={liste.arsivSuruyor}
-                  onClick={() => {
-                    liste.setArsivBilgisi(null)
-                    liste.setArsivOnayi(d)
-                  }}
-                >
-                  Arşivle
-                </button>
-              </li>
-            ))}
+                  {/* Erişilebilir ad "Ayşe Yılmaz dosyasını aç": takvimdeki
+                      randevu bloğunun adı düz "Ayşe Yılmaz" ve iki özdeş adlı
+                      düğme hem ekran okuyucu kullanıcısını hem de ada göre
+                      arayan testleri belirsiz bırakırdı. `id`: arama
+                      kutusunun `aria-activedescendant`'ı. */}
+                  <button
+                    type="button"
+                    id={`danisan-ac-${d.id}`}
+                    className="underline"
+                    aria-label={`${d.ad_soyad} dosyasını aç`}
+                    aria-current={d.id === seciliDanisanId ? 'true' : undefined}
+                    onClick={() => onDanisanSec(d.id)}
+                  >
+                    {d.ad_soyad}
+                  </button>
+                  {/* Erişilebilir ad danışanın ADINI taşır (bkz. AnaEkran'daki
+                      aynı gerekçe: on özdeş "Arşivle" düğmesi ekran okuyucu
+                      kullanıcısı için ayırt edilemezdi). */}
+                  <button
+                    type="button"
+                    className="text-slate-500 underline disabled:opacity-50"
+                    aria-label={`${d.ad_soyad} adlı danışanı arşivle`}
+                    title="Danışanı arşivle"
+                    disabled={liste.arsivSuruyor}
+                    onClick={() => {
+                      liste.setArsivBilgisi(null)
+                      liste.setArsivOnayi(d)
+                    }}
+                  >
+                    Arşivle
+                  </button>
+                </li>
+              )
+            })}
           </ul>
+        )}
+
+        {sorgu.trim() !== '' && suzulmus.length === 0 && (
+          <div className="mt-2 text-sm">
+            <button type="button" className="text-left underline" onClick={() => formuAc(sorgu.trim())}>
+              {`'${sorgu.trim()}' adıyla yeni danışan ekle`}
+            </button>
+            <p className="mt-1 text-xs text-slate-500">
+              Arşivlenmiş danışanlar bu listede aranmaz; ⌘K hızlı arama arşivi de tarar.
+            </p>
+          </div>
         )}
 
         {/* İki adımlı onay. Metin ne olduğunu ve ne OLMADIĞINI birlikte

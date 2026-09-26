@@ -12,7 +12,8 @@ test('danisan ekle, randevu olustur, geldi isaretle', async ({ page }) => {
   // (Playwright varsayılan olarak alt dize eşleştirir) iki düğmeyi de
   // bulur; gönder düğmesi tam eşleşmeyle hedefleniyor.
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
-  await expect(page.getByText('Ayşe Yılmaz')).toBeVisible()
+  // Tasarım B1: ekleme dosyayı açar; ad hem listede hem başlıkta durur.
+  await expect(page.getByRole('heading', { level: 2, name: 'Ayşe Yılmaz', exact: true })).toBeVisible()
 
   // Boş saat düğmesi Takvim sekmesinde.
   await page.getByRole('tab', { name: 'Takvim', exact: true }).click()
@@ -58,7 +59,7 @@ test('kilitliyken randevu ucu veri sizdirmaz', async ({ page, request }) => {
   await page.getByRole('button', { name: 'Danışan ekle' }).click()
   await page.getByLabel('Ad soyad').fill('Zeynep Kaya')
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
-  await expect(page.getByText('Zeynep Kaya')).toBeVisible()
+  await expect(page.getByRole('heading', { level: 2, name: 'Zeynep Kaya', exact: true })).toBeVisible()
 
   await page.getByRole('tab', { name: 'Takvim', exact: true }).click()
   await page.locator('button[aria-label$="10:00 boş"]').first().click()
@@ -101,7 +102,7 @@ test('mevcut randevunun ucreti guncellenir, kopya olusmaz', async ({ page }) => 
   await page.getByRole('button', { name: 'Danışan ekle' }).click()
   await page.getByLabel('Ad soyad').fill('Elif Şahin')
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
-  await expect(page.getByText('Elif Şahin')).toBeVisible()
+  await expect(page.getByRole('heading', { level: 2, name: 'Elif Şahin', exact: true })).toBeVisible()
 
   await page.getByRole('tab', { name: 'Takvim', exact: true }).click()
   // Bu dosyadaki diger testlerin kullandigi 10:00 satirindan farkli bir saat
@@ -247,7 +248,7 @@ test('seri kurulur ve tek adimda iptal edilir', async ({ page }) => {
   await page.getByRole('button', { name: 'Danışan ekle' }).click()
   await page.getByLabel('Ad soyad').fill('Deniz Arslan')
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
-  await expect(page.getByText('Deniz Arslan')).toBeVisible()
+  await expect(page.getByRole('heading', { level: 2, name: 'Deniz Arslan', exact: true })).toBeVisible()
 
   await page.getByRole('tab', { name: 'Takvim', exact: true }).click()
   await page.locator('button[aria-label$="12:00 boş"]').first().click()

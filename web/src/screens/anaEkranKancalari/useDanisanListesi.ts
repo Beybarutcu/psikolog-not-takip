@@ -128,32 +128,45 @@ export function useDanisanListesi({ ayarlarGorunur }: { ayarlarGorunur: boolean 
     setSaklamaDolanlar((onceki) => onceki.filter((d) => d.id !== clientId))
   }
 
-  async function ekle() {
+  /**
+   * Yeni danışanı kaydeder ve POST yanıtındaki `Danisan`'ı döndürür
+   * (tasarım B1: çağıran dosyayı BU kimlikle açar). Başarısızlıkta `null`.
+   *
+   * Listenin yeniden çekilmesi AYRI bir `try`'da: çekme başarısız olsa bile
+   * ekleme sunucuda yapılmıştır ve kullanıcıya "eklenemedi" GÖSTERİLMEZ.
+   * O durumda yeni kayıt listeye yerelde eklenir; doğru sıra bir sonraki
+   * çekimde gelir. Yeniden çekmenin gerekçesi aynen geçerli: liste sunucuda
+   * `ad_soyad COLLATE NOCASE` ile sıralanıyor ve yeni kaydı istemcide doğru
+   * yere sokmak Türkçe sıralamayı burada ikinci kez (farklı) uygulamak
+   * demekti. Ekleme seyrek; hacmi sunucudaki birleştirme (`clients::listele`)
+   * kapatıyor.
+   */
+  async function ekle(): Promise<Danisan | null> {
     if (yeniAdSoyad.trim() === '') {
       setHata('Lütfen ad soyad girin.')
-      return
+      return null
     }
+    let yeni: Danisan
     try {
-      await takvimApi.danisanEkle(yeniAdSoyad.trim(), yeniTelefon.trim() || undefined)
-      setYeniAdSoyad('')
-      setYeniTelefon('')
-      setFormAcik(false)
-      setHata(null)
-      // Burada yeniden yükleme KORUNUYOR: liste sunucuda `ad_soyad COLLATE
-      // NOCASE` ile sıralanıyor ve yeni kaydı istemcide doğru yere sokmak
-      // Türkçe harf sıralamasını burada ikinci kez (farklı) uygulamak
-      // demekti. Danışan ekleme seyrek bir işlem; hacim tarafını sunucudaki
-      // birleştirme (`clients::listele`) zaten kapatıyor.
-      setDanisanlar(await takvimApi.danisanlariGetir())
+      yeni = await takvimApi.danisanEkle(yeniAdSoyad.trim(), yeniTelefon.trim() || undefined)
     } catch (e) {
       // Sunucudan gelen mesaj OLDUĞU GİBİ gösteriliyor: doğrulama hataları
       // hangi alanın (ad mı, telefon mu) neden reddedildiğini söylüyor
-      // (bkz. `store::clients` doğrulayıcıları). Burada onu genel bir
-      // "Danışan eklenemedi." ile değiştirmek, kullanıcıya neyi
-      // düzelteceğini söylememek olurdu — bu kod tabanında tekrar eden
-      // "her hata parola hatasıdır" sınıfının ta kendisi.
+      // (bkz. `store::clients` doğrulayıcıları). Genel bir "Danışan
+      // eklenemedi." kullanıcıya neyi düzelteceğini söylemezdi.
       setHata(e instanceof Error ? e.message : 'Danışan eklenemedi.')
+      return null
     }
+    setYeniAdSoyad('')
+    setYeniTelefon('')
+    setFormAcik(false)
+    setHata(null)
+    try {
+      setDanisanlar(await takvimApi.danisanlariGetir())
+    } catch {
+      setDanisanlar((onceki) => (onceki.some((d) => d.id === yeni.id) ? onceki : [...onceki, yeni]))
+    }
+    return yeni
   }
 
   // Arşivleme SİLME DEĞİLDİR. `clients::arsivle` Plan 2 Görev 3'te yazılmış

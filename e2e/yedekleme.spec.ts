@@ -35,7 +35,8 @@ test('yedek klasoru secilir ve yedek gercekten alinir', async ({ page }) => {
   await page.getByRole('button', { name: 'Danışan ekle' }).click()
   await page.getByLabel('Ad soyad').fill('Ayşe Yılmaz')
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
-  await expect(page.getByText('Ayşe Yılmaz')).toBeVisible()
+  // Tasarım B1: ekleme dosyayı açar; ad hem listede hem başlıkta durur.
+  await expect(page.getByRole('heading', { level: 2, name: 'Ayşe Yılmaz', exact: true })).toBeVisible()
 
   // Yedekleme bölümü Ayarlar sekmesinin İÇİNDE. Ad `/^Ayarlar/` ile
   // aranıyor: hiç yedek alınmamışken `Sekmeler` erişilebilir adı "Ayarlar —
@@ -74,7 +75,7 @@ test('yedekten geri yukleme, yedekten SONRAKI kaydi geri alir', async ({ page })
   await page.getByRole('button', { name: 'Danışan ekle' }).click()
   await page.getByLabel('Ad soyad').fill('Yedekten Sonra Eklenen')
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
-  await expect(page.getByText('Yedekten Sonra Eklenen')).toBeVisible()
+  await expect(page.getByRole('heading', { level: 2, name: 'Yedekten Sonra Eklenen', exact: true })).toBeVisible()
 
   await page.getByRole('tab', { name: /^Ayarlar/ }).click()
   const bolum = page.getByRole('region', { name: 'Yedekleme' })

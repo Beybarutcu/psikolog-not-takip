@@ -63,7 +63,8 @@ async function danisanEkle(page: Page, ad: string) {
   await page.getByRole('button', { name: 'Danışan ekle' }).click()
   await page.getByLabel('Ad soyad').fill(ad)
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
-  await expect(page.getByText(ad, { exact: true })).toBeVisible()
+  // Tasarım B1: ekleme dosyayı açar; ad hem listede hem başlıkta durur.
+  await expect(page.getByRole('heading', { level: 2, name: ad, exact: true })).toBeVisible()
   await page.getByRole('tab', { name: 'Takvim', exact: true }).click()
 }
 

@@ -36,7 +36,8 @@ async function danisanVeRandevu(page: Page, ad: string, saat: string) {
   await page.getByLabel('Ad soyad').fill(ad)
   // `exact: true`: "Danışan ekle" düğmesi de "Ekle" alt dizgisini içeriyor.
   await page.getByRole('button', { name: 'Ekle', exact: true }).click()
-  await expect(page.getByText(ad, { exact: true })).toBeVisible()
+  // Tasarım B1: ekleme dosyayı açar; ad hem listede hem başlıkta durur.
+  await expect(page.getByRole('heading', { level: 2, name: ad, exact: true })).toBeVisible()
 
   await page.getByRole('tab', { name: 'Takvim' }).click()
   await page.locator(`button[aria-label$="${saat} boş"]`).first().click()

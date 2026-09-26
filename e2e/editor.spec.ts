@@ -537,6 +537,73 @@ test('onay kutusu: kutu ekranda gorunur, tiklayinca dolu kutunun icinde tik cizi
   expect(cspIhlalleri).toEqual([])
 })
 
+test('E8: kayitli zengin notu acmak, tiklamak ve imleci gezdirmek YAZMAZ; tek harf tek PUT (tasarim E8)', async ({ page, request }) => {
+  await kurulumYap(page)
+  const ad = 'Kerem Acar'
+  await danisanEkle(page, ad)
+  const blok = await randevuKur(page, ad, '20:00')
+  const id = await randevuKimligi(request, ad, '20:00')
+  const notYolu = `/api/randevular/${id}/not`
+
+  // Sunucudaki not TipTap'ın KENDİ çıktısı DEĞİL: `<b>`, `<p>`'siz liste ve
+  // görev öğesi, `target`/`rel`'siz bağlantı. Editör açılışta bunu kendi
+  // biçimine normalleştirir; bu bir değişiklik SAYILMAMALI (E8). Not başka
+  // bir sürümün (TipTap yükseltmesi çıktıyı değiştirir) ya da şablonun
+  // yazdığı hâli temsil eder. Editörün kendi yazdığı bir not burada az şey
+  // ölçerdi: yeniden normalleştirme onu değiştirmez. Belge bir LİSTEYLE
+  // biter (`TrailingNode` ilk işlemde sona `<p>` eklerdi, preflight F12).
+  const ham =
+    '<h2>Gözlem</h2><p>Danışan <b>kaygı</b> anlattı; kaynak: <a href="https://ornek.invalid/makale">makale</a></p>' +
+    '<ul data-type="taskList"><li data-type="taskItem" data-checked="true">ödev verildi</li>' +
+    '<li data-type="taskItem" data-checked="false">ölçek doldurulacak</li></ul>' +
+    '<ul><li>madde bir</li><li>madde SON39</li></ul>'
+  const kayit = await request.put(notYolu, { data: { sablon: 'serbest', icerik: ham } })
+  expect(kayit.status()).toBe(200)
+
+  // Sayım İLK açılıştan önce başlar: açılış, ayrılış (tahliye) ve yeniden
+  // açılışın HİÇBİRİ yazmamalı.
+  const notPutlari: string[] = []
+  page.on('request', (istek) => {
+    if (istek.method() === 'PUT' && new URL(istek.url()).pathname === notYolu) notPutlari.push(istek.postData() ?? '')
+  })
+
+  const ilk = await seansiAc(page, blok)
+  await expect(ilk.locator('h2')).toHaveText('Gözlem')
+  await takvimeDon(page)
+
+  const alan = await seansiAc(page, blok)
+  await expect(alan.locator('strong')).toHaveText('kaygı')
+  await expect(alan.locator('ul[data-type="taskList"] input[type="checkbox"]').first()).toBeChecked()
+  // Tıklamalar: paragraf, bağlantı (editörde bağlantıyı seçer, açmaz),
+  // görev metni, son liste öğesi. Onay kutusuna tıklanmaz (o bir değişiklik).
+  await alan.locator('strong', { hasText: 'kaygı' }).click()
+  await alan.getByRole('link', { name: 'makale' }).click()
+  // (`getByText` DEĞİL: görev öğesinin görünmez erişilebilir etiketi de bu
+  // metni taşır.)
+  await alan.locator('ul[data-type="taskList"] p', { hasText: 'ölçek doldurulacak' }).click()
+  await alan.locator('ul:not([data-type="taskList"]) p', { hasText: 'madde SON39' }).click()
+  // İmleç gezintisi: yukarı-aşağı bütün bloklardan geçer, belge sonuna iner.
+  for (const tus of ['ArrowUp', 'ArrowUp', 'ArrowUp', 'ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'Home', 'End']) {
+    await page.keyboard.press(tus)
+  }
+  await page.keyboard.press(MAC ? 'Meta+ArrowDown' : 'Control+End')
+
+  // "Hiçbir şey olmaz" iddiası: beklenecek bir durum yok, bu yüzden SINIRLI
+  // bekleme — otomatik kayıt gecikmesinin (2 sn, `NotEditoru`) üstünde.
+  await page.waitForTimeout(3_000)
+  expect(notPutlari).toEqual([])
+
+  // ARTI YÖN (sayaç kör değil): tek harf, AYNI yola tam bir PUT üretir.
+  // İmleç belge sonunda: harf son liste öğesine eklenir.
+  await page.keyboard.type('x')
+  await expect.poll(() => notPutlari.length).toBe(1)
+  await kaydedildiBekle(page)
+  expect(JSON.parse(notPutlari[0]).icerik).toContain('madde SON39x')
+  await page.waitForTimeout(3_000)
+  expect(notPutlari).toHaveLength(1)
+  await expect.poll(() => sunucuNotu(request, id)).toContain('madde SON39x')
+})
+
 test('okuma penceresi kilitte icerigi kaldirir: sag tik "Yeni pencerede ac", salt okunur, ayni seans ayni pencere (P2-P4)', async ({ page, context }) => {
   await kurulumYap(page)
   const ad = 'Ece Yurt'

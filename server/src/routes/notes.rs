@@ -42,6 +42,7 @@ use axum::{
 };
 use psikolog_core::store::audit::Cihaz;
 use psikolog_core::store::notes::{danisan_notlari, not_getir, not_kaydet, SeansNotu};
+use psikolog_core::store::search::{danisan_notlarinda_ara, NotAramaSonucu};
 use serde::Deserialize;
 
 /// `GET /api/danisanlar/{id}/notlar` için üst sınır.
@@ -78,6 +79,14 @@ pub struct ListeSorgusu {
     /// tarih biçimini burada ikinci kez (farklı) yorumlaması, arayüzün
     /// gönderdiği `appointments.baslangic` ile sessizce uyuşmayan bir
     /// kesme riski olurdu.
+    pub once: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct NotAramaSorgusu {
+    pub q: String,
+    /// `ListeSorgusu::once` ile aynı: biçim doğrulanmaz, parametre olarak
+    /// SQL'e gider (dizge karşılaştırması).
     pub once: Option<String>,
 }
 
@@ -146,6 +155,23 @@ pub async fn danisan_listesi(
         danisan_notlari(&conn, id, limiti_kirp(q.limit), q.once.as_deref(), Cihaz::Masaustu)
             .map_err(depo_hatasi)?;
     Ok(Json(liste))
+}
+
+/// `GET /api/danisanlar/{id}/not-ara?q=&once=` — danışanın **resmî**
+/// notlarında arama (tasarım S8, önceki notlar paneli). Kurallar ve denetim
+/// kaydı `store::search::danisan_notlarinda_ara`'da; bu handler ikinci bir
+/// satır yazmaz, terimi hiçbir yere düşürmez. Özel not bu uca giremez: depo
+/// fonksiyonu yalnızca `progress_notes.duz_metin` okur.
+pub async fn danisan_not_ara(
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+    q: Result<Sorgu<NotAramaSorgusu>, ApiHata>,
+) -> Result<Json<Vec<NotAramaSonucu>>, ApiHata> {
+    let conn = acik_baglanti(&s)?;
+    let Sorgu(q) = q?;
+    let sonuc = danisan_notlarinda_ara(&conn, id, &q.q, q.once.as_deref(), Cihaz::Masaustu)
+        .map_err(depo_hatasi)?;
+    Ok(Json(sonuc))
 }
 
 #[cfg(test)]

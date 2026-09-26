@@ -547,6 +547,15 @@ export type SeansNotu = {
   guncelleme_zamani: string
 }
 
+/** `GET /api/danisanlar/{id}/not-ara` satırı (sunucudaki `NotAramaSonucu`, tasarım S8). */
+export type NotAramaSonucu = {
+  appointment_id: number
+  /** Seansın başlangıcı — duvar saati. */
+  seans_zamani: string
+  /** Eşleşmenin çevresinden düz metin parça (sunucuda `parca_cikar`). */
+  parca: string
+}
+
 /**
  * `GET/PUT /api/randevular/{id}/ozel-not` yanıtı (sunucudaki `OzelNot`).
  *
@@ -601,6 +610,14 @@ export const notApi = {
   danisanNotlari: (danisanId: number, limit: number, once?: string) =>
     istek<SeansNotu[]>(
       `/api/danisanlar/${danisanId}/notlar?limit=${limit}` +
+        (once === undefined ? '' : `&once=${encodeURIComponent(once)}`),
+    ),
+  // Önceki notlar panelinin araması (tasarım S8) — yalnızca RESMÎ notlar,
+  // yalnızca bu danışan, `once` verilirse yalnızca o seanstan önce. Terim
+  // sunucuda loga yazılmaz; burada da hiçbir yere düşürülmez.
+  notAra: (danisanId: number, sorgu: string, once?: string) =>
+    istek<NotAramaSonucu[]>(
+      `/api/danisanlar/${danisanId}/not-ara?q=${encodeURIComponent(sorgu)}` +
         (once === undefined ? '' : `&once=${encodeURIComponent(once)}`),
     ),
 }

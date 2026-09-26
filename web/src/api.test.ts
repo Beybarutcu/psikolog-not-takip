@@ -91,6 +91,14 @@ describe('notApi — resmî seans notu', () => {
     expect(cagrilar[1].yol).toBe('/api/danisanlar/3/notlar?limit=200')
     expect(cagrilar[1].yol).not.toContain('once')
   })
+
+  it('notAra terimi kodlar, `once`u yalnızca verilince koyar', async () => {
+    await notApi.notAra(3, 'kaygı & uyku', '2026-09-07T10:00')
+    expect(cagrilar[0].yol).toBe('/api/danisanlar/3/not-ara?q=kayg%C4%B1%20%26%20uyku&once=2026-09-07T10%3A00')
+    expect(cagrilar[0].method).toBe('GET')
+    await notApi.notAra(3, 'x y')
+    expect(cagrilar[1].yol).toBe('/api/danisanlar/3/not-ara?q=x%20y')
+  })
 })
 
 describe('ozelNotApi — özel not', () => {
@@ -118,8 +126,9 @@ describe('resmî not istemcisi özel nota YAPISAL olarak erişemez', () => {
     await notApi.notGetir(7)
     await notApi.notKaydet(7, 'dap', 'metin')
     await notApi.danisanNotlari(3, 4)
+    await notApi.notAra(3, 'terim')
 
-    expect(cagrilar).toHaveLength(3)
+    expect(cagrilar).toHaveLength(4)
     for (const c of cagrilar) {
       expect(c.yol).not.toContain('ozel')
     }
@@ -141,7 +150,7 @@ describe('resmî not istemcisi özel nota YAPISAL olarak erişemez', () => {
     // Tek bir nesnede toplanırlarsa yukarıdaki yapısal ayrım kaybolur:
     // "notları getiren istemci"yi bulan geliştirici özel notu da bulur.
     const resmiAnahtarlar = Object.keys(notApi)
-    expect(resmiAnahtarlar).toEqual(['notGetir', 'notKaydet', 'danisanNotlari'])
+    expect(resmiAnahtarlar).toEqual(['notGetir', 'notKaydet', 'danisanNotlari', 'notAra'])
     expect(Object.keys(ozelNotApi)).toEqual(['getir', 'kaydet'])
   })
 })

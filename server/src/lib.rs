@@ -132,6 +132,10 @@ fn api_router() -> Router<AppState> {
         // olmasin TUM seanslar -- `.../notlar`'in aksine notu yazilmamis
         // randevu da doner (bkz. `store::danisan_seanslari` modul basligi).
         .route("/danisanlar/{id}/seanslar", get(routes::danisan_seanslari::liste))
+        // Tasarim S8: onceki notlar panelinin aramasi -- danisanin RESMI
+        // notlarinda, `once` kesmesiyle. Terim sorgu dizesinde (hizli arama
+        // `/ara?q=` ile ayni karar); loga girmez.
+        .route("/danisanlar/{id}/not-ara", get(routes::notes::danisan_not_ara))
         .route(
             "/danisanlar/{id}/ekler",
             get(routes::attachments::liste)

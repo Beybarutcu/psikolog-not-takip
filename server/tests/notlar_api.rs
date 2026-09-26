@@ -198,6 +198,8 @@ async fn kilitliyken_gorev7_uclarinin_hepsi_401_doner_ve_veri_sizdirmaz() {
         // liste de gorunmemeli; `not_ilk_satiri` RESMI_GIZLI_ICERIK'i
         // tasidigi icin asagidaki gizli-tarama dongusu bunu da kapsar.
         ("GET", format!("/api/danisanlar/{cid}/seanslar"), None),
+        // Tasarim S8: danisana ozel not aramasi da kapinin icinde.
+        ("GET", format!("/api/danisanlar/{cid}/not-ara?q=RESMI"), None),
         ("GET", format!("/api/danisanlar/{cid}/ekler"), None),
         // POST /ekler ham govdeli oldugu icin ayri cagrilir (asagida).
         ("GET", format!("/api/ekler/{ek_id}"), None),
@@ -225,7 +227,7 @@ async fn kilitliyken_gorev7_uclarinin_hepsi_401_doner_ve_veri_sizdirmaz() {
             Some(json!({"parola":"danisan-parolasi-1","bugun":"2026-09-16"})),
         ),
     ];
-    assert_eq!(uclar.len(), 20, "POST /ekler ile birlikte yirmi bir uc kapsanmali");
+    assert_eq!(uclar.len(), 21, "POST /ekler ile birlikte yirmi iki uc kapsanmali");
 
     for (metot, yol, govde) in &uclar {
         let (kod, json) = cagir(&s, metot, yol, govde.clone()).await;
@@ -331,6 +333,13 @@ async fn kilitliyken_govde_ve_sorgu_alan_her_uc_once_401_doner() {
             "danisan_listesi",
             "GET",
             format!("/api/danisanlar/{cid}/notlar?limit={KANARYA}"),
+            None,
+        ),
+        (
+            "notes.rs",
+            "danisan_not_ara",
+            "GET",
+            format!("/api/danisanlar/{cid}/not-ara?x={KANARYA}"),
             None,
         ),
         ("ozet.rs", "ay_ozeti_uc", "GET", "/api/ay-ozeti".into(), None),
@@ -1082,6 +1091,55 @@ async fn not_yaniti_sunucunun_onizlemesini_ve_danisan_adini_tasir() {
     let (_, bos_not) = cagir(&s, "GET", &format!("/api/randevular/{bos}/not"), None).await;
     assert!(bos_not["onizleme"].is_null(), "{bos_not}");
     assert_eq!(bos_not["danisan_adi"], json!("Ayse Yilmaz"));
+}
+
+#[tokio::test]
+async fn danisan_not_aramasi_bu_danisanin_onceki_resmi_notlarini_dondurur() {
+    let (_d, s) = kurulu_state().await;
+    let ayse = danisan_ekle(&s, "Ayse Yilmaz").await;
+    let mehmet = danisan_ekle(&s, "Mehmet Demir").await;
+    let eski = randevu_ekle(&s, ayse, "2026-09-01").await;
+    let simdiki = randevu_ekle(&s, ayse, "2026-09-08").await;
+    let sonraki = randevu_ekle(&s, ayse, "2026-09-15").await;
+    let baskasi = randevu_ekle(&s, mehmet, "2026-09-02").await;
+    for (rid, icerik) in [
+        (eski, "<p>ESKI <strong>KAYGI</strong> notu</p>"),
+        (simdiki, "<p>SIMDIKI kaygi</p>"),
+        (sonraki, "<p>SONRAKI kaygi</p>"),
+        (baskasi, "<p>BASKASI kaygi</p>"),
+    ] {
+        cagir(&s, "PUT", &format!("/api/randevular/{rid}/not"), Some(json!({"sablon":"serbest","icerik":icerik})))
+            .await;
+    }
+    cagir(&s, "PUT", &format!("/api/randevular/{eski}/ozel-not"), Some(json!({"icerik":"OZELKAYGI"}))).await;
+
+    let (kod, sonuc) = cagir(
+        &s,
+        "GET",
+        &format!("/api/danisanlar/{ayse}/not-ara?q=kayg%C4%B1&once=2026-09-08T14%3A00"),
+        None,
+    )
+    .await;
+    assert_eq!(kod, StatusCode::OK);
+    let liste = sonuc.as_array().expect("dizi");
+    assert_eq!(liste.len(), 1, "{sonuc}");
+    assert_eq!(liste[0]["appointment_id"], json!(eski));
+    assert_eq!(liste[0]["seans_zamani"], json!("2026-09-01T14:00"));
+    let parca = liste[0]["parca"].as_str().unwrap();
+    assert!(parca.contains("ESKI KAYGI notu") && !parca.contains('<'), "{parca}");
+    for yok in ["SIMDIKI", "SONRAKI", "BASKASI", "OZELKAYGI"] {
+        assert!(!sonuc.to_string().contains(yok), "{yok} sizdi: {sonuc}");
+    }
+    // ARTI YÖN: kesme `once`'den geliyor — verilmezse sonrakiler de döner.
+    let (_, hepsi) = cagir(&s, "GET", &format!("/api/danisanlar/{ayse}/not-ara?q=kaygi"), None).await;
+    assert_eq!(hepsi.as_array().unwrap().len(), 3, "{hepsi}");
+    // Kısa terim boş liste (400 değil), olmayan danışan 404.
+    let (kod, kisa) = cagir(&s, "GET", &format!("/api/danisanlar/{ayse}/not-ara?q=k"), None).await;
+    assert_eq!((kod, kisa), (StatusCode::OK, json!([])));
+    let (kod, _) = cagir(&s, "GET", "/api/danisanlar/9999/not-ara?q=kaygi", None).await;
+    assert_eq!(kod, StatusCode::NOT_FOUND);
+    // Terim loga girmedi.
+    assert!(!audit_dokumu(&s).await.to_lowercase().contains("kayg"));
 }
 
 #[tokio::test]
@@ -2374,7 +2432,8 @@ fn her_veri_handleri_acik_baglantidan_gecer() {
     // seans_listesi, ekle, kaldir, seanslar) -- toplam 32 -> 37.
     // Gorev 7 Plan 7: `routes::audit::liste` (denetim kaydini OKUMA ucu)
     // eklendi -- toplam 37 -> 38.
-    assert_eq!(toplam, 38, "toplam veri handler'i sayisi 38 olmali");
+    // Tasarım S8 (2026-09-26): `routes::notes::danisan_not_ara` -- toplam 38 -> 39.
+    assert_eq!(toplam, 39, "toplam veri handler'i sayisi 39 olmali");
 }
 
 /// Kapıyı ilk satırda VE uzun bir üretimden sonra ikinci kez çağırmasına izin

@@ -684,4 +684,37 @@ describe('DanisanDosyasi — uzun geçmiş (tasarım B3)', () => {
       expect(secim.className, sinif).toContain(sinif)
     }
   })
+
+  // Kullanıcı isteği 2026-09-27 ("araç çubuğu örtmesin notu"): not sütunu
+  // ekranın kalanını doldurur ve notla uzamaz; uzun not yüzeyin kendi yazı
+  // alanında kayar (`BicimliYuzey`). Yerleşim `e2e/yerlesim.spec.ts` > "arac
+  // cubugu notu ortmez"de ölçülür; burada yapı ve sınıflar.
+  it('not sütunu ekran boyu esnek sütun: editör, etiket ve durum satırı içinde; editör kalanı alır', () => {
+    render(
+      <DanisanDosyasi
+        {...proplar({
+          kart: kartIle(RANDEVULAR),
+          seanslar: SEANSLAR,
+          seciliSeansId: 1,
+          not: not({ appointment_id: 1 }),
+          etiketBaglami: () => ({
+            etiketler: [], hata: null, onYenidenDene: vi.fn(), sozluk: null, onSozlukIste: vi.fn(),
+            onEkle: vi.fn(async () => {}), onKaldir: vi.fn(async () => {}), onEtiketAc: vi.fn(),
+            yazmaHatasi: null, onYazmaHatasiTemizle: vi.fn(),
+          }),
+        })}
+      />,
+    )
+    const sutun = screen.getByTestId('seans-notu-sutunu')
+    for (const sinif of ['sticky', 'top-0', 'self-start', 'flex', 'flex-col', 'min-h-[calc(100dvh-13rem)]']) {
+      expect(sutun.classList.contains(sinif), sinif).toBe(true)
+    }
+    const editor = screen.getByLabelText('Seans notu')
+    expect(sutun.contains(editor)).toBe(true)
+    expect(sutun.contains(screen.getByRole('group', { name: 'Seans durumu' }))).toBe(true)
+    expect(sutun.contains(screen.getByTestId('etiket-satiri'))).toBe(true)
+    // Editörün kökü (`NotEditoru`) sütunun doğrudan çocuğu ve kalan boyu alır.
+    const editorKoku = Array.from(sutun.children).find((c) => c.contains(editor))!
+    for (const sinif of ['flex', 'flex-1', 'flex-col']) expect(editorKoku.classList.contains(sinif), sinif).toBe(true)
+  })
 })

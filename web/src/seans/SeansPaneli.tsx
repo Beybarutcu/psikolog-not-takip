@@ -65,7 +65,9 @@ import { sablonMetni } from './sablon'
  *
  * Kök ve sekme gövdesi dikey esnek kutu: `SeansSayfasi` editör alanına
  * yükseklik verdiğinde editör o yüksekliği doldurur (tasarım N4 "sayfanın
- * büyük kısmı"; zincirin sonu `NotEditoru` > `BicimliYuzey`).
+ * büyük kısmı"; zincirin sonu `NotEditoru` > `BicimliYuzey`). Notun uzunluğu
+ * bu zincirin boyunu ETKİLEMEZ: yüzeyin yazı alanı boyut sınırlamalı
+ * (`contain-size`, bkz. `BicimliYuzey`), uzun not orada kayar.
  */
 
 type NotKaydi = { sablon: string; icerik: string }

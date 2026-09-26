@@ -358,13 +358,21 @@ export function NotEditoru({
   const sablonId = `not-sablonu-${taslakAnahtari}`
 
   return (
-    // `flex-1`: dikey esnek bir kapta (not sayfası, tasarım N4) kalan
-    // yüksekliği alır ve yüzeye (`BicimliYuzey`) taşır; yükseklik vermeyen bir
-    // kapta (danışan dosyası) etkisiz, yüzey kendi asgarisiyle (16rem) kalır.
-    // Ölçen test: `e2e/yerlesim.spec.ts` > "not sayfasinda editor ekranin
-    // kalanini doldurur".
+    // `flex-1`: dikey esnek bir kapta (not sayfası, tasarım N4; danışan
+    // dosyasının not sütunu) kalan yüksekliği alır ve yüzeye (`BicimliYuzey`)
+    // taşır; yükseklik vermeyen bir kapta etkisiz, yüzey yazı alanının
+    // asgarisiyle (16rem) kalır. Notun uzunluğu bu boyu ETKİLEMEZ: uzun not
+    // yüzeyin kendi yazı alanında kayar (kullanıcı isteği 2026-09-27, bkz.
+    // `BicimliYuzey`). Ölçen testler: `e2e/yerlesim.spec.ts` > "not
+    // sayfasinda editor ekranin kalanini doldurur", "arac cubugu notu ortmez".
     <div className="flex flex-1 flex-col">
-      <div className="mb-2 flex items-center gap-2">
+      {/* `min-h-5` (bir `text-sm` satırı): şablon seçicisi olmayan editörde
+          (Özel Notlarım) satırın tek içeriği durum metni ve o metin ilk
+          tuşta belirir. Asgarisiz satır 0'dan 20 px'e büyüyor, sınırlı not
+          sayfasında yazı alanını küçültüyor ve tarayıcının kaydırma
+          çapası (`overflow-anchor`) SAYFAYI 20 px kaydırıyordu (ölçüldü,
+          e2e "arac cubugu notu ortmez", özel not). */}
+      <div className="mb-2 flex min-h-5 items-center gap-2">
         {sablonSecilebilir && (
           <>
             <label className="text-sm" htmlFor={sablonId}>

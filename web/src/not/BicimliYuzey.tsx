@@ -59,6 +59,15 @@ export function BicimliYuzey({ html, onChange, etiket, editable = true, vurgu = 
     content: html,
     editable,
     editorProps: {
+      // İmleç yazı alanının kenarına 16 px'ten fazla yaklaşınca kaydırma
+      // onu kenardan 16 px içeri alır (varsayılan: eşik 0, pay 5). Satır
+      // yüksekliği 1.6 (25,6 px) ve imleç dikdörtgeni yazı tipi boyu kadar:
+      // eşiksiz kaydırma (ör. Ctrl+End'in yerli kaydırması imleci kenara
+      // hizalar) son satırın alt payını kabın dışında bırakıyordu (ölçüldü,
+      // e2e "arac cubugu notu ortmez" (c)). Yazı alanı pencerenin içinde
+      // olduğundan pencere bu eşik yüzünden kaymaz.
+      scrollThreshold: 16,
+      scrollMargin: 16,
       attributes: {
         role: 'textbox',
         'aria-label': etiket,
@@ -106,9 +115,38 @@ export function BicimliYuzey({ html, onChange, etiket, editable = true, vurgu = 
 
   return (
     <EditorContext.Provider value={{ editor }}>
-      {/* `flex-1` + yüzey kabının `flex-1`i + `.not-editoru .ProseMirror`'un
-          `flex` kuralı (not-yuzeyi.scss): çağıranın verdiği yükseklik yazı
-          yüzeyine kadar iner (bkz. `NotEditoru` kökü). */}
+      {/* # Araç çubuğu notu ÖRTMEZ: çubuk üstte, not kendi kabında kayar
+          (kullanıcı isteği 2026-09-27)
+
+          Eskiden yüzey içeriğiyle uzuyor ve SAYFA kayıyordu; şablonun
+          araç çubuğu `position: sticky; top: 0` ve opak olduğu için dar
+          sütunda iki-üç satıra kırılan (69–105 px) çubuk, kayan notun üst
+          satırlarını örtüyordu; ProseMirror'un imleci gösteren kaydırması
+          (en yakın kayan ata + pencere) imleci de onun altında
+          bırakabiliyordu. Artık dikey esnek bir sütun:
+
+          - araç çubuğu akışta (`position: static`, küçülmez —
+            not-yuzeyi.scss), yazının ÜSTÜNDE, onunla çakışmaz;
+          - yazı alanı (`EditorContent`) kendi kaydırma kabı:
+            `flex-1 overflow-y-auto`, asgarisi 16rem (`min-h-64`, eskiden
+            ProseMirror'daydı). ProseMirror kabı doldurur (`flex: 1 0
+            auto`, boş notta tıklanan her yer yazı yüzeyi) ve uzun notta
+            kabın içinde kayar; imleç kaydırması önce bu kabı kaydırır.
+
+          # Notun uzunluğu yüzeyin boyunu belirlemez (`contain-size`)
+
+          Yazı alanı boyut sınırlamalı: tarayıcı onun içerik boyunu 0
+          sayar, boyu yalnızca asgarisinden (16rem) ve çağıranın verdiği
+          esnek paydan gelir. Böylece zincirin hiçbir halkası (`NotEditoru`,
+          `SeansPaneli`, not sayfası bölgesi, danışan dosyasının not
+          sütunu) uzun notla uzamaz ve her halkanın esnek asgarisi
+          "sabit satırlar + 16rem" olarak kalır. `min-h-0` ile yapılan
+          ilk deneme ölçümde çakışma üretti: sınırlı sütun (danışan
+          dosyası, 1024x680) asgarinin altına inince yazı alanı etiket
+          satırının üstüne taşıyordu. Kısa pencerede ya da randevu formu
+          açıkken zincir asgarisinde durur, sayfa kayar; hiçbir şey
+          üst üste binmez. Ölçen test: `e2e/yerlesim.spec.ts` > "arac
+          cubugu notu ortmez". */}
       <div className="not-editoru relative flex flex-1 flex-col rounded border border-slate-300 bg-white">
         {editable && <AracCubugu bulAcik={bulAcik} onBulDegistir={() => setBulAcik((a) => !a)} />}
         {editable && (
@@ -116,17 +154,35 @@ export function BicimliYuzey({ html, onChange, etiket, editable = true, vurgu = 
           // sütunda iki-üç satıra kırıldığında (bkz. `AracCubugu`) panel
           // sabit bir yükseklikten açılsaydı alttaki satırları ve "Bul ve
           // değiştir"in kendisini örterdi.
+          //
+          // Eşleşmeye gitme `block: 'nearest'` (eskiden `center`):
+          // `scrollIntoView` yazı alanıyla birlikte PENCEREYİ de kaydırır ve
+          // `center` eşleşmeyi pencerenin ortasına almak için sayfayı
+          // oynatıyordu (ölçüldü: 1200x760 not sayfasında 92 px yukarı; etiket
+          // satırı ekrandan çıkıyordu). `nearest` eşleşme yazı alanının
+          // içine girince durur; yazı alanı ekranda olduğundan pencere
+          // kıpırdamaz. Panel yazı alanının sağ üstünü örttüğü için (304x221
+          // px, ölçüldü) panel açıkken yazı alanının üst 15rem'i kaydırma
+          // hedefi sayılmaz (`scroll-pt-60`): yukarıdaki eşleşme panelin
+          // ALTINA gelir.
           <div className="relative">
             <SearchAndReplace
               className="not-bul-paneli"
               open={bulAcik}
               onOpen={() => setBulAcik(true)}
               onClose={() => setBulAcik(false)}
-              scrollIntoViewOptions={{ block: 'center' }}
+              scrollIntoViewOptions={{ block: 'nearest' }}
             />
           </div>
         )}
-        <EditorContent editor={editor} role="presentation" className="flex flex-1 flex-col" />
+        <EditorContent
+          editor={editor}
+          role="presentation"
+          data-testid="not-yazi-alani"
+          className={
+            'flex min-h-64 flex-1 flex-col overflow-y-auto contain-size' + (bulAcik ? ' scroll-pt-60' : '')
+          }
+        />
       </div>
     </EditorContext.Provider>
   )

@@ -16,28 +16,42 @@
   --tt-selection-color: rgba(100, 116, 139, 0.25);
 }
 
+// `anywhere` (`break-word` DEĞİL): boşluksuz uzun bir dizgi (bağlantı,
+// tek sözcük) satır sonunda bölünür VE içeriğin asgari genişliğini
+// büyütmez; yüzey dar bir esnek/ızgara hücresinde de kutusunu taşırmaz.
 .tiptap.ProseMirror.not-yuzeyi {
   font-family: var(--sans);
   font-size: 16px;
   line-height: 1.6;
   color: #0f172a;
-  min-height: 16rem;
   padding: 0.75rem 1rem;
   outline: none;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 
 .tiptap.ProseMirror.not-okuma {
-  min-height: 0;
   padding: 0.5rem 0.75rem;
 }
 
-// Düzenlenebilir yüzey kabının (`BicimliYuzey`, `.not-editoru`) kalan
-// yüksekliğini doldurur: kap yükseklik aldığında (not sayfası, tasarım N4)
-// yazı alanı uzar, almadığında `min-height` geçerli (danışan dosyası).
-// Okuma görünümü bu kabın dışında, etkilenmez.
+// Düzenlenebilir yüzey (`BicimliYuzey`, `.not-editoru`): ProseMirror yazı
+// alanını (kaydırma kabı, asgari 16rem) doldurur ve KÜÇÜLMEZ — uzun not
+// kabın içinde kayar. Okuma görünümü bu kabın dışında, etkilenmez.
 .not-editoru .tiptap.ProseMirror.not-yuzeyi {
-  flex: 1 1 auto;
+  flex: 1 0 auto;
+}
+
+// Araç çubuğu notu ÖRTMEZ (kullanıcı isteği 2026-09-27, bkz. `BicimliYuzey`).
+// Şablonun kuralı (`toolbar.scss`, `data-variant="fixed"`) çubuğu
+// `position: sticky; top: 0; z-index: 50` yapıyor: sayfa kaydıkça opak çubuk
+// notun üst satırlarının üstünde kalıyordu. Burada akışta (`static`) ve
+// yazı alanının üstünde durur. `flex-shrink: 0`: şablonun `overflow-x: auto`su
+// çubuğu bir kaydırma kabı yapar ve kaydırma kabının esnek asgarisi 0'dır —
+// sınırlı bir sütunda çubuk küçülüp kendi satırlarını gizlerdi. Özgüllük
+// (0,3,0) şablonunkini (0,2,0) sıradan bağımsız yener; Tailwind sınıfı
+// (`static`) yetmezdi: yardımcı sınıflar katmanlı, şablon katmansız.
+.not-editoru > .tiptap-toolbar[data-variant='fixed'] {
+  position: static;
+  flex-shrink: 0;
 }
 
 .tiptap.ProseMirror.not-yuzeyi p.is-editor-empty:first-child::before {

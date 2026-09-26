@@ -38,9 +38,17 @@ import { SeansPaneli } from './SeansPaneli'
  * başına kaydırılıyor (`TakvimSekmesi`, A6), yani üst satırdan ekranın altına
  * kadar olan alan sayfanındır. Editör satırı kalan yüksekliği alır ve esnek
  * kutu zinciri (`SeansPaneli` > sekme gövdesi > `NotEditoru` >
- * `BicimliYuzey`) bu yüksekliği yazı yüzeyine taşır; yüzeyin kendi asgarisi
- * (`not-yuzeyi.scss`, 16rem) kısa pencerelerde geçerli. Ölçen test:
- * `e2e/yerlesim.spec.ts` > "not sayfasinda editor ekranin kalanini doldurur".
+ * `BicimliYuzey`) bu yüksekliği yazı yüzeyine taşır; yazı alanının kendi
+ * asgarisi (16rem) kısa pencerelerde ve randevu formu açıkken geçerli (bölge
+ * o zaman uzar, sayfa kayar).
+ *
+ * Notun UZUNLUĞU bölgeyi uzatmaz (kullanıcı isteği 2026-09-27, "araç çubuğu
+ * örtmesin notu"): yazı alanı boyut sınırlamalı (`contain-size`, bkz.
+ * `BicimliYuzey`), uzun not orada kayar. Eskiden not bölgeyi ve sayfayı
+ * uzatıyor, sayfa kayınca şablonun yapışkan araç çubuğu notun üst satırlarını
+ * örtüyordu. Şimdi üst satır (durum/ödeme), etiket satırı ve bul paneli sayfa
+ * kaydırılmadan ekranda kalır. Ölçen testler: `e2e/yerlesim.spec.ts` > "not
+ * sayfasinda editor ekranin kalanini doldurur", "arac cubugu notu ortmez".
  */
 type Props = {
   randevu: Randevu

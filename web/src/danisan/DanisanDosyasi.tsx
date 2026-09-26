@@ -321,7 +321,24 @@ export function DanisanDosyasi({
                 />
               </div>
 
-              <div>
+              {/* Not sütunu ekranın kalanını doldurur ve notla UZAMAZ
+                  (kullanıcı isteği 2026-09-27, "araç çubuğu örtmesin notu"):
+                  eskiden yüzey notla uzuyor, sayfa kayınca yapışkan araç
+                  çubuğu notu örtüyordu. Uzun not yüzeyin kendi yazı alanında
+                  kayar (`BicimliYuzey`, `contain-size`); `NotEditoru`
+                  (`flex-1`) sütunun etiket ve durum satırlarından artan
+                  boyunu alır. `13rem`: sütunun sayfa kaymamışken üst kenarı
+                  (1024x680 ve 1200x760'da 191 px, ölçüldü) + 16 px pay;
+                  1200x760'da sütunun tamamı ekranda. Sütunun asgarisi
+                  (satırlar + 16rem yazı alanı) daha büyükse sütun uzar: dar
+                  pencerede (1024x680, üç satırlık araç çubuğu) sayfa ~30 px
+                  kayar, hiçbir şey üst üste binmez. `sticky top-0` +
+                  `self-start`: soldaki seans listesi sütunu (`max-h-[100dvh]`)
+                  sayfayı kaydırdığında not tepede, görünür kalır (B3). */}
+              <div
+                data-testid="seans-notu-sutunu"
+                className="sticky top-0 flex min-h-[calc(100dvh-13rem)] flex-col self-start"
+              >
                 {seciliSeans === null ? (
                   <p className="text-sm text-slate-500">Bu danışanın kayıtlı bir seansı yok.</p>
                 ) : (

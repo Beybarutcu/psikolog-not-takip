@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
 import { act, render, screen, within } from '@testing-library/react'
 import type { Editor } from '@tiptap/react'
 import { describe, expect, it, vi } from 'vitest'
@@ -181,6 +183,61 @@ describe('BicimliYuzey (gerçek TipTap)', () => {
     expect(etiket).toContain('sudan cik')
     expect(etiket).not.toMatch(/task item checkbox/i)
     expect(etiket).toMatch(/görev|onay kutusu/i)
+  })
+
+  // Kullanıcı isteği 2026-09-27 ("araç çubuğu örtmesin notu"). jsdom yerleşim
+  // ölçmez: burada YAPI ve sınıflar; örtmeme, sayfanın kaymaması ve imlecin
+  // görünürlüğü gerçek tarayıcıda (`e2e/yerlesim.spec.ts` > "arac cubugu notu
+  // ortmez").
+  it('araç çubuğu yazı alanının DIŞINDA ve üstünde; yazı alanı kendi kaydırma kabı, boyu nottan bağımsız', () => {
+    render(<BicimliYuzey html={'<p>satır</p>'.repeat(80)} onChange={vi.fn()} etiket="Seans notu" />)
+    const cubuk = screen.getByRole('toolbar', { name: 'Biçim araçları' })
+    const alan = screen.getByTestId('not-yazi-alani')
+    const yuzey = screen.getByRole('textbox', { name: 'Seans notu' })
+    const kok = alan.parentElement!
+    expect(kok.classList.contains('not-editoru')).toBe(true)
+    // Çubuk kökün DOĞRUDAN çocuğu (`not-yuzeyi.scss`'teki `.not-editoru >
+    // .tiptap-toolbar[data-variant='fixed']` kuralı ona böyle uyar), yazı
+    // alanının içinde değil ve ondan ÖNCE.
+    expect(cubuk.parentElement).toBe(kok)
+    expect(cubuk.getAttribute('data-variant')).toBe('fixed')
+    expect(alan.contains(cubuk)).toBe(false)
+    expect(cubuk.compareDocumentPosition(alan) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(alan.contains(yuzey)).toBe(true)
+    for (const sinif of ['flex-1', 'flex-col', 'min-h-64', 'overflow-y-auto', 'contain-size']) {
+      expect(alan.classList.contains(sinif), sinif).toBe(true)
+    }
+    for (const sinif of ['flex', 'flex-1', 'flex-col']) expect(kok.classList.contains(sinif), sinif).toBe(true)
+    // İmleç kaydırması kenardan 16 px içeride durur (bkz. bileşen).
+    const editor = editorAl()
+    expect(editor.view.someProp('scrollThreshold')).toBe(16)
+    expect(editor.view.someProp('scrollMargin')).toBe(16)
+  })
+
+  it('bul paneli açıkken yazı alanının üst 15rem\'i kaydırma hedefi sayılmaz (eşleşme panelin altına gelir)', () => {
+    render(<BicimliYuzey html="<p>metin</p>" onChange={vi.fn()} etiket="Seans notu" />)
+    const alan = screen.getByTestId('not-yazi-alani')
+    expect(alan.classList.contains('scroll-pt-60')).toBe(false)
+    act(() => {
+      within(screen.getByRole('toolbar', { name: 'Biçim araçları' })).getByRole('button', { name: 'Bul ve değiştir' }).click()
+    })
+    expect(screen.getByRole('dialog', { name: 'Bul ve değiştir' })).toBeDefined()
+    expect(alan.classList.contains('scroll-pt-60')).toBe(true)
+  })
+
+  it('şablonun yapışkan araç çubuğu kuralı yüzeyde ezilir: static, küçülmez; asgari yükseklik ProseMirror\'da değil', () => {
+    // Stil diskten okunur: Vitest CSS işlemediği için `?raw` boş dizgi döner
+    // (bkz. `sablonKodu.test.ts`).
+    const scss = readFileSync(path.join(process.cwd(), 'src/not/not-yuzeyi.scss'), 'utf8')
+    const kural = /\.not-editoru > \.tiptap-toolbar\[data-variant='fixed'\]\s*\{([^}]*)\}/.exec(scss)
+    expect(kural, 'araç çubuğu kuralı yok').not.toBeNull()
+    expect(kural![1]).toMatch(/position:\s*static;/)
+    expect(kural![1]).toMatch(/flex-shrink:\s*0;/)
+    const yuzeyKurali = /\.tiptap\.ProseMirror\.not-yuzeyi\s*\{([^}]*)\}/.exec(scss)
+    expect(yuzeyKurali).not.toBeNull()
+    expect(yuzeyKurali![1]).not.toMatch(/min-height/)
+    expect(yuzeyKurali![1]).toMatch(/overflow-wrap:\s*anywhere;/)
+    expect(scss).toMatch(/\.not-editoru \.tiptap\.ProseMirror\.not-yuzeyi\s*\{\s*flex:\s*1 0 auto;/)
   })
 
   it('editable=false: düzenlenemez ve araç çubuğu yok', () => {

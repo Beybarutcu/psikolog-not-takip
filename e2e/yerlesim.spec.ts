@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Locator, type Page } from '@playwright/test'
 import { kurulumYap } from './yardimcilar'
 
 // Tasarım A3 kabul ölçütü: 1200x760 ve 1280x800'de gün başlığı ile 20:00
@@ -111,9 +111,15 @@ test('1200x760: sayfa sonuna kaydirip Geldi isaretlenince ilk satir yuksekligi d
 // `NotEditoru`'nun esnek sütununda uzamıyordu (eski metin kutusu
 // `min-h-64 flex-1` idi). Tasarım N4: not sayfasında editör "sayfanın büyük
 // kısmı" — açılış kaydırmasından (A6) sonra ekranın kalanını doldurur.
-// Danışan dosyasının editörü (`DanisanDosyasi`, yükseklik vermeyen bir
-// kapta) yüzeyin kendi asgarisini (16rem) korur. jsdom yerleşim ölçmediği
-// için tek bekçi gerçek tarayıcı.
+// Danışan dosyasının editörü yazı alanının asgarisini (16rem) korur. jsdom
+// yerleşim ölçmediği için tek bekçi gerçek tarayıcı.
+//
+// 2026-09-27 (araç çubuğu notu örtmez): ProseMirror artık yüzeyin kaydırma
+// kabının (`not-yazi-alani`) içinde ve en az onun boyunda. Danışan
+// dosyasındaki asgari ölçümü GÖRÜNEN yazı alanına taşındı: ProseMirror'un
+// kendi boyu kabın içinde kayan notla büyür, görünen alanı ölçmez (daha
+// sıkı ölçüm; not sayfasındaki ölçümler aynı kaldı, boş notta ikisi eşit).
+// Danışan dosyasının not sütunu da artık yükseklik veriyor (`DanisanDosyasi`).
 test('not sayfasinda editor ekranin kalanini doldurur; danisan dosyasinda asgari yukseklik korunur', async ({ page }) => {
   const boyut = { width: 1280, height: 800 }
   await page.setViewportSize(boyut)
@@ -153,11 +159,11 @@ test('not sayfasinda editor ekranin kalanini doldurur; danisan dosyasinda asgari
   expect(etiket!.y + etiket!.height).toBeLessThanOrEqual(govde!.y + govde!.height)
   expect(govde!.y + govde!.height).toBeLessThanOrEqual(boyut.height)
 
-  // Danışan dosyası: aynı editör, yükseklik vermeyen bir kapta — asgari korunur.
+  // Danışan dosyası: aynı editör — görünen yazı alanının asgarisi korunur.
   await page.getByRole('button', { name: `${ad} dosyasını aç`, exact: true }).click()
   const dosyaYuzeyi = page.getByLabel('Seans notu', { exact: true })
   await expect(dosyaYuzeyi).toBeVisible()
-  const d = await dosyaYuzeyi.boundingBox()
+  const d = await page.getByTestId('not-yazi-alani').boundingBox()
   expect(d).not.toBeNull()
   expect(d!.height).toBeGreaterThanOrEqual(256)
 })
@@ -262,6 +268,210 @@ test.describe('editor arac cubugu pencereye sigar', () => {
       await alan.fill(uzunBaglanti)
       await expect(alan).toHaveText(uzunBaglanti)
       await tasmaYok(page, `${boyut.width}x${boyut.height} danışan dosyası, uzun bağlantı`)
+    })
+  }
+})
+
+// Kullanıcı isteği (2026-09-27, "araç çubuğu örtmesin notu"): yüzey
+// içeriğiyle uzuyor ve SAYFA kayıyordu; şablonun yapışkan (`position:
+// sticky; top: 0; z-index: 50`), opak araç çubuğu dar sütunda iki-üç satıra
+// kırılıp (69–105 px) kayan notun üst satırlarını örtüyor, ProseMirror'un
+// imleci gösteren kaydırması imleci çubuğun altında bırakabiliyordu. Artık
+// çubuk akışta, yazı alanının ÜSTÜNDE; uzun not yüzeyin KENDİ kaydırma
+// kabında kayar, sayfa kaymaz (bkz. `BicimliYuzey`). Ölçümler:
+//  (a) çubuğun alt kenarı yazı alanının üst kenarında ya da üstünde; ortaya
+//      kaydırılmış notta çubuğun hemen altındaki nokta NOT İÇERİĞİ;
+//  (b) not kayarken ve sonuna yazılırken sayfa kaymaz, belge yatay taşmaz;
+//  (c) Ctrl+End ve yazma: son paragraf yazı alanının kutusunun içinde;
+//  (d) not sayfasında durum satırı, etiket satırı ve bul paneli sayfa
+//      kaydırılmadan görünür.
+test.describe('arac cubugu notu ortmez; uzun not editorun icinde kayar', () => {
+  test.use({ reducedMotion: 'reduce' })
+
+  const MAC = process.platform === 'darwin'
+
+  /** 60 paragraflık not: gerçek bir `paste` olayı (bkz. `editor.spec.ts::htmlYapistir`). */
+  async function uzunNotYapistir(alan: Locator) {
+    const html = Array.from({ length: 60 }, (_, i) => `<p>Paragraf ${i + 1}: seans notunun uzun bir satırı.</p>`).join('')
+    await alan.click()
+    await alan.evaluate((el, html) => {
+      const veri = new DataTransfer()
+      veri.setData('text/html', html)
+      veri.setData('text/plain', html.replace(/<[^>]*>/g, '\n'))
+      el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: veri, bubbles: true, cancelable: true }))
+    }, html)
+    await expect(alan).toContainText('Paragraf 60:')
+  }
+
+  /**
+   * Notu kaydırır: ProseMirror'un en yakın KAYAN atası (kaydırma kabı), yoksa
+   * belge. `oran` 0 = baş, 0.5 = orta, 1 = son. Kimin kaydırdığını döndürür.
+   */
+  function notuKaydir(alan: Locator, oran: number): Promise<'yuzey' | 'belge'> {
+    return alan.evaluate((el, oran) => {
+      let kap: HTMLElement | null = el.parentElement
+      while (kap !== null && !(/(auto|scroll)/.test(getComputedStyle(kap).overflowY) && kap.scrollHeight > kap.clientHeight)) {
+        kap = kap.parentElement
+      }
+      const kaydirici = kap ?? (document.scrollingElement as HTMLElement)
+      kaydirici.scrollTop = (kaydirici.scrollHeight - kaydirici.clientHeight) * oran
+      return kap === null ? 'belge' : 'yuzey'
+    }, oran)
+  }
+
+  const sayfaKaymasi = (page: Page) => page.evaluate(() => window.scrollY)
+
+  /**
+   * (a)-(c). Yazı alanı = ProseMirror'un ebeveyni (yüzeyin kaydırma kabı).
+   * `kaydirma`: sayfanın bu ölçümler boyunca kalması gereken konumu.
+   */
+  async function cubukNotuOrtmez(page: Page, alan: Locator, yer: string, kaydirma: number) {
+    const cubuk = page.getByRole('toolbar', { name: 'Biçim araçları', exact: true })
+    const icerik = alan.locator('xpath=..')
+    // ÖN KOŞUL: not pencereden uzun (kısa notta kaydırma hiçbir şey ölçmezdi).
+    const pencere = page.viewportSize()!
+    expect((await alan.boundingBox())!.height, `${yer}: not yeterince uzun değil`).toBeGreaterThan(pencere.height)
+
+    // (b) Not ortaya kayar: kaydıran yüzeyin kendi kabı, sayfa yerinde.
+    expect.soft(await notuKaydir(alan, 0.5), `${yer}: notu sayfa kaydırıyor`).toBe('yuzey')
+    expect(await sayfaKaymasi(page), `${yer}: not kayarken sayfa kaydı`).toBe(kaydirma)
+    const belge = await page.evaluate(() => ({ genislik: document.documentElement.scrollWidth, pencere: window.innerWidth }))
+    expect(belge.genislik, `${yer}: belge yatay taşıyor`).toBeLessThanOrEqual(belge.pencere)
+
+    // (a) Çubuk ekranda, alt kenarı yazı alanının üstünde; hemen altındaki
+    // nokta not içeriği (çubuk değil). Ön koşul: ilk paragraf yukarıda
+    // kaldı, yani not gerçekten kaydı ve çubuğun "altında" metin var.
+    await expect(cubuk).toBeInViewport({ ratio: 1 })
+    const c = (await cubuk.boundingBox())!
+    const k = (await icerik.boundingBox())!
+    expect(c.y + c.height, `${yer}: araç çubuğu yazı alanına biniyor`).toBeLessThanOrEqual(k.y + 0.5)
+    expect((await alan.locator('p').first().boundingBox())!.y).toBeLessThan(c.y + c.height)
+    const altindaki = await page.evaluate(
+      ([x, y]) => {
+        const e = document.elementFromPoint(x, y)
+        if (e === null) return 'hiçbir şey'
+        if (e.closest('[role="toolbar"]') !== null) return 'araç çubuğu'
+        return e.closest('.ProseMirror') !== null ? 'not' : e.tagName
+      },
+      [k.x + 24, c.y + c.height + 2],
+    )
+    expect(altindaki, `${yer}: çubuğun hemen altında not içeriği yok`).toBe('not')
+
+    // (c) Baştan Ctrl+End ve yazma: son paragraf yazı alanının içinde, sayfa yerinde.
+    await notuKaydir(alan, 0)
+    await alan.locator('p').first().click()
+    await page.keyboard.press(MAC ? 'Meta+ArrowDown' : 'Control+End')
+    await page.keyboard.type(' sonuna eklendi')
+    const son = alan.locator('p').last()
+    await expect(son).toContainText('sonuna eklendi')
+    const kk = (await icerik.boundingBox())!
+    // İmleç (daraltılmış seçimin dikdörtgeni) yazı alanının içinde.
+    const imlec = await page.evaluate(() => {
+      const r = window.getSelection()!.getRangeAt(0).getBoundingClientRect()
+      return { ust: r.top, alt: r.bottom }
+    })
+    expect(imlec.alt - imlec.ust, `${yer}: imleç dikdörtgeni boş`).toBeGreaterThan(0)
+    expect(imlec.ust, `${yer}: imleç yazı alanının üstünde`).toBeGreaterThanOrEqual(kk.y - 0.5)
+    expect(imlec.alt, `${yer}: imleç yazı alanının altında`).toBeLessThanOrEqual(kk.y + kk.height + 0.5)
+    const s = (await son.boundingBox())!
+    expect(s.y, `${yer}: son paragraf yazı alanının üstünde`).toBeGreaterThanOrEqual(kk.y - 0.5)
+    expect(s.y + s.height, `${yer}: son paragraf yazı alanının altında (imleç görünmüyor)`).toBeLessThanOrEqual(kk.y + kk.height + 0.5)
+    await expect(son).toBeInViewport({ ratio: 1 })
+    expect(await sayfaKaymasi(page), `${yer}: sona yazınca sayfa kaydı`).toBe(kaydirma)
+  }
+
+  /**
+   * Yazı alanı etiket satırının üstüne TAŞMAZ. Esnek zincirde `min-h-0` ile
+   * yapılan ilk deneme danışan dosyasında (1024x680) tam bunu üretti: sütun
+   * asgarinin altına inince 16rem'lik yazı alanı etiket satırının üstüne
+   * biniyordu (ölçüldü: alan 349–605, etiket satırı 558–604).
+   */
+  async function etiketSatiriYaziAlanininAltinda(page: Page, alan: Locator, yer: string) {
+    const k = (await alan.locator('xpath=..').boundingBox())!
+    const e = (await page.getByTestId('etiket-satiri').boundingBox())!
+    expect(e.y, `${yer}: yazı alanı etiket satırının üstüne biniyor`).toBeGreaterThanOrEqual(k.y + k.height - 0.5)
+  }
+
+  for (const [sira, boyut] of [
+    { width: 1024, height: 680 },
+    { width: 1200, height: 760 },
+  ].entries()) {
+    test(`${boyut.width}x${boyut.height}: not sayfasi ve danisan dosyasinda cubuk notu ortmez, sayfa kaymaz`, async ({ page }) => {
+      await page.setViewportSize(boyut)
+      await kurulumYap(page)
+      const ad = `Yerlesim Uzun Not ${sira + 1}`
+      await danisanEkle(page, ad)
+      await randevuOlustur(page, ad, '15:00', '400')
+
+      // --- Takvimdeki not sayfası ---
+      await page.locator('button[data-durum]', { hasText: ad }).click()
+      const bolum = page.getByTestId('seans-bolumu')
+      const alan = page.getByLabel('Seans notu', { exact: true })
+      await expect(alan).toBeVisible()
+      // BARİYER: açılış kaydırması (A6) bitti.
+      await expect.poll(async () => Math.round((await bolum.boundingBox())?.y ?? -1)).toBe(8)
+      const kaydirma = await sayfaKaymasi(page)
+      await uzunNotYapistir(alan)
+      expect(await sayfaKaymasi(page), 'yapıştırınca sayfa kaydı').toBe(kaydirma)
+      await cubukNotuOrtmez(page, alan, `${boyut.width}x${boyut.height} not sayfası`, kaydirma)
+      await etiketSatiriYaziAlanininAltinda(page, alan, `${boyut.width}x${boyut.height} not sayfası`)
+
+      // (d) Durum satırı, etiket satırı ve bul paneli sayfa kaymadan görünür.
+      await expect(bolum.getByRole('group', { name: 'Seans durumu', exact: true })).toBeInViewport({ ratio: 1 })
+      await expect(bolum.getByLabel('Etiket ekle', { exact: true })).toBeInViewport({ ratio: 1 })
+      const cubuk = page.getByRole('toolbar', { name: 'Biçim araçları', exact: true })
+      await cubuk.getByRole('button', { name: 'Bul ve değiştir', exact: true }).click()
+      const panel = page.getByRole('dialog', { name: 'Bul ve değiştir', exact: true })
+      await expect(panel).toBeInViewport({ ratio: 1 })
+      const cb = (await cubuk.boundingBox())!
+      const pk = (await panel.boundingBox())!
+      expect(pk.y, 'bul paneli araç çubuğunu örtüyor').toBeGreaterThanOrEqual(cb.y + cb.height)
+      // Bul paneli kayan yazı alanında çalışır: not sonundayken yukarıdaki
+      // (ortadaki) eşleşmeye gidilir; eşleşme yazı alanının içinde ve panelin ALTINDA
+      // görünür (panel yazı alanının sağ üstünü örter), sayfa kaymaz.
+      await notuKaydir(alan, 1)
+      const bul = panel.getByLabel('Bul', { exact: true })
+      await bul.fill('Paragraf 30:')
+      const guncel = alan.locator('.find-and-replace-result-current')
+      await expect(guncel).toHaveCount(1)
+      await bul.press('Enter')
+      await expect(guncel).toBeInViewport({ ratio: 1 })
+      const g = (await guncel.boundingBox())!
+      const ka = (await alan.locator('xpath=..').boundingBox())!
+      expect(g.y + g.height, 'eşleşme yazı alanının dışında').toBeLessThanOrEqual(ka.y + ka.height)
+      expect(g.y, 'eşleşme bul panelinin altında kaldı').toBeGreaterThanOrEqual(pk.y + pk.height)
+      await page.keyboard.press('Escape')
+      await expect(panel).toHaveCount(0)
+      expect(await sayfaKaymasi(page), 'bul panelinde gezinince sayfa kaydı').toBe(kaydirma)
+      const kaydedildi = page.getByRole('status').filter({ hasText: /^Kaydedildi \d{2}:\d{2}$/ })
+      await expect(kaydedildi).toBeVisible()
+
+      // Özel Notlarım: aynı editör, aynı davranış.
+      await bolum.getByRole('tab', { name: 'Özel Notlarım', exact: true }).click()
+      const ozel = page.getByLabel('Özel notum', { exact: true })
+      await expect(ozel).toBeVisible()
+      await uzunNotYapistir(ozel)
+      expect(await sayfaKaymasi(page), 'özel nota yapıştırınca sayfa kaydı').toBe(kaydirma)
+      await cubukNotuOrtmez(page, ozel, `${boyut.width}x${boyut.height} özel not`, kaydirma)
+      await expect(bolum.getByRole('group', { name: 'Seans durumu', exact: true })).toBeInViewport({ ratio: 1 })
+      await expect(kaydedildi).toBeVisible()
+
+      // --- Danışan dosyası: aynı editör, sütununun içinde ---
+      await bolum.getByRole('button', { name: `${ad} dosyasını aç`, exact: true }).click()
+      await expect(page.getByRole('heading', { level: 2, name: ad, exact: true })).toBeVisible()
+      const dosyaAlani = page.getByLabel('Seans notu', { exact: true })
+      await expect(dosyaAlani).toContainText('Paragraf 60:')
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await expect.poll(() => sayfaKaymasi(page)).toBe(0)
+      await cubukNotuOrtmez(page, dosyaAlani, `${boyut.width}x${boyut.height} danışan dosyası`, 0)
+      await etiketSatiriYaziAlanininAltinda(page, dosyaAlani, `${boyut.width}x${boyut.height} danışan dosyası`)
+      // 1200x760'da sütunun tamamı (etiket ve durum satırı dahil) sayfa
+      // kaymadan ekranda. 1024x680'de üç satırlık araç çubuğu + 16rem
+      // asgari yazı alanı sığmaz: sayfa ~50 px kayar (bkz. `DanisanDosyasi`).
+      if (boyut.width >= 1200) {
+        await expect(page.getByRole('group', { name: 'Seans durumu', exact: true })).toBeInViewport({ ratio: 1 })
+        await expect(page.getByLabel('Etiket ekle', { exact: true })).toBeInViewport({ ratio: 1 })
+      }
     })
   }
 })

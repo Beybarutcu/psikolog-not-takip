@@ -90,6 +90,77 @@ describe('useDanisanListesi.ekle (tasarım B1)', () => {
     expect(taklit.danisanlariGetir).toHaveBeenCalledTimes(1)
   })
 
+  // İnceleme M1: danışan silinemez ve adda benzersizlik yok; POST sürerken
+  // ikinci Enter/tıklama KALICI bir kopya kayıt yaratırdı. İlk iki çağrı
+  // AYNI kapanıştan (aynı çizimden) geliyor: durum bayrağı henüz
+  // güncellenmemişken de ikinci çağrı istek atmamalı.
+  it('ekleme uçuştayken ikinci çağrı istek ATMAZ ve null döner; bayrak uçuş boyunca kalkık, bitince iner ve yeni ekleme yapılabilir', async () => {
+    let coz!: (d: Danisan) => void
+    taklit.danisanlariGetir.mockResolvedValueOnce([AYSE]).mockResolvedValue([AYSE, YENI])
+    taklit.danisanEkle.mockImplementationOnce(
+      () =>
+        new Promise<Danisan>((c) => {
+          coz = c
+        }),
+    )
+    const { result } = await kur()
+    expect(result.current.ekleniyor).toBe(false)
+
+    let ilk!: Promise<Danisan | null>
+    let ikinci!: Promise<Danisan | null>
+    act(() => {
+      ilk = result.current.ekle()
+      ikinci = result.current.ekle()
+    })
+    expect(await ikinci).toBeNull()
+    expect(taklit.danisanEkle).toHaveBeenCalledTimes(1)
+    expect(result.current.ekleniyor).toBe(true)
+
+    // Yeniden çizimden sonraki gönderim de istek atmaz.
+    let ucuncu: Danisan | null = YENI
+    await act(async () => {
+      ucuncu = await result.current.ekle()
+    })
+    expect(ucuncu).toBeNull()
+    expect(taklit.danisanEkle).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      coz(YENI)
+      await ilk
+    })
+    expect(await ilk).toEqual(YENI)
+    expect(result.current.ekleniyor).toBe(false)
+    expect(result.current.hata).toBeNull()
+
+    // Bayrak GERÇEKTEN iner: sonraki ekleme istek atar.
+    taklit.danisanEkle.mockResolvedValueOnce({ ...YENI, id: 10, ad_soyad: 'Can Öz' })
+    act(() => result.current.setYeniAdSoyad('Can Öz'))
+    await act(async () => {
+      await result.current.ekle()
+    })
+    expect(taklit.danisanEkle).toHaveBeenCalledTimes(2)
+  })
+
+  it('POST başarısız olunca bayrak iner: düzeltilen ikinci deneme istek atar', async () => {
+    taklit.danisanlariGetir.mockResolvedValueOnce([AYSE]).mockResolvedValueOnce([AYSE, YENI])
+    taklit.danisanEkle
+      .mockRejectedValueOnce(new Error('Telefon en az 7 rakam içermeli.'))
+      .mockResolvedValueOnce(YENI)
+    const { result } = await kur()
+
+    await act(async () => {
+      await result.current.ekle()
+    })
+    expect(result.current.ekleniyor).toBe(false)
+
+    let donen: Danisan | null = null
+    await act(async () => {
+      donen = await result.current.ekle()
+    })
+    expect(donen).toEqual(YENI)
+    expect(taklit.danisanEkle).toHaveBeenCalledTimes(2)
+  })
+
   it('boş ad: istek yok, null', async () => {
     taklit.danisanlariGetir.mockResolvedValueOnce([AYSE])
     const { result } = await kur()

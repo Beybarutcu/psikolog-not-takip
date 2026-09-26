@@ -138,6 +138,11 @@ export function DanisanlarSekmesi({
   }
 
   function aramaTusu(olay: TusOlayi<HTMLInputElement>) {
+    // IME birleştirmesi sürerken (macOS'ta "kâ": ölü tuş ya da basılı
+    // tutma) Enter bir harfi onaylar, dosya açmaz; Esc birleştirmeyi iptal
+    // eder, aramayı silmez. `keyCode` 229: Safari birleştirmeyi bitiren
+    // keydown'da `isComposing`'i `false` verir (bkz. `EtiketSatiri.tsx`).
+    if (olay.nativeEvent.isComposing || olay.keyCode === 229) return
     const n = suzulmus.length
     if (olay.key === 'ArrowDown') {
       olay.preventDefault()
@@ -242,7 +247,14 @@ export function DanisanlarSekmesi({
                 onChange={(e) => liste.setYeniTelefon(e.target.value)}
               />
             </div>
-            <button type="submit" className="rounded bg-slate-900 px-3 py-2 text-sm text-white">
+            {/* Uçuştayken devre dışı (inceleme M1): devre dışı varsayılan
+                düğme Enter'la örtük gönderimi de durdurur. Asıl kilit
+                kancada (`useDanisanListesi.ekle`). */}
+            <button
+              type="submit"
+              className="rounded bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-50"
+              disabled={liste.ekleniyor}
+            >
               Ekle
             </button>
           </form>
@@ -270,13 +282,15 @@ export function DanisanlarSekmesi({
                   // vurgulanır — eskiden yalnızca `aria-current` taşıyordu.
                   data-secili={d.id === seciliDanisanId ? 'evet' : undefined}
                   // Klavye vurgusu (B1) seçimden AYRI: halka ile gösterilir.
+                  // `ring-inset`: kolonun `overflow-y-auto`'su (overflow-x de
+                  // `auto` hesaplanır) dışa taşan halkanın iki yanını kırpardı.
                   data-vurgulu={vurgulu ? 'evet' : undefined}
                   className={
                     'flex items-center justify-between gap-2 rounded border-l-4 px-3 py-1 ' +
                     (d.id === seciliDanisanId
                       ? 'border-slate-900 bg-slate-200 font-semibold'
                       : 'border-transparent bg-slate-100') +
-                    (vurgulu ? ' ring-2 ring-sky-400' : '')
+                    (vurgulu ? ' ring-2 ring-inset ring-sky-400' : '')
                   }
                 >
                   {/* Erişilebilir ad "Ayşe Yılmaz dosyasını aç": takvimdeki

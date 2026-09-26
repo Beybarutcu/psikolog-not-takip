@@ -1,4 +1,4 @@
-import { act, render, renderHook, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -116,6 +116,7 @@ function sahteListe(danisanlar: Danisan[] = []): ReturnType<typeof useDanisanLis
     arsivBilgisi: null,
     setArsivBilgisi: () => {},
     arsivSuruyor: false,
+    ekleniyor: false,
     saklamaDolanlar: [],
     saklamaDolandanDus: () => {},
     ekle: async () => null,
@@ -571,10 +572,13 @@ describe('DanisanlarSekmesi — arama ve ekleme (tasarım B1)', () => {
     ekle = async () => null,
     onDanisanSec = () => {},
     baslangicFormAcik = false,
+    ekleniyor = false,
   }: {
     ekle?: () => Promise<Danisan | null>
     onDanisanSec?: (id: number) => void
     baslangicFormAcik?: boolean
+    /** Kancanın uçuş bayrağı (`useDanisanListesi.ekleniyor`); asıl koruma orada. */
+    ekleniyor?: boolean
   }) {
     const [formAcik, setFormAcik] = useState(baslangicFormAcik)
     const [yeniAdSoyad, setYeniAdSoyad] = useState('')
@@ -588,6 +592,7 @@ describe('DanisanlarSekmesi — arama ve ekleme (tasarım B1)', () => {
       yeniTelefon,
       setYeniTelefon,
       ekle,
+      ekleniyor,
     }
     return (
       <DanisanlarSekmesi
@@ -669,6 +674,53 @@ describe('DanisanlarSekmesi — arama ve ekleme (tasarım B1)', () => {
     await userEvent.keyboard('{ArrowDown}{ArrowDown}')
     expect(kaydir).toHaveBeenLastCalledWith({ block: 'nearest' })
     expect(kaydir.mock.contexts.at(-1)).toBe(document.querySelector('li[data-vurgulu="evet"]'))
+    // Halka satırın İÇİNDE: kolonun `overflow-y-auto`'su (overflow-x de
+    // `auto` hesaplanır) dışa taşan `ring-2`'nin sağını ve solunu kırpardı.
+    expect(document.querySelector('li[data-vurgulu="evet"]')?.className).toContain('ring-inset')
+  })
+
+  // İnceleme I1. macOS'ta "kâ" (ölü tuş ya da basılı tutma) bir IME
+  // birleştirmesidir: Return harfi onaylar, dosya açmaz (açmak silinemez bir
+  // görüntüleme satırı yazar); Esc birleştirmeyi iptal eder, aramayı silmez.
+  // `keyCode` 229: Safari birleştirmeyi bitiren keydown'da `isComposing`'i
+  // `false` verir.
+  it('IME birleştirmesi sürerken Enter dosya AÇMAZ, Esc kutuyu temizlemez, ↓ vurguyu taşımaz; birleştirme dışında Enter açar', async () => {
+    const onDanisanSec = vi.fn()
+    render(<DurumluSekme onDanisanSec={onDanisanSec} />)
+    await userEvent.type(aramaKutusu(), 'ipek')
+    expect(vurgulu()).toBe('Ipek Sahin')
+
+    fireEvent.keyDown(aramaKutusu(), { key: 'Enter', isComposing: true })
+    fireEvent.keyDown(aramaKutusu(), { key: 'Enter', keyCode: 229 })
+    fireEvent.keyDown(aramaKutusu(), { key: 'ArrowDown', isComposing: true })
+    fireEvent.keyDown(aramaKutusu(), { key: 'ArrowDown', keyCode: 229 })
+    fireEvent.keyDown(aramaKutusu(), { key: 'Escape', isComposing: true })
+    fireEvent.keyDown(aramaKutusu(), { key: 'Escape', keyCode: 229 })
+    expect(onDanisanSec).not.toHaveBeenCalled()
+    expect(vurgulu()).toBe('Ipek Sahin')
+    expect(aramaKutusu().value).toBe('ipek')
+
+    // Koruma her Enter'ı yutmuyor: birleştirme bitince aynı tuş dosyayı açar.
+    fireEvent.keyDown(aramaKutusu(), { key: 'Enter' })
+    expect(onDanisanSec).toHaveBeenCalledExactlyOnceWith(2)
+  })
+
+  // İnceleme M1. Asıl koruma kancada (`useDanisanListesi.ekle`, uçuş
+  // bayrağı; bkz. `useDanisanListesi.test.ts`). Burada ölçülen: bayrak
+  // kalkıkken "Ekle" devre dışı ve Enter (örtük gönderim) de göndermez.
+  it('ekleme uçuştayken "Ekle" devre dışı; Enter ve tıklama ekle ÇAĞIRMAZ; bayrak inince Enter kaydeder', async () => {
+    const ekle = vi.fn(async () => null)
+    const { rerender } = render(<DurumluSekme ekle={ekle} baslangicFormAcik ekleniyor />)
+    const gonder = screen.getByRole('button', { name: 'Ekle' }) as HTMLButtonElement
+    expect(gonder.disabled).toBe(true)
+    await userEvent.type(screen.getByLabelText('Ad soyad'), 'Zeynep Ak{Enter}')
+    await userEvent.click(gonder)
+    expect(ekle).not.toHaveBeenCalled()
+
+    rerender(<DurumluSekme ekle={ekle} baslangicFormAcik ekleniyor={false} />)
+    expect(gonder.disabled).toBe(false)
+    await userEvent.type(screen.getByLabelText('Ad soyad'), '{Enter}')
+    expect(ekle).toHaveBeenCalledTimes(1)
   })
 
   it('eşleşme yoksa kısayol ve sabit bilgi satırı; kısayol formu o adla açar, imleç ad alanında; Enter kaydeder, dosya YENİ kimlikle açılır, arama temizlenir', async () => {

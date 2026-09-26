@@ -41,6 +41,13 @@ export function useDanisanListesi({ ayarlarGorunur }: { ayarlarGorunur: boolean 
   const [arsivOnayi, setArsivOnayi] = useState<Danisan | null>(null)
   const [arsivBilgisi, setArsivBilgisi] = useState<string | null>(null)
   const [arsivSuruyor, setArsivSuruyor] = useState(false)
+  // Ekleme uçuşta mı (inceleme M1). Danışan silinemez ve adda benzersizlik
+  // yok: POST sürerken ikinci bir Enter ya da tıklama KALICI bir kopya kayıt
+  // yaratırdı. Asıl kilit `ekleniyorRef`: aynı çizimden gelen iki çağrı
+  // durumu henüz güncellenmemiş görür. `ekleniyor` durumu arayüz içindir
+  // ("Ekle" düğmesi devre dışı, dolayısıyla Enter'la örtük gönderim de yok).
+  const [ekleniyor, setEkleniyor] = useState(false)
+  const ekleniyorRef = useRef(false)
   // Saklama süresi dolmuş danışanlar — tasarım §7'nin ana ekran
   // hatırlatması. Kart içindeki tekil gösterge bunun yerini tutmuyordu: bir
   // dosyanın süresinin dolduğunu görmek için o dosyayı AÇMAK gerekiyordu,
@@ -140,33 +147,45 @@ export function useDanisanListesi({ ayarlarGorunur }: { ayarlarGorunur: boolean 
    * yere sokmak Türkçe sıralamayı burada ikinci kez (farklı) uygulamak
    * demekti. Ekleme seyrek; hacmi sunucudaki birleştirme (`clients::listele`)
    * kapatıyor.
+   *
+   * Uçuştayken (POST ya da ardındaki yeniden çekme sürerken) ikinci çağrı
+   * istek atmaz ve `null` döner (bkz. `ekleniyorRef`). Kilit her çıkışta,
+   * başarısızlıkta da, `finally` ile açılır.
    */
   async function ekle(): Promise<Danisan | null> {
+    if (ekleniyorRef.current) return null
     if (yeniAdSoyad.trim() === '') {
       setHata('Lütfen ad soyad girin.')
       return null
     }
-    let yeni: Danisan
+    ekleniyorRef.current = true
+    setEkleniyor(true)
     try {
-      yeni = await takvimApi.danisanEkle(yeniAdSoyad.trim(), yeniTelefon.trim() || undefined)
-    } catch (e) {
-      // Sunucudan gelen mesaj OLDUĞU GİBİ gösteriliyor: doğrulama hataları
-      // hangi alanın (ad mı, telefon mu) neden reddedildiğini söylüyor
-      // (bkz. `store::clients` doğrulayıcıları). Genel bir "Danışan
-      // eklenemedi." kullanıcıya neyi düzelteceğini söylemezdi.
-      setHata(e instanceof Error ? e.message : 'Danışan eklenemedi.')
-      return null
+      let yeni: Danisan
+      try {
+        yeni = await takvimApi.danisanEkle(yeniAdSoyad.trim(), yeniTelefon.trim() || undefined)
+      } catch (e) {
+        // Sunucudan gelen mesaj OLDUĞU GİBİ gösteriliyor: doğrulama hataları
+        // hangi alanın (ad mı, telefon mu) neden reddedildiğini söylüyor
+        // (bkz. `store::clients` doğrulayıcıları). Genel bir "Danışan
+        // eklenemedi." kullanıcıya neyi düzelteceğini söylemezdi.
+        setHata(e instanceof Error ? e.message : 'Danışan eklenemedi.')
+        return null
+      }
+      setYeniAdSoyad('')
+      setYeniTelefon('')
+      setFormAcik(false)
+      setHata(null)
+      try {
+        setDanisanlar(await takvimApi.danisanlariGetir())
+      } catch {
+        setDanisanlar((onceki) => (onceki.some((d) => d.id === yeni.id) ? onceki : [...onceki, yeni]))
+      }
+      return yeni
+    } finally {
+      ekleniyorRef.current = false
+      setEkleniyor(false)
     }
-    setYeniAdSoyad('')
-    setYeniTelefon('')
-    setFormAcik(false)
-    setHata(null)
-    try {
-      setDanisanlar(await takvimApi.danisanlariGetir())
-    } catch {
-      setDanisanlar((onceki) => (onceki.some((d) => d.id === yeni.id) ? onceki : [...onceki, yeni]))
-    }
-    return yeni
   }
 
   // Arşivleme SİLME DEĞİLDİR. `clients::arsivle` Plan 2 Görev 3'te yazılmış
@@ -210,6 +229,7 @@ export function useDanisanListesi({ ayarlarGorunur }: { ayarlarGorunur: boolean 
     arsivBilgisi,
     setArsivBilgisi,
     arsivSuruyor,
+    ekleniyor,
     saklamaDolanlar,
     saklamaDolandanDus,
     ekle,

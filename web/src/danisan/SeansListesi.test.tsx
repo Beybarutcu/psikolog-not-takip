@@ -1,5 +1,5 @@
 import { render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DanisanSeansi } from '../api'
 import { SeansListesi } from './SeansListesi'
 
@@ -178,5 +178,32 @@ describe('SeansListesi', () => {
   it('yuklendi=true iken dolu listede data-yuklendi="evet" olur', () => {
     render(<SeansListesi seanslar={[seans()]} secili={null} onSecim={() => {}} yuklendi={true} />)
     expect(screen.getByTestId('seans-listesi').getAttribute('data-yuklendi')).toBe('evet')
+  })
+})
+
+describe('SeansListesi — seçili satır görünür alana gelir (tasarım B2/B3)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  it('açılışta seçili satır bir kez (en yakın kenara); aynı seçimle yeniden çizim kaydırmaz; seçim değişince ve kaydırma isteğiyle yeniden', () => {
+    const kaydir = vi.spyOn(Element.prototype, 'scrollIntoView')
+    const iki = [
+      seans({ appointment_id: 1, baslangic: '2026-09-14T10:00' }),
+      seans({ appointment_id: 2, baslangic: '2026-09-07T10:00' }),
+    ]
+    const { rerender } = render(<SeansListesi seanslar={iki} secili={2} onSecim={() => {}} />)
+    expect(kaydir).toHaveBeenCalledTimes(1)
+    expect(kaydir.mock.contexts[0]).toBe(screen.getAllByRole('button')[1])
+    expect(kaydir).toHaveBeenLastCalledWith({ block: 'nearest' })
+
+    // Liste tazelemesi (yeni dizi, aynı seçim) KAYDIRMAZ.
+    rerender(<SeansListesi seanslar={[...iki]} secili={2} onSecim={() => {}} />)
+    expect(kaydir).toHaveBeenCalledTimes(1)
+
+    rerender(<SeansListesi seanslar={iki} secili={1} onSecim={() => {}} />)
+    expect(kaydir).toHaveBeenCalledTimes(2)
+    expect(kaydir.mock.contexts[1]).toBe(screen.getAllByRole('button')[0])
+
+    rerender(<SeansListesi seanslar={iki} secili={1} onSecim={() => {}} kaydirmaIstegi={1} />)
+    expect(kaydir).toHaveBeenCalledTimes(3)
   })
 })

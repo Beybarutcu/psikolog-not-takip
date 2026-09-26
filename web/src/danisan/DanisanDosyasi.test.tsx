@@ -1,10 +1,12 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DanisanDosyasi as DanisanKaydi, DanisanSeansi, SeansNotu } from '../api'
 import type { KartVerisi } from '../screens/anaEkranKancalari/useDanisanDosyasi'
 import { taslaklariUnut } from '../seans/taslak'
-import { DanisanDosyasi } from './DanisanDosyasi'
+import type { Randevu } from '../takvim/HaftalikTakvim'
+import { DanisanDosyasi, type DosyaAltSekme } from './DanisanDosyasi'
 
 // Son inceleme C1/C2/M1: `DanisanDosyasi` artık DURUMSUZ — seçili seans,
 // not, alt sekme ve bütün yazmalar yukarıda (`AnaEkran` + kancalar). Bu
@@ -89,6 +91,7 @@ function proplar(oz: Partial<Proplar> = {}): Proplar {
     altSekme: 'seanslar',
     onAltSekme: vi.fn(),
     bugun: '2026-09-14',
+    simdi: '2026-09-20T12:00',
     veriRaporuIndir: async () => {},
     ekYukle: async () => {},
     ekSil: async () => {},
@@ -102,6 +105,33 @@ const IKI_SEANS = [
   seans({ appointment_id: 1, baslangic: '2026-09-14T10:00', odendi: true }),
   seans({ appointment_id: 2, baslangic: '2026-09-07T10:00', odendi: false }),
 ]
+
+/**
+ * Alt sekmeyi ve seçimi GERÇEK durumla tutan sarmalayıcı (üretimde
+ * `AnaEkran` + `useDanisanSeanslari`). B2 bağlantılarının "Seanslar'a geç
+ * ve seç" etkisi yalnızca böyle ölçülür.
+ */
+function Kontrollu({
+  ilkAltSekme = 'seanslar',
+  ilkSecili = null,
+  ...oz
+}: Partial<Proplar> & { ilkAltSekme?: DosyaAltSekme; ilkSecili?: number | null }) {
+  const [altSekme, setAltSekme] = useState<DosyaAltSekme>(ilkAltSekme)
+  const [secili, setSecili] = useState<number | null>(ilkSecili)
+  return (
+    <DanisanDosyasi
+      {...proplar({ ...oz, altSekme, onAltSekme: setAltSekme, seciliSeansId: secili, onSeansSec: setSecili })}
+    />
+  )
+}
+
+function randevu(oz: Partial<Randevu>): Randevu {
+  return {
+    id: 1, client_id: 12, danisan_adi: 'Ayşe Yılmaz',
+    baslangic: '2026-09-14T10:00', bitis: '2026-09-14T10:50',
+    durum: 'geldi', ucret: 90000, odendi: false, seri_id: null, ...oz,
+  }
+}
 
 describe('DanisanDosyasi', () => {
   // Son inceleme I2: Seanslar alt sekmesinde açık dosyanın KİME ait olduğu
@@ -436,5 +466,119 @@ describe('DanisanDosyasi — etiketler', () => {
     )
     expect((screen.getByLabelText('Etiket ekle') as HTMLInputElement).value).toBe('')
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+})
+
+// Plan B Görev 3 — başlık özeti (tasarım B2). "Şimdi" = proplar'ın simdi'si (20 Eylül 12:00).
+describe('DanisanDosyasi — başlık özeti (tasarım B2)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  const RANDEVULAR = [
+    randevu({ id: 1, baslangic: '2026-03-03T10:00', bitis: '2026-03-03T10:50', odendi: true }),
+    randevu({ id: 2, baslangic: '2026-09-08T10:00', bitis: '2026-09-08T10:50' }),
+    randevu({ id: 3, baslangic: '2026-09-15T10:00', bitis: '2026-09-15T10:50', durum: 'gelmedi' }),
+    randevu({ id: 4, baslangic: '2026-09-17T10:00', bitis: '2026-09-17T10:50', durum: 'iptal' }),
+    randevu({ id: 5, baslangic: '2026-09-18T10:00', bitis: '2026-09-18T10:50', durum: 'planlandi' }),
+    randevu({ id: 6, baslangic: '2026-09-24T14:00', bitis: '2026-09-24T14:50', durum: 'planlandi' }),
+  ]
+  // Aynı seansların dosya listesi karşılığı (sunucu sırası: en yeni üstte).
+  const SEANSLAR = [...RANDEVULAR].reverse().map((r) =>
+    seans({ appointment_id: r.id, baslangic: r.baslangic, durum: r.durum, ucret_kurus: r.ucret, odendi: r.odendi }),
+  )
+  const OZET =
+    "2. seans · Mart 2026'dan beri · Son: 8 Eylül · Sıradaki: Perşembe 24 Eylül 14:00 · Ödenmemiş: 1.800,00 TL (+1 işaretlenmemiş)"
+  const kartIle = (randevular: Randevu[]) => ({ ...sahteKart(), randevular })
+  const ozet = () => screen.getByTestId('dosya-ozeti')
+  const aktifSatir = () =>
+    within(screen.getByTestId('seans-listesi')).getByRole('button', { current: true }).textContent
+
+  it('adın hemen altında tek satır; iki alt sekmede de görünür', () => {
+    const { rerender } = render(
+      <DanisanDosyasi {...proplar({ kart: kartIle(RANDEVULAR), seanslar: SEANSLAR, seciliSeansId: 5 })} />,
+    )
+    expect(ozet().textContent).toBe(OZET)
+    expect(ozet().previousElementSibling).toBe(screen.getByRole('heading', { level: 2 }))
+    rerender(
+      <DanisanDosyasi
+        {...proplar({ kart: kartIle(RANDEVULAR), seanslar: SEANSLAR, seciliSeansId: 5, altSekme: 'bilgiler' })}
+      />,
+    )
+    expect(ozet().textContent).toBe(OZET)
+  })
+
+  it('"Ödenmemiş" Bilgiler\'deki bakiyeyle AYNI sayı (gelmedi borcu dahil)', () => {
+    render(<DanisanDosyasi {...proplar({ kart: kartIle(RANDEVULAR), seanslar: SEANSLAR, altSekme: 'bilgiler' })} />)
+    const ozettekiBorc = /Ödenmemiş: ([\d.,]+ TL)/.exec(ozet().textContent ?? '')?.[1]
+    const bakiye = screen.getAllByRole('term').find((e) => e.textContent === 'Bakiye')?.nextElementSibling?.textContent
+    expect(ozettekiBorc).toBe('1.800,00 TL')
+    expect(bakiye).toBe(ozettekiBorc)
+  })
+
+  it('olmayan parça yazılmaz: randevu yoksa satır yok; borç yokken işaretlenmemiş kendi parçasıdır', () => {
+    const { rerender } = render(<DanisanDosyasi {...proplar({ kart: kartIle([]) })} />)
+    expect(screen.queryByTestId('dosya-ozeti')).toBeNull()
+    rerender(<DanisanDosyasi {...proplar({ kart: kartIle([RANDEVULAR[4]]) })} />)
+    expect(ozet().textContent).toBe('1 işaretlenmemiş seans')
+    expect(within(ozet()).queryAllByRole('button')).toHaveLength(0)
+  })
+
+  it('bağlantı Seanslar alt sekmesine geçer ve o seansı seçer (Bilgiler\'den de)', async () => {
+    render(<Kontrollu kart={kartIle(RANDEVULAR)} seanslar={SEANSLAR} ilkAltSekme="bilgiler" ilkSecili={5} />)
+    await userEvent.click(within(ozet()).getByRole('button', { name: 'Son: 8 Eylül' }))
+    expect(screen.getByRole('tab', { name: 'Seanslar' }).getAttribute('aria-selected')).toBe('true')
+    expect(aktifSatir()).toContain('8 Eylül 2026, 10:00')
+
+    await userEvent.click(within(ozet()).getByRole('button', { name: "Mart 2026'dan beri" }))
+    expect(aktifSatir()).toContain('3 Mart 2026, 10:00')
+    await userEvent.click(within(ozet()).getByRole('button', { name: 'Sıradaki: Perşembe 24 Eylül 14:00' }))
+    expect(aktifSatir()).toContain('24 Eylül 2026, 14:00')
+  })
+
+  it('seans etiket süzgecinde gizliyse süzgeç "Tüm seanslar"a çekilir; görünüyorsa süzgeç korunur', async () => {
+    const etiketli = SEANSLAR.map((s) =>
+      s.appointment_id === 1 ? { ...s, etiketler: ['kaygı'] } : s.appointment_id === 2 ? { ...s, etiketler: ['uyku'] } : s,
+    )
+    render(<Kontrollu kart={kartIle(RANDEVULAR)} seanslar={etiketli} ilkSecili={5} />)
+    const secim = () => screen.getByLabelText('Etikete göre süz') as HTMLSelectElement
+    await userEvent.selectOptions(secim(), 'kaygı')
+    await userEvent.click(within(ozet()).getByRole('button', { name: 'Son: 8 Eylül' }))
+    expect(secim().value).toBe('')
+    expect(aktifSatir()).toContain('8 Eylül 2026, 10:00')
+
+    // EKSİ YÖN: hedef süzgeçte görünüyorsa süzgece dokunulmaz.
+    await userEvent.selectOptions(secim(), 'kaygı')
+    await userEvent.click(within(ozet()).getByRole('button', { name: "Mart 2026'dan beri" }))
+    expect(secim().value).toBe('kaygı')
+    expect(aktifSatir()).toContain('3 Mart 2026, 10:00')
+  })
+
+  it('bağlantı seçilen satırı görünür alana getirir; ZATEN seçili seansın bağlantısı da yeniden getirir', async () => {
+    const kaydir = vi.spyOn(Element.prototype, 'scrollIntoView')
+    render(<Kontrollu kart={kartIle(RANDEVULAR)} seanslar={SEANSLAR} ilkSecili={2} />)
+    const satirDugmesi = (metin: string) =>
+      within(screen.getByTestId('seans-listesi')).getByText(metin).closest('button')
+    // Açılışta seçili satır (takvimden/aramadan gelmekle aynı yol).
+    expect(kaydir).toHaveBeenCalledTimes(1)
+    expect(kaydir.mock.contexts[0]).toBe(satirDugmesi('8 Eylül 2026, 10:00'))
+
+    await userEvent.click(within(ozet()).getByRole('button', { name: "Mart 2026'dan beri" }))
+    expect(kaydir).toHaveBeenCalledTimes(2)
+    expect(kaydir.mock.contexts[1]).toBe(satirDugmesi('3 Mart 2026, 10:00'))
+    expect(kaydir).toHaveBeenLastCalledWith({ block: 'nearest' })
+
+    // Seçim DEĞİŞMEDİ ama kullanıcı istedi (listeyi kaydırmış olabilir).
+    await userEvent.click(within(ozet()).getByRole('button', { name: "Mart 2026'dan beri" }))
+    expect(kaydir).toHaveBeenCalledTimes(3)
+  })
+
+  it('özet ve bağlantılar istek ATMAZ (tek kaynak kart.randevular)', async () => {
+    const fetchCasusu = vi.spyOn(globalThis, 'fetch')
+    render(<Kontrollu kart={kartIle(RANDEVULAR)} seanslar={SEANSLAR} ilkAltSekme="bilgiler" ilkSecili={5} />)
+    // Üç bağlantının üçü de (ilki Bilgiler'den: alt sekme geçişi de dahil).
+    for (const ad of ['Son: 8 Eylül', "Mart 2026'dan beri", 'Sıradaki: Perşembe 24 Eylül 14:00']) {
+      await userEvent.click(within(ozet()).getByRole('button', { name: ad }))
+    }
+    expect(aktifSatir()).toContain('24 Eylül 2026, 14:00')
+    expect(fetchCasusu).not.toHaveBeenCalled()
   })
 })

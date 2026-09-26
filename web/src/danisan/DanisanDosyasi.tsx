@@ -8,6 +8,7 @@ import { NotEditoru } from '../seans/NotEditoru'
 import { sablonMetni } from '../seans/sablon'
 import { SeansAltSatiri } from '../seans/SeansAltSatiri'
 import { DosyaBilgileri } from './DosyaBilgileri'
+import { DosyaOzetiSatiri } from './DosyaOzetiSatiri'
 import { SeansListesi } from './SeansListesi'
 
 /** Danışan dosyasının iki alt sekmesi. */
@@ -56,6 +57,17 @@ type NotKaydi = { sablon: string; icerik: string }
  * yazabilirdi. Başlık artık şeridin ÜSTÜNDE, iki alt sekmede de görünür;
  * `DosyaBilgileri` kendi ad başlığını bu yüzden taşımıyor.
  *
+ * # Başlık özeti (tasarım B2)
+ *
+ * Adın altında tek, soluk satır (`DosyaOzetiSatiri`, tanımlar
+ * `dosyaOzeti.ts`'te): TEK kaynağı `kart.randevular` ve `simdi`
+ * (`DanisanlarSekmesi`'nin `useDakikalikSimdi`'si). İki alt sekmede de
+ * görünür. "Ödenmemiş" Bilgiler'deki bakiyeyle AYNI işlevden
+ * (`borcToplami`) gelir. Bağlantıları (`ozettenSec`) Seanslar alt sekmesine
+ * geçer ve o seansı seçer. Seans etiket süzgecinde gizliyse süzgeç
+ * "Tüm seanslar"a çekilir. Satır, `kaydirmaIstegi` ile seçim değişmese de
+ * görünür alana getirilir.
+ *
  * # Kendi küçük sekme şeridi — `kabuk/Sekmeler` DEĞİL
  *
  * `kabuk/Sekmeler.tsx` uygulamanın ÜST kabuğunun şeridi (Takvim/Danışanlar/
@@ -90,7 +102,8 @@ type NotKaydi = { sablon: string; icerik: string }
  *
  * Süzgeç SEÇİMİ değiştirmez: süzülmüş listede görünmeyen seçili seansın
  * notu sağda açık kalır. Süzgeci değiştirmek terapistin elinin altındaki
- * editörü değiştirmemeli.
+ * editörü değiştirmemeli. İstisna: B2 bağlantısı gizli bir seansı seçerse
+ * süzgeç "Tüm seanslar"a çekilir (`ozettenSec`).
  */
 type Props = {
   kart: KartVerisi
@@ -114,6 +127,11 @@ type Props = {
   altSekme: DosyaAltSekme
   onAltSekme: (sekme: DosyaAltSekme) => void
   bugun: string
+  /**
+   * Uygulamadaki TEK "şimdi" (`yerelGun.ts::useDakikalikSimdi`, çağıran
+   * `DanisanlarSekmesi`): başlık özeti (B2) ve liste düzeni (B3).
+   */
+  simdi: string
   veriRaporuIndir: (danisanId: number, parola: string) => Promise<void>
   ekYukle: (dosya: File, tur: string) => Promise<void>
   ekSil: (ekId: number) => Promise<void>
@@ -144,6 +162,7 @@ export function DanisanDosyasi({
   altSekme,
   onAltSekme,
   bugun,
+  simdi,
   veriRaporuIndir,
   ekYukle,
   ekSil,
@@ -152,8 +171,21 @@ export function DanisanDosyasi({
   etiketBaglami,
 }: Props) {
   const [suzgec, setSuzgec] = useState('')
+  const [kaydirmaIstegi, setKaydirmaIstegi] = useState(0)
   const kullanilanEtiketler = [...new Set(seanslar.flatMap((s) => s.etiketler))].sort(etiketSirasi)
   const etkinSuzgec = kullanilanEtiketler.includes(suzgec) ? suzgec : ''
+
+  // B2 bağlantısı: Seanslar'a geç, seç, gizleyen süzgeci kaldır, göster.
+  // Hedef yüklü listede YOKSA (bayat liste, `seansSec` yeniden çektirir)
+  // süzgecin onu gizleyip gizlemeyeceği bilinemez: süzgeç yine sıfırlanır.
+  function ozettenSec(appointmentId: number) {
+    const hedef = seanslar.find((s) => s.appointment_id === appointmentId)
+    if (etkinSuzgec !== '' && !(hedef?.etiketler.includes(etkinSuzgec) ?? false)) setSuzgec('')
+    onAltSekme('seanslar')
+    onSeansSec(appointmentId)
+    setKaydirmaIstegi((n) => n + 1)
+  }
+
   const gorunenSeanslar =
     etkinSuzgec === '' ? seanslar : seanslar.filter((s) => s.etiketler.includes(etkinSuzgec))
   const seciliSeans = seanslar.find((s) => s.appointment_id === seciliSeansId) ?? null
@@ -177,6 +209,7 @@ export function DanisanDosyasi({
       <h2 id="danisan-dosyasi-basligi" className="mb-2 text-lg font-semibold">
         {adSoyad}
       </h2>
+      <DosyaOzetiSatiri randevular={kart.randevular} simdi={simdi} onSec={ozettenSec} />
       <div role="tablist" aria-label="Danışan dosyası bölümleri" className="flex gap-1">
         <button
           type="button"
@@ -264,6 +297,7 @@ export function DanisanDosyasi({
                   secili={seciliSeansId}
                   onSecim={onSeansSec}
                   yuklendi={yuklendi}
+                  kaydirmaIstegi={kaydirmaIstegi}
                 />
               </div>
 

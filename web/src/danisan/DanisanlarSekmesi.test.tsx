@@ -7,6 +7,7 @@ import type { KartVerisi, useDanisanDosyasi } from '../screens/anaEkranKancalari
 import type { useDanisanListesi } from '../screens/anaEkranKancalari/useDanisanListesi'
 import { useDanisanSeanslari } from '../screens/anaEkranKancalari/useDanisanSeanslari'
 import { useDosyaNotu } from '../screens/anaEkranKancalari/useDosyaNotu'
+import type { Randevu } from '../takvim/HaftalikTakvim'
 import type { DosyaAltSekme } from './DanisanDosyasi'
 import { DanisanlarSekmesi } from './DanisanlarSekmesi'
 
@@ -58,7 +59,7 @@ afterEach(() => {
 // değil; bu yüzden `dosya` burada minimal ama GEÇERLİ bir sahte kayıtla
 // dolduruluyor (gerçek alan adları `DanisanKarti.test.tsx`teki fixture ile
 // aynı).
-function sahteKart(seciliDanisanId: number | null): KartVerisi {
+function sahteKart(seciliDanisanId: number | null, randevular: Randevu[] = []): KartVerisi {
   return {
     id: seciliDanisanId,
     dosya:
@@ -78,16 +79,16 @@ function sahteKart(seciliDanisanId: number | null): KartVerisi {
             saklama_bitis: null,
           },
     ekler: [],
-    randevular: [],
+    randevular,
     hata: null,
     randevularDamgasi: 0,
   }
 }
 
-function sahteDosya(seciliDanisanId: number | null): ReturnType<typeof useDanisanDosyasi> {
+function sahteDosya(seciliDanisanId: number | null, randevular: Randevu[] = []): ReturnType<typeof useDanisanDosyasi> {
   return {
     seciliDanisanId,
-    kart: sahteKart(seciliDanisanId),
+    kart: sahteKart(seciliDanisanId, randevular),
     depolama: null,
     ac: () => {},
     kapat: () => {},
@@ -782,5 +783,61 @@ describe('DanisanlarSekmesi — arama ve ekleme (tasarım B1)', () => {
       expect(sutun.className, sinif).toContain(sinif)
     }
     expect(sutun.contains(aramaKutusu())).toBe(true)
+  })
+})
+
+/**
+ * Tasarım A2/B2: dosya özetinin "şimdi"si uygulamanın TEK kaynağından
+ * (`useDakikalikSimdi`, burada `DanisanlarSekmesi`'nde çağrılır). Emsal:
+ * `yerelGun.test.ts` (yalnızca Date ve interval sahte).
+ */
+describe('DanisanlarSekmesi — dosya özeti tek "şimdi"den (tasarım A2, B2)', () => {
+  afterEach(() => vi.useRealTimers())
+
+  function randevu(oz: Partial<Randevu>): Randevu {
+    return {
+      id: 1, client_id: 1, danisan_adi: 'Danışan 1',
+      baslangic: '2026-09-24T10:00', bitis: '2026-09-24T10:50',
+      durum: 'planlandi', ucret: null, odendi: false, seri_id: null, ...oz,
+    }
+  }
+  function ciz(randevular: Randevu[]) {
+    render(
+      <DanisanlarSekmesi
+        liste={sahteListe()}
+        dosya={sahteDosya(1, randevular)}
+        seanslar={bosSeanslar()}
+        dosyaNotu={bosDosyaNotu()}
+        altSekme="seanslar"
+        onAltSekme={() => {}}
+        {...ILGISIZ}
+      />,
+    )
+  }
+
+  // İstanbul UTC+3: 00:30'da UTC günü hâlâ DÜN (21:30). `toISOString`'den
+  // türeyen bir "şimdi" dünkü 23:00'ı gelecek sayar: "Son" kaybolur.
+  it('İstanbul 00:30: dünkü 23:00 seansı "Son", bugünkü 01:00 "Sıradaki"', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 25, 0, 30))
+    ciz([
+      randevu({ id: 1, baslangic: '2026-09-24T23:00', bitis: '2026-09-24T23:50', durum: 'geldi' }),
+      randevu({ id: 2, baslangic: '2026-09-25T01:00', bitis: '2026-09-25T01:50' }),
+    ])
+    expect(screen.getByTestId('dosya-ozeti').textContent).toBe(
+      "1. seans · Eylül 2026'dan beri · Son: 24 Eylül · Sıradaki: Cuma 25 Eylül 01:00",
+    )
+  })
+
+  it('dakikalık tik: 13:59\'da "Sıradaki" olan 14:00 seansı 14:00\'te artık sıradaki değil', () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    vi.setSystemTime(new Date(2026, 8, 24, 13, 59))
+    ciz([randevu({ id: 1, baslangic: '2026-09-24T14:00', bitis: '2026-09-24T14:50' })])
+    expect(screen.getByTestId('dosya-ozeti').textContent).toBe('Sıradaki: Perşembe 24 Eylül 14:00')
+    act(() => {
+      vi.advanceTimersByTime(60_000)
+    })
+    // Süren seans ne sıradaki ne işaretlenmemiş: satırın hiçbir parçası kalmaz.
+    expect(screen.queryByTestId('dosya-ozeti')).toBeNull()
   })
 })

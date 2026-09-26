@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent as TusOlayi } from 'react'
-import { yerelGun } from '../screens/anaEkranKancalari/yerelGun'
+import { useDakikalikSimdi, yerelGun } from '../screens/anaEkranKancalari/yerelGun'
 import type { useDanisanDosyasi } from '../screens/anaEkranKancalari/useDanisanDosyasi'
 import type { useDanisanListesi } from '../screens/anaEkranKancalari/useDanisanListesi'
 import type { useDanisanSeanslari } from '../screens/anaEkranKancalari/useDanisanSeanslari'
@@ -102,6 +102,10 @@ export function DanisanlarSekmesi({
   etiketBaglami: (appointmentId: number) => EtiketBaglami
 }) {
   const { seciliDanisanId, kart } = dosya
+  // Dosya özetinin ve liste düzeninin "şimdi"si: uygulamanın TEK kaynağı,
+  // dakikada bir yenilenir (`TakvimSekmesi` emsali: kanca sekme
+  // bileşeninde, `AnaEkran`'da değil; görünmeyen sekme tiklemez).
+  const simdi = useDakikalikSimdi()
   // Yerel değişkene alınıyor: `liste.arsivOnayi` üzerinden daralan tür bir
   // callback'in içine taşınmaz, `AnaEkran`'daki gerekçeyle aynı (onay
   // metniyle "Evet, arşivle"nin AYNI danışanı görmesi bu satırla garanti).
@@ -423,6 +427,7 @@ export function DanisanlarSekmesi({
                 altSekme={altSekme}
                 onAltSekme={onAltSekme}
                 bugun={yerelGun(new Date())}
+                simdi={simdi}
                 veriRaporuIndir={veriRaporuIndir}
                 ekYukle={dosya.ekYukle}
                 ekSil={dosya.ekSil}

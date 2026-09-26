@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import type { DanisanSeansi } from '../api'
 import { tlMetni } from '../para'
 import { zamanMetni } from '../tarih'
@@ -34,6 +35,15 @@ import { zamanMetni } from '../tarih'
  * `EtiketSatiri`'nda. Adlar React metni olarak basılır, HTML olarak değil.
  * Süzme bu bileşende DEĞİL (`DanisanDosyasi` süzülmüş listeyi geçirir) —
  * bileşen kendisine verilen listeyi olduğu gibi çizer.
+ *
+ * # Seçili satır görünür alana gelir (tasarım B2/B3)
+ *
+ * `scrollIntoView({ block: 'nearest' })`, odak VERMEDEN (A6): açılışta
+ * (takvimden, aramadan gelince), seçim değişince ve kullanıcı istediğinde
+ * (`kaydirmaIstegi`, B2 bağlantıları: seçim değişmese de). Bileşen her
+ * monte oluşta da çalışır, yani sekmeye dönüşte ve Bilgiler→Seanslar
+ * geçişinde de; `nearest` satır zaten görünüyorsa hiçbir şeyi kıpırdatmaz.
+ * Aynı seçimle liste tazelemesi (yeni dizi) kaydırmaz.
  */
 type Props = {
   seanslar: DanisanSeansi[]
@@ -50,6 +60,12 @@ type Props = {
    * `useDanisanSeanslari.ts` modül başlığındaki aynı gerekçe).
    */
   yuklendi?: boolean
+  /**
+   * Kullanıcının "bu seansı göster" isteği sayacı (tasarım B2 bağlantıları).
+   * Seçim DEĞİŞMEDEN de (zaten seçili seansın bağlantısı) satırın yeniden
+   * görünür alana getirilmesi için. Varsayılan 0.
+   */
+  kaydirmaIstegi?: number
 }
 
 const DURUM_ADLARI: Record<string, string> = {
@@ -93,9 +109,16 @@ function notOnizlemesi(satir: string | null) {
   return <span className="truncate text-slate-600">{satir}</span>
 }
 
-export function SeansListesi({ seanslar, secili, onSecim, yuklendi = true }: Props) {
+export function SeansListesi({ seanslar, secili, onSecim, yuklendi = true, kaydirmaIstegi = 0 }: Props) {
   const etkiliSecili = secili ?? seanslar[0]?.appointment_id ?? null
   const yuklendiOzniteligi = yuklendi ? 'evet' : 'hayir'
+
+  // Seçili satır görünür alana gelir (bkz. modül başlığı). Aynı seçimle
+  // liste tazelemesi kaydırmaz: bağımlılıklar değişmez. Odak verilmez (A6).
+  const seciliSatirRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    seciliSatirRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [etkiliSecili, kaydirmaIstegi])
 
   if (seanslar.length === 0) {
     return (
@@ -117,6 +140,7 @@ export function SeansListesi({ seanslar, secili, onSecim, yuklendi = true }: Pro
           <li key={s.appointment_id}>
             <button
               type="button"
+              ref={aktif ? seciliSatirRef : undefined}
               aria-current={aktif ? 'true' : undefined}
               onClick={() => onSecim(s.appointment_id)}
               className={

@@ -2,14 +2,13 @@ import { useRef, useState } from 'react'
 import type { OzelNot, SeansNotu } from '../api'
 import { EtiketSatiri, type EtiketBaglami } from '../etiket/EtiketSatiri'
 import type { Randevu } from '../takvim/HaftalikTakvim'
-import { zamanMetni } from '../tarih'
-import { GecmisNotlar } from './GecmisNotlar'
 import { NotEditoru } from './NotEditoru'
-import { SeansAltSatiri } from './SeansAltSatiri'
 import { sablonMetni } from './sablon'
 
 /**
- * Seans paneli: solda geçmiş bağlam, sağda **iki sekmeli** not alanı.
+ * Not sayfasının editör alanı (tasarım N4): iki sekmeli not alanı ve resmî
+ * sekmede etiketler. Üst satır (danışan, tarih, durum/ödeme, Takvime dön) ve
+ * önceki notlar `SeansSayfasi`'nde.
  *
  * # İki sekme = iki ayrı tablo, bir filtre değil
  *
@@ -33,7 +32,7 @@ import { sablonMetni } from './sablon'
  *
  * # Özel not sekmeye GEÇİLİNCE yüklenir
  *
- * Panel açılışında iki istek gider (resmî not + geçmiş), üçüncüsü değil.
+ * Sayfa açılışında özel not istenmez.
  * Sunucudaki `ozel_not_getir` her çağrıda `goruntuleme | private_note |
  * <randevu>` satırı yazar ve `audit_log` **silinemez**: kullanıcı özel
  * sekmeye hiç girmeden o satırı bastırmak, olmayan bir eylemi kalıcı
@@ -62,21 +61,17 @@ import { sablonMetni } from './sablon'
  * sandırırdı. Etiket verisi ve yazmaları bu bileşende değil
  * (`etiket` prop'u, `AnaEkran`'ın tek yolu — bkz. `useEtiketler`).
  *
- * # Alt satır: durum, ücret, ödendi (Plan 4 Görev 2)
+ * # Yükseklik
  *
- * Tasarım §6: ödeme takibi ayrı bir modül değil, seansın alt satırı. Durum
- * düğmeleri buraya `RandevuPaneli`'nden TAŞINDI (iki panel aynı anda açık).
- * Satırın kendisi `SeansAltSatiri`'nda: not yüklenemediğinde de (panel
- * açılmadığında) `AnaEkran` aynı satırı gösteriyor — bkz. o dosyanın
- * başlığı.
+ * Kök ve sekme gövdesi dikey esnek kutu: `SeansSayfasi` editör alanına
+ * yükseklik verdiğinde editör o yüksekliği doldurur (tasarım N4 "sayfanın
+ * büyük kısmı"; zincirin sonu `NotEditoru` > `BicimliYuzey`).
  */
 
 type NotKaydi = { sablon: string; icerik: string }
 
 type Props = {
   randevu: Randevu
-  /** Danışanın önceki **resmî** notları. Bu seansın kendi notu listede olmaz. */
-  gecmisNotlar: SeansNotu[]
   /** `null` = henüz yükleniyor. Editör, içerik gelmeden mount EDİLMEZ. */
   not: SeansNotu | null
   /**
@@ -100,30 +95,9 @@ type Props = {
   onOzelSekme: () => void
   /** Özel not yüklenemediyse yeniden dene. */
   onOzelYenidenDene?: () => void
-  onKapat: () => void
-  /**
-   * Başlıktaki danışan adına tıklanınca çağrılır: Danışanlar sekmesi bu
-   * danışanın dosyasıyla açılır (bkz. `AnaEkran.tsx::danisanaGit` — inceleme
-   * CRITICAL-1: Görev 8 öncesi takvimden danışana giden TEK yol hızlı arama
-   * ve ay özetiydi; seçili bir randevunun panelinden doğrudan danışana
-   * gitmenin yolu YOKTU, brief'in Adım 1'i buydu).
-   */
-  onDanisanAc: (clientId: number) => void
-  /**
-   * Alt satırdaki durum düğmesi (`geldi` / `gelmedi` / `iptal`). Seçili
-   * düğme `randevu.durum`'dan okunur, yerel kopyadan DEĞİL: çağıran taraf
-   * başarıda seçili randevunun kopyasını aynı kimlikle tazeliyor ve panel
-   * yeniden mount edilmiyor.
-   */
-  onDurumDegis: (durum: string) => Promise<void>
-  /**
-   * Alt satırdaki "Ödendi" kutusu. Reddedilirse kutu eski hâline döner ve
-   * hata `role="alert"` ile duyurulur.
-   */
-  onOdemeDegis: (odendi: boolean) => Promise<void>
   /**
    * Seansın etiketleri (`AnaEkran.etiketBaglami`). İsteğe bağlı: bu
-   * bileşenin kendi testleri etiketsiz kurulur; üretimde `TakvimSekmesi`
+   * bileşenin kendi testleri etiketsiz kurulur; üretimde `SeansSayfasi`
    * her zaman geçirir.
    */
   etiket?: EtiketBaglami
@@ -140,7 +114,6 @@ const RESMI_GOVDE_SINIFI = 'border-slate-200 bg-white'
 
 export function SeansPaneli({
   randevu,
-  gecmisNotlar,
   not,
   ozelNot,
   ozelHata = null,
@@ -148,10 +121,6 @@ export function SeansPaneli({
   onOzelNotKaydet,
   onOzelSekme,
   onOzelYenidenDene,
-  onKapat,
-  onDurumDegis,
-  onOdemeDegis,
-  onDanisanAc,
   etiket,
 }: Props) {
   const [sekme, setSekme] = useState<'resmi' | 'ozel'>('resmi')
@@ -200,222 +169,155 @@ export function SeansPaneli({
   }
 
   return (
-    <section
-      aria-labelledby="seans-paneli-basligi"
-      className="mt-4 rounded-lg border border-slate-300 p-4"
-    >
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div>
-          <h2 id="seans-paneli-basligi" className="text-lg font-semibold">
-            Seans
-          </h2>
-          <p className="text-sm text-slate-600">
-            {/* CRITICAL-1: takvimden danışana giden yol. Erişilebilir ad
-                danışan listesindeki çiple AYNI kalıp ("… dosyasını aç") —
-                iki farklı yoldan gelen iki buton aynı işi aynı isimle
-                anlatmalı. */}
-            <button
-              type="button"
-              className="underline"
-              aria-label={`${randevu.danisan_adi} dosyasını aç`}
-              onClick={() => onDanisanAc(randevu.client_id)}
-            >
-              {randevu.danisan_adi}
-            </button>{' '}
-            — {zamanMetni(randevu.baslangic)}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-3">
-          {/* Tasarım A6: seans bölümü takvimin ALTINDA; bu bağlantı sayfayı
-              takvimin başına kaydırır. Seçimi KAPATMAZ (o iş "Seansı
-              kapat"ın) ve odak vermez. Paneli yalnızca Takvim sekmesi
-              kullanıyor (danışan dosyası kendi editörünü çiziyor), bu yüzden
-              ızgara DOM kancasıyla aranıyor; yoksa hiçbir şey olmaz. */}
-          <button
-            type="button"
-            className="text-sm underline"
-            onClick={() =>
-              document
-                .querySelector('[data-testid="takvim-izgara"]')
-                ?.scrollIntoView({ block: 'start' })
-            }
-          >
-            Takvime dön
-          </button>
-          <button type="button" className="rounded border px-3 py-1 text-sm" onClick={onKapat}>
-            Seansı kapat
-          </button>
-        </div>
+    <div className="flex flex-1 flex-col">
+      <div
+        role="tablist"
+        aria-label="Not türü"
+        className="flex gap-1"
+        onKeyDown={sekmeTusu}
+      >
+        <button
+          ref={resmiSekmeRef}
+          type="button"
+          role="tab"
+          id="sekme-resmi"
+          aria-selected={!ozelAcik}
+          // `aria-controls` YALNIZCA seçiliyken veriliyor: aynı anda
+          // tek bir `tabpanel` render ediliyor, seçili olmayan
+          // sekmenin işaret ettiği id ekranda YOK. Var olmayan bir
+          // id'yi göstermek ekran okuyucuya kırık bir bağ vermektir.
+          aria-controls={ozelAcik ? undefined : 'panel-resmi'}
+          // Dönen tabindex (roving): sekme şeridi klavyede TEK durak,
+          // içinde ok tuşlarıyla gezilir. İkisi de sekmelenebilir
+          // olsaydı Tab kullanıcısı burada iki kez durur, ok tuşları
+          // ise hiçbir şey yapmazdı.
+          tabIndex={ozelAcik ? -1 : 0}
+          className={
+            'rounded-t border border-b-0 px-3 py-1 text-sm ' +
+            (ozelAcik ? 'border-slate-200 bg-slate-50' : 'border-slate-300 bg-white font-medium')
+          }
+          onClick={() => setSekme('resmi')}
+        >
+          Seans Notu
+        </button>
+        <button
+          ref={ozelSekmeRef}
+          type="button"
+          role="tab"
+          id="sekme-ozel"
+          aria-selected={ozelAcik}
+          aria-controls={ozelAcik ? 'panel-ozel' : undefined}
+          tabIndex={ozelAcik ? 0 : -1}
+          // Ayırt edici renk SEÇİLİ OLMASA DA taşınıyor.
+          className={
+            'rounded-t border border-b-0 px-3 py-1 text-sm ' +
+            OZEL_SEKME_SINIFI +
+            (ozelAcik ? ' font-medium' : '')
+          }
+          onClick={ozelSekmeyeGec}
+        >
+          Özel Notlarım
+        </button>
       </div>
 
-      {/* Mobilde tek sütun ve geçmiş ÜSTTE (DOM sırası da öyle: ekran
-          okuyucu ve klavye kullanıcısı için bağlam önce gelir). Geniş
-          ekranda geçmiş sol sütuna geçer. */}
-      <div className="flex flex-col gap-4 lg:flex-row">
-        <div className="lg:w-72 lg:shrink-0">
-          <GecmisNotlar notlar={gecmisNotlar} />
-        </div>
-
-        <div className="flex-1">
-          <div
-            role="tablist"
-            aria-label="Not türü"
-            className="flex gap-1"
-            onKeyDown={sekmeTusu}
-          >
-            <button
-              ref={resmiSekmeRef}
-              type="button"
-              role="tab"
-              id="sekme-resmi"
-              aria-selected={!ozelAcik}
-              // `aria-controls` YALNIZCA seçiliyken veriliyor: aynı anda
-              // tek bir `tabpanel` render ediliyor, seçili olmayan
-              // sekmenin işaret ettiği id ekranda YOK. Var olmayan bir
-              // id'yi göstermek ekran okuyucuya kırık bir bağ vermektir.
-              aria-controls={ozelAcik ? undefined : 'panel-resmi'}
-              // Dönen tabindex (roving): sekme şeridi klavyede TEK durak,
-              // içinde ok tuşlarıyla gezilir. İkisi de sekmelenebilir
-              // olsaydı Tab kullanıcısı burada iki kez durur, ok tuşları
-              // ise hiçbir şey yapmazdı.
-              tabIndex={ozelAcik ? -1 : 0}
-              className={
-                'rounded-t border border-b-0 px-3 py-1 text-sm ' +
-                (ozelAcik ? 'border-slate-200 bg-slate-50' : 'border-slate-300 bg-white font-medium')
-              }
-              onClick={() => setSekme('resmi')}
-            >
-              Seans Notu
-            </button>
-            <button
-              ref={ozelSekmeRef}
-              type="button"
-              role="tab"
-              id="sekme-ozel"
-              aria-selected={ozelAcik}
-              aria-controls={ozelAcik ? 'panel-ozel' : undefined}
-              tabIndex={ozelAcik ? 0 : -1}
-              // Ayırt edici renk SEÇİLİ OLMASA DA taşınıyor.
-              className={
-                'rounded-t border border-b-0 px-3 py-1 text-sm ' +
-                OZEL_SEKME_SINIFI +
-                (ozelAcik ? ' font-medium' : '')
-              }
-              onClick={ozelSekmeyeGec}
-            >
-              Özel Notlarım
-            </button>
-          </div>
-
-          {ozelAcik ? (
-            <div
-              role="tabpanel"
-              id="panel-ozel"
-              aria-labelledby="sekme-ozel"
-              className={`rounded-b rounded-tr border p-3 ${OZEL_GOVDE_SINIFI}`}
-            >
-              {/* Kalıcı şerit: sekme açık olduğu SÜRECE görünür. Yalnızca
-                  ilk açılışta gösterilen bir uyarı, kullanıcı sekmeler
-                  arasında gidip geldikçe kaybolurdu. */}
-              <p className="mb-2 rounded border border-violet-400 bg-white p-2 text-sm text-violet-900">
-                {OZEL_UYARISI}
-              </p>
-              {ozelHata !== null ? (
-                // Yükleme başarısızsa BOŞ EDİTÖR açılmaz: boş bir alan
-                // sunucudaki özel notu "yok" diye gösterir ve üstüne
-                // yazılan metin var olanı ezerdi.
-                <div role="alert" className="rounded border border-red-300 bg-red-50 p-2">
-                  <p className="text-sm text-red-800">Özel not yüklenemedi. {ozelHata}</p>
-                  {onOzelYenidenDene !== undefined && (
-                    <button
-                      type="button"
-                      className="mt-2 rounded border border-red-300 px-2 py-1 text-sm"
-                      onClick={onOzelYenidenDene}
-                    >
-                      Yeniden dene
-                    </button>
-                  )}
-                </div>
-              ) : ozelNot === null ? (
-                <p className="text-sm text-slate-600">Özel not yükleniyor…</p>
-              ) : (
-                <NotEditoru
-                  // `key` ZORUNLU: bkz. modül başlığı. `ozel-` öneki resmî
-                  // notunkinden farklı olmalı ki aynı seansın iki sekmesi
-                  // birbirinin taslağını görmesin.
-                  key={`ozel-${randevu.id}`}
-                  baslangicIcerik={ozelNot.icerik}
-                  // Özel notun şablonu yok; seçici de gizli. Değer yalnızca
-                  // `NotEditoru`'nun imzasını doldurur ve hiçbir yere gitmez
-                  // (`onOzelNotKaydet` sadece içeriği alıyor).
-                  baslangicSablon="serbest"
-                  sablonSecilebilir={false}
-                  etiket="Özel notum"
-                  taslakAnahtari={`ozel-${randevu.id}`}
-                  onKaydet={(kayit) => onOzelNotKaydet(kayit.icerik)}
-                />
+      {ozelAcik ? (
+        <div
+          role="tabpanel"
+          id="panel-ozel"
+          aria-labelledby="sekme-ozel"
+          className={`flex flex-1 flex-col rounded-b rounded-tr border p-3 ${OZEL_GOVDE_SINIFI}`}
+        >
+          {/* Kalıcı şerit: sekme açık olduğu SÜRECE görünür. Yalnızca
+              ilk açılışta gösterilen bir uyarı, kullanıcı sekmeler
+              arasında gidip geldikçe kaybolurdu. */}
+          <p className="mb-2 rounded border border-violet-400 bg-white p-2 text-sm text-violet-900">
+            {OZEL_UYARISI}
+          </p>
+          {ozelHata !== null ? (
+            // Yükleme başarısızsa BOŞ EDİTÖR açılmaz: boş bir alan
+            // sunucudaki özel notu "yok" diye gösterir ve üstüne
+            // yazılan metin var olanı ezerdi.
+            <div role="alert" className="rounded border border-red-300 bg-red-50 p-2">
+              <p className="text-sm text-red-800">Özel not yüklenemedi. {ozelHata}</p>
+              {onOzelYenidenDene !== undefined && (
+                <button
+                  type="button"
+                  className="mt-2 rounded border border-red-300 px-2 py-1 text-sm"
+                  onClick={onOzelYenidenDene}
+                >
+                  Yeniden dene
+                </button>
               )}
             </div>
+          ) : ozelNot === null ? (
+            <p className="text-sm text-slate-600">Özel not yükleniyor…</p>
           ) : (
-            <div
-              role="tabpanel"
-              id="panel-resmi"
-              aria-labelledby="sekme-resmi"
-              className={`rounded-b rounded-tr border p-3 ${RESMI_GOVDE_SINIFI}`}
-            >
-              {not === null ? (
-                <p className="text-sm text-slate-600">Seans notu yükleniyor…</p>
-              ) : (
-                <NotEditoru
-                  key={`not-${randevu.id}`}
-                  // Şablon başlıklarını ÇAĞIRAN TARAF geçiriyor: `NotEditoru`
-                  // mount'ta içerik sentezlemiyor (bilinçli karar — sentezlese
-                  // kullanıcı tek tuşa basmadan bir kayıt ve silinemez bir
-                  // denetim satırı üretirdi). Burada geçirildiğinde editörün
-                  // "sunucudaki hâl" temeli de bu metin olur, dolayısıyla
-                  // açılış yine hiçbir yazma üretmez — ama yeni not "DAP
-                  // seçili ama başlıksız" açılmaz.
-                  //
-                  // Ölçüt sunucudaki içeriğin BOŞ olması: dolu bir notun
-                  // başına başlık eklemek yazılmış metni bozardı.
-                  baslangicIcerik={not.icerik === '' ? sablonMetni(not.sablon) : not.icerik}
-                  baslangicSablon={not.sablon}
-                  // Başka bir ekrandan (danışan dosyası) gelen kayıt editör
-                  // monte olduktan SONRA biterse temiz editör onu benimser
-                  // (son inceleme C1 — bkz. `NotEditoru::sunucuHali`). Açılış
-                  // içeriğiyle AYNI dönüşüm: yoksa boş not için başlıklar ile
-                  // `''` farklı sayılır ve editör başlıkları silerdi.
-                  sunucuHali={{
-                    sablon: not.sablon,
-                    icerik: not.icerik === '' ? sablonMetni(not.sablon) : not.icerik,
-                  }}
-                  taslakAnahtari={`not-${randevu.id}`}
-                  onKaydet={onNotKaydet}
-                />
-              )}
-              {etiket !== undefined && (
-                <EtiketSatiri
-                  // Panelin kendisi seans kimliğiyle `key`li, yani bu satır
-                  // seans değişince zaten yeniden monte olur; `key` dosya
-                  // tarafındaki (orada YÜK TAŞIYAN) kullanımla aynı kalıp.
-                  key={`etiket-${randevu.id}`}
-                  kimlik={`takvim-${randevu.id}`}
-                  {...etiket}
-                />
-              )}
-            </div>
+            <NotEditoru
+              // `key` ZORUNLU: bkz. modül başlığı. `ozel-` öneki resmî
+              // notunkinden farklı olmalı ki aynı seansın iki sekmesi
+              // birbirinin taslağını görmesin.
+              key={`ozel-${randevu.id}`}
+              baslangicIcerik={ozelNot.icerik}
+              // Özel notun şablonu yok; seçici de gizli. Değer yalnızca
+              // `NotEditoru`'nun imzasını doldurur ve hiçbir yere gitmez
+              // (`onOzelNotKaydet` sadece içeriği alıyor).
+              baslangicSablon="serbest"
+              sablonSecilebilir={false}
+              etiket="Özel notum"
+              taslakAnahtari={`ozel-${randevu.id}`}
+              onKaydet={(kayit) => onOzelNotKaydet(kayit.icerik)}
+            />
           )}
         </div>
-      </div>
-
-      {/* Alt satır (tasarım §6): "geldi/gelmedi/iptal + ücret + ödendi" tek
-          satırda. Ödeme takibi ayrı bir modül değil, seansın parçası. `key`
-          gerekmiyor: panelin kendisi seans kimliğiyle key'li. */}
-      <SeansAltSatiri
-        randevu={randevu}
-        onDurumDegis={onDurumDegis}
-        onOdemeDegis={onOdemeDegis}
-      />
-    </section>
+      ) : (
+        <div
+          role="tabpanel"
+          id="panel-resmi"
+          aria-labelledby="sekme-resmi"
+          className={`flex flex-1 flex-col rounded-b rounded-tr border p-3 ${RESMI_GOVDE_SINIFI}`}
+        >
+          {not === null ? (
+            <p className="text-sm text-slate-600">Seans notu yükleniyor…</p>
+          ) : (
+            <NotEditoru
+              key={`not-${randevu.id}`}
+              // Şablon başlıklarını ÇAĞIRAN TARAF geçiriyor: `NotEditoru`
+              // mount'ta içerik sentezlemiyor (bilinçli karar — sentezlese
+              // kullanıcı tek tuşa basmadan bir kayıt ve silinemez bir
+              // denetim satırı üretirdi). Burada geçirildiğinde editörün
+              // "sunucudaki hâl" temeli de bu metin olur, dolayısıyla
+              // açılış yine hiçbir yazma üretmez — ama yeni not "DAP
+              // seçili ama başlıksız" açılmaz.
+              //
+              // Ölçüt sunucudaki içeriğin BOŞ olması: dolu bir notun
+              // başına başlık eklemek yazılmış metni bozardı.
+              baslangicIcerik={not.icerik === '' ? sablonMetni(not.sablon) : not.icerik}
+              baslangicSablon={not.sablon}
+              // Başka bir ekrandan (danışan dosyası) gelen kayıt editör
+              // monte olduktan SONRA biterse temiz editör onu benimser
+              // (son inceleme C1 — bkz. `NotEditoru::sunucuHali`). Açılış
+              // içeriğiyle AYNI dönüşüm: yoksa boş not için başlıklar ile
+              // `''` farklı sayılır ve editör başlıkları silerdi.
+              sunucuHali={{
+                sablon: not.sablon,
+                icerik: not.icerik === '' ? sablonMetni(not.sablon) : not.icerik,
+              }}
+              taslakAnahtari={`not-${randevu.id}`}
+              onKaydet={onNotKaydet}
+            />
+          )}
+          {etiket !== undefined && (
+            <EtiketSatiri
+              // Panelin kendisi seans kimliğiyle `key`li, yani bu satır
+              // seans değişince zaten yeniden monte olur; `key` dosya
+              // tarafındaki (orada YÜK TAŞIYAN) kullanımla aynı kalıp.
+              key={`etiket-${randevu.id}`}
+              kimlik={`takvim-${randevu.id}`}
+              {...etiket}
+            />
+          )}
+        </div>
+      )}
+    </div>
   )
 }

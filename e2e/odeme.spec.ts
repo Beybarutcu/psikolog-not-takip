@@ -106,7 +106,21 @@ async function durumIsaretle(page: Page, satir: Locator, r: Randevu, ad: string,
   await dugme.click()
   expect((await yanitSozu).ok()).toBe(true)
   await expect(dugme).toHaveAttribute('aria-pressed', 'true')
+  // Sayfa ızgaranın yerinde (tasarım N1): bloğun durumunu görmek için takvime
+  // dön, sonra seansı yeniden aç (satır locator'ı yeniden çözülür).
+  await takvimeDon(page)
   await expect(blok(page, ad)).toHaveAttribute('data-durum', kod)
+  await blok(page, ad).click()
+  await expect(satir.getByRole('button', { name: etiket, exact: true })).toHaveAttribute('aria-pressed', 'true')
+}
+
+/**
+ * Açık not sayfasını kapatır (tasarım N1: sayfa ızgaranın YERİNDE, başka bir
+ * bloğa ancak ızgaradan gidilir). Bariyer: ızgara yeniden çizildi.
+ */
+async function takvimeDon(page: Page) {
+  await page.getByRole('button', { name: 'Takvime dön', exact: true }).click()
+  await expect(page.getByTestId('takvim-izgara')).toBeVisible()
 }
 
 /**
@@ -198,6 +212,7 @@ test('geldi + odendi isaretlenen seans ay sonu ozetinde tahsilata, odenmeyen bor
   await durumIsaretle(page, s1, r1, 'Tahsil Aslı', 'Geldi', 'geldi')
   await odemeIsaretle(page, s1, r1)
 
+  await takvimeDon(page)
   const s2 = await seansAc(page, 'Borçlu Burak', '300,00 TL')
   await durumIsaretle(page, s2, r2, 'Borçlu Burak', 'Geldi', 'geldi')
 
@@ -217,6 +232,7 @@ test('geldi + odendi isaretlenen seans ay sonu ozetinde tahsilata, odenmeyen bor
   // bayat kaldığı hata tam o atlatmanın arkasında duruyordu. Bariyer: PATCH
   // BAŞARIYLA döndükten SONRA gelen bir `GET /api/ay-ozeti` yanıtı; sayılar
   // ancak o isteğin sonucuyla değişebilir.
+  await takvimeDon(page)
   const s2b = await seansAc(page, 'Borçlu Burak', '300,00 TL')
   const tazelemeSozu = page.waitForResponse(
     (y) => y.request().method() === 'GET' && new URL(y.url()).pathname === '/api/ay-ozeti',

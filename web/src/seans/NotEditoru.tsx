@@ -358,7 +358,12 @@ export function NotEditoru({
   const sablonId = `not-sablonu-${taslakAnahtari}`
 
   return (
-    <div className="flex h-full flex-col">
+    // `flex-1`: dikey esnek bir kapta (not sayfası, tasarım N4) kalan
+    // yüksekliği alır ve yüzeye (`BicimliYuzey`) taşır; yükseklik vermeyen bir
+    // kapta (danışan dosyası) etkisiz, yüzey kendi asgarisiyle (16rem) kalır.
+    // Ölçen test: `e2e/yerlesim.spec.ts` > "not sayfasinda editor ekranin
+    // kalanini doldurur".
+    <div className="flex flex-1 flex-col">
       <div className="mb-2 flex items-center gap-2">
         {sablonSecilebilir && (
           <>

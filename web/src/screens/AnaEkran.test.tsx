@@ -14,6 +14,18 @@ import { AnaEkran } from './AnaEkran'
  */
 const blokAdi = (ad: string) => new RegExp(`^\\d{2}:\\d{2} ${ad}(, gelmedi)?(, ödeme alınmadı)?$`)
 
+/** Not sayfasında randevu formu KAPALI başlar (tasarım N3); formla çalışan testler önce açar. */
+async function randevuFormunuAc() {
+  await userEvent.click(await screen.findByRole('button', { name: 'Randevuyu düzenle' }))
+}
+
+/** Not sayfasının üst satırı "Ad — tarih" biçiminde (tasarım N2: danışan düğmesi + tarih-saat). */
+function sayfaBasligi(): string {
+  const sayfa = screen.getByRole('region', { name: 'Seans' })
+  const ad = within(sayfa).getByRole('button', { name: /dosyasını aç$/ }).textContent
+  return `${ad} — ${within(sayfa).getByTestId('seans-zamani').textContent}`
+}
+
 // Görev 10 inceleme Bulgu 1: RandevuPaneli, seçili randevu/boş saat değişince
 // yeniden mount edilecek bir `key` almadan önce, panel içindeki state
 // (silme onayı, doldurulmuş form alanları) bir seçimden diğerine sızıyordu.
@@ -358,10 +370,15 @@ describe('AnaEkran — panel kimliği (Görev 10 inceleme Bulgu 1)', () => {
     await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
 
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
+    await randevuFormunuAc()
     await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
     expect(screen.getByText(/kalıcı olarak silinsin mi/i)).toBeDefined()
 
+    // Not sayfası ızgaranın yerinde (tasarım N1): B'ye takvimden gidilir.
+    // (Doğrudan A->B geçişinin `key` koruması `TakvimSekmesi.test.tsx` 7.13'te.)
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
+    await randevuFormunuAc()
 
     // Panel B'yi göstermeli; A'da açılmış silme onayı B'ye sızmamalı,
     // aksi hâlde kullanıcı sadece gezinirken "Evet, sil"e basıp B'yi silebilir.
@@ -376,10 +393,13 @@ describe('AnaEkran — panel kimliği (Görev 10 inceleme Bulgu 1)', () => {
     await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
 
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
+    await randevuFormunuAc()
     await userEvent.clear(screen.getByLabelText('Süre (dakika)'))
     await userEvent.type(screen.getByLabelText('Süre (dakika)'), '45')
     expect((screen.getByLabelText('Süre (dakika)') as HTMLInputElement).value).toBe('45')
 
+    // Boş saat ızgarada: önce takvime dönülür (tasarım N1).
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     // Boş bir saate tıkla (09:00, 08 satırından farklı bir aria-label).
     const bosSaat = screen.getAllByLabelText(/boş$/).find((el) =>
       el.getAttribute('aria-label')?.includes('09:00'),
@@ -453,6 +473,7 @@ describe('AnaEkran — düzenleme kipi POST değil PUT üretir (C1)', () => {
     await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
 
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
+    await randevuFormunuAc()
     await userEvent.clear(screen.getByLabelText('Ücret (TL)'))
     await userEvent.type(screen.getByLabelText('Ücret (TL)'), '500')
     await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
@@ -568,6 +589,12 @@ describe('AnaEkran — gereksiz yeniden yükleme yapmaz (Plan 3 Görev 2)', () =
       (i) => i.yol.startsWith('/api/randevular') && i.method === 'PATCH',
     )
     expect(yazmalar).toHaveLength(1)
+    // BARİYER: yazma bitti (seçili düğme Geldi). Sonra takvime dönülür: not
+    // sayfası ızgaranın yerinde (tasarım N1), bloğu görmek için.
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Geldi' }).getAttribute('aria-pressed')).toBe('true'),
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     expect(takvimGetSayisi()).toBe(1)
 
     // Sunucu isteği atlanmadı, yalnızca YENİDEN YÜKLEME atlandı: yeni durum
@@ -588,6 +615,7 @@ describe('AnaEkran — gereksiz yeniden yükleme yapmaz (Plan 3 Görev 2)', () =
     expect(takvimGetSayisi()).toBe(1)
 
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
+    await randevuFormunuAc()
     await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
     await userEvent.click(screen.getByRole('button', { name: 'Evet, sil' }))
 
@@ -981,6 +1009,7 @@ describe('AnaEkran — seçili randevu yeniden yüklemede bayatlamaz (Plan 2 dev
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
+    await randevuFormunuAc()
     expect(screen.getByRole('heading', { name: 'Randevu' })).toBeDefined()
   }
 
@@ -988,7 +1017,7 @@ describe('AnaEkran — seçili randevu yeniden yüklemede bayatlamaz (Plan 2 dev
     await randevuSec()
     // Görev 8: RandevuPaneli'nin özeti artık `okunurAralik` (yıl taşımıyor,
     // "Pazartesi, 7 Eylül · 10:00–11:00"); bu testte ölçülen başlangıç metni
-    // artık SEANS PANELİNİN başlığından okunuyor (`SeansPaneli.tsx::zamanMetni`,
+    // artık not sayfasının üst satırından okunuyor (`SeansSayfasi.tsx::zamanMetni`,
     // "7 Eylül 2026, 10:00").
     expect(screen.getByText(/7 Eylül 2026, 10:00/)).toBeDefined()
 
@@ -1019,8 +1048,9 @@ describe('AnaEkran — seçili randevu yeniden yüklemede bayatlamaz (Plan 2 dev
 
     // Var olmayan bir randevuya bağlı panel (ve ileride not editörü) açık
     // kalırsa, otomatik kayıt silinmiş bir `appointment_id`'ye yazmaya
-    // çalışır.
-    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Randevu' })).toBeNull())
+    // çalışır. (Form artık kapalı başlıyor — tasarım N3 — sayfanın TAMAMI
+    // kalkmalı.)
+    await waitFor(() => expect(screen.queryByTestId('seans-bolumu')).toBeNull())
   })
 
   it('401 sonrası panel kapanır', async () => {
@@ -1031,7 +1061,7 @@ describe('AnaEkran — seçili randevu yeniden yüklemede bayatlamaz (Plan 2 dev
 
     // Oturum kilitlendi: takvim listesi zaten temizleniyordu ama panel
     // seçili danışanı ve saatini göstermeye devam ediyordu.
-    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Randevu' })).toBeNull())
+    await waitFor(() => expect(screen.queryByTestId('seans-bolumu')).toBeNull())
   })
 })
 
@@ -1229,9 +1259,10 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
   }
 
   /**
-   * GÖZLEMLENEBİLİR BARİYER: randevu seçilince `RandevuPaneli`
-   * `CAKISMA_GECIKME_MS` (300 ms) sonra `GET /api/cakisma?...&haric_id=<id>`
-   * atıyor. "Bu işlemden sonra başka istek yok" diyen bir test anlık
+   * GÖZLEMLENEBİLİR BARİYER: randevu formu açılınca (not sayfasında KAPALI
+   * başlar, tasarım N3 — kullanan testler önce `randevuFormunuAc`)
+   * `RandevuPaneli` `CAKISMA_GECIKME_MS` (300 ms) sonra
+   * `GET /api/cakisma?...&haric_id=<id>` atıyor. "Bu işlemden sonra başka istek yok" diyen bir test anlık
    * görüntüsünü bu istek gelmeden alırsa, sorgu ölçüm penceresine düşer ve
    * test yük altında kırılır (Görev 2 I2 / Görev 4 I1: tek-PATCH testi 5
    * koşunun 4'ünde kırmızı; ölçüm penceresine sabit 400 ms eklenince HER
@@ -1255,6 +1286,17 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     expect(screen.getByRole('region', { name: 'Seans' })).toBeDefined()
     expect(screen.getByRole('tab', { name: 'Seans Notu' })).toBeDefined()
     expect(screen.getByRole('tab', { name: 'Özel Notlarım' })).toBeDefined()
+  })
+
+  it('7.15 sayfa açıkken ızgara YOK; "Takvime dön" aynı haftayı ve ızgarayı geri getirir', async () => {
+    await seansAc()
+    const baslik = document.querySelector('#hafta-basligi')?.textContent
+    expect(screen.queryByTestId('takvim-izgara')).toBeNull()
+    expect(screen.getByTestId('seans-bolumu')).toBeDefined()
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
+    expect(screen.getByTestId('takvim-izgara')).toBeDefined()
+    expect(screen.queryByTestId('seans-bolumu')).toBeNull()
+    expect(document.querySelector('#hafta-basligi')?.textContent).toBe(baslik)
   })
 
   it('bos saat secilince seans paneli ACILMAZ', async () => {
@@ -1303,6 +1345,10 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
     expect(await screen.findByLabelText('Özel notum')).toBeDefined()
 
+    // Not sayfası ızgaranın yerinde (tasarım N1): B'ye takvimden gidilir.
+    // Doğrudan A->B geçişinde (aynı haftada "sıradaki", Görev 8'in "Bu seansa
+    // git"i) sekme sıfırlamasını `key` taşır: `TakvimSekmesi.test.tsx` > "7.13".
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
     await screen.findByLabelText('Seans notu')
 
@@ -1324,6 +1370,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
     await userEvent.type(await screen.findByLabelText('Özel notum'), '-A HIPOTEZI')
 
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
 
     await waitFor(() =>
@@ -1385,6 +1432,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await screen.findByLabelText('Özel notum')
     expect(ozelGetleri()).toHaveLength(1)
 
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
     await screen.findByLabelText('Seans notu')
 
@@ -1405,9 +1453,11 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await screen.findByLabelText('Özel notum')
     expect(ozelGetleri().filter((i) => i.yol.includes(String(randevuA.id)))).toHaveLength(1)
 
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
     await screen.findByLabelText('Seans notu')
 
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     // Panel RESMI sekmede acilir (key ile yeniden monte olur); ozel not
     // ekranda görünmüyor.
@@ -1427,7 +1477,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
   it('resmi sekmede yazilan metin YALNIZCA /not adresine PUT edilir', async () => {
     await seansAc()
     await userEvent.type(screen.getByLabelText('Seans notu'), 'resmi ek')
-    await userEvent.click(screen.getByRole('button', { name: 'Seansı kapat' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
 
     await waitFor(() => expect(yazmalar(`/api/randevular/${randevuA.id}/not`)).toHaveLength(1))
     expect(yazmalar(`/api/randevular/${randevuA.id}/ozel-not`)).toHaveLength(0)
@@ -1439,7 +1489,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await seansAc()
     await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
     await userEvent.type(screen.getByLabelText('Özel notum'), '-EK')
-    await userEvent.click(screen.getByRole('button', { name: 'Seansı kapat' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
 
     await waitFor(() =>
       expect(yazmalar(`/api/randevular/${randevuA.id}/ozel-not`)).toHaveLength(1),
@@ -1472,6 +1522,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await seansAc()
     await userEvent.type(screen.getByLabelText('Seans notu'), 'A seansinin metni')
 
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
 
     await waitFor(() => expect(yazmalar(`/api/randevular/${randevuA.id}/not`)).toHaveLength(1))
@@ -1571,6 +1622,12 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     // denetim kaydı testlerine bakın); "Geldi" de bunu değiştirmemeli.
     expect(ozelGetleri()).toHaveLength(0)
     // İşlem gerçekten yapıldı: "hiçbir şey yapmayan" kod da üsttekileri geçerdi.
+    // BARİYER (yazma bitti), sonra takvime dönülür: blok ızgarada (tasarım N1).
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Geldi' }).getAttribute('aria-pressed')).toBe('true'),
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
+    expect(notGetSayisi(randevuA.id)).toBe(1)
     expect(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }).getAttribute('data-durum')).toBe(
       'geldi',
     )
@@ -1584,8 +1641,10 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await seansAc()
     const kutu = odendiKutusu()
     expect(kutu.checked).toBe(false)
-    // ÖN BARİYER: panelin gecikmeli çakışma sorgusu ölçüm penceresinden
-    // ÖNCE gelmiş olmalı (bkz. `cakismaSorgusunuBekle`).
+    // ÖN BARİYER: randevu formu AÇIK (ödeme işaretlenirken form açık olabilir;
+    // kapalı başlaması tasarım N3) ve gecikmeli çakışma sorgusu ölçüm
+    // penceresinden ÖNCE gelmiş olmalı (bkz. `cakismaSorgusunuBekle`).
+    await randevuFormunuAc()
     await cakismaSorgusunuBekle(randevuA.id)
 
     let coz: () => void = () => {}
@@ -1625,26 +1684,20 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await waitFor(() => expect(odendiKutusu().disabled).toBe(false))
     expect(odendiKutusu().checked).toBe(true)
 
-    // B'ye geç: B ödenmemiş. `key` olmasaydı panel yeniden mount edilmez ve
-    // A'nın iyimser `true`'su B'nin kutusunda kalırdı — yanlış danışana
-    // "ödendi" görünür.
+    // B'ye geç: B ödenmemiş. A'nın iyimser `true`'su B'nin kutusunda
+    // kalsaydı yanlış danışana "ödendi" görünürdü. (Not sayfası ızgaranın
+    // yerinde — tasarım N1 — B'ye takvimden gidilir; doğrudan A->B geçişini
+    // sayfanın `key`i sıfırlar: `TakvimSekmesi.test.tsx` > "7.13".)
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
-    // İnceleme CRITICAL-1: danışan adı artık bir DÜĞME (bkz. `SeansPaneli`
-    // "başlıktaki danışan adı"); `findByText` bir düzenli ifadeyi TEK bir
-    // metin düğümünde arıyor ve ad ayrı bir öğede olduğu için "metin birden
-    // çok öğeye bölünmüş" hatasıyla patlıyor. `textContent` düğüm
-    // sınırlarını GÖRMEZDEN GELİR, birleşik metni ölçer.
-    await waitFor(() =>
-      expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(/Mehmet Demir — /),
-    )
+    await waitFor(() => expect(sayfaBasligi()).toMatch(/Mehmet Demir — /))
     expect(odendiKutusu().checked).toBe(false)
 
     // A'ya dön: takvim YENİDEN YÜKLENMEDİ, dolayısıyla A'nın `true`'su ancak
     // yerel listedeki kopya tazelendiyse görünür.
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
-    await waitFor(() =>
-      expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(/Ayşe Yılmaz — /),
-    )
+    await waitFor(() => expect(sayfaBasligi()).toMatch(/Ayşe Yılmaz — /))
     expect(odendiKutusu().checked).toBe(true)
     expect(
       istekler.filter((i) => i.yol.startsWith('/api/randevular?') && i.method === 'GET'),
@@ -1659,6 +1712,8 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
   // giden HTTP gövdesini ölçüyor.
   it('odeme GERI ALINABILIR: isaretle -> {odendi:true}, kaldir -> {odendi:false}; baska seansa gidip donunce kutu false', async () => {
     await seansAc()
+    // Form açık (bkz. "Ödendi isaretlemek YALNIZCA tek PATCH" ön bariyeri).
+    await randevuFormunuAc()
     await cakismaSorgusunuBekle(randevuA.id)
     const once = istekler.length
 
@@ -1680,14 +1735,12 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
 
     // Yerel liste de geri alındı: A'ya dönünce kutu `false` açılır (takvim
     // yeniden yüklenmiyor, değer listedeki kopyadan geliyor).
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
-    await waitFor(() =>
-      expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(/Mehmet Demir — /),
-    )
+    await waitFor(() => expect(sayfaBasligi()).toMatch(/Mehmet Demir — /))
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
-    await waitFor(() =>
-      expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(/Ayşe Yılmaz — /),
-    )
+    await waitFor(() => expect(sayfaBasligi()).toMatch(/Ayşe Yılmaz — /))
     expect(odendiKutusu().checked).toBe(false)
   })
 
@@ -1708,8 +1761,10 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     [
       'durum',
       async () => userEvent.click(screen.getByRole('button', { name: 'Geldi' })),
-      () => {
+      async () => {
         expect(screen.getByRole('button', { name: 'Geldi' }).getAttribute('aria-pressed')).toBe('true')
+        // Blok ızgarada: not sayfası ızgaranın yerinde (tasarım N1).
+        await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
         expect(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }).getAttribute('data-durum')).toBe('geldi')
       },
       () => sunucuDurumu[randevuA.id] === 'geldi',
@@ -1743,10 +1798,8 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
       haftayiBirak()
 
       await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
-      await waitFor(() =>
-        expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(/Ayşe Yılmaz — /),
-      )
-      yeniDegerGorunur()
+      await waitFor(() => expect(sayfaBasligi()).toMatch(/Ayşe Yılmaz — /))
+      await yeniDegerGorunur()
     },
   )
 
@@ -1821,7 +1874,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
       expect(screen.getByRole('button', { name: 'Geldi' }).getAttribute('aria-pressed')).toBe('false')
       expect(odendiKutusu().checked).toBe(false)
 
-      await userEvent.click(screen.getByRole('button', { name: 'Seansı kapat' }))
+      await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
       expect(screen.queryByRole('region', { name: 'Seans' })).toBeNull()
       expect(document.body.textContent).not.toContain(mesaj)
     },
@@ -1834,7 +1887,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     // Serbest şablonunun başlık metni yoktur.
     expect(alan.value).toBe('')
 
-    await userEvent.click(screen.getByRole('button', { name: 'Seansı kapat' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     // BARİYER: panel gerçekten kapandı, yani editörün unmount tahliyesi
     // ÇALIŞTI. Tahliye yazmayı senkron başlatıyor (`void k(kayit)` ->
     // `fetch` ilk `await`ten önce çağrılıyor ve taklit isteği ilk satırında
@@ -1919,12 +1972,13 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
 
     // Kilit: ekranda danışan adı ve saati kalmamalı — ne seans paneli ne de
-    // randevu paneli. Yazılmamış metin taslakta korunuyor.
-    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Randevu' })).toBeNull())
+    // randevu paneli. Yazılmamış metin taslakta korunuyor. (Form artık kapalı
+    // başlıyor — tasarım N3 — sayfanın TAMAMI kalkmalı.)
+    await waitFor(() => expect(screen.queryByTestId('seans-bolumu')).toBeNull())
     expect(screen.queryByRole('region', { name: 'Seans' })).toBeNull()
   })
 
-  it('not yuklenemezse panel ACILMAZ, hata ve yeniden deneme gosterilir', async () => {
+  it('not yuklenemezse EDITOR acilmaz; sayfa hata ve yeniden deneme gosterir', async () => {
     notSunucuHatasi = true
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
@@ -1934,7 +1988,9 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     const uyari = await screen.findByRole('alert')
     expect(uyari.textContent).toContain('Seans notu yüklenemedi')
     expect(uyari.textContent).toContain('Veritabanı okunamadı.')
-    expect(screen.queryByRole('region', { name: 'Seans' })).toBeNull()
+    // Sayfa ("Seans" bölgesi) açık — durum/ödeme yine işaretlenir (N2) —
+    // ama editör alanı çizilmedi.
+    expect(screen.queryByRole('tab', { name: 'Seans Notu' })).toBeNull()
 
     notSunucuHatasi = false
     await userEvent.click(within(uyari).getByRole('button', { name: 'Yeniden dene' }))
@@ -1958,8 +2014,8 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
 
       const uyari = await screen.findByRole('alert')
       expect(uyari.textContent).toContain(mesaj)
-      // Ön koşul: gerçekten HATA dalındayız (panel açılmadı).
-      expect(screen.queryByRole('region', { name: 'Seans' })).toBeNull()
+      // Ön koşul: gerçekten HATA dalındayız (editör alanı çizilmedi).
+      expect(screen.queryByRole('tab', { name: 'Seans Notu' })).toBeNull()
       expect(screen.queryByLabelText('Seans notu')).toBeNull()
 
       const geldi = () => screen.getByRole('button', { name: 'Geldi' })
@@ -2208,7 +2264,7 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await screen.findByLabelText('Seans notu')
     expect(kaydir).toHaveBeenCalledTimes(1)
-    // Kaydırılan öğe seans BÖLÜMÜ (form + not birlikte görünsün diye başı).
+    // Kaydırılan öğe not SAYFASI (başı: üst satır ve editör birlikte görünür).
     expect(kaydir.mock.contexts[0]).toBe(screen.getByTestId('seans-bolumu'))
     expect(kaydir).toHaveBeenLastCalledWith({ block: 'start' })
 
@@ -2230,30 +2286,35 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     await waitFor(() => expect(odendiKutusu().disabled).toBe(false))
     expect(kaydir).toHaveBeenCalledTimes(1)
 
-    // ARTI YÖN: her kullanıcı seçimi kaydırır, yalnızca ilki değil.
+    // ARTI YÖN: her kullanıcı seçimi kaydırır, yalnızca ilki değil. ("Takvime
+    // dön" kaydırmaz; blok ızgarada — tasarım N1.)
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
+    expect(kaydir).toHaveBeenCalledTimes(1)
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
-    await waitFor(() =>
-      expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(/Mehmet Demir — /),
-    )
+    await waitFor(() => expect(sayfaBasligi()).toMatch(/Mehmet Demir — /))
     expect(kaydir).toHaveBeenCalledTimes(2)
   })
 
   it('10.2 formdan SONRAKI haftaya tasininca hafta ona gecer; seans bolumu ve Randevu formu acik kalir, baslikta yeni tarih; tasima KAYDIRMAZ', async () => {
     const kaydir = vi.spyOn(Element.prototype, 'scrollIntoView')
     await seansAc()
+    await randevuFormunuAc()
     expect(haftaBasligi()).toBe('7 – 13 Eylül 2026')
     expect(kaydir).toHaveBeenCalledTimes(1)
     const getlerOnce = haftaGetleri().length
 
     await tarihiTasiVeGuncelle('2026-09-15')
 
-    // BARİYER: yeni haftanın listesi geldi — blok artık ızgarada (liste
-    // gelmeden önce eski kopya "aralık dışı" satırında durur, adı farklı).
-    await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
+    // BARİYER: yeni haftanın listesi geldi ve gövdesi okundu (ızgara sayfa
+    // açıkken çizilmiyor — tasarım N1 — blok bariyer olamaz); bir makro görev
+    // sonra `yukle` onu yazmıştır.
+    await waitFor(() => expect(haftaGetleri()).toHaveLength(getlerOnce + 1))
+    await waitFor(() => expect(haftaYanitiOkundu[haftaGetSayaci]).toBe(true))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
+    await waitFor(() => expect(sayfaBasligi()).toMatch(/Ayşe Yılmaz — 15 Eylül 2026, 10:00/))
     expect(haftaBasligi()).toBe('14 – 20 Eylül 2026')
-    expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(
-      /Ayşe Yılmaz — 15 Eylül 2026, 10:00/,
-    )
     const bolum = screen.getByTestId('seans-bolumu')
     expect(within(bolum).getByRole('heading', { name: 'Randevu' })).toBeDefined()
     // Eski haftanın yeniden yüklenmesi YOK: PUT'tan sonra TEK hafta GET'i ve
@@ -2263,6 +2324,13 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     expect(sonrakiler[0].yol).toContain(`baslangic=${encodeURIComponent('2026-09-14T00:00')}`)
     // Taşıma sonrası tazeleme kaydırmaz (tasarım A6).
     expect(kaydir).toHaveBeenCalledTimes(1)
+
+    // "Takvime dön" YENİ haftayı gösterir (tasarım N3): blok ızgarada, "aralık
+    // dışı" satırında değil.
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
+    expect(haftaBasligi()).toBe('14 – 20 Eylül 2026')
+    expect(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') })).toBeDefined()
+    expect(screen.queryByRole('region', { name: 'Görünen aralık dışındaki randevular' })).toBeNull()
   })
 
   it('10.3 hafta korumasi: GEC donen eski hafta yaniti izgaraya YAZILMAZ', async () => {
@@ -2316,6 +2384,9 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     expect(notGetSayisi(randevuA.id)).toBe(1)
 
     const editor = screen.getByLabelText('Seans notu') as HTMLTextAreaElement
+    // Formu açmak editörü yeniden monte ETMEZ (aşağıdaki "AYNI düğüm" iddiası
+    // bu noktadan ölçülüyor).
+    await randevuFormunuAc()
     // Kayıt gecikmesi (2 sn) DOLMADAN taşınıyor: metin yalnızca editörde.
     fireEvent.change(editor, { target: { value: 'Yarım kalan cümle' } })
     await tarihiTasiVeGuncelle('2026-09-09')
@@ -2341,6 +2412,7 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     expect(ozelGetleri()).toHaveLength(1)
     expect(within(gecmis()).queryAllByRole('button')).toHaveLength(0)
 
+    await randevuFormunuAc()
     await tarihiTasiVeGuncelle('2026-09-09')
 
     // BARİYER: taşıma sonrası geçmiş okumasının yanıtı ekrana yazıldı — özel
@@ -2357,6 +2429,7 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
 
   it('10.6 Guncelle sonrasi form ACIK kalir ve kaydedilen degerleri gosterir; yeni randevuda Kaydet formu kapatir', async () => {
     await seansAc()
+    await randevuFormunuAc()
     const tarihAlani = screen.getByLabelText('Tarih')
     await userEvent.click(screen.getByRole('button', { name: '45 dk' }))
     await userEvent.clear(screen.getByLabelText('Ücret (TL)'))
@@ -2378,11 +2451,11 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     expect((screen.getByLabelText('Süre (dakika)') as HTMLInputElement).value).toBe('45')
     expect(within(bolum).getByTestId('ucret-onizleme').textContent).toBe('= 500,00 TL')
     expect(bolum.textContent).toContain('Salı, 8 Eylül · 10:00–10:45')
-    expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(
-      /Ayşe Yılmaz — 8 Eylül 2026, 10:00/,
-    )
+    expect(sayfaBasligi()).toMatch(/Ayşe Yılmaz — 8 Eylül 2026, 10:00/)
 
-    // Var olan davranış: yeni randevunun "Kaydet"i formu KAPATIR.
+    // Var olan davranış: yeni randevunun "Kaydet"i formu KAPATIR. (Boş saat
+    // ızgarada — önce takvime dönülür, tasarım N1.)
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(screen.getByLabelText('9 Eylül 09:00 boş'))
     expect(screen.queryByTestId('seans-bolumu')).toBeNull()
     await userEvent.selectOptions(screen.getByLabelText('Danışan'), '2')
@@ -2397,6 +2470,7 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
   // yeni saatin danışanına PUT ediyordu (A ve notu sessizce başka danışana).
   it('R11 Guncelle ucustayken bos saat secilirse yanit secimi EZMEZ: yalnizca Yeni randevu formu, Kaydet POST atar (A ya PUT degil)', async () => {
     await seansAc()
+    await randevuFormunuAc()
     const bekletme = kapi()
     putKapisi = bekletme.bekle
     fireEvent.change(screen.getByLabelText('Başlangıç'), { target: { value: '11:00' } })
@@ -2404,6 +2478,8 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     // PUT yolda (sunucu henüz işlemedi).
     await waitFor(() => expect(randevuPutlari(randevuA.id)).toHaveLength(1))
 
+    // Boş saat ızgarada: önce takvime dönülür (tasarım N1).
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(screen.getByLabelText('9 Eylül 09:00 boş'))
     expect(screen.queryByTestId('seans-bolumu')).toBeNull()
     bekletme.ac()
@@ -2433,41 +2509,57 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
   // bakıyor).
   it('R11 Guncelle ucustayken B secilirse bolum B de kalir; A baska haftaya tasinsa da hafta ATLAMAZ', async () => {
     await seansAc()
+    await randevuFormunuAc()
     const bekletme = kapi()
     putKapisi = bekletme.bekle
     fireEvent.change(screen.getByLabelText('Tarih'), { target: { value: '2026-09-15' } })
     await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
     await waitFor(() => expect(randevuPutlari(randevuA.id)).toHaveLength(1))
 
+    // B ızgarada: önce takvime dönülür (tasarım N1).
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
-    await waitFor(() =>
-      expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(/Mehmet Demir — /),
-    )
+    await waitFor(() => expect(sayfaBasligi()).toMatch(/Mehmet Demir — /))
+    await randevuFormunuAc()
+    const getlerOnce = haftaGetleri().length
     bekletme.ac()
-    // BARİYER: PUT işlendi ve GÖRÜNEN hafta yeniden yüklendi — A bu haftadan
-    // gitti (15 Eylül'e taşındı).
-    await waitFor(() => expect(screen.queryByRole('button', { name: blokAdi('Ayşe Yılmaz') })).toBeNull())
+    // BARİYER: PUT işlendi ve GÖRÜNEN hafta yeniden yüklendi (gövdesi okundu;
+    // ızgara sayfa açıkken çizilmiyor, blok bariyer olamaz), bir makro görev
+    // sonra `yukle` onu yazmıştır.
+    await waitFor(() => expect(haftaGetleri()).toHaveLength(getlerOnce + 1))
+    await waitFor(() => expect(haftaYanitiOkundu[haftaGetSayaci]).toBe(true))
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0))
+    })
 
     expect(haftaBasligi()).toBe('7 – 13 Eylül 2026')
-    expect(screen.getByRole('region', { name: 'Seans' }).textContent).toMatch(/Mehmet Demir — /)
+    expect(sayfaBasligi()).toMatch(/Mehmet Demir — /)
     expect((screen.getByLabelText('Danışan') as HTMLSelectElement).value).toBe('2')
     expect(sunucuRandevulari.find((r) => r.id === randevuA.id)!.baslangic).toBe('2026-09-15T10:00')
+    // A bu haftadan gitti (15 Eylül'e taşındı): ızgarada yok, B var.
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
+    expect(haftaBasligi()).toBe('7 – 13 Eylül 2026')
+    expect(screen.queryByRole('button', { name: blokAdi('Ayşe Yılmaz') })).toBeNull()
+    expect(screen.getByRole('button', { name: blokAdi('Mehmet Demir') })).toBeDefined()
   })
 
   // Düzeltme turu 1 (kontrolör R12): not okunamayınca seans paneli çizilmiyor
-  // ve bölümdeki form gömülü ("Kapat" yok) — bölümün kapatma yolu kalmıyordu.
-  it('R12 not okunamazsa hata kutusunda "Seansi kapat" var ve bolumu kapatir', async () => {
+  // ve bölümün kapatma yolu kalmıyordu. Görev 7'den beri kapatma yolu ("Takvime
+  // dön") not sayfasının üst satırında: hata dalında da, form açıkken de.
+  it('R12 not okunamazsa üst satırdaki Takvime dön sayfayı kapatır', async () => {
     notOkumaHatasi = true
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     const uyari = await screen.findByRole('alert')
     expect(uyari.textContent).toContain('Seans notu yüklenemedi')
     const bolum = screen.getByTestId('seans-bolumu')
-    // Ön koşul: gerçekten hata dalı (seans paneli yok) ve form gömülü.
-    expect(screen.queryByRole('region', { name: 'Seans' })).toBeNull()
-    expect(within(bolum).queryByRole('button', { name: 'Kapat' })).toBeNull()
+    // Ön koşul: gerçekten hata dalı (editör alanı yok). Randevu formu hata
+    // dalında da açılabilir (tasarım N3) — kapatma onu da götürmeli.
+    expect(screen.queryByRole('tab', { name: 'Seans Notu' })).toBeNull()
+    await randevuFormunuAc()
+    expect(within(bolum).getByRole('heading', { name: 'Randevu' })).toBeDefined()
 
-    await userEvent.click(within(uyari).getByRole('button', { name: 'Seansı kapat' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     expect(screen.queryByTestId('seans-bolumu')).toBeNull()
     expect(screen.queryByRole('heading', { name: 'Randevu' })).toBeNull()
   })
@@ -2627,6 +2719,8 @@ describe('AnaEkran — seans geçişi × uçuştaki istek (Görev 9)', () => {
     const b = kapi()
     gecikmeler[`GET /api/randevular/${randevuB.id}/not`] = b.bekle
 
+    // B ızgarada: önce takvime dönülür (tasarım N1).
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
 
     // B'nin verisi henüz gelmedi. Sıfırlama bir efekte bırakılsaydı, o
@@ -2656,6 +2750,7 @@ describe('AnaEkran — seans geçişi × uçuştaki istek (Görev 9)', () => {
     gecikmeler[`PUT /api/randevular/${randevuA.id}/not`] = a.bekle
     await userEvent.type(alan(), ' EK')
 
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
     await waitFor(() => expect(alan().value).toBe('B METNI'))
 
@@ -3117,10 +3212,9 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
       await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
       await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
       await screen.findByLabelText('Seans notu')
-      // Ön bariyer: panelin gecikmeli çakışma sorgusu ölçüm penceresine düşmesin.
-      await waitFor(() =>
-        expect(istekYollari.filter((y) => y.startsWith('GET /api/cakisma?'))).toHaveLength(1),
-      )
+      // Görev 7: randevu formu KAPALI başlar (tasarım N3), yani formun
+      // gecikmeli çakışma sorgusu (eskiden burada beklenen ön bariyer) HİÇ
+      // atılmaz — ölçüm penceresine düşecek gecikmeli istek kalmadı.
     }
 
     async function ozetAcVeAyseBorcunuGor() {
@@ -3255,32 +3349,21 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
     await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await screen.findByLabelText('Seans notu')
-    // Ön bariyer: panelin gecikmeli çakışma sorgusu ölçüm penceresine düşmesin.
-    const CAKISMA_202 =
-      'GET /api/cakisma?baslangic=2026-09-14T10%3A00&bitis=2026-09-14T11%3A00&haric_id=202'
-    const cakismaSayisi = () => istekYollari.filter((y) => y.startsWith('GET /api/cakisma?')).length
-    await waitFor(() => expect(cakismaSayisi()).toBe(1))
     const once = istekYollari.length
     const kutu = () => screen.getByRole('checkbox', { name: 'Ödendi' }) as HTMLInputElement
 
-    // Takvim'e HER dönüş seans panelini YENİDEN MONTE ediyor (`bakiye()`
-    // Danışanlar'a geçerken Takvim sekmesi unmount oluyor) ve panel çakışma
-    // sorgusunu `CAKISMA_GECIKME_MS` (300 ms, GERÇEK saat) sonra yeniden
-    // atıyor. Eskiden test beklemeden yazıp hemen Danışanlar'a dönüyordu:
-    // 300 ms dolmadan dönülürse zamanlayıcı iptal ediliyor, dolarsa sorgu
-    // ölçüm penceresine düşüyordu — makine yük altındayken test kırmızıydı
-    // (2026-09-22, iki kez; sakin makinede de ~9 koşuda 2). Gecikme 1 ms'ye
-    // indirilince HER seferinde kırılıyordu.
-    //
-    // Süzgeçle ayıklamak yerine BEKLENİYOR (bkz. `cakismaSorgusunuBekle`
-    // gerekçesi): dönüşte TAM BİR sorgu gelmesi şart ve pencerede de açıkça
-    // yer alıyor. Böylece pencere tam eşitlikle kalıyor — kartın ya da
-    // takvim listesinin yeniden çekilmesi hâlâ kırmızı. Sorgu denetim
-    // kaydına YAZMAZ (`cakisanlari_bul`, `cakisma_kontrolu_log_yazmaz`).
+    // Takvim'e HER dönüş not sayfasını YENİDEN MONTE ediyor (`bakiye()`
+    // Danışanlar'a geçerken Takvim sekmesi unmount oluyor). Eskiden sayfada
+    // randevu formu da her montajda açılıyor ve çakışma sorgusunu
+    // `CAKISMA_GECIKME_MS` (300 ms, GERÇEK saat) sonra atıyordu; test o
+    // sorguyu bekliyor ve pencerede açıkça sayıyordu. Görev 7'den beri form
+    // KAPALI başlar (tasarım N3): dönüşte çakışma sorgusu YOK ve pencere
+    // yalnızca üç yazmayla tam eşitlikte ölçülüyor (daha sıkı: fazladan HER
+    // istek, bir çakışma sorgusu da, kırmızı). Bariyer: sayfa yeniden monte
+    // oldu (alt satırın kutusu ekranda).
     async function takvimeDon() {
-      const onceki = cakismaSayisi()
       await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
-      await waitFor(() => expect(cakismaSayisi()).toBe(onceki + 1))
+      await screen.findByRole('checkbox', { name: 'Ödendi' })
     }
 
     await userEvent.click(kutu())
@@ -3309,14 +3392,11 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     // `AnaEkran`'da yaşayan `useDosyaNotu`'da; sekme dönüşü onu yeniden
     // istemez (ve bu testte dosya Bilgiler alt sekmesinde kaldığı için hiç
     // istenmez — alt sekme de artık dönüşte korunuyor). Pencerede YALNIZCA
-    // üç yazma kalmalı — araya yalnızca iki Takvim dönüşünün BEKLENEN
-    // çakışma sorguları giriyor (bkz. `takvimeDon`).
+    // üç yazma kalmalı (bkz. `takvimeDon`: form kapalı, çakışma sorgusu yok).
     const pencere = istekYollari.slice(once)
     expect(pencere).toEqual([
       'PATCH /api/randevular/202/odeme',
-      CAKISMA_202,
       'PATCH /api/randevular/202/odeme',
-      CAKISMA_202,
       'PATCH /api/randevular/202',
     ])
   })
@@ -3344,9 +3424,6 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Sonraki hafta' }))
     await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await screen.findByLabelText('Seans notu')
-    await waitFor(() =>
-      expect(istekYollari.filter((y) => y.startsWith('GET /api/cakisma?'))).toHaveLength(1),
-    )
 
     await userEvent.click(screen.getByRole('button', { name: 'Gelmedi' }))
     expect(await bakiye()).toBe(BAKIYE_450)
@@ -3369,9 +3446,6 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
       await userEvent.click(await screen.findByRole('button', { name: 'Sonraki hafta' }))
       await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
       await screen.findByLabelText('Seans notu')
-      await waitFor(() =>
-        expect(istekYollari.filter((y) => y.startsWith('GET /api/cakisma?'))).toHaveLength(1),
-      )
 
       const tumZaman =
         'GET /api/randevular?baslangic=2000-01-01T00%3A00&bitis=2100-01-01T00%3A00'

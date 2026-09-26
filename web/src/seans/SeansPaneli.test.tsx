@@ -30,8 +30,8 @@ const resmiNot: SeansNotu = {
   guncelleme_zamani: '2026-09-07T06:00:00Z',
 }
 
-// Sızıntı testlerinin kanaryası. Bu dizge resmî sekmede, geçmiş listesinde
-// ve resmî nota giden hiçbir istekte GÖRÜNMEMELİ.
+// Sızıntı testlerinin kanaryası. Bu dizge resmî sekmede ve resmî nota giden
+// hiçbir istekte GÖRÜNMEMELİ (sağ sütun: `SeansSayfasi.test.tsx` > "7.10").
 const GIZLI = 'GIZLI-OZEL-ABC'
 
 const ozelNot: OzelNot = {
@@ -40,79 +40,18 @@ const ozelNot: OzelNot = {
   guncelleme_zamani: '2026-09-07T06:00:00Z',
 }
 
-// Sunucu `ORDER BY a.baslangic DESC` uyguluyor. Bileşen listeyi
-// `guncelleme_zamani`'na göre yeniden sıralarsa sunucunun bildiği gerçek
-// seans sırası sessizce bozulur.
-//
-// Kurulum bilerek şöyle: geliş sırası `guncelleme_zamani`'na göre NE ARTAN
-// NE AZALAN sıraya denk geliyor. Tek bir yöne göre kurulsaydı, ters yöndeki
-// sıralama mutasyonu testi yeşil bırakırdı — sıralama anahtarının testte
-// görünmez kalması (sekizinci biçim) tam olarak budur.
-//
-//   geliş (seans):  31.08 · 24.08 · 17.08   (a.baslangic DESC — doğru sıra)
-//   son düzenleme:  05.09 · 31.08 · 20.09   (ne artan ne azalan)
-//
-// İnceleme I3'ün ölçtüğü şey de bu kurulumda görünür: son düzenleme
-// tarihleri sırasız, seans tarihleri sıralı. Ekranda YALNIZCA son düzenleme
-// gösterilseydi (eski hâl) kullanıcı sırasız bir liste görürdü.
-const gecmisNotlar: SeansNotu[] = [
-  {
-    appointment_id: 90,
-    client_id: 1,
-    danisan_adi: 'Ayşe Yılmaz',
-    seans_zamani: '2026-08-31T10:00',
-    sablon: 'dap',
-    icerik: 'gecen hafta konusulanlar',
-    onizleme: null,
-    guncelleme_zamani: '2026-09-05T06:00:00Z',
-  },
-  {
-    appointment_id: 80,
-    client_id: 1,
-    danisan_adi: 'Ayşe Yılmaz',
-    seans_zamani: '2026-08-24T10:00',
-    sablon: 'soap',
-    icerik: 'iki hafta onceki seans',
-    onizleme: null,
-    guncelleme_zamani: '2026-08-31T06:00:00Z',
-  },
-  {
-    appointment_id: 70,
-    client_id: 1,
-    danisan_adi: 'Ayşe Yılmaz',
-    seans_zamani: '2026-08-17T10:00',
-    sablon: 'serbest',
-    icerik: 'uc hafta onceki seans',
-    onizleme: null,
-    guncelleme_zamani: '2026-09-20T06:00:00Z',
-  },
-]
-
 type PanelProps = React.ComponentProps<typeof SeansPaneli>
-
-/** Alt satır testlerinin okuduğu ad; `randevu` ile aynı nesne. */
-const ornekRandevu = randevu
 
 function propsKur(ozel: Partial<PanelProps> = {}) {
   return {
     randevu,
-    gecmisNotlar,
     not: resmiNot,
     ozelNot,
     onNotKaydet: vi.fn().mockResolvedValue(undefined),
     onOzelNotKaydet: vi.fn().mockResolvedValue(undefined),
     onOzelSekme: vi.fn(),
-    onKapat: vi.fn(),
-    onDurumDegis: vi.fn().mockResolvedValue(undefined),
-    onOdemeDegis: vi.fn().mockResolvedValue(undefined),
-    onDanisanAc: vi.fn(),
     ...ozel,
   }
-}
-
-/** `rerender` için: aynı varsayılanlarla kurulmuş panel ÖĞESİ. */
-function panel(ozel: Partial<PanelProps> = {}) {
-  return <SeansPaneli {...propsKur(ozel)} />
 }
 
 function kur(ozel: Partial<PanelProps> = {}) {
@@ -130,141 +69,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
-})
-
-// İnceleme CRITICAL-1: Görev 8 öncesi takvimden danışana giden yol yoktu —
-// randevu ÇİPİNİN kendisi yalnızca seansı seçiyordu (`onSec`), panelin
-// içinde danışana giden bir düğme YOKTU. Başlıktaki ad artık bir düğme ve
-// `danisanaGit`e (burada `onDanisanAc` olarak enjekte ediliyor) gidiyor.
-describe('SeansPaneli — başlıktaki danışan adı', () => {
-  it('danisan adi bir dugme, tiklaninca onDanisanAc dogru client_id ile cagrilir', async () => {
-    const onDanisanAc = vi.fn()
-    const kullanici = userEvent.setup()
-    kur({ onDanisanAc })
-
-    const dugme = screen.getByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })
-    await kullanici.click(dugme)
-
-    expect(onDanisanAc).toHaveBeenCalledTimes(1)
-    expect(onDanisanAc).toHaveBeenCalledWith(randevu.client_id)
-  })
-
-  it('erisilebilir ad danisan listesindeki cipin adiyla AYNI kalipta ("... dosyasini ac")', () => {
-    // Aynı işe giden iki farklı düğmenin (seans paneli + danışan listesi
-    // çipi) ekran okuyucuya AYNI şekilde tanıtılması gerekir — biri
-    // "... dosyasını aç" derken öteki farklı bir kalıp kullansaydı
-    // kullanıcı iki düğmenin aynı işi yaptığını anlayamazdı.
-    kur()
-    expect(screen.getByRole('button', { name: 'Ayşe Yılmaz dosyasını aç' })).toBeDefined()
-  })
-})
-
-describe('SeansPaneli — geçmiş bağlam', () => {
-  it('sol tarafta son seanslarin notlari gorunur', () => {
-    kur()
-    // Başlık: seans tarihi + şablon adı + son düzenleme.
-    expect(screen.getByRole('button', { name: /31 Ağustos 2026, 10:00.*DAP.*05\.09\.2026/ })).toBeDefined()
-    expect(screen.getByRole('button', { name: /24 Ağustos 2026, 10:00.*SOAP.*31\.08\.2026/ })).toBeDefined()
-    expect(
-      screen.getByRole('button', { name: /17 Ağustos 2026, 10:00.*Serbest.*20\.09\.2026/ }),
-    ).toBeDefined()
-  })
-
-  // İnceleme I3: sıralama anahtarı ekranda görünmüyordu. Liste
-  // `a.baslangic DESC` ile geliyor ama ekrandaki tek tarih "Son düzenleme"
-  // idi ve o alan sıralı DEĞİL — terapist "hangisi son seanstı" sorusuna
-  // panelden cevap alamıyordu.
-  it('her satirda SEANS TARIHI gorunur ve o tarihler ekranda sirali', () => {
-    kur()
-    const gecmis = screen.getByRole('region', { name: 'Önceki seans notları' })
-    const metinler = within(gecmis)
-      .getAllByRole('button')
-      .map((d) => d.textContent ?? '')
-
-    // Seans tarihleri ekranda, ve azalan sırada.
-    const seansTarihleri = metinler.map((m) => /Seans: (\d{1,2} \S+ \d{4})/.exec(m)?.[1])
-    expect(seansTarihleri).toEqual(['31 Ağustos 2026', '24 Ağustos 2026', '17 Ağustos 2026'])
-
-    // "Son düzenleme" hâlâ var ama SIRALI DEĞİL: ekrandaki tek tarih o
-    // olsaydı liste sırasız görünürdü. Bu iddia olmadan üstteki, seans
-    // tarihinin gerçekten sıralama anahtarı olduğunu göstermezdi.
-    const duzenlemeler = metinler.map((m) => /Son düzenleme: (\d{2}\.\d{2}\.\d{4})/.exec(m)?.[1])
-    expect(duzenlemeler).toEqual(['05.09.2026', '31.08.2026', '20.09.2026'])
-  })
-
-  it('seans tarihi zaman dilimine gore KAYMAZ (Date kullanilmiyor)', () => {
-    // Gece yarısına yakın bir seans: `new Date('2026-08-31T00:30')` yerel
-    // saate göre yorumlanır ve UTC'ye çevrilirse tarih bir gün kayar.
-    // Kayan şey listenin sıralama anahtarı olurdu.
-    kur({
-      gecmisNotlar: [{ ...gecmisNotlar[0], seans_zamani: '2026-08-31T00:30' }],
-    })
-    expect(screen.getByRole('button', { name: /Seans: 31 Ağustos 2026, 00:30/ })).toBeDefined()
-  })
-
-  it('liste SUNUCUDAN geldigi sirada basilir, guncelleme zamanina gore yeniden siralanmaz', () => {
-    kur()
-    const gecmis = screen.getByRole('region', { name: 'Önceki seans notları' })
-    const adlar = within(gecmis)
-      .getAllByRole('button')
-      .map((d) => d.textContent ?? '')
-    // Geliş sırası: DAP · SOAP · Serbest. `guncelleme_zamani`'na göre artan
-    // ya da azalan sıralayan bir uygulama bu diziyi tutturamaz.
-    expect(adlar).toHaveLength(3)
-    expect(adlar[0]).toContain('DAP')
-    expect(adlar[1]).toContain('SOAP')
-    expect(adlar[2]).toContain('Serbest')
-  })
-
-  it('gecmis notlar katlanmis baslar, tiklayinca acilir', async () => {
-    kur()
-    const dugme = screen.getByRole('button', { name: /DAP/ })
-    expect(dugme.getAttribute('aria-expanded')).toBe('false')
-    expect(screen.queryByText('gecen hafta konusulanlar')).toBeNull()
-
-    await userEvent.click(dugme)
-
-    expect(dugme.getAttribute('aria-expanded')).toBe('true')
-    expect(screen.getByText('gecen hafta konusulanlar')).toBeDefined()
-  })
-
-  it('acilan not tekrar tiklayinca kapanir', async () => {
-    // Ters yön: "her zaman açık" bir liste de üstteki testi geçerdi.
-    kur()
-    const dugme = screen.getByRole('button', { name: /DAP/ })
-    await userEvent.click(dugme)
-    await userEvent.click(dugme)
-    expect(dugme.getAttribute('aria-expanded')).toBe('false')
-    expect(screen.queryByText('gecen hafta konusulanlar')).toBeNull()
-  })
-
-  it('iki gecmis not ayni anda acik olabilir', async () => {
-    kur()
-    await userEvent.click(screen.getByRole('button', { name: /DAP/ }))
-    await userEvent.click(screen.getByRole('button', { name: /SOAP/ }))
-    expect(screen.getByText('gecen hafta konusulanlar')).toBeDefined()
-    expect(screen.getByText('iki hafta onceki seans')).toBeDefined()
-  })
-
-  it('gecmis not yoksa bilgilendirici bos durum gosterir', () => {
-    kur({ gecmisNotlar: [] })
-    expect(screen.getByText(/önceki seanslarından kayıtlı not yok/i)).toBeDefined()
-    expect(screen.getByText(/İlk seans ise/i)).toBeDefined()
-  })
-
-  // Modül başlığındaki "DOM sırası da öyle" iddiasının testi yoktu
-  // (onuncu biçim: gerekçe yorumunun testin yerine geçmesi). Sıra ekran
-  // okuyucu ve klavye kullanıcısı için önemli: bağlam önce gelmeli.
-  // CSS sırasını değiştiren bir `order-` sınıfı bu iddiayı bozmadan
-  // görüntüyü değiştirebilir; ölçülen şey DOM.
-  it('gecmis bolumu DOM sirasinda sekmelerden ONCE gelir', () => {
-    kur()
-    const gecmis = screen.getByRole('region', { name: 'Önceki seans notları' })
-    const sekmeler = screen.getByRole('tablist')
-    // DOCUMENT_POSITION_FOLLOWING = 4: `sekmeler`, `gecmis`'ten SONRA.
-    expect(gecmis.compareDocumentPosition(sekmeler) & Node.DOCUMENT_POSITION_FOLLOWING)
-      .toBeTruthy()
-  })
 })
 
 // WAI-ARIA tab deseni: sekme şeridi klavyede tek durak, içinde ok
@@ -431,16 +235,6 @@ describe('SeansPaneli — özel not resmî tarafa sızmaz', () => {
     expect((screen.getByLabelText('Özel notum') as HTMLTextAreaElement).value).toBe(GIZLI)
   })
 
-  it('ozel not gecmis listesinde gorunmez (tum gecmis acikken bile)', async () => {
-    kur()
-    await userEvent.click(screen.getByRole('button', { name: /DAP/ }))
-    await userEvent.click(screen.getByRole('button', { name: /SOAP/ }))
-    const gecmis = screen.getByRole('region', { name: 'Önceki seans notları' })
-    expect(gecmis.textContent).not.toContain(GIZLI)
-    // Geçmiş gerçekten dolu: boş bir bölüm de üstteki iddiayı geçerdi.
-    expect(gecmis.textContent).toContain('gecen hafta konusulanlar')
-  })
-
   it('resmi sekmede yazilan metin YALNIZCA resmi kayda gider', async () => {
     const { onNotKaydet, onOzelNotKaydet, unmount } = kur()
     await userEvent.type(screen.getByLabelText('Seans notu'), ' ek')
@@ -552,7 +346,6 @@ function Harness() {
   return (
     <SeansPaneli
       randevu={randevu}
-      gecmisNotlar={[]}
       not={not}
       ozelNot={ozel}
       onNotKaydet={async (kayit) => {
@@ -562,10 +355,6 @@ function Harness() {
         setOzel((o) => ({ ...o, icerik }))
       }}
       onOzelSekme={vi.fn()}
-      onKapat={vi.fn()}
-      onDurumDegis={vi.fn()}
-      onOdemeDegis={vi.fn()}
-      onDanisanAc={vi.fn()}
     />
   )
 }
@@ -625,16 +414,11 @@ describe('SeansPaneli — seans değişimi (`key` yolu, ikincil hat)', () => {
     const { rerender } = render(
       <SeansPaneli
         randevu={randevu}
-        gecmisNotlar={[]}
         not={{ ...resmiNot, icerik: 'A notu' }}
         ozelNot={ozelNot}
         onNotKaydet={kaydetA}
         onOzelNotKaydet={vi.fn()}
         onOzelSekme={vi.fn()}
-        onKapat={vi.fn()}
-        onDurumDegis={vi.fn()}
-        onOdemeDegis={vi.fn()}
-        onDanisanAc={vi.fn()}
       />,
     )
 
@@ -643,16 +427,11 @@ describe('SeansPaneli — seans değişimi (`key` yolu, ikincil hat)', () => {
     rerender(
       <SeansPaneli
         randevu={randevuB}
-        gecmisNotlar={[]}
         not={notB}
         ozelNot={{ ...ozelNot, appointment_id: 102, icerik: '' }}
         onNotKaydet={kaydetB}
         onOzelNotKaydet={vi.fn()}
         onOzelSekme={vi.fn()}
-        onKapat={vi.fn()}
-        onDurumDegis={vi.fn()}
-        onOdemeDegis={vi.fn()}
-        onDanisanAc={vi.fn()}
       />,
     )
 
@@ -680,16 +459,11 @@ describe('SeansPaneli — seans değişimi (`key` yolu, ikincil hat)', () => {
     ) => (
       <SeansPaneli
         randevu={r}
-        gecmisNotlar={[]}
         not={resmiNot}
         ozelNot={o}
         onNotKaydet={vi.fn().mockResolvedValue(undefined)}
         onOzelNotKaydet={kaydet}
         onOzelSekme={vi.fn()}
-        onKapat={vi.fn()}
-        onDurumDegis={vi.fn()}
-        onOdemeDegis={vi.fn()}
-        onDanisanAc={vi.fn()}
       />
     )
     const { rerender } = render(paneli(randevu, { ...ozelNot, icerik: 'A ozel' }, ozelA))
@@ -706,172 +480,6 @@ describe('SeansPaneli — seans değişimi (`key` yolu, ikincil hat)', () => {
 
     await waitFor(() => expect(ozelA).toHaveBeenCalledWith('A ozel BEKLEYEN'))
     expect(ozelB).not.toHaveBeenCalled()
-  })
-})
-
-// Plan 4 Görev 2 — tasarım §6: "Panelin altında tek satırda: geldi/gelmedi/
-// iptal + ücret + ödendi."
-describe('SeansPaneli — alt satır: durum, ücret, ödendi', () => {
-  it('odendi kutusu isaretlenince TEK istek gider ve kutu isaretli kalir', async () => {
-    const onOdemeDegis = vi.fn().mockResolvedValue(undefined)
-    kur({ randevu: { ...ornekRandevu, ucret: 45000, odendi: false }, onOdemeDegis })
-    const kutu = screen.getByRole('checkbox', { name: 'Ödendi' }) as HTMLInputElement
-    expect(kutu.checked).toBe(false)
-    await userEvent.click(kutu)
-    expect(onOdemeDegis).toHaveBeenCalledTimes(1)
-    expect(onOdemeDegis).toHaveBeenCalledWith(true)
-    expect(kutu.checked).toBe(true)
-  })
-
-  it('odeme istegi basarisiz olursa kutu ESKI haline doner ve hata duyurulur', async () => {
-    const onOdemeDegis = vi.fn().mockRejectedValue(new Error('Kayıt bulunamadı.'))
-    kur({ randevu: { ...ornekRandevu, ucret: 45000, odendi: false }, onOdemeDegis })
-    const kutu = screen.getByRole('checkbox', { name: 'Ödendi' }) as HTMLInputElement
-    await userEvent.click(kutu)
-    expect((await screen.findByRole('alert')).textContent).toContain('Kayıt bulunamadı.')
-    expect(kutu.checked).toBe(false)
-  })
-
-  it('ucret TL olarak gosterilir; ucret yoksa bunu soyler', () => {
-    const { rerender } = kur({ randevu: { ...ornekRandevu, ucret: 45050 } })
-    expect(screen.getByText('450,50 TL')).toBeDefined()
-    rerender(panel({ randevu: { ...ornekRandevu, ucret: null } }))
-    expect(screen.getByText('Ücret girilmemiş')).toBeDefined()
-  })
-
-  it('secili durum aria-pressed ile belirtilir', () => {
-    kur({ randevu: { ...ornekRandevu, durum: 'gelmedi' } })
-    expect(screen.getByRole('button', { name: 'Gelmedi' }).getAttribute('aria-pressed')).toBe('true')
-    expect(screen.getByRole('button', { name: 'Geldi' }).getAttribute('aria-pressed')).toBe('false')
-  })
-
-  // --- Brief'in dört iddiasının yanındakiler --------------------------------
-
-  it('isaretli kutunun isareti kaldirilinca false gider (iki yon)', async () => {
-    // Yalnızca `true` gönderen bir uygulama ilk testi geçerdi.
-    const onOdemeDegis = vi.fn().mockResolvedValue(undefined)
-    kur({ randevu: { ...ornekRandevu, ucret: 45000, odendi: true }, onOdemeDegis })
-    const kutu = screen.getByRole('checkbox', { name: 'Ödendi' }) as HTMLInputElement
-    expect(kutu.checked).toBe(true)
-    await userEvent.click(kutu)
-    expect(onOdemeDegis).toHaveBeenCalledExactlyOnceWith(false)
-    expect(kutu.checked).toBe(false)
-  })
-
-  it('istek suruyorken ikinci tiklama IKINCI istek uretmez', async () => {
-    // Denetim hacmi: bir ödeme işaretleme tek PATCH. Hızlı çift tıklama
-    // (işaretle + geri al) iki yazma ve iki silinemez satır bırakırdı.
-    let coz: () => void = () => {}
-    const onOdemeDegis = vi.fn(() => new Promise<void>((r) => { coz = r }))
-    kur({ randevu: { ...ornekRandevu, odendi: false }, onOdemeDegis })
-    const kutu = screen.getByRole('checkbox', { name: 'Ödendi' }) as HTMLInputElement
-    await userEvent.click(kutu)
-    await userEvent.click(kutu)
-    expect(onOdemeDegis).toHaveBeenCalledTimes(1)
-    coz()
-    await waitFor(() => expect(kutu.disabled).toBe(false))
-    expect(kutu.checked).toBe(true)
-  })
-
-  // Görev 2 inceleme M2: durum düğmelerinin kilidi (`disabled`) testsizdi.
-  // Kaldırıldığında hızlı bir çift tıklama iki PATCH ve sunucuda iki
-  // silinemez denetim satırı üretir.
-  it('durum istegi suruyorken HICBIR alt satir denetimi ikinci istek uretemez; kilit kalkinca uretir', async () => {
-    let coz: () => void = () => {}
-    const onDurumDegis = vi.fn(() => new Promise<void>((r) => { coz = r }))
-    const onOdemeDegis = vi.fn().mockResolvedValue(undefined)
-    kur({ onDurumDegis, onOdemeDegis })
-    const dugme = (ad: string) => screen.getByRole('button', { name: ad }) as HTMLButtonElement
-    const kutu = () => screen.getByRole('checkbox', { name: 'Ödendi' }) as HTMLInputElement
-
-    await userEvent.click(dugme('Geldi'))
-    expect(onDurumDegis).toHaveBeenCalledExactlyOnceWith('geldi')
-    for (const ad of ['Geldi', 'Gelmedi', 'İptal']) expect(dugme(ad).disabled).toBe(true)
-    expect(kutu().disabled).toBe(true)
-
-    await userEvent.click(dugme('Geldi'))
-    await userEvent.click(dugme('Gelmedi'))
-    await userEvent.click(kutu())
-    expect(onDurumDegis).toHaveBeenCalledTimes(1)
-    expect(onOdemeDegis).not.toHaveBeenCalled()
-
-    // ARTI YÖN: kilit kalkınca yeni istek GİDER — "hep kilitli" bir satır da
-    // üstteki iddiaları geçerdi.
-    coz()
-    await waitFor(() => expect(dugme('Gelmedi').disabled).toBe(false))
-    await userEvent.click(dugme('Gelmedi'))
-    expect(onDurumDegis).toHaveBeenCalledTimes(2)
-    expect(onDurumDegis).toHaveBeenLastCalledWith('gelmedi')
-  })
-
-  it('durum dugmesi onDurumDegis e kodu gecirir; hata alert ile duyurulur', async () => {
-    const onDurumDegis = vi
-      .fn()
-      .mockResolvedValueOnce(undefined)
-      .mockRejectedValueOnce(new Error('Randevu güncellenemedi.'))
-    kur({ onDurumDegis })
-    expect(screen.queryByRole('alert')).toBeNull()
-
-    await userEvent.click(screen.getByRole('button', { name: 'Geldi' }))
-    expect(onDurumDegis).toHaveBeenCalledWith('geldi')
-
-    await userEvent.click(screen.getByRole('button', { name: 'İptal' }))
-    expect(onDurumDegis).toHaveBeenLastCalledWith('iptal')
-    expect((await screen.findByRole('alert')).textContent).toContain('Randevu güncellenemedi.')
-  })
-
-  it('durum prop u degisince (ayni seans) aria-pressed onu izler', () => {
-    // `useTakvimAkisi.durumDegis` seçili randevunun kopyasını AYNI kimlikle
-    // tazeliyor, panel yeniden mount EDİLMİYOR. Durum yerel bir kopyada
-    // tutulsaydı "Geldi"ye basınca vurgu eski düğmede kalırdı.
-    const { rerender } = kur({ randevu: { ...ornekRandevu, durum: 'planlandi' } })
-    expect(screen.getByRole('button', { name: 'Geldi' }).getAttribute('aria-pressed')).toBe('false')
-    rerender(panel({ randevu: { ...ornekRandevu, durum: 'geldi' } }))
-    expect(screen.getByRole('button', { name: 'Geldi' }).getAttribute('aria-pressed')).toBe('true')
-    expect(screen.getByRole('button', { name: 'Gelmedi' }).getAttribute('aria-pressed')).toBe('false')
-  })
-})
-
-describe('SeansPaneli — kapatma', () => {
-  it('Seansi kapat dugmesi onKapat cagirir', async () => {
-    const { onKapat } = kur()
-    await userEvent.click(screen.getByRole('button', { name: 'Seansı kapat' }))
-    expect(onKapat).toHaveBeenCalledTimes(1)
-  })
-
-  // Plan A Görev 10 (tasarım A6): seans bölümü takvimin ALTINDA; başlıktaki
-  // "Takvime dön" sayfayı takvimin başına kaydırır. Seçimi KAPATMAZ (o iş
-  // "Seansı kapat"ın) ve "Seansı kapat"ın solunda durur.
-  it('"Takvime don" Seansi kapat in solunda; takvim izgarasini kaydirir, seansi kapatmaz', async () => {
-    const izgara = document.createElement('div')
-    izgara.setAttribute('data-testid', 'takvim-izgara')
-    document.body.appendChild(izgara)
-    const kaydir = vi.spyOn(Element.prototype, 'scrollIntoView')
-    try {
-      const { onKapat } = kur()
-      const don = screen.getByRole('button', { name: 'Takvime dön' })
-      const kapat = screen.getByRole('button', { name: 'Seansı kapat' })
-      expect(don.compareDocumentPosition(kapat) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-
-      await userEvent.click(don)
-      expect(kaydir).toHaveBeenCalledTimes(1)
-      expect(kaydir.mock.contexts[0]).toBe(izgara)
-      expect(kaydir).toHaveBeenCalledWith({ block: 'start' })
-      expect(onKapat).not.toHaveBeenCalled()
-    } finally {
-      izgara.remove()
-    }
-  })
-
-  it('baslikta danisan adi ve saat gorunur', () => {
-    kur()
-    const baslik = screen.getByRole('region', { name: 'Seans' })
-    // İnceleme CRITICAL-1: danışan adı artık bir DÜĞME (bkz. "başlıktaki
-    // danışan adı" bloğu) — `getByText` bir düzenli ifadeyi tek bir metin
-    // düğümünde arar ve ad artık ayrı bir öğede olduğu için "metin birden
-    // çok öğeye bölünmüş" hatasıyla patlar. `textContent` düğüm sınırlarını
-    // GÖRMEZDEN GELİR, birleşik metni ölçer.
-    expect(baslik.textContent).toMatch(/Ayşe Yılmaz — 7 Eylül 2026, 10:00/)
   })
 })
 

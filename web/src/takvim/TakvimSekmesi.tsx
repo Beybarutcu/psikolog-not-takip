@@ -3,8 +3,7 @@ import { aramaApi, takvimApi, type Danisan, type Etiket } from '../api'
 import type { EtiketBaglami } from '../etiket/EtiketSatiri'
 import { HizliArama } from '../arama/HizliArama'
 import { AyOzeti } from '../ozet/AyOzeti'
-import { SeansAltSatiri } from '../seans/SeansAltSatiri'
-import { SeansPaneli } from '../seans/SeansPaneli'
+import { SeansSayfasi } from '../seans/SeansSayfasi'
 import { useDakikalikSimdi } from '../screens/anaEkranKancalari/yerelGun'
 import type { useSeansNotlari } from '../screens/anaEkranKancalari/useSeansNotlari'
 import type { useTakvimAkisi } from '../screens/anaEkranKancalari/useTakvimAkisi'
@@ -36,7 +35,7 @@ import { RandevuPaneli } from './RandevuPaneli'
  * bağ `AnaEkran`'da kuruluyor. O bağı burada yeniden kurmak (örn. `onYetkisiz`
  * geri çağrısını bu bileşene taşımak) akışları ÇAĞIRANI ikiye bölerdi; hook
  * çağrıları `AnaEkran`'da kalıyor, yalnızca SONUÇLARI (ve dönüştürülmüş
- * `RandevuPaneli`/`SeansPaneli` prop'ları) buraya iniyor.
+ * `RandevuPaneli`/`SeansSayfasi` prop'ları) buraya iniyor.
  *
  * # `onDurumDegis` / `onOdemeDegis` neden PROP, `takvim.durumDegis` DEĞİL
  *
@@ -46,7 +45,7 @@ import { RandevuPaneli } from './RandevuPaneli'
  * bu bileşenin GÖRMEDİĞİ state. `AnaEkran` bu üçünü birleştiren bileşik
  * fonksiyonları geçiyor; bu bileşen yalnızca hangi randevu kimliğine
  * uygulanacağını biliyor ve onu bağlıyor (eskiden `AnaEkran` içinde satır
- * içi yapılan aynı bağlama, bkz. `SeansPaneli`/`SeansAltSatiri` çağrıları).
+ * içi yapılan aynı bağlama, bkz. `SeansSayfasi` çağrısı).
  *
  * # Ay özeti KAPALI başlar — bu state artık BURADA yaşıyor
  *
@@ -75,10 +74,14 @@ import { RandevuPaneli } from './RandevuPaneli'
  * yanlışlıkla geçerdi (bkz. görev raporu). `id`'siz bir `<div>` sarmalayıcı
  * bu ölçümün tek çapası.
  *
- * Plan A Görev 10'dan beri bu kanca yalnızca testlerin değil: `SeansPaneli`
- * başlığındaki "Takvime dön" ızgarayı BU seçiciyle bulup kaydırıyor. Kanca
- * kaldırılır ya da adı değişirse düğme sessizce hiçbir şey yapmaz (ölçen
- * test: `TakvimSekmesi.test.tsx` > "10.9").
+ * # Not sayfası ızgaranın YERİNE (tasarım N1)
+ *
+ * Seçili randevu varken ızgara ve boş saat formu çizilmez, `SeansSayfasi`
+ * çizilir; hafta araç çubuğu, bugün satırı ve ay özeti yerinde kalır.
+ * "Takvime dön" seçimi kapatır (`takvim.panelKapat`), hafta DEĞİŞMEZ.
+ * Kaydırma isteği (A6) artık sayfanın başına. "Bu seansa git" başka bir
+ * haftaya gidiyorsa (N8) hafta yüklenene kadar ızgaranın yerinde "Seans
+ * açılıyor…" durur (`takvim.gecisBekliyor`).
  *
  * # Tek araç çubuğu, tek "şimdi" kaynağı (Görev 5, tasarım §4 A1/A2)
  *
@@ -191,7 +194,6 @@ export function TakvimSekmesi({
   const buHafta = haftaninBasi(zamandanDate(simdi)).getTime() === takvim.haftaBasi.getTime()
 
   const { seciliRandevu, seciliBosSaat } = takvim
-  const seans = seansAkisi.seans
 
   // Kaydırma (tasarım A6): istek kancada (`kaydirmaIstegi`), yalnızca
   // kullanıcı seçiminde kurulur; burada UYGULANIR ve hemen TÜKETİLİR. Sekme
@@ -318,7 +320,7 @@ export function TakvimSekmesi({
                 <button
                   type="button"
                   className="underline"
-                  // Kullanıcı seçimi: seans bölümüne kaydırır (tasarım A6).
+                  // Kullanıcı seçimi: not sayfasını açar (tasarım N1, A6).
                   onClick={() => takvim.randevuSec(o.siradaki as Randevu, { kaydir: true })}
                 >
                   {o.siradaki.baslangic.slice(11, 16)} {o.siradaki.danisan_adi}
@@ -331,155 +333,78 @@ export function TakvimSekmesi({
 
       {takvim.hata && <p className="mb-4 text-sm text-red-600">{takvim.hata}</p>}
 
-      <div className="flex flex-wrap items-start gap-4">
-        <div className="min-w-0 flex-1 basis-[720px]" data-testid="takvim-izgara">
-          <HaftalikTakvim
-            randevular={takvim.randevular}
-            haftaBasi={takvim.haftaBasi}
-            // Izgaradaki blok ve "aralık dışı" listesindeki düğmeler
-            // KULLANICI seçimi: seans bölümüne kaydırır (tasarım A6).
-            onRandevuSec={(r) => takvim.randevuSec(r, { kaydir: true })}
-            onBosSaatSec={takvim.bosSaatSec}
-            simdi={simdi}
-          />
-        </div>
-
-        {/* Yalnızca BOŞ SAATİN yeni randevu formu ızgaranın yanında (A3);
-            var olan randevunun formu aşağıdaki seans bölümünde. */}
-        {seciliBosSaat !== null && (
-          <div className="shrink-0">
-            <RandevuPaneli
-              // Seçim değişince (başka bir boş saat) bileşen yeniden mount
-              // edilmeli — aksi hâlde panelin iç state'i (doldurulmuş form
-              // alanları) önceki seçimden yeni seçime sızar (bkz. Görev 10
-              // inceleme Bulgu 1, AnaEkran'dan taşındı).
-              key={`bos-${seciliBosSaat}`}
-              zaman={seciliBosSaat}
-              randevu={null}
-              danisanlar={danisanlar}
-              onKaydet={onRandevuKaydet}
-              onSil={onRandevuSil}
-              onSeriSil={onSeriSil}
-              seriSayisiAl={takvimApi.seriSayisi}
-              silinecekNotSayisiAl={takvimApi.silinecekNotSayisi}
-              onKapat={takvim.panelKapat}
-              cakismaKontrol={takvimApi.cakismaKontrol}
+      {seciliRandevu !== null ? (
+        <SeansSayfasi
+          // Anahtar YALNIZCA kimlik: başka seans sekmeyi/formu sıfırlar, taşıma
+          // (yeni başlangıç) editörü yeniden monte ETMEZ (ölçen test:
+          // `AnaEkran.test.tsx` > "10.4"). Doğrudan A->B geçişinde (bilgi
+          // satırındaki "sıradaki", Görev 8'in "Bu seansa git"i aynı hafta)
+          // açık form ve silme onayı B'ye sızmaz (ölçen test:
+          // `TakvimSekmesi.test.tsx` > "7.13").
+          key={`seans-${seciliRandevu.id}`}
+          ref={seansBolumuRef}
+          randevu={seciliRandevu}
+          seansAkisi={seansAkisi}
+          danisanlar={danisanlar}
+          onTakvimeDon={takvim.panelKapat}
+          // CRITICAL-1: aynı `onDanisanAc` — danışan çipi, hızlı arama, ay
+          // özeti ile AYNI yol (bkz. `AnaEkran.tsx::danisanaGit`). Seans
+          // kimliği de gidiyor: dosya BU seans seçili açılır (son inceleme I3).
+          onDanisanAc={(clientId) => onDanisanAc(clientId, seciliRandevu.id)}
+          onDurumDegis={(durum) => onDurumDegis(seciliRandevu.id, durum)}
+          onOdemeDegis={(odendi) => onOdemeDegis(seciliRandevu.id, odendi)}
+          onRandevuKaydet={onRandevuKaydet}
+          onRandevuSil={onRandevuSil}
+          onSeriSil={onSeriSil}
+          etiket={etiketBaglami(seciliRandevu.id)}
+        />
+      ) : takvim.gecisBekliyor ? (
+        // "Bu seansa git" başka bir haftaya: hafta yüklenene kadar (tasarım N8).
+        <p role="status" className="text-sm text-slate-600">Seans açılıyor…</p>
+      ) : (
+        <div className="flex flex-wrap items-start gap-4">
+          <div className="min-w-0 flex-1 basis-[720px]" data-testid="takvim-izgara">
+            <HaftalikTakvim
+              randevular={takvim.randevular}
+              haftaBasi={takvim.haftaBasi}
+              // Izgaradaki blok ve "aralık dışı" listesindeki düğmeler
+              // KULLANICI seçimi: not sayfasını açar ve başına kaydırır
+              // (tasarım N1, A6).
+              onRandevuSec={(r) => takvim.randevuSec(r, { kaydir: true })}
+              onBosSaatSec={takvim.bosSaatSec}
+              simdi={simdi}
             />
           </div>
-        )}
-      </div>
 
-      {/* SEANS BÖLÜMÜ (tasarım A6): var olan bir randevu seçilince form ile
-          seans paneli takvimin ALTINDA, ay özetinden ÖNCE tek bir bölüm. Form
-          solda dar kolon, seans paneli sağda; pencere ikisini yan yana
-          sığdırmıyorsa `flex-wrap` formu üste, notu alta alır.
-
-          Erişilebilir ad "Seans bölümü", "Seans" DEĞİL: içindeki seans
-          paneli zaten "Seans" başlıklı bir bölge ve aynı adlı iki iç içe
-          bölge, o paneli adıyla arayan her sorguyu (testler ve ekran
-          okuyucunun bölge listesi) belirsiz kılardı. */}
-      {seciliRandevu !== null && (
-        <section
-          ref={seansBolumuRef}
-          id="seans-bolumu"
-          data-testid="seans-bolumu"
-          aria-label="Seans bölümü"
-          className="mt-4 flex scroll-mt-2 flex-wrap items-start gap-4"
-        >
-          <RandevuPaneli
-            // Başka bir randevuya geçiş bileşeni yeniden MONTE eder (iç
-            // state — silme onayı, doldurulmuş alanlar — sızmasın; bkz.
-            // Görev 10 inceleme Bulgu 1). Kimlik aynıyken (Güncelle, liste
-            // tazelemesi, Geldi) monte OLMAZ: taze kayıt `RandevuPaneli`nin
-            // yeniden eşitleme efektine (R9) gelir.
-            key={`randevu-${seciliRandevu.id}`}
-            gomulu
-            zaman={seciliRandevu.baslangic}
-            randevu={seciliRandevu}
-            danisanlar={danisanlar}
-            onKaydet={onRandevuKaydet}
-            onSil={onRandevuSil}
-            onSeriSil={onSeriSil}
-            seriSayisiAl={takvimApi.seriSayisi}
-            silinecekNotSayisiAl={takvimApi.silinecekNotSayisi}
-            onKapat={takvim.panelKapat}
-            cakismaKontrol={takvimApi.cakismaKontrol}
-          />
-          <div className="min-w-0 flex-1 basis-[480px]">
-            {/* Seans paneli YALNIZCA mevcut bir randevu seçiliyken açılır: boş
-                bir saatte henüz bir `appointment_id` yok ve not ona bağlanır. */}
-            {seans.hata === null ? (
-              <SeansPaneli
-                // Seans değişince panel yeniden mount edilmeli: sekme seçimi
-                // (özellikle "Özel Notlarım") bir seanstan diğerine sızmamalı.
-                // Anahtar YALNIZCA kimlik: taşıma (yeni başlangıç) editörü
-                // yeniden monte ETMEZ — yazılmamış metin yerinde kalır
-                // (tasarım A6; ölçen test: `AnaEkran.test.tsx` > "10.4").
-                key={`seans-${seciliRandevu.id}`}
-                randevu={seciliRandevu}
-                gecmisNotlar={seans.gecmisNotlar}
-                not={seans.not}
-                ozelNot={seans.ozelNot}
-                ozelHata={seans.ozelHata}
-                onNotKaydet={seansAkisi.notKaydet}
-                onOzelNotKaydet={seansAkisi.ozelNotKaydet}
-                onOzelSekme={seansAkisi.ozelSekmeAcildi}
-                onOzelYenidenDene={seansAkisi.ozelYenidenDene}
+          {/* Yalnızca BOŞ SAATİN yeni randevu formu ızgaranın yanında (A3);
+              var olan randevunun formu not sayfasında (N3). */}
+          {seciliBosSaat !== null && (
+            <div className="shrink-0">
+              <RandevuPaneli
+                // Seçim değişince (başka bir boş saat) bileşen yeniden mount
+                // edilmeli — aksi hâlde panelin iç state'i (doldurulmuş form
+                // alanları) önceki seçimden yeni seçime sızar (bkz. Görev 10
+                // inceleme Bulgu 1, AnaEkran'dan taşındı).
+                key={`bos-${seciliBosSaat}`}
+                zaman={seciliBosSaat}
+                randevu={null}
+                danisanlar={danisanlar}
+                onKaydet={onRandevuKaydet}
+                onSil={onRandevuSil}
+                onSeriSil={onSeriSil}
+                seriSayisiAl={takvimApi.seriSayisi}
+                silinecekNotSayisiAl={takvimApi.silinecekNotSayisi}
                 onKapat={takvim.panelKapat}
-                onDurumDegis={(durum) => onDurumDegis(seciliRandevu.id, durum)}
-                onOdemeDegis={(odendi) => onOdemeDegis(seciliRandevu.id, odendi)}
-                // CRITICAL-1: aynı `onDanisanAc` — danışan çipi, hızlı arama, ay
-                // özeti ile AYNI yol (bkz. `AnaEkran.tsx::danisanaGit`). Seans
-                // kimliği de gidiyor: dosya BU seans seçili açılır (son inceleme
-                // I3 — terapist panelde baktığı seansın dosyadaki hâlini arıyor).
-                onDanisanAc={(clientId) => onDanisanAc(clientId, seciliRandevu.id)}
-                etiket={etiketBaglami(seciliRandevu.id)}
+                cakismaKontrol={takvimApi.cakismaKontrol}
               />
-            ) : (
-              // Yükleme başarısızsa panel AÇILMAZ: "yükleniyor…" yazan bir panel
-              // sonsuza kadar öyle kalır ve kullanıcı notunun neden gelmediğini
-              // bilemez.
-              <div className="mt-4">
-                <div role="alert" className="rounded border border-red-300 bg-red-50 p-3">
-                  <p className="text-sm text-red-800">Seans notu yüklenemedi. {seans.hata}</p>
-                  <div className="mt-2 flex gap-2">
-                    <button
-                      type="button"
-                      className="rounded border border-red-300 px-2 py-1 text-sm"
-                      onClick={seansAkisi.yenidenDene}
-                    >
-                      Yeniden dene
-                    </button>
-                    {/* Düzeltme turu 1 (kontrolör R12): bölümdeki form gömülü
-                        ("Kapat" yok) ve seçimi kapatan "Seansı kapat" seans
-                        panelinde; panel çizilmeyince bölümün kapatma yolu
-                        kalmıyordu. */}
-                    <button
-                      type="button"
-                      className="rounded border px-2 py-1 text-sm"
-                      onClick={takvim.panelKapat}
-                    >
-                      Seansı kapat
-                    </button>
-                  </div>
-                </div>
-                {/* Durum ve ödeme notlara BAĞLI DEĞİL: notlar okunamasa da
-                    işaretlenebilmeli (Görev 2 inceleme I1, AnaEkran'dan taşındı). */}
-                <SeansAltSatiri
-                  key={`seans-alt-${seciliRandevu.id}`}
-                  randevu={seciliRandevu}
-                  onDurumDegis={(durum) => onDurumDegis(seciliRandevu.id, durum)}
-                  onOdemeDegis={(odendi) => onOdemeDegis(seciliRandevu.id, odendi)}
-                />
-              </div>
-            )}
-          </div>
-        </section>
+            </div>
+          )}
+        </div>
       )}
 
-      {/* Ay özeti burada, TAKVİMDEN (ve seans bölümünden) SONRA: sıralama
-          testleri ("takvim, ay özeti panelinden önce gelir", "10.7 DOM
-          sirasi") tam olarak bunu ölçüyor. Borçlu satırı GERÇEK danışan
+      {/* Ay özeti burada, TAKVİMDEN (ve not sayfasından) SONRA: sıralama
+          testleri ("takvim, ay özeti panelinden önce gelir", "7.11 N1")
+          tam olarak bunu ölçüyor. Borçlu satırı GERÇEK danışan
           kartını açar: danışan çipiyle aynı `onDanisanAc` yolu. Açık/kapalı
           state (yukarıda) burada kuruluyor — panel takvimin ÜSTÜNDE değil,
           üst satırın altında açılan bir panel (Görev 3 ürün kararı); "altında"

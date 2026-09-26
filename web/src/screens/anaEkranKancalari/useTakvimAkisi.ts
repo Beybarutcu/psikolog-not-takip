@@ -40,6 +40,11 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
   // her montajda yeniden kaydırırdı. Liste tazelemesi, hafta değişimi ve
   // taşıma sonrası tazeleme bu isteği KURMAZ.
   const [kaydirmaIstegi, setKaydirmaIstegi] = useState<number | null>(null)
+  // "Bu seansa git" (tasarım N8): hedef başka haftadaysa seçim o haftanın
+  // yüklemesi dönünce yapılır. Kimlik REF'te (yukle'nin bağımlılığı olmasın);
+  // `gecisBekliyor` ızgaranın yerine "Seans açılıyor…" gösterilsin diye.
+  const bekleyenSecimRef = useRef<number | null>(null)
+  const [gecisBekliyor, setGecisBekliyor] = useState(false)
 
   const yetkisizRef = useRef(onYetkisiz)
   yetkisizRef.current = onYetkisiz
@@ -86,6 +91,12 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
     seciliIdRef.current = null
     setSeciliRandevu(null)
     setSeciliBosSaat(null)
+    // Bekleyen "Bu seansa git" de düşer: kilit anında yolda olan hedef hafta
+    // yanıtı (App `AnaEkran`'ı sökene kadarki gidiş-dönüşte) seansı açıp
+    // danışan adını ekrana geri getirmesin (ölçen test:
+    // `useTakvimAkisi.test.ts` > "7.4e").
+    bekleyenSecimRef.current = null
+    setGecisBekliyor(false)
   }, [])
 
   const yukle = useCallback(async () => {
@@ -129,6 +140,24 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
         if (secili === null) return null
         return gelen.find((r) => r.id === secili.id) ?? null
       })
+      // Bekleyen "Bu seansa git" (tasarım N8) BU haftanın yanıtıyla, hafta
+      // korumasının ARKASINDA tüketilir: seçim beklerken dönen ESKİ bir
+      // haftanın yanıtı hedefi orada bulamayıp geçişi bitirirdi (ölçen test:
+      // `useTakvimAkisi.test.ts` > "7.4"). Seçim tazeleme güncelleyicisinden
+      // SONRA — son yazan kazanır.
+      const bekleyen = bekleyenSecimRef.current
+      if (bekleyen !== null) {
+        bekleyenSecimRef.current = null
+        setGecisBekliyor(false)
+        const hedef = gelen.find((r) => r.id === bekleyen)
+        // Listede yoksa (silinmiş) geçiş sessizce biter; ızgara görünür.
+        if (hedef !== undefined) {
+          seciliIdRef.current = hedef.id
+          setSeciliBosSaat(null)
+          setSeciliRandevu(hedef)
+          setKaydirmaIstegi(hedef.id)
+        }
+      }
       setHata(null)
     } catch (e) {
       if (e instanceof YetkisizHata) {
@@ -150,6 +179,14 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
       }
       // Eski bir haftanın hatası, görünen haftanın bandına yazılmaz.
       if (gorunenHafta.current !== istenen) return
+      // Hedef haftanın KENDİ hatası bekleyen geçişi bitirir ("Seans
+      // açılıyor…" sonsuza kadar kalmasın). Hafta korumasının ARKASINDA:
+      // eski haftanın hatası, yolda olan hedef haftanın seçimini iptal
+      // etmemeli (ölçen testler: `useTakvimAkisi.test.ts` > "7.4c", "7.4d").
+      if (bekleyenSecimRef.current !== null) {
+        bekleyenSecimRef.current = null
+        setGecisBekliyor(false)
+      }
       setHata(e instanceof Error ? e.message : 'Randevular yüklenemedi.')
     }
   }, [haftaBasi, oturumKapandi, yazmaSaati])
@@ -183,6 +220,33 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
     // Kaydırma YALNIZCA kullanıcı seçiminde (tasarım A6); istek burada, sekme
     // yeniden monte olunca tekrar çalışmasın diye bileşenin DIŞINDA tutulur.
     if (secenek?.kaydir) setKaydirmaIstegi(randevu.id)
+  }
+
+  /**
+   * "Bu seansa git" / önceki notlarda açık satıra ikinci tık (tasarım N8).
+   * Önce açık seans KAPANIR: editörler unmount tahliyesiyle bekleyen
+   * metni YAZAR (bugünkü seans değişimi kuralı) ve eski seansın notu yeni
+   * seansın sayfasına bir kare bile sızmaz.
+   *
+   * Hedef görünen haftada ve listedeyse hemen seçilir (yeni istek yok);
+   * değilse hedef hafta açılır ve seçim o haftanın yüklemesi dönünce yapılır
+   * (bkz. `yukle`'deki bekleyen seçim bloğu). Aynı haftada ama listede
+   * değilse görünen hafta yeniden yüklenir; hedef orada da yoksa geçiş
+   * sessizce biter.
+   */
+  function randevuyaGit(id: number, baslangic: string) {
+    const hedefHafta = haftaninBasi(zamandanDate(baslangic))
+    const ayniHafta = hedefHafta.getTime() === haftaBasi.getTime()
+    const listede = randevular.find((r) => r.id === id)
+    if (ayniHafta && listede !== undefined) {
+      randevuSec(listede, { kaydir: true })
+      return
+    }
+    panelKapat()
+    bekleyenSecimRef.current = id
+    setGecisBekliyor(true)
+    if (ayniHafta) void yukle()
+    else setHaftaBasi(hedefHafta)
   }
 
   /** Seans bölümü kaydırmayı uyguladı: istek tüketildi (bkz. `kaydirmaIstegi`). */
@@ -257,7 +321,7 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
         }
         // Düzeltme turu 1 (kontrolör R11): ızgara PUT uçuştayken
         // tıklanabilir. Kullanıcı bu arada boş bir saate, başka bir randevuya
-        // ya da "Seansı kapat"a bastıysa yanıt O SEÇİMİ EZMEZ. Koşulsuz
+        // ya da "Takvime dön"e bastıysa yanıt O SEÇİMİ EZMEZ. Koşulsuz
         // yamada A geri seçiliyor, boş saat seçimi de yerinde kalıyordu: iki
         // form birden açılıyor ve "Yeni randevu"nun Kaydet'i A'yı yeni
         // saatin danışanına PUT ediyordu (A ve notu sessizce başka danışana).
@@ -435,6 +499,8 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
     haftaDegis,
     haftayaGit,
     randevuSec,
+    randevuyaGit,
+    gecisBekliyor,
     kaydirmaIstegi,
     kaydirmaTamam,
     bosSaatSec,

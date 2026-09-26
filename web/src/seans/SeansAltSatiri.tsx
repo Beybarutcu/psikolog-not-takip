@@ -16,11 +16,12 @@ import { tlMetni } from '../para'
  * işaretlenemeyince sunucudaki son temas — dolayısıyla saklama bitişi —
  * tazelenmiyor ve dosya imha hatırlatmasına ERKEN düşüyordu.
  *
- * Durum ve ödeme notlara bağlı değil: randevu satırının alanları. Bu yüzden
- * satır hem panelin içinde hem `AnaEkran`'ın not-yükleme-hatası dalında
- * aynı bileşenle gösteriliyor (ölçen testler: `AnaEkran.test.tsx` > "not
- * yuklenemezse de Geldi ve Odendi ..." ve "gecmis notlar yuklenemezse de
- * ...").
+ * Durum ve ödeme notlara bağlı değil: randevu satırının alanları. Görev 7'den
+ * (tasarım N2) beri satır not sayfasının ÜST satırında (`SeansSayfasi`,
+ * `gomulu`) ve not okunamasa da orada durur; danışan dosyasında ayrı satır
+ * (ölçen testler: `AnaEkran.test.tsx` > "not yuklenemezse de Geldi ve Odendi
+ * ..." ve "gecmis notlar yuklenemezse de ...", `SeansSayfasi.test.tsx` >
+ * "7.9").
  *
  * # Durum prop'tan, "Ödendi" iyimser yerel kopyadan
  *
@@ -48,6 +49,11 @@ type Props = {
   randevu: Pick<Randevu, 'durum' | 'ucret' | 'odendi'>
   onDurumDegis: (durum: string) => Promise<void>
   onOdemeDegis: (odendi: boolean) => Promise<void>
+  /**
+   * Not sayfasının üst satırında (tasarım N2): üst kenarlık ve boşluk yok.
+   * Danışan dosyası ayrı satır görünümünü korur.
+   */
+  gomulu?: boolean
 }
 
 const DURUMLAR = [
@@ -61,7 +67,7 @@ function ucretMetni(kurus: number | null): string {
   return kurus === null ? 'Ücret girilmemiş' : tlMetni(kurus)
 }
 
-export function SeansAltSatiri({ randevu, onDurumDegis, onOdemeDegis }: Props) {
+export function SeansAltSatiri({ randevu, onDurumDegis, onOdemeDegis, gomulu = false }: Props) {
   // "Ödendi" kutusunun EKRANDAKİ değeri. İyimser: tıklanınca hemen değişir,
   // istek reddedilirse eski değere döner. İlk değer prop'tan, yalnızca
   // MOUNT'ta okunur — seans değişince sıfırlanması çağıranın `key`ine bağlı
@@ -96,7 +102,13 @@ export function SeansAltSatiri({ randevu, onDurumDegis, onOdemeDegis }: Props) {
   }
 
   return (
-    <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-200 pt-3">
+    <div
+      className={
+        gomulu
+          ? 'flex flex-wrap items-center gap-3'
+          : 'mt-4 flex flex-wrap items-center gap-3 border-t border-slate-200 pt-3'
+      }
+    >
       <div role="group" aria-label="Seans durumu" className="flex gap-1">
         {DURUMLAR.map(([etiket, kod]) => (
           <button

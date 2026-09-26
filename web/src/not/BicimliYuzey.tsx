@@ -106,7 +106,10 @@ export function BicimliYuzey({ html, onChange, etiket, editable = true, vurgu = 
 
   return (
     <EditorContext.Provider value={{ editor }}>
-      <div className="not-editoru relative flex flex-col rounded border border-slate-300 bg-white">
+      {/* `flex-1` + yüzey kabının `flex-1`i + `.not-editoru .ProseMirror`'un
+          `flex` kuralı (not-yuzeyi.scss): çağıranın verdiği yükseklik yazı
+          yüzeyine kadar iner (bkz. `NotEditoru` kökü). */}
+      <div className="not-editoru relative flex flex-1 flex-col rounded border border-slate-300 bg-white">
         {editable && <AracCubugu bulAcik={bulAcik} onBulDegistir={() => setBulAcik((a) => !a)} />}
         {editable && (
           <SearchAndReplace
@@ -117,7 +120,7 @@ export function BicimliYuzey({ html, onChange, etiket, editable = true, vurgu = 
             scrollIntoViewOptions={{ block: 'center' }}
           />
         )}
-        <EditorContent editor={editor} role="presentation" />
+        <EditorContent editor={editor} role="presentation" className="flex flex-1 flex-col" />
       </div>
     </EditorContext.Provider>
   )

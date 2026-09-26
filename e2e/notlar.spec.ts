@@ -469,6 +469,8 @@ test('danisan dosyasi: ek dosya, riza ve saklama suresi', async ({ page }) => {
   await page.getByRole('tab', { name: 'Takvim', exact: true }).click()
   await blok.click()
   await page.getByRole('button', { name: 'Geldi' }).click()
+  // Not sayfası ızgaranın YERİNDE (tasarım N1): bloğu görmek için takvime dön.
+  await page.getByRole('button', { name: 'Takvime dön', exact: true }).click()
   // BARİYER: durum değişikliği ekrana yansıyana kadar bekle. Kart bundan
   // önce açılırsa sunucu henüz `son_temas`ı yazmamış olabilir ve test
   // "hesaplanmadı" görüp yanlış sebeple kırılırdı.
@@ -501,6 +503,8 @@ test('randevu silme onayi, gidecek NOTLARI da soyler (dal incelemesi I2)', async
   // İŞLEM ÖNCESİ DURUM: onay kutusu henüz yok.
   await expect(page.getByRole('button', { name: 'Evet, sil', exact: true })).toHaveCount(0)
 
+  // Randevu formu not sayfasında KAPALI başlar (tasarım N3).
+  await page.getByRole('button', { name: 'Randevuyu düzenle' }).click()
   await page.getByRole('button', { name: 'Sil', exact: true }).click()
 
   // Sayı SUNUCUDAN geliyor: arayüz notların varlığını başka hiçbir yerden
@@ -516,14 +520,20 @@ test('randevu silme onayi, gidecek NOTLARI da soyler (dal incelemesi I2)', async
   await expect(uyari).not.toContainText('CASCADEKANARYA19')
   await expect(uyari).not.toContainText('CASCADEOZEL19')
 
-  // Vazgeçmek gerçekten vazgeçiyor: randevu ve notu yerinde.
+  // Vazgeçmek gerçekten vazgeçiyor: sayfa ve notu yerinde (ızgara sayfa
+  // açıkken çizilmiyor — tasarım N1 — bloğun yerine not ölçülüyor).
   await page.getByRole('button', { name: 'Vazgeç', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Evet, sil', exact: true })).toHaveCount(0)
-  await expect(blok).toBeVisible()
+  await expect(page.getByLabel('Özel notum', { exact: true })).toHaveText(gizli)
 
   // Silme uygulanınca randevu da notu da gider (cascade).
   await page.getByRole('button', { name: 'Sil', exact: true }).click()
   await page.getByRole('button', { name: 'Evet, sil', exact: true }).click()
+  // BARİYER (altıncı biçim): sayfa açıkken ızgara yok, yani aşağıdaki "0"
+  // işlem öncesi durumla da tatmin olurdu. Silme başarıyla bitince sayfa
+  // kapanır ve ızgara döner; sayım ONDAN SONRA.
+  await expect(page.getByTestId('seans-bolumu')).toHaveCount(0)
+  await expect(page.getByTestId('takvim-izgara')).toBeVisible()
   await expect(blok).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Hızlı arama (⌘K)' }).click()

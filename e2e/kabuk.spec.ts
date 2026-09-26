@@ -143,8 +143,12 @@ test('takvimdeki randevudan danisan adina tiklayinca Danisanlar sekmesi o danisa
 
   // Takvim sekmesine dönünce randevu HÂLÂ orada — sekme değişimi takvimin
   // state'ini SIFIRLAMAMALI (`AnaEkran` yalnızca hangi panelin göründüğünü
-  // değiştiriyor, `useTakvimAkisi`nin kendisini değil).
+  // değiştiriyor, `useTakvimAkisi`nin kendisini değil). Seçim de sıfırlanmadı:
+  // not sayfası ızgaranın yerinde açık (tasarım N1); "Takvime dön" ızgarayı
+  // ve bloğu geri getirir.
   await page.getByRole('tab', { name: 'Takvim' }).click()
+  await expect(page.getByTestId('seans-bolumu')).toBeVisible()
+  await page.getByRole('button', { name: 'Takvime dön', exact: true }).click()
   await expect(blok).toBeVisible()
 })
 

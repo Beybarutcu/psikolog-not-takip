@@ -39,6 +39,8 @@ test('danisan ekle, randevu olustur, geldi isaretle', async ({ page }) => {
 
   await blok.click()
   await page.getByRole('button', { name: 'Geldi' }).click()
+  // Not sayfasi izgaranin YERINDE (tasarim N1): blogu gormek icin takvime don.
+  await page.getByRole('button', { name: 'Takvime dön', exact: true }).click()
   // Gorsel sinif adina/renge degil, RandevuBloku'nun yaydigi semantik
   // data-durum onitelegine bakiyoruz: renk ya da sinif degisirse bu test
   // "durum degismedi" gibi yanlis bir sebeple kirilmaz.
@@ -113,11 +115,16 @@ test('mevcut randevunun ucreti guncellenir, kopya olusmaz', async ({ page }) => 
   const bloklar = page.getByTestId('takvim-izgara').getByRole('button', { name: '11:00 Elif Şahin', exact: true })
   await expect(bloklar).toHaveCount(1)
 
-  // Randevuyu ac, ucreti degistir, Guncelle'ye bas.
+  // Randevuyu ac, formu ac (not sayfasinda KAPALI baslar, tasarim N3),
+  // ucreti degistir, Guncelle'ye bas.
   await bloklar.first().click()
+  await page.getByRole('button', { name: 'Randevuyu düzenle' }).click()
   await expect(page.getByLabel('Ücret (TL)')).toHaveValue('450,00')
   await page.getByLabel('Ücret (TL)').fill('500')
   await page.getByRole('button', { name: 'Güncelle' }).click()
+  // Form acik kalir ve soyler (tasarim N3); izgara sayfa kapaninca gorunur.
+  await expect(page.getByText(/^Güncellendi \d{2}:\d{2}$/)).toBeVisible()
+  await page.getByRole('button', { name: 'Takvime dön', exact: true }).click()
 
   // SENKRONIZASYON BARIYERI. `toHaveCount` kosul saglanana kadar BEKLER;
   // tiklama aninda sayi zaten 1 oldugu icin, dogrudan yazilan bir
@@ -138,14 +145,13 @@ test('mevcut randevunun ucreti guncellenir, kopya olusmaz', async ({ page }) => 
   // POST regresyonunda burada 2 gorunur ve test kirilir.
   await expect(bloklar).toHaveCount(1)
 
-  // (b) UCRET GERCEKTEN DEGISTI: paneli yeniden ac ve alani oku.
-  // Plan A Gorev 10 (tasarim A6): "Guncelle" seans bolumunu KAPATMIYOR; ayni
-  // bloga tekrar tiklamak ayni secimi yeniden secer ve form yeniden MONTE
-  // OLMAZ -- alan ekrandaki (kullanicinin yazdigi) degeri gosterirdi. Once
-  // "Seansi kapat": form yeniden monte olsun, deger sunucudan okunsun.
-  await page.getByRole('button', { name: 'Seansı kapat' }).click()
+  // (b) UCRET GERCEKTEN DEGISTI: sayfayi yeniden ac ve alani oku. "Takvime
+  // don" sayfayi kapatti; yeniden acilan sayfanin formu yeniden MONTE olur
+  // ve degeri sunucudan gelen kayittan okur (kullanicinin yazdigi degerden
+  // degil).
   await expect(page.getByTestId('seans-bolumu')).toHaveCount(0)
   await bloklar.first().click()
+  await page.getByRole('button', { name: 'Randevuyu düzenle' }).click()
   await expect(page.getByLabel('Ücret (TL)')).toHaveValue('500,00')
 })
 
@@ -188,7 +194,9 @@ test('randevu silinmeden baska gune tasinir, notu onunla gider', async ({ page }
   ).toBeVisible()
 
   // Ertesi gun: tarih formdan okunur (hangi gunun ilk bos 10:00'i oldugu
-  // dosyadaki onceki testlere bagli).
+  // dosyadaki onceki testlere bagli). Form not sayfasinda KAPALI baslar
+  // (tasarim N3).
+  await page.getByRole('button', { name: 'Randevuyu düzenle' }).click()
   const tarihAlani = page.getByLabel('Tarih', { exact: true })
   const [yil, ay, gun] = (await tarihAlani.inputValue()).split('-').map(Number)
   const eski = new Date(Date.UTC(yil, ay - 1, gun))
@@ -198,16 +206,20 @@ test('randevu silinmeden baska gune tasinir, notu onunla gider', async ({ page }
   // Ertesi gun Pazartesi ise tasima hafta sinirini asar: gorunen hafta yeni
   // haftaya gecer (tasarim A6) ve eski gun ekranda olmaz.
   const ayniHafta = yeni.getUTCDay() !== 1
-  if (ayniHafta) {
-    // On kosul (altinci bicim): ertesi gunun 10:00 hucresi su an BOS.
-    await expect(page.getByRole('button', { name: hucreAdi(yeni), exact: true })).toHaveCount(1)
-  }
 
   await tarihAlani.fill(yeniMetin)
   await page.getByRole('button', { name: 'Güncelle', exact: true }).click()
+  // Form acik kalir ve soyler (tasarim N3); sayfa tasinan seansi gosterir, not onunla.
+  await expect(page.getByText(/^Güncellendi \d{2}:\d{2}$/)).toBeVisible()
+  const sayfa = page.getByRole('region', { name: 'Seans', exact: true })
+  await expect(sayfa).toContainText(`${yeni.getUTCDate()} ${AYLAR[yeni.getUTCMonth()]}`)
+  await expect(page.getByLabel('Seans notu', { exact: true })).toHaveText(not)
 
-  // Blok ertesi gunun sutununda: o gunun 10:00 hucresi artik BOS DEGIL (ve
-  // ayni haftadaysa eski gununku yeniden bos).
+  // "Takvime don" YENI haftayi gosterir (tasarim N3): blok ertesi gunun sutununda.
+  // (Eski "on kosul: ertesi gunun 10:00 hucresi su an BOS" satiri kalkti:
+  // sayfa acikken izgara yok. Asagidaki "0" iddiasi, ayni gunun 11:00
+  // hucresinin gorunmesiyle ekranda-gun bariyerine bagli kaliyor.)
+  await page.getByRole('button', { name: 'Takvime dön', exact: true }).click()
   await expect(page.getByRole('button', { name: hucreAdi(yeni), exact: true })).toHaveCount(0)
   // ...ve o gun GERCEKTEN ekranda (yukaridaki "0" gorunmeyen bir gunle
   // tatmin olmasin): ayni gunun 11:00 hucresi gorunur ve bos.
@@ -220,15 +232,7 @@ test('randevu silinmeden baska gune tasinir, notu onunla gider', async ({ page }
   // yenisi kurulmadi.
   await expect(bloklar).toHaveCount(1)
 
-  // Seans bolumu acik kaldi ve not onunla geldi.
-  const seansPaneli = page.getByRole('region', { name: 'Seans', exact: true })
-  await expect(seansPaneli).toContainText(`${yeni.getUTCDate()} ${AYLAR[yeni.getUTCMonth()]}`)
-  await expect(page.getByLabel('Seans notu', { exact: true })).toHaveText(not)
-
-  // Not SUNUCUDAN da onunla geliyor: bolumu kapatip blogu yeniden ac (editor
-  // yeniden monte olur, metin `GET .../not` yanitindan okunur).
-  await page.getByRole('button', { name: 'Seansı kapat' }).click()
-  await expect(page.getByTestId('seans-bolumu')).toHaveCount(0)
+  // Not SUNUCUDAN da onunla geliyor: sayfa yeniden monte olur, metin GET yanitindan.
   await bloklar.first().click()
   await expect(page.getByLabel('Seans notu', { exact: true })).toHaveText(not)
 })
@@ -256,6 +260,7 @@ test('seri kurulur ve tek adimda iptal edilir', async ({ page }) => {
   await expect(bloklar).toHaveCount(1) // bu haftada serinin ilk uyesi
 
   await bloklar.first().click()
+  await page.getByRole('button', { name: 'Randevuyu düzenle' }).click()
   await page.getByRole('button', { name: 'Bu ve sonraki tüm tekrarları sil' }).click()
   // Onay metni kac randevunun silinecegini ve gecmisin korundugunu soyler.
   await expect(page.getByText(/3 randevu/)).toBeVisible()
@@ -313,6 +318,8 @@ test('yarim genislikteki blokta gelmedi ve odeme simgeleri kirpilmaz', async ({ 
 
   await ilk.click()
   await page.getByRole('button', { name: 'Gelmedi', exact: true }).click()
+  // Not sayfası ızgaranın YERİNDE (tasarım N1): ölçüm takvime dönünce.
+  await page.getByRole('button', { name: 'Takvime dön', exact: true }).click()
   // BARİYER: durum ızgaraya yansıdı (ad eki ve data-durum).
   await expect(ilk).toHaveAttribute('data-durum', 'gelmedi')
   await expect(ilk).toHaveAccessibleName(`16:00 ${ad}, gelmedi, ödeme alınmadı`)

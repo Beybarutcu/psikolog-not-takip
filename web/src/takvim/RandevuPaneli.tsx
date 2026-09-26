@@ -70,8 +70,9 @@ type Props = {
     tekrarSayisi?: number,
   ) => Promise<SeriCakismasi>
   /**
-   * Görev 10'da panel seans bölümünün İÇİNE gömülür: `Kapat` düğmesi orada
-   * anlamsız (seans zaten kendi "Seansı kapat"ını taşıyor) ve panel artık
+   * Görev 10'da panel seans bölümünün İÇİNE gömülür (Görev 7'den beri not
+   * sayfasının açılır formu, tasarım N3): `Kapat` düğmesi orada anlamsız
+   * (sayfanın üst satırında "Takvime dön" ve formu gizleyen "Kapat" var) ve panel artık
    * ayrı bir kart değil, bölümün bir parçası — bu yüzden `aside`'ın sol
    * kenarlığı (`border-l`, önceki ayrı-panel görünümünün izi) de kalkıyor.
    */

@@ -14,6 +14,11 @@ import { AnaEkran } from './AnaEkran'
  */
 const blokAdi = (ad: string) => new RegExp(`^\\d{2}:\\d{2} ${ad}(, gelmedi)?(, ödeme alınmadı)?$`)
 
+/** Not sayfasında randevu formu KAPALI başlar (tasarım N3); formla çalışan testler önce açar. */
+async function randevuFormunuAc() {
+  await userEvent.click(await screen.findByRole('button', { name: 'Randevuyu düzenle' }))
+}
+
 /**
  * Son inceleme — takvim ile danışan dosyasının AYNI seansa bakması.
  *
@@ -1146,6 +1151,7 @@ describe('Plan A Görev 9 — taşınan "geldi" seansı son temasını ilerletir
     await userEvent.click(screen.getByRole('button', { name: '7 – 13 Eylül 2026' }))
     fireEvent.change(screen.getByLabelText('Gidilecek gün'), { target: { value: '2017-01-10' } })
     await userEvent.click(await screen.findByRole('button', { name: blokAdi('Zeynep Kaya') }))
+    await randevuFormunuAc()
     await tarihiTasi(303, '2026-09-10')
 
     // (a) Kart yerelde yamandı: yeni saklama bitişi, "doldu" yok.
@@ -1173,6 +1179,7 @@ describe('Plan A Görev 9 — taşınan "geldi" seansı son temasını ilerletir
 
     await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Zeynep Kaya') }))
+    await randevuFormunuAc()
     await tarihiTasi(301, '2026-09-10')
 
     await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
@@ -1238,6 +1245,7 @@ describe('Bayatlık — takvimin yamanamayan yazmaları dosyanın seans listesin
 
     await takvimeDon()
     await takvimde202Ac()
+    await randevuFormunuAc()
     await userEvent.selectOptions(screen.getByLabelText('Danışan'), '2')
     await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
     await waitFor(() => expect(tumu().find((r) => r.id === 202)!.client_id).toBe(2))
@@ -1286,6 +1294,7 @@ describe('Bayatlık — takvimin yamanamayan yazmaları dosyanın seans listesin
 
     await takvimeDon()
     await takvimde202Ac()
+    await randevuFormunuAc()
     await userEvent.click(screen.getByRole('button', { name: 'Bu ve sonraki tüm tekrarları sil' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Evet, tekrarları sil' }))
     await waitFor(() => expect(tumu().some((r) => r.seri_id === 'seri-1')).toBe(false))
@@ -1304,6 +1313,7 @@ describe('Bayatlık — takvimin yamanamayan yazmaları dosyanın seans listesin
 
     await takvimeDon()
     await takvimde202Ac()
+    await randevuFormunuAc()
     await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
     await waitFor(() => expect(tumu().some((r) => r.id === 202)).toBe(false))
@@ -1329,8 +1339,12 @@ describe('Görev 2 — randevu yazmaları ay özetine ve kart bakiyesine yayıl�
       ?.nextElementSibling?.textContent
   }
 
-  /** Takvimde açık 202 panelinin ücretini değiştirip "Güncelle"ye basar. */
+  /**
+   * Takvimde açık 202 sayfasının randevu formunu açar (kapalı başlar, tasarım
+   * N3), ücretini değiştirip "Güncelle"ye basar.
+   */
   async function ucretiGuncelle(yeniTl: string) {
+    await randevuFormunuAc()
     await userEvent.clear(screen.getByLabelText('Ücret (TL)'))
     await userEvent.type(screen.getByLabelText('Ücret (TL)'), yeniTl)
     await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
@@ -1345,6 +1359,7 @@ describe('Görev 2 — randevu yazmaları ay özetine ve kart bakiyesine yayıl�
     await waitFor(() => expect(bekleyenTutari(bolge)).toBe('450,00 TL'))
 
     await takvimde202Ac()
+    await randevuFormunuAc()
     await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
     await waitFor(() => expect(tumu().some((r) => r.id === 202)).toBe(false))
@@ -1413,6 +1428,7 @@ describe('Görev 2 — randevu yazmaları ay özetine ve kart bakiyesine yayıl�
     // Silme: 201 (7 Eylül), 202 sonraki adımda gerekiyor.
     await userEvent.click(await screen.findByRole('button', { name: 'Önceki hafta' }))
     await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
+    await randevuFormunuAc()
     await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
     await waitFor(() => expect(tumu().some((r) => r.id === 201)).toBe(false))
@@ -1461,6 +1477,7 @@ describe('Görev 2 — randevu yazmaları ay özetine ve kart bakiyesine yayıl�
 
     await takvimeDon()
     await takvimde202Ac()
+    await randevuFormunuAc()
     await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
     await waitFor(() => expect(tumu().some((r) => r.id === 202)).toBe(false))
@@ -1496,6 +1513,7 @@ describe('Görev 2 — randevu yazmaları ay özetine ve kart bakiyesine yayıl�
     const tumZamanYolu = `/api/randevular?baslangic=${encodeURIComponent('2000-01-01T00:00')}&bitis=${encodeURIComponent('2100-01-01T00:00')}`
     // Sekme hiç Danışanlar'a geçmedi — kart hiç açılmadı.
     await takvimde202Ac()
+    await randevuFormunuAc()
     await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
     await waitFor(() => expect(tumu().some((r) => r.id === 202)).toBe(false))
@@ -1768,6 +1786,8 @@ describe('Etiketler — geciken yanıt ve istek zamanlaması', () => {
     await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     // BARİYER: 201'in etiket okuması sunucuda yapıldı, yanıt yolda.
     await waitFor(() => expect(etiketGetleri(201)).toHaveLength(1))
+    // B ızgarada: önce takvime dönülür (tasarım N1).
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Mehmet Demir') }))
     await waitFor(() => expect(kaldirDugmesi('mehmet-etiketi')).not.toBeNull())
 
@@ -1780,6 +1800,7 @@ describe('Etiketler — geciken yanıt ve istek zamanlaması', () => {
 
     // İki yön: geç yanıt ATILMADI, İSTENEN seansa yazıldı — 201'e dönünce
     // yeniden istek olmadan görünür.
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(screen.getByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await waitFor(() => expect(kaldirDugmesi('AYSE_ETIKETI')).not.toBeNull())
     expect(etiketGetleri(201)).toHaveLength(1)
@@ -2126,6 +2147,7 @@ describe('Son inceleme I1 — randevu yazmaları açık etiketli seanslar paneli
     etiketBagla(203, 'kriz')
     ciz()
     const bolge = await krizPaneliAc()
+    await randevuFormunuAc()
     putBaslangici[203] = '2026-09-08T15:00'
     await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
     await within(bolge).findByRole('button', { name: 'Mehmet Demir — 8 Eylül 2026, 15:00' })
@@ -2138,6 +2160,7 @@ describe('Son inceleme I1 — randevu yazmaları açık etiketli seanslar paneli
     etiketBagla(203, 'kriz')
     ciz()
     const bolge = await krizPaneliAc()
+    await randevuFormunuAc()
     await userEvent.selectOptions(screen.getByLabelText('Danışan'), '1')
     await userEvent.click(screen.getByRole('button', { name: 'Güncelle' }))
     await within(bolge).findByRole('button', { name: 'Ayşe Yılmaz — 8 Eylül 2026, 13:00' })
@@ -2149,6 +2172,7 @@ describe('Son inceleme I1 — randevu yazmaları açık etiketli seanslar paneli
     etiketBagla(203, 'kriz')
     ciz()
     const bolge = await krizPaneliAc()
+    await randevuFormunuAc()
     await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
     await waitFor(() => expect(silinenRandevular.has(203)).toBe(true))
@@ -2165,6 +2189,7 @@ describe('Son inceleme I1 — randevu yazmaları açık etiketli seanslar paneli
     // Sözlük bu oturumda istendi (etiket kutusuna odak).
     await userEvent.click(screen.getByLabelText('Etiket ekle'))
     await waitFor(() => expect(sozlukGetleri()).toHaveLength(1))
+    await randevuFormunuAc()
     await userEvent.click(screen.getByRole('button', { name: 'Sil' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
     await within(bolge).findByText('Bu etiketi taşıyan seans kalmadı.')
@@ -2179,6 +2204,7 @@ describe('Son inceleme I1 — randevu yazmaları açık etiketli seanslar paneli
     etiketBagla(203, 'kriz')
     ciz()
     const bolge = await krizPaneliAc()
+    await randevuFormunuAc()
     await userEvent.click(screen.getByRole('button', { name: 'Bu ve sonraki tüm tekrarları sil' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Evet, tekrarları sil' }))
     await waitFor(() => expect(silinenRandevular.has(203)).toBe(true))
@@ -2213,10 +2239,14 @@ describe('Son inceleme I1 — randevu yazmaları açık etiketli seanslar paneli
     // Hiç açılmamış panel, hiç istenmemiş sözlük: düzenle + sil.
     await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
     await screen.findByLabelText('Etiket ekle')
+    await randevuFormunuAc()
     // BARİYER: PUT yapıldı ve `randevuKaydet` (takvimin yeniden yüklenmesi ve
     // `etiketler.randevularDegisti()` dahil) bitti — bkz. `guncelleVeBekle`.
     await guncelleVeBekle(201)
+    // "Güncelle" sayfayı kapatmaz; blok ızgarada (tasarım N1).
+    await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     await userEvent.click(await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') }))
+    await randevuFormunuAc()
     await userEvent.click(await screen.findByRole('button', { name: 'Sil' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Evet, sil' }))
     await waitFor(() => expect(silinenRandevular.has(201)).toBe(true))
@@ -2230,6 +2260,7 @@ describe('Son inceleme I1 — randevu yazmaları açık etiketli seanslar paneli
     const bolge = await krizPaneliAc()
     await userEvent.click(within(bolge).getByRole('button', { name: 'Kapat' }))
     expect(screen.queryByRole('region', { name: 'kriz etiketli seanslar' })).toBeNull()
+    await randevuFormunuAc()
     await guncelleVeBekle(203)
     await act(async () => {
       await new Promise((r) => setTimeout(r, 30))

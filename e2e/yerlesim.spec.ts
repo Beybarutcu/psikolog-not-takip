@@ -55,8 +55,9 @@ test('1024 genisliginde yeni randevu formu izgaranin altina iner, sikismaz', asy
 // Bu test tam o senaryoyu kurup (danışan + randevu oluştur, aç, SAYFANIN
 // SONUNA kaydır, "Geldi"ye bas) hem düğmenin `aria-pressed="true"`
 // olduğunu (ağaç sökülmediyse bu satır hiç çalışmaz) hem de ızgaranın ilk
-// satır yüksekliğinin kaydırmadan ÖNCE ve SONRA AYNI kaldığını (ölçüm
-// SAYFA konumuna göre, `scrollY`'den bağımsız) doğruluyor.
+// satır yüksekliğinin kaydırmadan ÖNCE ve SONRA AYNI kaldığını (sayfa
+// ızgaranın yerinde açıldığı için ölçüm takvime dönüşte; ölçüm SAYFA
+// konumuna göre, `scrollY`'den bağımsız) doğruluyor.
 async function danisanEkle(page: Page, ad: string) {
   await page.getByRole('tab', { name: 'Danışanlar', exact: true }).click()
   await page.getByRole('button', { name: 'Danışan ekle', exact: true }).click()
@@ -82,12 +83,14 @@ test('1200x760: sayfa sonuna kaydirip Geldi isaretlenince ilk satir yuksekligi d
   await danisanEkle(page, ad)
   await randevuOlustur(page, ad, '09:00', '400')
 
+  // Not sayfası ızgaranın YERİNDE açılır (tasarım N1): ızgara ölçümü bloğa
+  // tıklamadan ÖNCE.
+  const oncesi = await page.locator('tbody tr').first().boundingBox()
+  expect(oncesi).not.toBeNull()
+
   await page.locator('button[data-durum]', { hasText: ad }).click()
   const grup = page.getByRole('group', { name: 'Seans durumu', exact: true })
   await expect(grup).toBeVisible()
-
-  const oncesi = await page.locator('tbody tr').first().boundingBox()
-  expect(oncesi).not.toBeNull()
 
   // Sayfanın SONUNA kaydır: eski (viewport-göreli) ölçümle bu adım ölçüm ↔
   // scroll geri besleme döngüsünü BAŞLATIRDI.
@@ -97,7 +100,51 @@ test('1200x760: sayfa sonuna kaydirip Geldi isaretlenince ilk satir yuksekligi d
   await dugme.click()
   await expect(dugme).toHaveAttribute('aria-pressed', 'true')
 
+  await page.getByRole('button', { name: 'Takvime dön', exact: true }).click()
+  await expect(page.locator('tbody tr').first()).toBeVisible()
   const sonrasi = await page.locator('tbody tr').first().boundingBox()
   expect(sonrasi).not.toBeNull()
   expect(sonrasi?.height).toBe(oncesi?.height)
+})
+
+// Görev 5 incelemesinden taşınan madde: biçimli yüzey (`BicimliYuzey`)
+// `NotEditoru`'nun esnek sütununda uzamıyordu (eski metin kutusu
+// `min-h-64 flex-1` idi). Tasarım N4: not sayfasında editör "sayfanın büyük
+// kısmı" — açılış kaydırmasından (A6) sonra ekranın kalanını doldurur.
+// Danışan dosyasının editörü (`DanisanDosyasi`, yükseklik vermeyen bir
+// kapta) yüzeyin kendi asgarisini (16rem) korur. jsdom yerleşim ölçmediği
+// için tek bekçi gerçek tarayıcı.
+test('not sayfasinda editor ekranin kalanini doldurur; danisan dosyasinda asgari yukseklik korunur', async ({ page }) => {
+  const boyut = { width: 1280, height: 800 }
+  await page.setViewportSize(boyut)
+  await kurulumYap(page)
+
+  const ad = 'Yerlesim Editor Testi'
+  await danisanEkle(page, ad)
+  await randevuOlustur(page, ad, '11:00', '400')
+  await page.locator('button[data-durum]', { hasText: ad }).click()
+
+  const sayfa = page.getByTestId('seans-bolumu')
+  const yuzey = page.getByLabel('Seans notu', { exact: true })
+  await expect(yuzey).toBeVisible()
+  // BARİYER: açılış kaydırması (yumuşak, index.css) bitti — sayfanın başı
+  // ekranın üstünde (`scroll-mt-2` = 8 px).
+  await expect.poll(async () => Math.round((await sayfa.boundingBox())?.y ?? -1)).toBe(8)
+
+  const k = await yuzey.boundingBox()
+  expect(k).not.toBeNull()
+  // Ekranın kalanını dolduruyor: alt kenarı ekranın alt beşte birinde ve
+  // ekranın İÇİNDE (altında yalnızca etiket satırı ve kenar boşlukları).
+  expect(k!.y + k!.height).toBeGreaterThan(boyut.height * 0.8)
+  expect(k!.y + k!.height).toBeLessThanOrEqual(boyut.height)
+  // Asgari (16rem = 256 px) yükseklikte kalmış bir yüzey bu eşiği geçemez.
+  expect(k!.height).toBeGreaterThan(boyut.height / 2)
+
+  // Danışan dosyası: aynı editör, yükseklik vermeyen bir kapta — asgari korunur.
+  await page.getByRole('button', { name: `${ad} dosyasını aç`, exact: true }).click()
+  const dosyaYuzeyi = page.getByLabel('Seans notu', { exact: true })
+  await expect(dosyaYuzeyi).toBeVisible()
+  const d = await dosyaYuzeyi.boundingBox()
+  expect(d).not.toBeNull()
+  expect(d!.height).toBeGreaterThanOrEqual(256)
 })

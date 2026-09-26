@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { aramaApi, takvimApi, type Danisan, type Etiket } from '../api'
+import { aramaApi, takvimApi, type Danisan, type DanisanSeansi, type Etiket } from '../api'
 import type { EtiketBaglami } from '../etiket/EtiketSatiri'
 import { HizliArama } from '../arama/HizliArama'
 import { AyOzeti } from '../ozet/AyOzeti'
@@ -168,6 +168,13 @@ type Props = {
    * yalnızca çağırıyor.
    */
   onEtiketAc: (etiket: Etiket) => void
+  /**
+   * Önceki notlar panelinin listesi (Görev 8, preflight F7): danışan
+   * dosyasının seans listesi önbelleği o danışan için yüklü ve tazeyse o
+   * liste, değilse `null` (`AnaEkran.seansListesiOnbellegi`). Önbellek
+   * `useDanisanSeanslari`'de, bu bileşenin görmediği bir kancada.
+   */
+  seansListesiOnbellegi: (clientId: number) => DanisanSeansi[] | null
 }
 
 export function TakvimSekmesi({
@@ -183,6 +190,7 @@ export function TakvimSekmesi({
   onSeriSil,
   etiketBaglami,
   onEtiketAc,
+  seansListesiOnbellegi,
 }: Props) {
   // Bkz. modül başlığı: kapalı başlama kuralı burada yaşıyor.
   const [ozetAcik, setOzetAcik] = useState(false)
@@ -356,6 +364,9 @@ export function TakvimSekmesi({
           onRandevuKaydet={onRandevuKaydet}
           onRandevuSil={onRandevuSil}
           onSeriSil={onSeriSil}
+          // "Bu seansa git" / açık satıra ikinci tık (tasarım N8).
+          onSeansaGit={takvim.randevuyaGit}
+          seansListesiOnbellegi={seansListesiOnbellegi(seciliRandevu.client_id)}
           etiket={etiketBaglami(seciliRandevu.id)}
         />
       ) : takvim.gecisBekliyor ? (

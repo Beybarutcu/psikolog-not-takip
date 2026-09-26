@@ -40,6 +40,28 @@ describe('NotOkuma (gerçek TipTap, salt okunur)', () => {
     expect(vurgular(container)).toEqual(['kaygı'])
   })
 
+  // Görev 4 incelemesi: `html` değişimi hiç ölçülmüyordu (`useEditor`'ın
+  // `[html]` bağımlılığı silinse bütün testler yeşil kalıyordu). Önceki
+  // notlar paneli ve okuma penceresi AYNI bileşende not değiştirir: eski
+  // notun metni ya da vurgusu yeni notun yerinde kalmamalı (dördüncü biçim —
+  // temiz mount değil, GEÇİŞ).
+  it('html değişince YENİ not gösterilir; vurgu ve kaydırma yeni notta', () => {
+    const kaydir = vi.spyOn(Element.prototype, 'scrollIntoView')
+    const { container, rerender } = render(<NotOkuma html="<p>ESKI NOT: uyku iyi</p>" vurgu="kaygı" />)
+    expect(container.querySelector('.ProseMirror')?.textContent).toBe('ESKI NOT: uyku iyi')
+    expect(vurgular(container)).toEqual([])
+    expect(kaydir).not.toHaveBeenCalled()
+
+    rerender(<NotOkuma html="<p>YENI NOT: <em>KAYGI</em> arttı</p>" vurgu="kaygı" />)
+    const pm = container.querySelector('.ProseMirror') as HTMLElement
+    expect(pm.textContent).toBe('YENI NOT: KAYGI arttı')
+    expect(container.textContent).not.toContain('ESKI NOT')
+    expect(pm.getAttribute('role')).toBe('document')
+    expect(vurgular(container)).toEqual(['KAYGI'])
+    expect(kaydir).toHaveBeenCalledTimes(1)
+    expect(pm.contains(kaydir.mock.contexts[0] as HTMLElement)).toBe(true)
+  })
+
   it('preflight F2: salt okunur görünüm metin kutusu DEĞİLDİR (okuma penceresi ve e2e buna dayanır)', () => {
     // TipTap her editöre `role="textbox"` koyar; okunur görünümde bu, ekran
     // okuyucuya "yazılabilir alan" der ve Görev 9/10'un

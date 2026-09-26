@@ -212,6 +212,29 @@ const OZEL_NOT_IZINLI_DOSYALAR = new Set([
   './seans/SeansPaneli.tsx',
 ])
 
+/**
+ * `window.open`'ın TEK adlı istisnası (tasarım 2026-09-26 P2): okuma
+ * penceresi. Dar ve çalıştırılabilir: yalnızca bu dosyada, TEK çağrı ve
+ * çağrının metni BİREBİR aşağıdaki (aynı kökenden, yalnızca randevu kimliği
+ * taşıyan adres; pencere notu sunucudan kendisi ister). Adres, ad ya da
+ * çağrı sayısı değişirse test kırılır.
+ */
+const OKUMA_PENCERESI_DOSYASI = './seans/okumaPenceresi.ts'
+const OKUMA_PENCERESI_CAGRISI = 'window.open(`/?okuma=${randevuId}`, `okuma-${randevuId}`)'
+
+function pencereAcmaCagrilari(ad: string, kaynak: string): string[] {
+  const kok = ts.createSourceFile(ad, kaynak, ts.ScriptTarget.Latest, true, betikTuru(ad))
+  const bulunan: string[] = []
+  const ziyaret = (d: ts.Node) => {
+    if (ts.isCallExpression(d) && ts.isPropertyAccessExpression(d.expression) && d.expression.name.text === 'open') {
+      bulunan.push(d.getText(kok))
+    }
+    ts.forEachChild(d, ziyaret)
+  }
+  ziyaret(kok)
+  return bulunan
+}
+
 /** `window`, `x.document`, `window.URL` → son ad; başka biçim → null. */
 function sonAd(ifade: ts.Expression): string | null {
   if (ts.isIdentifier(ifade)) return ifade.text
@@ -643,8 +666,20 @@ describe('web/src üretim kaynaklarında istemci rapor üretimi YOK', () => {
   })
 
   it('pano / yazdirma / yeni pencere / document.write / Response yok', () => {
-    const ihlal = bulgular.flatMap(([y, b]) => b.yasakApi.map((m) => `${y}: ${m}`))
+    const ihlal = bulgular.flatMap(([y, b]) =>
+      b.yasakApi
+        .filter((m) => !(y === OKUMA_PENCERESI_DOSYASI && m === 'window.open'))
+        .map((m) => `${y}: ${m}`),
+    )
     expect(ihlal).toEqual([])
+  })
+
+  it('window.open istisnası dar: yalnızca okuma penceresi dosyasında, TEK çağrı, adres birebir', () => {
+    const kaynak = uretimKaynaklari[OKUMA_PENCERESI_DOSYASI]
+    expect(kaynak, `${OKUMA_PENCERESI_DOSYASI} taranan kaynaklar arasında yok`).toBeDefined()
+    expect(pencereAcmaCagrilari(OKUMA_PENCERESI_DOSYASI, kaynak)).toEqual([OKUMA_PENCERESI_CAGRISI])
+    // Körlüğe karşı: istisna gerçekten bir yasakApi bulgusunu süzüyor.
+    expect(bulgular.find(([y]) => y === OKUMA_PENCERESI_DOSYASI)?.[1].yasakApi).toEqual(['window.open'])
   })
 
   it('web/package.json da dosya/PDF ureten bagimlilik yok', () => {

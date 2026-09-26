@@ -1,17 +1,20 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { SeansNotu } from '../api'
+import type { DanisanSeansi, SeansNotu } from '../api'
 import type { EtiketBaglami } from '../etiket/EtiketSatiri'
 import type { useSeansNotlari } from '../screens/anaEkranKancalari/useSeansNotlari'
 import type { Randevu } from '../takvim/HaftalikTakvim'
 import { SeansSayfasi } from './SeansSayfasi'
 import { taslaklariUnut } from './taslak'
 
+const oncekiApi = vi.hoisted(() => ({ seanslar: vi.fn(), notGetir: vi.fn() }))
 vi.mock('../api', async (importOriginal) => {
   const gercek = await importOriginal<typeof import('../api')>()
   return {
     ...gercek,
+    danisanApi: { ...gercek.danisanApi, seanslar: oncekiApi.seanslar },
+    notApi: { ...gercek.notApi, notGetir: oncekiApi.notGetir },
     takvimApi: {
       ...gercek.takvimApi,
       cakismaKontrol: async () => ({ cakisanlar: [], cakisan_hafta_sayisi: 0, kontrol_edilen_hafta: 1 }),
@@ -29,10 +32,14 @@ const resmiNot: SeansNotu = {
   guncelleme_zamani: '2026-09-07T06:00:00Z',
 }
 const GIZLI = 'GIZLI-OZEL-SAYFA'
+const GECEN_HAFTA: DanisanSeansi = {
+  appointment_id: 90, baslangic: '2026-08-31T10:00', durum: 'geldi', ucret_kurus: null, odendi: false,
+  not_ilk_satiri: 'gecen hafta', etiketler: [],
+}
 
 function akis(ozel: Partial<ReturnType<typeof useSeansNotlari>['seans']> = {}): ReturnType<typeof useSeansNotlari> {
   return {
-    seans: { id: randevu.id, not: resmiNot, ozelNot: null, ozelHata: null, gecmisNotlar: [], hata: null, ...ozel },
+    seans: { id: randevu.id, not: resmiNot, ozelNot: null, ozelHata: null, hata: null, ...ozel },
     notKaydet: vi.fn(async () => {}),
     notYansit: vi.fn(),
     ozelNotKaydet: vi.fn(async () => {}),
@@ -60,13 +67,19 @@ function kur(ozel: Partial<React.ComponentProps<typeof SeansSayfasi>> = {}) {
     onRandevuKaydet: vi.fn(async () => {}),
     onRandevuSil: vi.fn(async () => {}),
     onSeriSil: vi.fn(async () => {}),
+    onSeansaGit: vi.fn(),
+    seansListesiOnbellegi: null as DanisanSeansi[] | null,
     etiket,
     ...ozel,
   }
-  return { ...props, ...render(<SeansSayfasi {...props} />) }
+  return { ...props, ...render(<SeansSayfasi {...props} />), props }
 }
 
-beforeEach(() => taslaklariUnut())
+beforeEach(() => {
+  taslaklariUnut()
+  oncekiApi.seanslar.mockReset().mockResolvedValue([])
+  oncekiApi.notGetir.mockReset()
+})
 afterEach(() => vi.restoreAllMocks())
 
 describe('SeansSayfasi (tasarım N1-N4)', () => {
@@ -132,19 +145,68 @@ describe('SeansSayfasi (tasarım N1-N4)', () => {
     expect(screen.queryByRole('region', { name: 'Önceki seans notları' })).toBeNull()
   })
 
-  it('7.10 özel not sağ sütunda HİÇBİR biçimde görünmez (özel sekme açık, geçmiş açılmış)', async () => {
-    const gecmis: SeansNotu = { ...resmiNot, appointment_id: 90, seans_zamani: '2026-08-31T10:00', icerik: '<p>gecen hafta</p>' }
-    kur({
-      seansAkisi: akis({
-        ozelNot: { appointment_id: 101, icerik: GIZLI, guncelleme_zamani: 'z' },
-        gecmisNotlar: [gecmis],
-      }),
-    })
+  it('7.10 özel not önceki notlar sütununda HİÇBİR biçimde görünmez (özel sekme açık, eski not açılmış)', async () => {
+    oncekiApi.seanslar.mockResolvedValue([GECEN_HAFTA])
+    oncekiApi.notGetir.mockResolvedValue({ ...resmiNot, appointment_id: 90, icerik: '<p>gecen hafta</p>' })
+    kur({ seansAkisi: akis({ ozelNot: { appointment_id: 101, icerik: GIZLI, guncelleme_zamani: 'z' } }) })
     await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
     expect((screen.getByLabelText('Özel notum') as HTMLTextAreaElement).value).toBe(GIZLI)
     const sutun = screen.getByRole('region', { name: 'Önceki seans notları' })
-    for (const d of within(sutun).getAllByRole('button')) await userEvent.click(d)
-    expect(sutun.textContent).toContain('gecen hafta')
+    await userEvent.click(await within(sutun).findByRole('button', { name: /31 Ağustos 2026, 10:00/ }))
+    await waitFor(() => expect(sutun.textContent).toContain('gecen hafta'))
     expect(sutun.textContent).not.toContain(GIZLI)
+    expect(oncekiApi.notGetir).toHaveBeenCalledWith(90)
+  })
+
+  it('8.8 geniş okuma sütunu yarıya büyütür; editör AYNI düğüm kalır (yazılmamış metin kaybolmaz)', async () => {
+    oncekiApi.seanslar.mockResolvedValue([GECEN_HAFTA])
+    oncekiApi.notGetir.mockResolvedValue({ ...resmiNot, appointment_id: 90, icerik: '<p>gecen hafta</p>' })
+    kur()
+    const editor = screen.getByLabelText('Seans notu') as HTMLTextAreaElement
+    fireEvent.change(editor, { target: { value: '<p>yazılıyor</p>' } })
+    const sutun = screen.getByRole('region', { name: 'Önceki seans notları' }).parentElement!
+    expect(sutun.className).toContain('w-80')
+    await userEvent.click(await screen.findByRole('button', { name: /31 Ağustos 2026, 10:00/ }))
+    await waitFor(() => expect(sutun.className).toContain('w-1/2'))
+    expect(screen.getByLabelText('Seans notu')).toBe(editor)
+    expect(editor.value).toBe('<p>yazılıyor</p>')
+  })
+
+  it('"Bu seansa git" sayfanın onSeansaGit özelliğine (takvim.randevuyaGit) seansın kimliği ve başlangıcıyla gider', async () => {
+    oncekiApi.seanslar.mockResolvedValue([GECEN_HAFTA])
+    oncekiApi.notGetir.mockResolvedValue({ ...resmiNot, appointment_id: 90, icerik: '<p>gecen hafta</p>' })
+    const p = kur()
+    await userEvent.click(await screen.findByRole('button', { name: /31 Ağustos 2026, 10:00/ }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Bu seansa git' }))
+    expect(p.onSeansaGit).toHaveBeenCalledTimes(1)
+    expect(p.onSeansaGit).toHaveBeenCalledWith(90, '2026-08-31T10:00')
+  })
+
+  it('preflight F7: sayfa danışan dosyasının önbelleğini panele geçirir; önbellek varken liste İSTENMEZ', async () => {
+    kur({ seansListesiOnbellegi: [{ ...GECEN_HAFTA, not_ilk_satiri: 'ONBELLEKTEN' }] })
+    const sutun = screen.getByRole('region', { name: 'Önceki seans notları' })
+    expect(sutun.textContent).toContain('ONBELLEKTEN')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(oncekiApi.seanslar).not.toHaveBeenCalled()
+  })
+
+  // Sayfa randevu KİMLİĞİYLE `key`li: randevu formdan BAŞKA bir danışana
+  // taşınınca sayfa yeniden kurulmaz, yalnızca `randevu` prop'u değişir
+  // (dördüncü biçim: geçiş). Önceki danışanın açık notu yeni danışanın
+  // sayfasında kalsaydı ekranda yanlış danışanın notu dururdu.
+  it('randevu başka danışana taşınınca eski danışanın açık notu ekranda KALMAZ; sütun daralır, liste yeni danışan için', async () => {
+    oncekiApi.seanslar.mockImplementation(async (id: number) => (id === 1 ? [GECEN_HAFTA] : []))
+    oncekiApi.notGetir.mockResolvedValue({ ...resmiNot, appointment_id: 90, icerik: '<p>AYSE GECEN HAFTA</p>' })
+    const { rerender, props } = kur()
+    const sutun = () => screen.getByRole('region', { name: 'Önceki seans notları' }).parentElement!
+    await userEvent.click(await screen.findByRole('button', { name: /31 Ağustos 2026, 10:00/ }))
+    await waitFor(() => expect(sutun().textContent).toContain('AYSE GECEN HAFTA'))
+    expect(sutun().className).toContain('w-1/2')
+
+    rerender(<SeansSayfasi {...props} randevu={{ ...randevu, client_id: 2, danisan_adi: 'Mehmet Demir' }} />)
+    await waitFor(() => expect(oncekiApi.seanslar).toHaveBeenLastCalledWith(2))
+    expect(document.body.textContent).not.toContain('AYSE GECEN HAFTA')
+    expect(sutun().className).toContain('w-80')
+    expect(await within(sutun()).findByText('Bu seanstan önce kayıtlı seans yok.')).toBeDefined()
   })
 })

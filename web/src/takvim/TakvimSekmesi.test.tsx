@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { DanisanSeansi } from '../api'
 import { yerelGun } from '../screens/anaEkranKancalari/yerelGun'
 import type { useSeansNotlari } from '../screens/anaEkranKancalari/useSeansNotlari'
 import type { useTakvimAkisi } from '../screens/anaEkranKancalari/useTakvimAkisi'
@@ -64,7 +65,7 @@ function bosTakvim(): ReturnType<typeof useTakvimAkisi> {
 
 function bosSeansAkisi(): ReturnType<typeof useSeansNotlari> {
   return {
-    seans: { id: null, not: null, ozelNot: null, ozelHata: null, gecmisNotlar: [], hata: null },
+    seans: { id: null, not: null, ozelNot: null, ozelHata: null, hata: null },
     notKaydet: vi.fn(async () => {}),
     notYansit: vi.fn(),
     ozelNotKaydet: vi.fn(async () => {}),
@@ -92,6 +93,9 @@ function varsayilanProplar(ozelleştirme?: { ozetIstegi?: (ay: string) => Promis
     // Bu testlerde seans paneli hiç açılmıyor; bağlam hiç çağrılmaz.
     etiketBaglami: vi.fn(),
     onEtiketAc: vi.fn(),
+    // Önceki notlar paneli (Görev 8, preflight F7): dosyanın önbelleği boş
+    // bir liste — panel bu testlerde istek atmaz ("önceki seans yok").
+    seansListesiOnbellegi: vi.fn((_clientId: number): DanisanSeansi[] | null => []),
   }
 }
 
@@ -377,6 +381,24 @@ describe('TakvimSekmesi — not sayfası ve kaydırma (Görev 7, Plan A Görev 1
     expect(screen.getByRole('button', { name: 'Mehmet Demir dosyasını aç' })).toBeDefined()
     expect(screen.getByRole('tab', { name: 'Seans Notu' }).getAttribute('aria-selected')).toBe('true')
     expect(screen.getByRole('tab', { name: 'Özel Notlarım' }).getAttribute('aria-selected')).toBe('false')
+  })
+
+  it('8.10 önceki notlar paneli SEÇİLİ randevunun danışanının önbelleğiyle ve takvim.randevuyaGit ile bağlanır', async () => {
+    const props = seciliProplar()
+    const onceki: DanisanSeansi = {
+      appointment_id: 90, baslangic: '2026-08-31T10:00', durum: 'geldi', ucret_kurus: null, odendi: false,
+      not_ilk_satiri: null, etiketler: [],
+    }
+    props.seansListesiOnbellegi = vi.fn(() => [onceki])
+    render(<TakvimSekmesi {...props} />)
+    // Kimlik (101) değil DANIŞAN (1): önbellek danışan başına.
+    expect(props.seansListesiOnbellegi).toHaveBeenCalledWith(secili.client_id)
+    expect(props.seansListesiOnbellegi).not.toHaveBeenCalledWith(secili.id)
+    const bolge = screen.getByRole('region', { name: 'Önceki seans notları' })
+    await userEvent.click(within(bolge).getByRole('button', { name: /31 Ağustos 2026, 10:00/ }))
+    await userEvent.click(within(bolge).getByRole('button', { name: 'Bu seansa git' }))
+    expect(props.takvim.randevuyaGit).toHaveBeenCalledTimes(1)
+    expect(props.takvim.randevuyaGit).toHaveBeenCalledWith(90, '2026-08-31T10:00')
   })
 
   it('7.14 geçiş bekliyorken ızgaranın yerinde "Seans açılıyor…" durur', () => {

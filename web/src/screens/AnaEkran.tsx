@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { danisanApi, etiketApi, notApi, YetkisizHata, type Etiket } from '../api'
+import { danisanApi, etiketApi, notApi, YetkisizHata, type DanisanSeansi, type Etiket } from '../api'
 import { AyarlarSekmesi } from '../ayarlar/AyarlarSekmesi'
 import type { DosyaAltSekme } from '../danisan/DanisanDosyasi'
 import { DanisanlarSekmesi } from '../danisan/DanisanlarSekmesi'
@@ -34,7 +34,7 @@ import { yerelGun } from './anaEkranKancalari/yerelGun'
  * gerekiyordu. Ayrım akış başına:
  *
  *   - `useTakvimAkisi`     — görünen haftanın randevuları ve SEÇİM (omurga)
- *   - `useSeansNotlari`    — açık seansın resmî notu, geçmişi ve özel notu
+ *   - `useSeansNotlari`    — açık seansın resmî notu ve özel notu
  *   - `useDanisanDosyasi`  — açık danışan kartı, ekleri ve depolama durumu
  *   - `useDanisanListesi`  — danışan listesi, ekleme, arşivleme, saklama uyarısı
  *   - `useDenetimKayitlari`— Ayarlar > Denetim kaydı: salt okunur liste, süzgeç,
@@ -540,6 +540,21 @@ export function AnaEkran({
   }
 
   /**
+   * Not sayfasının önceki notlar panelinin listesi (Görev 8, preflight F7):
+   * danışan dosyasının seans listesi (`useDanisanSeanslari`) AYNI danışan
+   * için yüklü, hatasız ve taze ise o liste; değilse `null` ve panel TEK
+   * istek atar. Her `/seanslar` okuması silinemez bir `Goruntuleme` satırı;
+   * dosyanın listesi tek yazma yolundan (not, durum, ödeme, etiket) zaten
+   * yamanıyor. Bayat liste (`yuklendi === false`) verilmez: silinen ya da
+   * taşınan bir seans panelde görünürdü.
+   */
+  function seansListesiOnbellegi(clientId: number): DanisanSeansi[] | null {
+    return dosya.seciliDanisanId === clientId && seanslar.yuklendi && seanslar.hata === null
+      ? seanslar.seanslar
+      : null
+  }
+
+  /**
    * Bir seansın `EtiketSatiri` bağlamı. İki ekran da BUNU çağırıyor: aynı
    * önbellek girdisi (`seansDurumu`), aynı yazma yolu.
    */
@@ -652,6 +667,7 @@ export function AnaEkran({
             onSeriSil={randevuSeriSil}
             etiketBaglami={etiketBaglami}
             onEtiketAc={etiketler.etiketAc}
+            seansListesiOnbellegi={seansListesiOnbellegi}
           />
         </div>
       )}

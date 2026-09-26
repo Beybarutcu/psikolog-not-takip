@@ -123,13 +123,19 @@ export function OncekiNotlar({
     if (!aramaEtkin) return
     let iptal = false
     const zamanlayici = setTimeout(() => {
+      // Terimin SON aramasının sonucu geçerlidir: başarı eski hatayı, hata
+      // eski sonucu kaldırır — yoksa "Arama yapılamadı." doğru sonuçların
+      // yanında (ya da eski sonuçlar hatanın altında) kalırdı.
       notApi.notAra(danisanId, kirpilmis, seansBaslangici).then(
         (sonuclar) => {
-          if (!iptal) setArama({ terim: kirpilmis, sonuclar })
+          if (iptal) return
+          setArama({ terim: kirpilmis, sonuclar })
+          setAramaHatasi(null)
         },
         (e: unknown) => {
           if (iptal || e instanceof YetkisizHata) return
           setAramaHatasi({ terim: kirpilmis, mesaj: e instanceof Error ? e.message : 'Arama yapılamadı.' })
+          setArama(null)
         },
       )
     }, ARAMA_GECIKMESI_MS)

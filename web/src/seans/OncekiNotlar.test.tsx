@@ -258,6 +258,37 @@ describe('OncekiNotlar (tasarım N5-N9)', () => {
     expect(bolge().textContent).not.toContain('Bu terim önceki notlarda geçmiyor.')
   })
 
+  it('aynı terimin SON aramasının sonucu geçerli: başarı eski hatayı, hata eski sonucu kaldırır', async () => {
+    // Dal sonu incelemesi (Görev 8 minor): başarısız aramanın hatası aynı
+    // terimin sonraki BAŞARILI aramasında kalıyordu; "Arama yapılamadı."
+    // doğru sonuçların yanında duruyordu.
+    const sonuc: NotAramaSonucu[] = [{ appointment_id: 200, seans_zamani: '2026-09-07T10:00', parca: 'KAYGI anlattı' }]
+    t.notAra
+      .mockRejectedValueOnce(new Error('Arama sunucuda düştü.'))
+      .mockResolvedValueOnce(sonuc)
+      .mockRejectedValueOnce(new Error('Yine düştü.'))
+    kur()
+    await ilerle(0)
+    fireEvent.change(kutu(), { target: { value: 'kaygı' } })
+    await ilerle(ARAMA_GECIKMESI_MS)
+    expect(within(bolge()).getByRole('alert').textContent).toContain('Arama sunucuda düştü.')
+
+    // Terim değişip (gecikme dolmadan) AYNI terime döner: aynı terim yeniden aranır.
+    fireEvent.change(kutu(), { target: { value: 'kaygıx' } })
+    fireEvent.change(kutu(), { target: { value: 'kaygı' } })
+    await ilerle(ARAMA_GECIKMESI_MS)
+    expect(t.notAra).toHaveBeenCalledTimes(2)
+    expect(within(bolge()).queryByRole('alert')).toBeNull()
+    expect(satirlar()).toHaveLength(1)
+
+    fireEvent.change(kutu(), { target: { value: 'kaygıy' } })
+    fireEvent.change(kutu(), { target: { value: 'kaygı' } })
+    await ilerle(ARAMA_GECIKMESI_MS)
+    expect(t.notAra).toHaveBeenCalledTimes(3)
+    expect(within(bolge()).getByRole('alert').textContent).toContain('Yine düştü.')
+    expect(satirlar()).toHaveLength(0)
+  })
+
   it('açılan not okunamazsa hata gösterilir; "not yazılmamış" DENMEZ', async () => {
     t.notGetir.mockRejectedValue(new Error('Not okunamadı.'))
     kur()

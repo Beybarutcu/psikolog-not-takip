@@ -112,13 +112,19 @@ export function BicimliYuzey({ html, onChange, etiket, editable = true, vurgu = 
       <div className="not-editoru relative flex flex-1 flex-col rounded border border-slate-300 bg-white">
         {editable && <AracCubugu bulAcik={bulAcik} onBulDegistir={() => setBulAcik((a) => !a)} />}
         {editable && (
-          <SearchAndReplace
-            className="not-bul-paneli"
-            open={bulAcik}
-            onOpen={() => setBulAcik(true)}
-            onClose={() => setBulAcik(false)}
-            scrollIntoViewOptions={{ block: 'center' }}
-          />
+          // Yüksekliksiz çapa, araç çubuğunun HEMEN altında: çubuk dar
+          // sütunda iki-üç satıra kırıldığında (bkz. `AracCubugu`) panel
+          // sabit bir yükseklikten açılsaydı alttaki satırları ve "Bul ve
+          // değiştir"in kendisini örterdi.
+          <div className="relative">
+            <SearchAndReplace
+              className="not-bul-paneli"
+              open={bulAcik}
+              onOpen={() => setBulAcik(true)}
+              onClose={() => setBulAcik(false)}
+              scrollIntoViewOptions={{ block: 'center' }}
+            />
+          </div>
         )}
         <EditorContent editor={editor} role="presentation" className="flex flex-1 flex-col" />
       </div>

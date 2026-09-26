@@ -62,9 +62,11 @@
   background-color: #fcd34d;
 }
 
+// Kapsayıcısı araç çubuğunun altındaki yüksekliksiz çapa (`BicimliYuzey`):
+// çubuk kaç satıra kırılırsa kırılsın panel onun altından açılır.
 .not-bul-paneli {
   position: absolute;
-  top: calc(var(--tt-toolbar-height, 44px) + 0.25rem);
+  top: 0.25rem;
   right: 0.5rem;
   z-index: 20;
 }

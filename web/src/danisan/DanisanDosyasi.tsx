@@ -262,7 +262,10 @@ export function DanisanDosyasi({
           role="tabpanel"
           id="danisan-dosyasi-panel-seanslar"
           aria-labelledby="danisan-dosyasi-sekme-seanslar"
-          className="mt-3 grid grid-cols-[16rem_1fr] gap-4"
+          // `minmax(0,1fr)`: düz `1fr` izi içeriğinin asgari genişliğinin
+          // (eskiden tek satırlık editör araç çubuğu, ~740 px) altına
+          // inemez ve belgeyi yatay taşırırdı (son inceleme A).
+          className="mt-3 grid grid-cols-[16rem_minmax(0,1fr)] gap-4"
         >
           {seansHata !== null ? (
             // Son inceleme I4: yüklenemeyen liste "seans yok" DEĞİLDİR.

@@ -17,8 +17,11 @@ import { danisanSuz } from './danisanAramasi'
  *
  * Eskiden danışan çipleri ve açık kart AnaEkran'da alt alta, tam genişlikte
  * duruyordu (kart açıksa sayfa aşağı kayar, liste gözden kaybolurdu). Bu
- * bileşen ikisini `grid grid-cols-[18rem_1fr]` ile YAN YANA koyar: liste
- * her zaman görünür kalır, kart onun yanında açılır.
+ * bileşen ikisini `grid grid-cols-[18rem_minmax(0,1fr)]` ile YAN YANA
+ * koyar: liste her zaman görünür kalır, kart onun yanında açılır. Sağ iz
+ * `minmax(0,1fr)`: düz `1fr` içeriğinin asgari genişliğinin altına inemez;
+ * tek satırlık editör araç çubuğu (~740 px) belgeyi 1024-1280 px
+ * pencerelerde yatay taşırıyordu (son inceleme A; `e2e/yerlesim.spec.ts`).
  *
  * # Sol kolon: arama, ekleme, liste (tasarım B1)
  *
@@ -181,7 +184,7 @@ export function DanisanlarSekmesi({
   }
 
   return (
-    <div className="grid grid-cols-[18rem_1fr] gap-6" data-testid="danisanlar-sekmesi">
+    <div className="grid grid-cols-[18rem_minmax(0,1fr)] gap-6" data-testid="danisanlar-sekmesi">
       {/* SOL KOLON — arama (tasarım B1), ekleme formu, liste. Kendi içinde
           kayar: uzun listede sağdaki dosya yerinde kalır. `self-start`
           ZORUNLU: ızgara hücresi varsayılan olarak satır boyuna gerilir ve

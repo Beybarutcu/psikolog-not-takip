@@ -161,3 +161,94 @@ test('not sayfasinda editor ekranin kalanini doldurur; danisan dosyasinda asgari
   expect(d).not.toBeNull()
   expect(d!.height).toBeGreaterThanOrEqual(256)
 })
+
+// Son inceleme A: uygulamanın KENDİ pencere boylarında (Tauri ana pencere
+// 1200x760, en az 1024x680; bkz. `src-tauri/src/main.rs`) ve 1280x720'de
+// belge yatay taşmaz ve not editörünün araç çubuğu kesilmez. Eskiden
+// danışan dosyasının iki `1fr` izi TipTap araç çubuğunun tek satırlık
+// asgari genişliğinin (~740 px) altına inemiyordu: belge 1280'de ~1358 px
+// oluyor, "Bul ve değiştir" dahil editörün sağı ekranın dışında kalıyordu.
+// Takvimdeki not sayfasında sütun daralabiliyor (`min-w-0`) ama araç çubuğu
+// kendi içinde (gizli kaydırma çubuğuyla) kesiliyordu. İki sayfada da:
+// belge pencereden geniş değil, düğme tamamen ekranda ve araç çubuğunun
+// sağ kenarını aşmıyor (kendi içinde kaydırılarak gizlenmemiş).
+test.describe('editor arac cubugu pencereye sigar', () => {
+  // Açılış kaydırması (yumuşak, index.css) ölçümleri oynatmasın.
+  test.use({ reducedMotion: 'reduce' })
+
+  async function tasmaYok(page: Page, yer: string) {
+    const belge = await page.evaluate(() => ({
+      genislik: document.documentElement.scrollWidth,
+      pencere: window.innerWidth,
+    }))
+    expect.soft(belge.genislik, `${yer}: belge yatay taşıyor`).toBeLessThanOrEqual(belge.pencere)
+    const cubuk = page.getByRole('toolbar', { name: 'Biçim araçları', exact: true })
+    const dugme = cubuk.getByRole('button', { name: 'Bul ve değiştir', exact: true })
+    await expect.soft(dugme, `${yer}: "Bul ve değiştir" tamamen ekranda değil`).toBeInViewport({ ratio: 1 })
+    const c = await cubuk.boundingBox()
+    const d = await dugme.boundingBox()
+    expect(c).not.toBeNull()
+    expect(d).not.toBeNull()
+    expect.soft(d!.x + d!.width, `${yer}: düğme araç çubuğunun sağ kenarını aşıyor`).toBeLessThanOrEqual(c!.x + c!.width)
+  }
+
+  // Dar sütunda çubuk birkaç satıra kırılır; bul paneli çubuğun ALTINDAN
+  // açılır, alt satırları ve açan düğmeyi örtmez (eskiden çubuğun tek
+  // satırlık yüksekliğinden açılıyordu).
+  async function bulPaneliCubugunAltinda(page: Page, yer: string) {
+    const cubuk = page.getByRole('toolbar', { name: 'Biçim araçları', exact: true })
+    await cubuk.getByRole('button', { name: 'Bul ve değiştir', exact: true }).click()
+    const panel = page.getByRole('dialog', { name: 'Bul ve değiştir', exact: true })
+    await expect(panel).toBeVisible()
+    const c = await cubuk.boundingBox()
+    const p = await panel.boundingBox()
+    expect(c).not.toBeNull()
+    expect(p).not.toBeNull()
+    expect(p!.y, `${yer}: bul paneli araç çubuğunu örtüyor`).toBeGreaterThanOrEqual(c!.y + c!.height)
+    await page.keyboard.press('Escape')
+    await expect(panel).toHaveCount(0)
+  }
+
+  for (const [sira, boyut] of [
+    { width: 1024, height: 680 },
+    { width: 1200, height: 760 },
+    { width: 1280, height: 720 },
+  ].entries()) {
+    test(`${boyut.width}x${boyut.height}: danisan dosyasi ve not sayfasi yatay tasmaz, "Bul ve degistir" gorunur`, async ({ page }) => {
+      await page.setViewportSize(boyut)
+      await kurulumYap(page)
+      const ad = `Yerlesim Tasma ${sira + 1}`
+      await danisanEkle(page, ad)
+      // Önceki seans (geniş okuma için) ve bu seans, aynı gün.
+      const izgara = page.getByTestId('takvim-izgara')
+      for (const saat of ['08:00', '13:00']) {
+        await page.locator(`button[aria-label$="${saat} boş"]`).first().click()
+        await page.getByLabel('Danışan', { exact: true }).selectOption({ label: ad })
+        await page.getByRole('button', { name: 'Kaydet', exact: true }).click()
+        await expect(izgara.getByRole('button', { name: `${saat} ${ad}`, exact: true })).toBeVisible()
+      }
+
+      // Takvimdeki not sayfası, dar önceki notlar sütunuyla.
+      await izgara.getByRole('button', { name: `13:00 ${ad}`, exact: true }).click()
+      await expect(page.getByLabel('Seans notu', { exact: true })).toBeVisible()
+      const bolge = page.getByRole('region', { name: 'Önceki seans notları' })
+      await expect(bolge.getByRole('listitem')).toHaveCount(1)
+      await tasmaYok(page, `${boyut.width}x${boyut.height} not sayfası`)
+
+      // Geniş okuma (N7): sütun sayfanın yarısına büyür, editör daralır.
+      const darGenislik = (await bolge.boundingBox())!.width
+      await bolge.getByRole('listitem').getByRole('button').first().click()
+      await expect.poll(async () => (await bolge.boundingBox())!.width).toBeGreaterThan(darGenislik * 1.3)
+      await tasmaYok(page, `${boyut.width}x${boyut.height} not sayfası geniş okuma`)
+      await bulPaneliCubugunAltinda(page, `${boyut.width}x${boyut.height} not sayfası geniş okuma`)
+
+      // Danışan dosyası, Seanslar alt sekmesi, seans notu açık.
+      await page.getByTestId('seans-bolumu').getByRole('button', { name: `${ad} dosyasını aç`, exact: true }).click()
+      await expect(page.getByRole('heading', { level: 2, name: ad, exact: true })).toBeVisible()
+      await expect(page.getByRole('tab', { name: 'Seanslar', exact: true })).toHaveAttribute('aria-selected', 'true')
+      await expect(page.getByLabel('Seans notu', { exact: true })).toBeVisible()
+      await tasmaYok(page, `${boyut.width}x${boyut.height} danışan dosyası`)
+      await bulPaneliCubugunAltinda(page, `${boyut.width}x${boyut.height} danışan dosyası`)
+    })
+  }
+})

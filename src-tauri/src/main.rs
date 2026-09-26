@@ -120,7 +120,20 @@ fn main() {
     let koken: Url = format!("http://{YEREL_ADRES}:{port}/").parse().expect("yerel adres gecersiz");
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
+        // Varsayilan `init()` (open_js_links_on_click: true) HER webview'e
+        // bir JS betigi enjekte eder; bu betik `target="_blank"` (ve
+        // Ctrl/Shift-tikli) http(s)/mailto/tel baglantilarinin tiklamasini
+        // `preventDefault()` ile yutar ve dogrudan `invoke('plugin:opener|
+        // open_url', …)` cagirir. `capabilities/` hic acilmadigindan (JS'e
+        // opener izni verilmiyor) bu invoke IPC ACL tarafindan REDDEDILIR
+        // ve baglanti sessizce olur — `preventDefault()` yuzunden webview
+        // motoru bir "yeni pencere" istegi hic uretmez, dolayisiyla
+        // `on_new_window`/`pencere_karari`/`disarida_ac` zinciri de
+        // calismaz. Bu yuzden o betigi KAPATIYORUZ: gercek tiklama native
+        // olarak WebView'e ulasir, `on_new_window` tetiklenir, karar bu
+        // dosyadaki zincirden gecer (ve F14 yerel-adres reddi de gecerli
+        // kalir).
+        .plugin(tauri_plugin_opener::Builder::new().open_js_links_on_click(false).build())
         .setup(move |app| {
             korumali_pencere(app.handle(), ANA_PENCERE, koken.clone(), koken.clone())
                 .title("Terapi Notlari")
@@ -228,7 +241,14 @@ mod tests {
         assert!(kurucu.contains(".inner_size(720.0, 800.0)"), "okuma penceresi boyutu (P2)");
         assert!(kurucu.contains(".on_navigation(") && kurucu.contains(".on_new_window("), "gezinme korumasi (P6b)");
         assert!(kurucu.contains("NewWindowResponse::Deny"), "yeni pencere istegi webview'e birakilmaz");
-        assert!(kurucu.contains(".plugin(tauri_plugin_opener::init())"), "opener eklentisi (P6b)");
+        assert!(
+            kurucu.contains(".open_js_links_on_click(false)"),
+            "opener'in JS-tiklamada-ac betigi kapali olmali (capabilities yok; invoke reddedilir, link sessizce olur, on_new_window hic tetiklenmez)"
+        );
+        assert!(
+            !kurucu.contains(".plugin(tauri_plugin_opener::init())"),
+            "varsayilan opener init() KULLANILMAMALI (js_init_script capabilities olmadan target=_blank baglantisini sessizce olduruyor)"
+        );
         assert!(kurucu.contains("WindowEvent::Destroyed") && kurucu.contains("exit(0)"), "ana pencere kapaninca cikis (P5)");
         assert!(kurucu.contains("korumali_pencere(app.handle(), ANA_PENCERE"), "ana pencere de korumali kurucudan");
     }

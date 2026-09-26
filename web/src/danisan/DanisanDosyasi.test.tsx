@@ -670,5 +670,12 @@ describe('DanisanDosyasi — uzun geçmiş (tasarım B3)', () => {
     }
     expect(sutun.contains(liste())).toBe(true)
     expect(sutun.contains(screen.getByLabelText('Seans notu'))).toBe(false)
+    // Sütundaki tam genişlik süzgeç seçiminin odak çerçevesi de kırpılmaz
+    // (satırlar ve Yaklaşan düğmesi `SeansListesi.test.tsx`'te).
+    const secim = screen.getByLabelText('Etikete göre süz')
+    expect(sutun.contains(secim)).toBe(true)
+    for (const sinif of ['focus-visible:outline-hidden', 'focus-visible:ring-2', 'focus-visible:ring-inset']) {
+      expect(secim.className, sinif).toContain(sinif)
+    }
   })
 })

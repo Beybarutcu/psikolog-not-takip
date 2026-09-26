@@ -163,8 +163,18 @@ export function SeansListesi({
           aria-current={aktif ? 'true' : undefined}
           data-not={s.not_ilk_satiri === null ? 'yok' : s.not_ilk_satiri === '' ? 'bos' : 'dolu'}
           onClick={() => onSecim(s.appointment_id)}
+          // `scroll-mt-7` (28 px): `block: 'nearest'` yukarı kaydırmada
+          // satırın üstünü kabın üstüne koyar ve ayın opak yapışkan başlığı
+          // (text-xs 16 + py-0.5 4 = 20 px; Yaklaşan'ınki text-sm satırıyla
+          // ≈24 px) tarih, #n ve durumun üstüne binerdi. Pay SATIRDA, sütunda
+          // (`scroll-pt`) değil: başlığın boyu da bu dosyada, `DanisanDosyasi`
+          // onu bilmek zorunda kalmaz. Başlık büyürse pay da büyümeli.
+          // Odak halkası İÇTE (`ring-inset`, yerel çerçeve gizli): liste
+          // sütununun `overflow-y-auto`'su dışa çizilen çerçeveyi kırpardı
+          // (B1'deki `ring-inset` ile aynı gerekçe).
           className={
-            'flex w-full flex-col items-start gap-0.5 rounded border px-2 py-1 text-left ' +
+            'flex w-full scroll-mt-7 flex-col items-start gap-0.5 rounded border px-2 py-1 text-left ' +
+            'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500 ' +
             (aktif ? 'border-slate-900 bg-slate-100' : 'border-slate-200 hover:bg-slate-50')
           }
         >
@@ -212,7 +222,9 @@ export function SeansListesi({
               disabled={zorlaAcik}
               title={zorlaAcik ? 'Seçili seans bu grupta; grup açık kalır.' : undefined}
               onClick={() => setYaklasanIstegi(!yaklasanAcik)}
-              className="text-xs font-medium text-slate-600 underline-offset-2 hover:underline disabled:no-underline"
+              // Odak halkası İÇTE: düğme sütunun sol üst köşesinde, dışa
+              // çizilen çerçeve `overflow-y-auto` ile kırpılırdı.
+              className="rounded px-1 text-xs font-medium text-slate-600 underline-offset-2 hover:underline focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500 disabled:no-underline"
             >
               {`Yaklaşan (${yaklasan.length})`}
             </button>

@@ -292,7 +292,9 @@ export function DanisanDosyasi({
                     </label>
                     <select
                       id="etikete-gore-suz"
-                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                      // Odak halkası İÇTE: tam genişlik seçim `overflow-y-auto`
+                      // sütunda, dışa çizilen çerçevenin yanları kırpılırdı.
+                      className="w-full rounded border border-slate-300 px-2 py-1 text-sm focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500"
                       value={etkinSuzgec}
                       onChange={(olay) => setSuzgec(olay.target.value)}
                     >

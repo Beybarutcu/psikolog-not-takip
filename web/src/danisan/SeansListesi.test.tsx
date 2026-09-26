@@ -317,4 +317,29 @@ describe('SeansListesi — uzun geçmiş düzeni (tasarım B3)', () => {
     expect(kaydir).toHaveBeenCalledTimes(2)
     expect(kaydir.mock.contexts[1]).toBe(satir('1 Ekim 2026, 14:00'))
   })
+
+  // İnceleme (Görev 4, Important): `block: 'nearest'` yukarı kaydırmada
+  // satırın üst kenarını kabın üstüne koyar; kendi ayının opak yapışkan
+  // başlığı (≈20–24 px) tarih, #n ve durumun üstüne biner. Gerçek tarayıcı
+  // geometrisi Görev 5 e2e'sinde; burada sınıf sabitlenir.
+  it('satır yapışkan başlığın ALTINA kaydırılır (scroll-mt-7 = 28 px ≥ başlık)', () => {
+    render(<SeansListesi seanslar={UZUN} secili={30} onSecim={() => {}} simdi={SIMDI} />)
+    const satirlar = [...liste().querySelectorAll('li > button')]
+    expect(satirlar).toHaveLength(6)
+    for (const b of satirlar) expect(b.className, b.textContent ?? '').toContain('scroll-mt-7')
+  })
+
+  // İnceleme (Görev 4, Minor 1): liste sütunu `overflow-y-auto` (overflow-x
+  // de `auto` hesaplanır); dışa çizilen odak çerçevesi kenarlarda kırpılır.
+  // B1'deki `ring-inset` gibi halka İÇTE çizilir, yerel çerçeve gizlenir.
+  it('odak halkası düğmenin İÇİNDE (satırlar ve Yaklaşan düğmesi): sütun kırpmaz', () => {
+    render(<SeansListesi seanslar={UZUN} secili={30} onSecim={() => {}} simdi={SIMDI} />)
+    const dugmeler = [yaklasan(), ...liste().querySelectorAll('li > button')]
+    expect(dugmeler).toHaveLength(7)
+    for (const b of dugmeler) {
+      for (const sinif of ['focus-visible:outline-hidden', 'focus-visible:ring-2', 'focus-visible:ring-inset']) {
+        expect(b.className, `${b.textContent} ${sinif}`).toContain(sinif)
+      }
+    }
+  })
 })

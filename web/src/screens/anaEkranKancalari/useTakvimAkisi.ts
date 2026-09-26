@@ -446,10 +446,11 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
     setRandevular((onceki) => onceki.map((r) => (r.id === id ? { ...r, durum } : r)))
     // Panel açık kalır ve elindeki `randevu` nesnesi bu state'tir; o kopya
     // güncellenmezse `seciliRandevu.durum` sunucudaki gerçekten sessizce
-    // ayrışır. Plan 4 Görev 2'den beri bu satır YÜK TAŞIYOR: `SeansPaneli`
-    // alt satırı seçili düğmeyi (`aria-pressed`) `randevu.durum`'dan okuyor
-    // ve `key` değişmediği için remount olmuyor — bu tazeleme olmasaydı
-    // "Geldi"ye basınca vurgu eski düğmede kalırdı.
+    // ayrışır. Plan 4 Görev 2'den beri bu satır YÜK TAŞIYOR: alt satır artık
+    // `SeansSayfasi`'nin üst satırında yaşıyor (`SeansAltSatiri gomulu`) ve
+    // seçili düğmeyi (`aria-pressed`) `randevu.durum`'dan okuyor; `key`
+    // değişmediği için remount olmuyor — bu tazeleme olmasaydı "Geldi"ye
+    // basınca vurgu eski düğmede kalırdı.
     //
     // Nesne tazeleniyor ama KİMLİK aynı kalıyor: seans notu efektleri
     // `seansId`/`seansDanisanId`/`seansBaslangici` ilkel değerlerine bağlı,

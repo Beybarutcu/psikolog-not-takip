@@ -137,8 +137,11 @@ describe('HizliArama — açılış ve kapanış', () => {
   // Görev 6a inceleme bulgusu: eskiden `ctrlKey` de aramayı açıyordu ve
   // `preventDefault()` çağırıyordu -- macOS'ta Ctrl+K, textarea/input
   // içinde sistemin kendi "imleçten satır sonuna kadar sil" kısayolu.
-  // Odak `NotEditoru`'nun textarea'sındayken bu global dinleyici o
-  // kısayolu yutuyordu. Artık yalnızca `metaKey` (Cmd+K) kabul ediliyor.
+  // Odak herhangi bir metin alanındayken (ör. not editörünün düzenlenebilir
+  // yüzeyi) bu global dinleyici o kısayolu yutuyordu. Artık yalnızca
+  // `metaKey` (Cmd+K) kabul ediliyor. Aşağıdaki `<textarea>` gerçek
+  // `NotEditoru`'nun yüzeyini TEMSİL EDER (o artık TipTap/ProseMirror ile
+  // `contenteditable`); iddia genel olarak "bir metin alanı" için geçerli.
   it('Ctrl+K (Cmd olmadan) metin alani odaktayken aramayi ACMAZ, varsayilan davranisi BOZMAZ', () => {
     kur()
     const alan = document.createElement('textarea')

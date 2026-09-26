@@ -713,7 +713,11 @@ describe('NotEditoru — sablon secici ve etiket', () => {
     expect((screen.getByLabelText('Özel notum') as HTMLTextAreaElement).value).toBe('')
     await ilerle(10_000)
     expect(props.onKaydet).not.toHaveBeenCalled()
-    expect(screen.queryByText('Veri:')).toBeNull()
+    // Test yüzeyi bu dosyada textarea taklidi (yukarıdaki test); DOM'da
+    // `<h2>Veri</h2>` aranmaz (gerçek biçim `BicimliYuzey.test.tsx`/
+    // `NotEditoru.gercekYuzey.test.tsx`'te), ama enjekte edilmiş olsaydı
+    // `value` boş kalmazdı — asıl iddia budur.
+    expect((screen.getByLabelText('Özel notum') as HTMLTextAreaElement).value).toBe('')
   })
 
   it('secici yokken de otomatik kayit CALISIR', async () => {

@@ -73,7 +73,7 @@ describe('okumaKimligi (tasarım P2)', () => {
     expect(okumaKimligi('?okuma=42')).toBe(42)
     expect(okumaKimligi('?okuma=1')).toBe(1)
   })
-  it('geçersiz ya da yok -> null (ana ekran)', () => {
+  it('geçersiz kimlik ya da `okuma` anahtarı hiç yok -> null (bu TEK BAŞINA "ana ekran" demek değil, bkz. aşağıdaki describe)', () => {
     for (const a of ['', '?', '?okuma=', '?okuma=0', '?okuma=007', '?okuma=-1', '?okuma=1.5', '?okuma=abc', '?okuma=1234567890123456', '?baska=4']) {
       expect(okumaKimligi(a), a).toBeNull()
     }

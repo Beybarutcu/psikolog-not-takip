@@ -54,7 +54,7 @@
 //!
 //! `""` YALNIZCA içerik kırpıldıktan sonra (boşluk kümesi: `store::bosluk_mu`) tamamen boşsa döner. Yalnızca
 //! şablon başlıklarından oluşan bir not (şablon eklenmiş, hiçbir şey
-//! yazılmamış) boş SAYILMAZ: ilk başlık ("Veri:") döner — ekranda gerçekten
+//! yazılmamış) boş SAYILMAZ: ilk başlık ("Veri") döner — ekranda gerçekten
 //! duran şey odur ve "henüz boş" demek içerik varken boş demek olurdu.
 //!
 //! ## 2026-09-26: HTML not, düz metin önizleme
@@ -69,7 +69,7 @@
 //! Türkçe harfler (ı, ğ, ş, ö, ü, ç) UTF-8'de çok baytlıdır; bayt üzerinden
 //! kırpma bir karakterin ortasından kesip geçersiz UTF-8 üretebilirdi.
 //! İkinci satır (ve varsa devamı) SQL sorgusuyla diskten okunur --
-//! `p.icerik` sütunu bütünüyle bir `String`'e girer, satır bazında
+//! `p.duz_metin` sütunu bütünüyle bir `String`'e girer, satır bazında
 //! sınırlanmaz. Garanti daha dar: bu fonksiyonun DÖNÜŞ değerine (dolayısıyla
 //! `DanisanSeansi`'ye ve JSON yanıtına) yalnızca kırpılmış TEK satır girer;
 //! `onizleme` çağrısından sonra geri kalanı hiçbir yere taşınmadan düşer.

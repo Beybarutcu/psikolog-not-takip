@@ -40,11 +40,18 @@ import { okumaPenceresiniAc } from './okumaPenceresi'
  * sonradan kalkarsa (ör. bu sayfadan "Güncelle" dosyanın listesini bayat
  * sayar) yine tek istek.
  *
- * # Geç dönen not yanıtı
+ * # Geç dönen not yanıtı — `acikIdRef` NEYİ DÜZELTİR
  *
- * Not isteği açık seansın kimliğiyle karşılaştırılarak yazılır (`acikIdRef`):
- * A açılıp listeye dönülüp B açılırsa ve A'nın yanıtı B'ninkinden SONRA
- * gelirse, ekranda B'nin tarihi altında A'nın metni durmaz.
+ * Render zaten kimlik eşleşmesine bakar (`gosterilen = acikNot?.id ===
+ * acik.id ? acikNot : null`): açık seans değişince yanlış notun yanlış
+ * tarihin altında görünmesi bu satırla TEK BAŞINA engellenir. `acikIdRef`
+ * bambaşka bir riski kapatır: A açılıp (istek başlar) listeye dönülüp B
+ * açılırsa (B'nin kendi isteği gelir, notu GÖRÜNÜR), sonra A'nın GEÇ yanıtı
+ * gelirse — bu kontrol OLMASAYDI geç yanıt `acikNot`'u A'ya çevirirdi ve
+ * render B ile eşleşmediği için ekrandaki not sessizce "Not yükleniyor…"a
+ * DÖNERDİ; B için yeni bir istek bir daha hiç atılmayacağı için bu dönüş
+ * KALICI olurdu. `acikIdRef` yanıtı yalnızca hâlâ açık olan seansın
+ * kimliğiyle eşleşiyorsa yazar; geç gelen yabancı yanıt sessizce atılır.
  */
 export const ARAMA_GECIKMESI_MS = 300
 
@@ -86,7 +93,8 @@ export function OncekiNotlar({
   const [acik, setAcik] = useState<{ id: number; baslangic: string } | null>(null)
   const [acikNot, setAcikNot] = useState<AcikNot | null>(null)
   const [menu, setMenu] = useState<{ id: number; x: number; y: number } | null>(null)
-  // Yanıt yazılırken karşılaştırılan açık seans (bkz. "Geç dönen not yanıtı").
+  // Yanıt yazılırken karşılaştırılan açık seans: geç gelen yabancı yanıt
+  // açık notu "Not yükleniyor…"a GERİ DÖNDÜRMESİN diye (bkz. modül başlığı).
   const acikIdRef = useRef<number | null>(null)
   // Menüyü açan düğme: Escape odağı ona geri verir.
   const menuAcanRef = useRef<HTMLElement | null>(null)

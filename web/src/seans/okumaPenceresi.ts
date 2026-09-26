@@ -1,6 +1,6 @@
 /**
- * Okuma penceresi adresi (tasarım P2). Açan yarı burada; okuyan yarı
- * `okumaKimligi`, `App.tsx`'te.
+ * Okuma penceresi adresi (tasarım P2). Açan yarı (`okumaPenceresiniAc`) ve
+ * okuyan yarı (`okumaKimligi`) ikisi de burada; `App.tsx` yalnızca çağırır.
  *
  * `window.open` bu kod tabanında YASAK (`istemciRaporUretimi.test.ts`: yeni
  * pencere/belge danışan verisini sunucunun güvencesi dışına çıkarabilir).
@@ -26,7 +26,10 @@ export function okumaPenceresiniAc(randevuId: number): void {
 
 /**
  * `?okuma=<id>` (tasarım P2): pozitif tam sayı, başında sıfır yok, en fazla
- * 15 hane (güvenli tam sayı); değilse `null` — pencere ana ekranı çizer.
+ * 15 hane (güvenli tam sayı); değilse `null`. Bu `null` TEK BAŞINA "ana
+ * ekran adresi" anlamına GELMEZ (bkz. aşağıdaki `okumaParametresiVarMi`):
+ * adreste `okuma` anahtarı geçerken kimliği gramer dışıysa `App.tsx` yine
+ * ana ekrana düşmez, `OkumaAdresiGecersiz` gösterir.
  *
  * # F15 — bu gramer Rust'takiyle (`src-tauri/src/pencere.rs::okuma_kimligi`)
  *   BİREBİR AYNI DEĞİL
@@ -50,9 +53,13 @@ export function okumaKimligi(arama: string): number | null {
  * Adreste `okuma` anahtarı VAR MI — değeri geçerli olsun olmasın (F15,
  * yukarıdaki başlık). `okumaKimligi` ile birlikte kullanılır: anahtar var
  * ama `okumaKimligi` `null` dönüyorsa (gramer dışı hane sayısı, `0`,
- * negatif, tekrarlanan parametre, boş değer, vb.) bu adres yine de bir
- * okuma penceresidir — ana ekrana ASLA düşmemeli, kilit yoklaması yine
- * çalışmalı ve kullanıcıya kimliğin geçersiz olduğu söylenmeli.
+ * negatif, boş değer, vb.) bu adres yine de bir okuma penceresidir — ana
+ * ekrana ASLA düşmemeli, kilit yoklaması yine çalışmalı ve kullanıcıya
+ * kimliğin geçersiz olduğu söylenmeli.
+ *
+ * Tekrarlanan `okuma` parametresi (`?okuma=1&okuma=2`) TEK BAŞINA geçersiz
+ * SAYILMAZ: `URLSearchParams.get` her zaman İLK değeri döner, `okumaKimligi`
+ * de yalnızca o ilk değeri sınar — ikinci değer sessizce yok sayılır.
  */
 export function okumaParametresiVarMi(arama: string): boolean {
   return new URLSearchParams(arama).has('okuma')

@@ -593,25 +593,6 @@ export const notApi = {
       method: 'PUT',
       body: JSON.stringify({ sablon, icerik }),
     }),
-  // Danışanın geçmiş notları — YALNIZCA resmî notlar. Sunucudaki
-  // `notes::danisan_listesi` özel not tablosuna hiç bakmaz; istemcide de
-  // bu listeyi besleyen ikinci bir kaynak yok.
-  //
-  // `limit` çağıranın kararı ve zorunlu: sunucu `?limit=`i 1..=200 aralığına
-  // kırpıyor, ama varsayılanı 50. "Son üç seans" gösteren bir panelin 50
-  // seans notunun TAM İÇERİĞİNİ indirmesi için hiçbir sebep yok.
-  //
-  // `once` ("bu seans başlamadan önce") OPSİYONEL: verilmezse kesme yok.
-  // "Önceki seans notları" paneli bunu geçmek ZORUNDADIR — geçmeyen bir
-  // çağrı, açık seanstan SONRAKİ seansların notlarını "önceki" diye
-  // gösterir (bkz. `store::notes::danisan_notlari` belgesindeki `once`
-  // başlığı). Veri raporu ise bilerek geçmez: KVKK md. 11 "elimdeki her
-  // şey" demektir.
-  danisanNotlari: (danisanId: number, limit: number, once?: string) =>
-    istek<SeansNotu[]>(
-      `/api/danisanlar/${danisanId}/notlar?limit=${limit}` +
-        (once === undefined ? '' : `&once=${encodeURIComponent(once)}`),
-    ),
   // Önceki notlar panelinin araması (tasarım S8) — yalnızca RESMÎ notlar,
   // yalnızca bu danışan, `once` verilirse yalnızca o seanstan önce. Terim
   // sunucuda loga yazılmaz; burada da hiçbir yere düşürülmez.
@@ -650,8 +631,8 @@ export const ozelNotApi = {
  * `notApi`/`ozelNotApi` ayrımıyla aynı gerekçe (bkz. `notApi` başlığı): bir
  * "danışan veri raporu" ekranı doğal olarak "danışanın her şeyini getiren
  * istemciyi" arar. Bu nesne danışanın kimlik/rıza/saklama alanlarını ve ek
- * dosya ÜSTVERİSİNİ verir; not içeriği için tek yol `notApi.danisanNotlari`,
- * yani yalnızca **resmî** notlara giden fonksiyondur.
+ * dosya ÜSTVERİSİNİ verir; not içeriği için tek yol `notApi`'dir (`notGetir`,
+ * `notAra`): yalnızca **resmî** notlara giden fonksiyonlar.
  */
 export const danisanApi = {
   dosyaGetir: (id: number) => istek<DanisanDosyasi>(`/api/danisanlar/${id}`),

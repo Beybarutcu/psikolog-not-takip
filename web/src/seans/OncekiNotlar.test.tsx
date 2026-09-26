@@ -230,9 +230,9 @@ describe('OncekiNotlar (tasarım N5-N9)', () => {
     expect(t.seanslar).toHaveBeenCalledTimes(1)
   })
 
-  // `GecmisNotlar.test.tsx`'ten (Görev 8'de silindi) "seans tarihi zaman
-  // dilimine göre KAYMAZ" korumasının yerine: gece yarısına yakın bir seans
-  // `Date`'e çevrilip UTC'ye kayarsa (TZ Europe/Istanbul) bir gün önce görünür.
+  // "Seans tarihi zaman dilimine göre KAYMAZ" koruması: gece yarısına yakın
+  // bir seans `Date`'e çevrilip UTC'ye kayarsa (TZ Europe/Istanbul) bir gün
+  // önce görünür.
   it('gece yarısına yakın seansın tarihi KAYMAZ (Date kullanılmıyor)', async () => {
     t.seanslar.mockResolvedValue([seans({ appointment_id: 90, baslangic: '2026-08-31T00:30', not_ilk_satiri: 'gece' })])
     kur()
@@ -284,8 +284,11 @@ describe('OncekiNotlar (tasarım N5-N9)', () => {
     expect(bolge().textContent).toContain('Not açıldı, henüz boş.')
   })
 
-  // Yanlış notu doğru tarihin altında göstermek: A'nın yanıtı B açıkken
-  // B'ninkinden SONRA gelirse ekranda B'nin tarihi ve A'nın metni durur.
+  // Asıl risk yanlış tarihin altında yanlış notun görünmesi DEĞİL (onu
+  // render'ın kimlik süzgeci zaten engeller): A'nın GEÇ yanıtı B açıkken
+  // gelirse, `acikIdRef` olmasaydı B'nin zaten yüklenmiş notu sessizce ve
+  // KALICI olarak "Not yükleniyor…"a dönerdi (bkz. `OncekiNotlar.tsx` modül
+  // başlığı "acikIdRef NEYİ DÜZELTİR").
   it('geç dönen ESKİ not yanıtı, o sırada açılmış başka seansın okumasının yerine GEÇMEZ', async () => {
     t.seanslar.mockResolvedValue([
       seans({ appointment_id: 200, baslangic: '2026-09-07T10:00', not_ilk_satiri: 'A' }),

@@ -3600,7 +3600,20 @@ fn istemci_cagrilari() -> Vec<(String, String)> {
 /// `useDanisanSeanslari`e gerçek çağrı yerini ekledi; istisna KALDIRILDI --
 /// aksi hâlde bu test artık gerçek bir bağlantı eksikliğini sessizce
 /// gizlerdi.
-const ISTEMCISIZ_UCLAR: [(&str, &str); 0] = [];
+///
+/// `GET /danisanlar/{id}/notlar` (`notes::danisan_listesi`, çekirdekte
+/// `store::notes::danisan_notlari`'yı çağırır): Görev 11 istemcideki tek
+/// çağıranı (`notApi.danisanNotlari`) kaldırdı -- Görev 8 "önceki seans
+/// notları" panelini `danisanApi.seanslar` + `notApi.notGetir`/`notApi.
+/// notAra`e taşıdığından beri bu geniş listeyi kullanan yoktu. Uç ve
+/// çekirdek fonksiyonu KALDIRILMADI: veri raporu (`store::veri_raporu`) BU
+/// HTTP UCUNU DA `danisan_notlari` FONKSİYONUNU DA ÇAĞIRMAZ -- kendi ayrı
+/// SQL sorgusuyla `progress_notes.duz_metin`'i doğrudan okur (preflight F24
+/// bu yanlış varsayımı işaretlemişti) -- ama e2e `notlar.spec.ts`teki
+/// kilitli-uç (`kapaliYollar`) testi hâlâ bu HTTP ucunu doğrudan çağırıyor.
+/// `web/src`e geri bağlamak (ya da ucu tamamen kaldırmak) ayrı bir ürün
+/// kararı (bkz. görev 11 raporu "sonraki iş").
+const ISTEMCISIZ_UCLAR: [(&str, &str); 1] = [("GET", "/api/danisanlar/{}/notlar")];
 
 /// Kilit kapısının **dışında** olması BİLİNÇLİ olan uçlar — adı konmuş
 /// istisna (inceleme, ikinci tur).

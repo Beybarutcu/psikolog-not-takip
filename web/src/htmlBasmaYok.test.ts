@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest'
 
 // =========================================================================
 // YAPISAL TEST — `dangerouslySetInnerHTML` / `innerHTML` / `outerHTML` /
-// `insertAdjacentHTML` web/src üretim kodunda YOK. Markdown çevirici bu
-// görevin HTML-üretmeme kısıtını (bkz. görev brief'i, genel kısıtlar) yapısal
-// olarak da zorlar; test dosyaları hariç tutulur çünkü meşru olarak bu
+// `insertAdjacentHTML` web/src üretim kodunda YOK. Saklanan not HTML'i
+// (biçimli editör ve okuma görünümü TipTap/ProseMirror ile kurulur) hiçbir
+// yerde DOM'a doğrudan basılmaz; bu tarama tasarımın HTML-üretmeme kısıtını
+// (bkz. görev brief'i, genel kısıtlar) yapısal olarak zorlar; test dosyaları
+// hariç tutulur çünkü meşru olarak bu
 // dizgileri (ör. `DosyaBilgileri.test.tsx` içindeki `document.body.innerHTML`
 // iddiaları) içerirler. Dosya kümesi `import.meta.glob` ile `web/src`'den
 // özyinelemeli türetilir (`istemciRaporUretimi.test.ts` emsali); asgari
@@ -47,8 +49,9 @@ describe('yapısal: dangerouslySetInnerHTML / innerHTML web/src üretim kodunda 
    * Asgari sayı koruması (`AyarlarSekmesi.test.tsx` emsali). Glob boşa
    * düşerse (yanlış kök, yanlış desen) bu test SIFIR dosya tarar ve
    * aşağıdaki iddia hiçbir şeyi ölçmeden koşulsuz YEŞİL kalırdı. Eşik
-   * bugünkü üretim dosyası sayısının (şablon koduyla 172) belirgin altında
-   * ama "boş tarama" ile "gerçek tarama"yı kesin ayıracak kadar yüksek.
+   * (şablon koduyla) bugünkü üretim dosyası sayısının belirgin altında ama
+   * "boş tarama" ile "gerçek tarama"yı kesin ayıracak kadar yüksek; sabit
+   * bir dosya sayısı YAZILMAZ (dosya sayısı değiştikçe bayatlar).
    */
   it('taranan dosya sayısı asgari korumayı karşılar', () => {
     expect(yollar.length).toBeGreaterThan(100)

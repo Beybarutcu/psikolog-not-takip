@@ -52,7 +52,11 @@
 //! taşır ve oraya düşerse kalıcıdır. Bu yüzden:
 //! - `ayrinti` her zaman `None`'dır (`Ayrinti` kapalı bir enum'dur; sorgu
 //!   metni taşıyan bir varyant **eklenmez** — bkz. `store::audit` başlığı),
-//! - `varlik_id` **sabittir** (`"genel"`), sorgudan türetilmez,
+//! - genel aramada (`ara`) `varlik_id` **sabittir** (`"genel"`), sorgudan
+//!   türetilmez; danışana özel aramada (`danisan_notlarinda_ara`) `varlik_id`
+//!   `danisan:<client_id>`'dir — bu da sorgudan DEĞİL, çağıranın GİRDİSİNDEN
+//!   (aranan danışanın kimliği) gelir ve arama terimi işlenmeden ÖNCE
+//!   bellidir,
 //! - sonuç sayısı da yazılmaz: "kaç sonuç döndü" bilgisi arka arkaya
 //!   yapılan aramalarla bir terimin varlığını sızdırabilir.
 //!
@@ -191,9 +195,10 @@
 //! `lower()` + 12 `replace()`) aynı ASCII biçime katlanır.
 //!
 //! İki uygulamanın **aynı** kalması bir kısıttır: ayrışırlarsa arama sessizce
-//! sonuç bulamaz hâle gelir. Katlama dört yerde geçer (`katla_karakter`,
-//! `SORGU_DANISAN`, `SORGU_NOT`, `SORGU_DANISAN_NOT`) ve davranışsal testlerle
-//! her iki sorgu üzerinde ayrı ayrı iki yönlü olarak sabitlenir.
+//! sonuç bulamaz hâle gelir. Katlama beş yerde geçer (`katla_karakter`,
+//! `SORGU_DANISAN`, `SORGU_NOT`, `SORGU_ETIKET`, `SORGU_DANISAN_NOT`) ve
+//! davranışsal testlerle bu sorguların her biri üzerinde ayrı ayrı iki yönlü
+//! olarak sabitlenir.
 //!
 //! `katla_karakter` **1:1**'dir — her karakter tam olarak bir karaktere
 //! gider. `parca_cikar` bu değişmezliğe dayanır: katlanmış metindeki eşleşme

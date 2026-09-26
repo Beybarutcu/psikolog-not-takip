@@ -309,10 +309,10 @@ export function SeansPaneli({
           {etiket !== undefined && (
             <EtiketSatiri
               // Bu panel değil, üst bileşen `SeansSayfasi` seans kimliğiyle
-              // `key`li (`randevu-${randevu.id}`); yani bu satır zaten
-              // seans değişince yeniden monte olur — `key` dosya tarafındaki
-              // (orada YÜK TAŞIYAN) kullanımla aynı kalıp, burada ikinci bir
-              // savunma hattı.
+              // `key`li (`TakvimSekmesi.tsx`: `seans-${seciliRandevu.id}`);
+              // yani bu satır zaten seans değişince yeniden monte olur — `key`
+              // dosya tarafındaki (orada YÜK TAŞIYAN) kullanımla aynı kalıp,
+              // burada ikinci bir savunma hattı.
               key={`etiket-${randevu.id}`}
               kimlik={`takvim-${randevu.id}`}
               {...etiket}

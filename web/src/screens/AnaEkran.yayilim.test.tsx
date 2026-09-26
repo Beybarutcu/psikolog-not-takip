@@ -597,8 +597,23 @@ async function kaydedildiBekle() {
   )
 }
 
+/**
+ * Katlı "Yaklaşan" grubunu (tasarım B3) kullanıcının yapacağı gibi açar.
+ * Grup zaten açıksa (seçili seans oradaysa zorla açık ve düğme devre dışı)
+ * ya da hiç yoksa bir şey yapmaz. Katlı grubun satırları DOM'da yoktur;
+ * tıklama ve metin iddiaları ancak açık grupta anlamlıdır.
+ */
+function yaklasaniAc() {
+  const dugme = within(screen.getByTestId('seans-listesi')).queryByRole('button', {
+    name: /^Yaklaşan \(\d+\)$/,
+    expanded: false,
+  }) as HTMLButtonElement | null
+  if (dugme !== null && !dugme.disabled) fireEvent.click(dugme)
+}
+
 /** Dosya listesindeki seans satırı (erişilebilir ad tarih metnini içerir). */
 function listeSatiri(tarihMetni: string) {
+  yaklasaniAc()
   return within(screen.getByTestId('seans-listesi')).getByText(tarihMetni).closest('button') as HTMLElement
 }
 
@@ -853,11 +868,13 @@ describe('C2 — durum/ödeme yazmaları iki ekranda TEK yoldan', () => {
     expect(istekler.filter((i) => i.yol.startsWith('/api/randevular?')).length).toBe(takvimGetleri)
   })
 
-  it('ters yön: takvimde not yazılınca dosya listesinde "Not yazılmamış" DEĞİL, notun ilk satırı görünür', async () => {
+  it('ters yön: takvimde not yazılınca dosya listesindeki notsuz satır notun ilk satırını gösterir', async () => {
     ciz()
     // Dosya listesi ÖNCE yüklenir (202'nin notu yok).
     await danisanlarda()
-    expect(listeSatiri('14 Eylül 2026, 10:00').textContent).toContain('Not yazılmamış')
+    // 202 GELECEKTE: tasarım B3'le gelecekteki satır "Not yazılmamış"
+    // YAZMAZ; notsuzluk `data-not`ta okunur (öncül aynı: liste notsuz yüklendi).
+    expect(listeSatiri('14 Eylül 2026, 10:00').getAttribute('data-not')).toBe('yok')
 
     await takvimeDon()
     await takvimde202Ac()
@@ -866,7 +883,7 @@ describe('C2 — durum/ödeme yazmaları iki ekranda TEK yoldan', () => {
 
     await userEvent.click(screen.getByRole('tab', { name: 'Danışanlar' }))
     const satir = listeSatiri('14 Eylül 2026, 10:00')
-    expect(satir.textContent).not.toContain('Not yazılmamış')
+    expect(satir.getAttribute('data-not')).toBe('dolu')
     expect(satir.textContent).toContain('Uyku düzeni iyileşmiş')
   })
 
@@ -1196,7 +1213,12 @@ describe('Plan A Görev 9 — taşınan "geldi" seansı son temasını ilerletir
 describe('Bayatlık — takvimin yamanamayan yazmaları dosyanın seans listesine yayılır', () => {
   const listeGetleri = () =>
     istekler.filter((i) => i.method === 'GET' && i.yol === '/api/danisanlar/1/seanslar').length
-  const listeMetni = () => screen.getByTestId('seans-listesi').textContent ?? ''
+  // Katlı Yaklaşan'daki seanslar da (14/21 Eylül, gelecekte) metne girsin:
+  // pozitif iddialar onları arar, negatifler açık grupta anlamlıdır.
+  const listeMetni = () => {
+    yaklasaniAc()
+    return screen.getByTestId('seans-listesi').textContent ?? ''
+  }
   const listeYuklendi = () =>
     waitFor(() =>
       expect(screen.getByTestId('seans-listesi').getAttribute('data-yuklendi')).toBe('evet'),
@@ -1676,6 +1698,7 @@ describe('I4 — seans listesi hatası "seans yok" DEĞİLDİR (AnaEkran üzerin
     await waitFor(() =>
       expect(screen.getByTestId('seans-listesi').getAttribute('data-yuklendi')).toBe('evet'),
     )
+    yaklasaniAc()
     expect(screen.getByTestId('seans-listesi').querySelectorAll('li')).toHaveLength(2)
   })
 })

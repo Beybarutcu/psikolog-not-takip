@@ -125,9 +125,13 @@ function sahteListe(danisanlar: Danisan[] = []): ReturnType<typeof useDanisanLis
   }
 }
 
-// `SeansListesi` boşken `<p data-testid="seans-listesi">`, doluyken
-// `<ul data-testid="seans-listesi">` basıyor (bkz. o dosya); ikisinde de
-// satır sayısı `<li>` adedinden okunabiliyor. Eskiden burada
+// `SeansListesi` boşken `<p data-testid="seans-listesi">`, doluyken grupları
+// taşıyan `<div data-testid="seans-listesi">` basıyor (bkz. o dosya); ikisinde
+// de satır sayısı `<li>` adedinden okunabiliyor. Katlı "Yaklaşan"ın (B3)
+// satırları DOM'da YOK; seçili seans oradaysa grup zorla açıktır. Bu
+// dosyadaki sayım testlerinde her satır ya geçmişte ya seçili seansla aynı
+// (zorla açık) Yaklaşan'da: sayım duvar saatinden bağımsız (saat 10 Eylül'e
+// çekilerek denendi). Eskiden burada
 // `data-seans-sayisi` diye bir test probu vardı (Görev 5) — bu görev onu
 // kaldırdı, aşağıdaki sayım artık GERÇEK render'dan okunuyor.
 function seansSayisi(): number {
@@ -839,5 +843,59 @@ describe('DanisanlarSekmesi — dosya özeti tek "şimdi"den (tasarım A2, B2)',
     })
     // Süren seans ne sıradaki ne işaretlenmemiş: satırın hiçbir parçası kalmaz.
     expect(screen.queryByTestId('dosya-ozeti')).toBeNull()
+  })
+})
+
+describe('DanisanlarSekmesi — liste düzeni tek "şimdi"den (tasarım A2, B3)', () => {
+  afterEach(() => vi.useRealTimers())
+
+  function sabitSeanslar(liste: DanisanSeansi[], secili: number): ReturnType<typeof useDanisanSeanslari> {
+    return { ...bosSeanslar(), seanslar: liste, yuklendi: true, seciliSeansId: secili }
+  }
+  function ciz(liste: DanisanSeansi[], secili: number) {
+    render(
+      <DanisanlarSekmesi
+        liste={sahteListe()}
+        dosya={sahteDosya(1)}
+        seanslar={sabitSeanslar(liste, secili)}
+        dosyaNotu={bosDosyaNotu()}
+        altSekme="seanslar"
+        onAltSekme={() => {}}
+        {...ILGISIZ}
+      />,
+    )
+  }
+  const basliklar = () =>
+    within(screen.getByTestId('seans-listesi')).getAllByRole('heading').map((h) => h.textContent)
+
+  it('İstanbul 00:30: dünkü 23:00 geçmişte (Eylül grubu), bugünkü 01:00 Yaklaşan\'da', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 25, 0, 30))
+    ciz(
+      [
+        seans({ appointment_id: 2, baslangic: '2026-09-25T01:00', durum: 'planlandi' }),
+        seans({ appointment_id: 1, baslangic: '2026-09-24T23:00', durum: 'geldi' }),
+      ],
+      1,
+    )
+    expect(basliklar()).toEqual(['Yaklaşan (1)', 'Eylül 2026 · 1 seans'])
+  })
+
+  it('dakikalık tik: 14:00 seansı 13:59\'da Yaklaşan\'da, 14:00\'te Eylül grubunda', () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    vi.setSystemTime(new Date(2026, 8, 24, 13, 59))
+    ciz(
+      [
+        seans({ appointment_id: 7, baslangic: '2026-09-24T14:00', durum: 'planlandi' }),
+        seans({ appointment_id: 6, baslangic: '2026-09-24T10:00', durum: 'geldi' }),
+      ],
+      6,
+    )
+    expect(basliklar()).toEqual(['Yaklaşan (1)', 'Eylül 2026 · 1 seans'])
+    act(() => {
+      vi.advanceTimersByTime(60_000)
+    })
+    expect(basliklar()).toEqual(['Eylül 2026 · 1 seans'])
+    expect(screen.getByTestId('seans-listesi').textContent).toContain('24 Eylül 2026, 14:00')
   })
 })

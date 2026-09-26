@@ -3991,8 +3991,18 @@ describe('AnaEkran — danışan kartı ve hızlı arama (Görev 10)', () => {
     await danisanlarSekmesineGec()
     await userEvent.click(await screen.findByRole('button', { name: 'Mehmet Demir dosyasını aç' }))
     // ON KOSUL: Mehmet'in karti gercekten acik -- onun seans listesinde
-    // Ayse'nin 14 Eylul randevusu YOK.
-    await screen.findByTestId('seans-listesi')
+    // Ayse'nin 14 Eylul randevusu YOK. Iddia ancak liste YUKLENDIKTEN
+    // sonra (bos `<p>` her zaman gecerdi, bicim 6) ve katli "Yaklasan"
+    // ACIKKEN bir sey olcer: 14 Eylul bu testin saatinde (9 Eylul) gelecekte,
+    // tasarim B3'le katli grubun satirlari DOM'da yok.
+    await waitFor(() =>
+      expect(screen.getByTestId('seans-listesi').getAttribute('data-yuklendi')).toBe('evet'),
+    )
+    const yaklasan = within(screen.getByTestId('seans-listesi')).queryByRole('button', {
+      name: /^Yaklaşan \(\d+\)$/,
+      expanded: false,
+    })
+    if (yaklasan !== null) await userEvent.click(yaklasan)
     expect(screen.queryByRole('button', { name: /14 Eylül 2026, 10:00/ })).toBeNull()
 
     await userEvent.click(screen.getByRole('tab', { name: 'Takvim' }))

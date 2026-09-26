@@ -9,6 +9,7 @@ import { sablonMetni } from '../seans/sablon'
 import { SeansAltSatiri } from '../seans/SeansAltSatiri'
 import { DosyaBilgileri } from './DosyaBilgileri'
 import { DosyaOzetiSatiri } from './DosyaOzetiSatiri'
+import { seansNumaralari } from './dosyaOzeti'
 import { SeansListesi } from './SeansListesi'
 
 /** Danışan dosyasının iki alt sekmesi. */
@@ -67,6 +68,15 @@ type NotKaydi = { sablon: string; icerik: string }
  * geçer ve o seansı seçer. Seans etiket süzgecinde gizliyse süzgeç
  * "Tüm seanslar"a çekilir. Satır, `kaydirmaIstegi` ile seçim değişmese de
  * görünür alana getirilir.
+ *
+ * # Uzun geçmiş (tasarım B3)
+ *
+ * Liste sütunu kendi içinde kayar (`sticky top-0 self-start
+ * max-h-[100dvh] overflow-y-auto`): uzun geçmiş sayfayı uzatmaz, sağdaki
+ * not görünür kalır. Katlı "Yaklaşan", ay grupları ve `#n`
+ * `SeansListesi`'nde. Numara haritası BURADA, `kart.randevular`'dan ve
+ * süzgeçten ÖNCE hesaplanır: etiket süzgeci numarayı değiştirmez. Gruplama
+ * ise süzülmüş listeyle yapılır.
  *
  * # Kendi küçük sekme şeridi — `kabuk/Sekmeler` DEĞİL
  *
@@ -188,6 +198,8 @@ export function DanisanDosyasi({
 
   const gorunenSeanslar =
     etkinSuzgec === '' ? seanslar : seanslar.filter((s) => s.etiketler.includes(etkinSuzgec))
+  // B3: `geldi` sıra numarası — TEK kaynak kart.randevular, süzgeçten önce.
+  const numaralar = seansNumaralari(kart.randevular)
   const seciliSeans = seanslar.find((s) => s.appointment_id === seciliSeansId) ?? null
   // Not seçili seansa ait değilse (seçim değişti, yenisi yükleniyor)
   // gösterilmez — bir seansın notu başka seansın editöründe bir kare bile
@@ -271,7 +283,8 @@ export function DanisanDosyasi({
             </div>
           ) : (
             <>
-              <div>
+              {/* Kendi içinde kayar (B3): uzun geçmiş sayfayı uzatmaz, not görünür kalır. `self-start`: ızgara hücresi gerilirse yapışacak yer kalmaz. */}
+              <div data-testid="seans-listesi-sutunu" className="sticky top-0 self-start max-h-[100dvh] overflow-y-auto">
                 {kullanilanEtiketler.length > 0 && (
                   <div className="mb-2">
                     <label htmlFor="etikete-gore-suz" className="block text-xs text-slate-600">
@@ -297,6 +310,8 @@ export function DanisanDosyasi({
                   secili={seciliSeansId}
                   onSecim={onSeansSec}
                   yuklendi={yuklendi}
+                  simdi={simdi}
+                  numaralar={numaralar}
                   kaydirmaIstegi={kaydirmaIstegi}
                 />
               </div>

@@ -582,3 +582,93 @@ describe('DanisanDosyasi — başlık özeti (tasarım B2)', () => {
     expect(fetchCasusu).not.toHaveBeenCalled()
   })
 })
+
+// Plan B Görev 4 — uzun geçmiş (tasarım B3). "Şimdi" 20 Eylül 12:00.
+describe('DanisanDosyasi — uzun geçmiş (tasarım B3)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  const RANDEVULAR = [
+    randevu({ id: 6, baslangic: '2026-09-24T14:00', bitis: '2026-09-24T14:50', durum: 'planlandi' }),
+    randevu({ id: 1, baslangic: '2026-09-14T10:00', bitis: '2026-09-14T10:50' }),
+    randevu({ id: 2, baslangic: '2026-09-08T10:00', bitis: '2026-09-08T10:50' }),
+    randevu({ id: 3, baslangic: '2026-08-31T10:00', bitis: '2026-08-31T10:50' }),
+  ]
+  const SEANSLAR = [
+    seans({ appointment_id: 6, baslangic: '2026-09-24T14:00', durum: 'planlandi' }),
+    seans({ appointment_id: 1, baslangic: '2026-09-14T10:00', etiketler: ['kaygı'] }),
+    seans({ appointment_id: 2, baslangic: '2026-09-08T10:00' }),
+    seans({ appointment_id: 3, baslangic: '2026-08-31T10:00', etiketler: ['kaygı'] }),
+  ]
+  const kartIle = (randevular: Randevu[]) => ({ ...sahteKart(), randevular })
+  const liste = () => screen.getByTestId('seans-listesi')
+  const basliklar = () => within(liste()).getAllByRole('heading').map((h) => h.textContent)
+  const numara = (t: string) =>
+    within(within(liste()).getByText(t).closest('button') as HTMLElement).queryByTestId('seans-numarasi')?.textContent ?? null
+
+  it('gruplama süzgeçten SONRA; numara süzgeçten bağımsız (kart.randevular\'dan)', async () => {
+    render(<DanisanDosyasi {...proplar({ kart: kartIle(RANDEVULAR), seanslar: SEANSLAR, seciliSeansId: 1 })} />)
+    expect(basliklar()).toEqual(['Yaklaşan (1)', 'Eylül 2026 · 2 seans', 'Ağustos 2026 · 1 seans'])
+    expect(numara('14 Eylül 2026, 10:00')).toBe('#3')
+    expect(numara('31 Ağustos 2026, 10:00')).toBe('#1')
+
+    await userEvent.selectOptions(screen.getByLabelText('Etikete göre süz'), 'kaygı')
+    expect(basliklar()).toEqual(['Eylül 2026 · 1 seans', 'Ağustos 2026 · 1 seans'])
+    expect(numara('14 Eylül 2026, 10:00')).toBe('#3')
+    expect(numara('31 Ağustos 2026, 10:00')).toBe('#1')
+  })
+
+  it('B2 "Sıradaki" bağlantısı katlı Yaklaşan\'ı açar, satırı seçer ve görünür alana getirir', async () => {
+    const kaydir = vi.spyOn(Element.prototype, 'scrollIntoView')
+    render(<Kontrollu kart={kartIle(RANDEVULAR)} seanslar={SEANSLAR} ilkSecili={1} />)
+    const dugme = within(liste()).getByRole('button', { name: 'Yaklaşan (1)' })
+    expect(dugme.getAttribute('aria-expanded')).toBe('false')
+
+    await userEvent.click(
+      within(screen.getByTestId('dosya-ozeti')).getByRole('button', { name: 'Sıradaki: Perşembe 24 Eylül 14:00' }),
+    )
+    expect(dugme.getAttribute('aria-expanded')).toBe('true')
+    const hedef = within(liste()).getByText('24 Eylül 2026, 14:00').closest('button')
+    expect(hedef?.getAttribute('aria-current')).toBe('true')
+    expect(kaydir.mock.contexts.at(-1)).toBe(hedef)
+  })
+
+  it('aylar arasında taşınan randevu: boşalan ay başlığı kalkar, #n ve "…\'dan beri" yeni sıraya göre', () => {
+    const { rerender } = render(
+      <DanisanDosyasi {...proplar({ kart: kartIle(RANDEVULAR), seanslar: SEANSLAR, seciliSeansId: 1 })} />,
+    )
+    expect(screen.getByTestId('dosya-ozeti').textContent).toContain("Ağustos 2026'dan beri")
+
+    // Takvimde taşıma: kart `randevularTazele` ile, liste `yapiDegisti` ile
+    // yeniden çekilir; ikisi de yeni başlangıcı taşır.
+    rerender(
+      <DanisanDosyasi
+        {...proplar({
+          kart: kartIle(
+            RANDEVULAR.map((r) => (r.id === 3 ? { ...r, baslangic: '2026-09-10T10:00', bitis: '2026-09-10T10:50' } : r)),
+          ),
+          seanslar: SEANSLAR.map((x) => (x.appointment_id === 3 ? { ...x, baslangic: '2026-09-10T10:00' } : x)),
+          seciliSeansId: 1,
+        })}
+      />,
+    )
+    expect(basliklar()).toEqual(['Yaklaşan (1)', 'Eylül 2026 · 3 seans'])
+    expect(numara('8 Eylül 2026, 10:00')).toBe('#1')
+    expect(numara('10 Eylül 2026, 10:00')).toBe('#2')
+    expect(numara('14 Eylül 2026, 10:00')).toBe('#3')
+    expect(screen.getByTestId('dosya-ozeti').textContent).toContain("Eylül 2026'dan beri")
+  })
+
+  it('liste sütunu kendi içinde kayar; not sütunu ondan ayrı', () => {
+    render(
+      <DanisanDosyasi
+        {...proplar({ kart: kartIle(RANDEVULAR), seanslar: SEANSLAR, seciliSeansId: 1, not: not({ appointment_id: 1 }) })}
+      />,
+    )
+    const sutun = screen.getByTestId('seans-listesi-sutunu')
+    for (const sinif of ['sticky', 'top-0', 'self-start', 'max-h-[100dvh]', 'overflow-y-auto']) {
+      expect(sutun.className, sinif).toContain(sinif)
+    }
+    expect(sutun.contains(liste())).toBe(true)
+    expect(sutun.contains(screen.getByLabelText('Seans notu'))).toBe(false)
+  })
+})

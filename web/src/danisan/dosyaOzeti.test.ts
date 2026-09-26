@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { borcToplami } from '../borc'
 import type { Randevu } from '../takvim/HaftalikTakvim'
-import { ayrilmaEki, ayYil, baslangicAyi, dosyaOzeti, gunluTarihSaat, kisaTarih, kronolojik } from './dosyaOzeti'
+import {
+  ayrilmaEki,
+  ayYil,
+  baslangicAyi,
+  dosyaOzeti,
+  gunluTarihSaat,
+  kisaTarih,
+  kronolojik,
+  seansNumaralari,
+} from './dosyaOzeti'
 
 const SIMDI = '2026-09-24T12:00' // Perşembe
 
@@ -137,5 +146,39 @@ describe('tarih metinleri (Date\'e yalnızca gün adı için çevrilir)', () => 
     expect(gunluTarihSaat('2026-09-24T14:00', SIMDI)).toBe('Perşembe 24 Eylül 14:00')
     expect(gunluTarihSaat('2026-09-25T01:00', SIMDI)).toBe('Cuma 25 Eylül 01:00')
     expect(gunluTarihSaat('2027-01-05T14:00', SIMDI)).toBe('Salı 5 Ocak 2027 14:00')
+  })
+})
+
+describe('seansNumaralari (tasarım B3, §5.1: yalnızca geldi)', () => {
+  const numaraSirasi = (h: ReadonlyMap<number, number>) => [...h.entries()].sort((a, b) => a[1] - b[1])
+
+  it('geldi seanslar baslangic ASC, id ASC ile 1..N; diğer durumlar haritada YOK', () => {
+    // 7 ile 9 AYNI anda başlıyor: eşitlik kuralı (küçük kimlik önce) ancak
+    // girdi iki sırayla da verilince ölçülür (bkz. docs/test-yesil-ama-korumuyor.md #8).
+    const liste = [
+      r({ id: 7, baslangic: '2026-09-14T10:00', durum: 'geldi' }),
+      r({ id: 3, baslangic: '2026-09-01T10:00', durum: 'geldi' }),
+      r({ id: 5, baslangic: '2026-09-07T10:00', durum: 'gelmedi' }),
+      r({ id: 9, baslangic: '2026-09-14T10:00', durum: 'geldi' }),
+      r({ id: 2, baslangic: '2026-10-01T10:00', durum: 'planlandi' }),
+    ]
+    const h = seansNumaralari(liste)
+    expect(numaraSirasi(h)).toEqual([[3, 1], [7, 2], [9, 3]])
+    expect(h.has(5)).toBe(false)
+    expect(h.has(2)).toBe(false)
+    expect(numaraSirasi(seansNumaralari([...liste].reverse()))).toEqual([[3, 1], [7, 2], [9, 3]])
+  })
+
+  it('başlıktaki "N. seans", "ilk" ve "Son" numaralarla tutarlı', () => {
+    const liste = [
+      r({ id: 1, baslangic: '2026-03-03T10:00', durum: 'geldi' }),
+      r({ id: 2, baslangic: '2026-09-08T10:00', durum: 'geldi' }),
+      r({ id: 3, baslangic: '2026-10-01T10:00', durum: 'geldi' }),
+    ]
+    const o = dosyaOzeti(liste, SIMDI)
+    const h = seansNumaralari(liste)
+    expect(o.geldiSayisi).toBe(h.size)
+    expect(h.get(o.ilkGeldi!.id)).toBe(1)
+    expect(h.get(o.sonGeldi!.id)).toBe(2)
   })
 })

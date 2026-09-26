@@ -101,3 +101,20 @@ export function gunluTarihSaat(zaman: string, simdi: string): string {
   const gunAdi = GUN_TAM_ADLARI[haftaIndeksi(zamandanDate(zaman))]
   return `${gunAdi} ${kisaTarih(zaman, simdi)} ${zaman.slice(11, 16)}`
 }
+
+/**
+ * Seans numarası haritası (tasarım B3, §5.1): `geldi` seanslar
+ * `baslangic ASC, id ASC` sırasıyla 1..N (`appointment_id → n`). TEK kaynak
+ * `kart.randevular`, süzgeçten ÖNCE: etiket süzgeci numarayı değiştirmez.
+ * Haritada olmayan satırda numara gösterilmez.
+ */
+export function seansNumaralari(
+  randevular: readonly Pick<Randevu, 'id' | 'baslangic' | 'durum'>[],
+): ReadonlyMap<number, number> {
+  const harita = new Map<number, number>()
+  randevular
+    .filter((r) => r.durum === 'geldi')
+    .sort(kronolojik)
+    .forEach((r, i) => harita.set(r.id, i + 1))
+  return harita
+}

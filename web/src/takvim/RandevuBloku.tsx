@@ -1,4 +1,6 @@
 import type { BlokKonumu, Sutun } from './blokYerlesimi'
+import { DurumSimgeleri } from './DurumSimgeleri'
+import { durumSimgeMetni } from './durumSimgesi'
 import type { Randevu } from './HaftalikTakvim'
 
 const DURUM_BICIMI: Record<string, string> = {
@@ -31,9 +33,13 @@ type Props = {
 export function RandevuBloku({ randevu, onSec, konum }: Props) {
   const stil = DURUM_BICIMI[randevu.durum] ?? BILINMEYEN_DURUM_BICIMI
   const { ust, yukseklik, sutun, sutunSayisi } = konum
+  const saat = randevu.baslangic.slice(11, 16)
   return (
     <button
       onClick={onSec}
+      // Erişilebilir ad tasarım T3: simgelerin anlamı sona eklenir; durumsuz
+      // blokta ad metinle birebir aynı.
+      aria-label={`${saat} ${randevu.danisan_adi}${durumSimgeMetni(randevu)}`}
       style={{
         top: ust,
         height: yukseklik,
@@ -58,16 +64,17 @@ export function RandevuBloku({ randevu, onSec, konum }: Props) {
       // `z-[5]`: blok bir sonraki saatin hücresine taştığında o hücrenin
       // "boş saat" düğmesinin ÜSTÜNDE kalsın (yoksa bloğun alt yarısına
       // tıklamak yeni randevu açardı); şimdi çizgisi (`z-10`) yine de üstte.
-      className={`absolute z-[5] flex items-start overflow-hidden rounded px-1 py-0.5 text-left text-xs leading-4 ${stil}`}
+      className={`absolute z-[5] flex items-start gap-0.5 overflow-hidden rounded px-1 py-0.5 text-left text-xs leading-4 ${stil}`}
     >
       {/* Başlangıç saati HER blokta, tam saatte başlayanlarda da. Saat ile isim
           arasında GERÇEK bir metin boşluğu (`{' '}`) var: yalnızca CSS margin
           kullanılsaydı erişilebilir ad "10:50Ayşe Yılmaz" çıkardı —
           erişilebilir ad hesaplaması CSS'i değil metni okur. */}
-      <span className="min-w-0 break-words">
-        <span className="tabular-nums">{randevu.baslangic.slice(11, 16)}</span>{' '}
+      <span data-testid="blok-adi" className="min-w-0 flex-1 break-words">
+        <span className="tabular-nums">{saat}</span>{' '}
         {randevu.danisan_adi}
       </span>
+      <DurumSimgeleri randevu={randevu} />
     </button>
   )
 }

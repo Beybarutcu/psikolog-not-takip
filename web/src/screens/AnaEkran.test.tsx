@@ -10,8 +10,9 @@ import { AnaEkran } from './AnaEkran'
  * Takvim bloğunun erişilebilir adı "SS:DD Ad Soyad": başlangıç saati her
  * blokta görünür. Bu testler saati değil danışanı sorduğu için blok, ada
  * göre bir desenle bulunur.
+ * Ad durum eklerini taşıyabilir (tasarım T3): "10:00 Ad, gelmedi, ödeme alınmadı".
  */
-const blokAdi = (ad: string) => new RegExp(`^\\d{2}:\\d{2} ${ad}$`)
+const blokAdi = (ad: string) => new RegExp(`^\\d{2}:\\d{2} ${ad}(, gelmedi)?(, ödeme alınmadı)?$`)
 
 // Görev 10 inceleme Bulgu 1: RandevuPaneli, seçili randevu/boş saat değişince
 // yeniden mount edilecek bir `key` almadan önce, panel içindeki state

@@ -32,7 +32,9 @@ test('danisan ekle, randevu olustur, geldi isaretle', async ({ page }) => {
   // Blok adi "SS:DD Ad Soyad" (baslangic saati her blokta). Izgarayla
   // sinirli: bugunun siradaki seansiysa bilgi satirindaki baglanti da ayni
   // adi tasir.
-  const blok = page.getByTestId('takvim-izgara').getByRole('button', { name: '10:00 Ayşe Yılmaz', exact: true })
+  const blok = page
+    .getByTestId('takvim-izgara')
+    .getByRole('button', { name: /^10:00 Ayşe Yılmaz(, gelmedi)?(, ödeme alınmadı)?$/ })
   await expect(blok).toBeVisible()
 
   await blok.click()
@@ -277,4 +279,56 @@ test('haftalar arasi gezinme calisir', async ({ page }) => {
 
   await page.getByRole('button', { name: 'Önceki hafta' }).click()
   await expect(baslik).toHaveText(ilk ?? '')
+})
+
+// Tasarım T4: dar (yarım genişlik) blokta ad kırpılır, simge KIRPILMAZ.
+// jsdom yerleşim ölçmediği için tek bekçi gerçek tarayıcıdır.
+test('yarim genislikteki blokta gelmedi ve odeme simgeleri kirpilmaz', async ({ page }) => {
+  await kurulumYap(page)
+  const ad = 'Simge Deneme'
+  await page.getByRole('tab', { name: 'Danışanlar', exact: true }).click()
+  await page.getByRole('button', { name: 'Danışan ekle' }).click()
+  await page.getByLabel('Ad soyad').fill(ad)
+  await page.getByRole('button', { name: 'Ekle', exact: true }).click()
+  await expect(page.getByText(ad, { exact: true }).first()).toBeVisible()
+  await page.getByRole('tab', { name: 'Takvim', exact: true }).click()
+
+  // İlk boş 16:00 hücresinin GÜNÜ; ikinci randevu aynı güne, çakışan saate.
+  const ilkHucre = page.locator('button[aria-label$="16:00 boş"]').first()
+  const gun = ((await ilkHucre.getAttribute('aria-label')) ?? '').replace(/ 16:00 boş$/, '')
+  await ilkHucre.click()
+  await page.getByLabel('Danışan', { exact: true }).selectOption({ label: ad })
+  await page.getByLabel('Ücret (TL)').fill('450')
+  await page.getByRole('button', { name: 'Kaydet', exact: true }).click()
+  const izgara = page.getByTestId('takvim-izgara')
+  const ilk = izgara.getByRole('button', { name: new RegExp(`^16:00 ${ad}`) })
+  await expect(ilk).toBeVisible()
+
+  await page.getByRole('button', { name: `${gun} 17:00 boş`, exact: true }).click()
+  await page.getByLabel('Danışan', { exact: true }).selectOption({ label: ad })
+  await page.getByLabel('Başlangıç', { exact: true }).fill('16:30')
+  await page.getByRole('button', { name: 'Kaydet', exact: true }).click()
+  const ikinci = izgara.getByRole('button', { name: `16:30 ${ad}`, exact: true })
+  await expect(ikinci).toBeVisible()
+
+  await ilk.click()
+  await page.getByRole('button', { name: 'Gelmedi', exact: true }).click()
+  // BARİYER: durum ızgaraya yansıdı (ad eki ve data-durum).
+  await expect(ilk).toHaveAttribute('data-durum', 'gelmedi')
+  await expect(ilk).toHaveAccessibleName(`16:00 ${ad}, gelmedi, ödeme alınmadı`)
+
+  const blokKutu = await ilk.boundingBox()
+  const ikinciKutu = await ikinci.boundingBox()
+  expect(blokKutu).not.toBeNull()
+  expect(ikinciKutu).not.toBeNull()
+  // ÖN KOŞUL: gerçekten yan yana yarım genişlik (tam genişlikte test hiçbir şey ölçmezdi).
+  expect((blokKutu?.x ?? 0) + (blokKutu?.width ?? 0)).toBeLessThanOrEqual((ikinciKutu?.x ?? 0) + 1)
+  for (const simge of ['gelmedi', 'odeme']) {
+    const k = await ilk.locator(`[data-simge="${simge}"]`).boundingBox()
+    expect(k, simge).not.toBeNull()
+    expect(k!.width, simge).toBeGreaterThan(8)
+    expect(k!.x, simge).toBeGreaterThanOrEqual(blokKutu!.x - 0.5)
+    expect(k!.x + k!.width, simge).toBeLessThanOrEqual(blokKutu!.x + blokKutu!.width + 0.5)
+    expect(k!.y + k!.height, simge).toBeLessThanOrEqual(blokKutu!.y + blokKutu!.height + 0.5)
+  }
 })

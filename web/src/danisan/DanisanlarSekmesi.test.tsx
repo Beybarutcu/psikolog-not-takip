@@ -780,6 +780,27 @@ describe('DanisanlarSekmesi — arama ve ekleme (tasarım B1)', () => {
     expect(document.activeElement).toBe(document.body)
   })
 
+  // Son inceleme: form alanlarında Esc de IME birleştirmesini iptal eder
+  // (aramaTusu ile aynı kural); formu kapatmaz, yazılan ad kaybolmaz.
+  it('form: IME birleştirmesi sürerken Esc formu KAPATMAZ; birleştirme dışında kapatır ve odak "Danışan ekle"ye döner', async () => {
+    render(<DurumluSekme />)
+    const ekleDugmesi = screen.getByRole('button', { name: 'Danışan ekle' })
+    await userEvent.click(ekleDugmesi)
+    const ad = screen.getByLabelText('Ad soyad') as HTMLInputElement
+    await userEvent.type(ad, 'Kâmil')
+    fireEvent.keyDown(ad, { key: 'Escape', isComposing: true })
+    fireEvent.keyDown(ad, { key: 'Escape', keyCode: 229 })
+    fireEvent.keyDown(screen.getByLabelText('Telefon'), { key: 'Escape', keyCode: 229 })
+    expect(screen.getByLabelText('Ad soyad')).toBe(ad)
+    expect(ad.value).toBe('Kâmil')
+
+    // Esc odağı kaybolan alanla birlikte `body`'ye düşürmez: formu açan
+    // düğmeye döner (klavyeyle gelen terapist yerini kaybetmez).
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByLabelText('Ad soyad')).toBeNull()
+    expect(document.activeElement).toBe(ekleDugmesi)
+  })
+
   it('sol kolon kendi içinde kayar (sticky + self-start + 100dvh + overflow)', () => {
     render(<DurumluSekme />)
     const sutun = screen.getByTestId('danisan-listesi-sutunu')
@@ -787,6 +808,30 @@ describe('DanisanlarSekmesi — arama ve ekleme (tasarım B1)', () => {
       expect(sutun.className, sinif).toContain(sinif)
     }
     expect(sutun.contains(aramaKutusu())).toBe(true)
+  })
+
+  // Son inceleme Minor 1: kolonun `overflow-y-auto`'su (overflow-x de `auto`
+  // hesaplanır) kenara dayanan öğelerin DIŞA çizilen odak çerçevesini
+  // kırpar ("Danışan ekle" üst kenarda; arama kutusu, form alanları ve
+  // "Ekle" sol kenarda). Halka İÇTE çizilir, yerel çerçeve gizlenir
+  // (`DanisanDosyasi`'ndaki süzgeç seçimi ve satırlarla aynı sınıflar).
+  it('sol kolonun kenarındaki denetimlerde odak halkası İÇTE (kırpılmaz)', () => {
+    render(<DurumluSekme baslangicFormAcik />)
+    const sutun = screen.getByTestId('danisan-listesi-sutunu')
+    const denetimler = [
+      screen.getByRole('button', { name: 'Danışan ekle' }),
+      aramaKutusu(),
+      screen.getByLabelText('Ad soyad'),
+      screen.getByLabelText('Telefon'),
+      screen.getByRole('button', { name: 'Ekle' }),
+    ]
+    for (const denetim of denetimler) {
+      expect(sutun.contains(denetim)).toBe(true)
+      for (const sinif of ['focus-visible:outline-hidden', 'focus-visible:ring-2', 'focus-visible:ring-inset']) {
+        const ad = denetim.getAttribute('aria-label') || denetim.id || denetim.textContent
+        expect(denetim.className, `${ad}: ${sinif}`).toContain(sinif)
+      }
+    }
   })
 })
 

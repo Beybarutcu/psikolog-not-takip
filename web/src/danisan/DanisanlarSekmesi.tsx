@@ -9,6 +9,16 @@ import { DanisanDosyasi, type DosyaAltSekme } from './DanisanDosyasi'
 import { danisanSuz } from './danisanAramasi'
 
 /**
+ * Sol kolonun kenarına dayanan denetimlerin odak göstergesi: yerel çerçeve
+ * gizlenir, halka öğenin İÇİNE çizilir. Kolonun `overflow-y-auto`'su
+ * (overflow-x de `auto` hesaplanır) dışa çizilen çerçevenin kenardaki
+ * yanını kırpardı (son inceleme Minor 1; `DanisanDosyasi`'ndaki süzgeç
+ * seçimi ve `SeansListesi` satırlarıyla aynı sınıflar).
+ */
+const ODAK_HALKASI =
+  'focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sky-500'
+
+/**
  * Danışanlar sekmesi: solda danışan listesi, sağda açık danışanın dosyası
  * (Plan 5 Görev 5 — ürün amacı: "terapist bir danışana tıkladığında o
  * danışanın dosyası açılsın").
@@ -134,6 +144,9 @@ export function DanisanlarSekmesi({
   // bu ayrımı yapamazdı.
   const [adOdakIstegi, setAdOdakIstegi] = useState(0)
   const adAlaniRef = useRef<HTMLInputElement>(null)
+  // Esc formu kapatınca odak buraya döner: kaldırılan alanla birlikte
+  // `body`'ye düşmesin.
+  const ekleDugmesiRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     if (adOdakIstegi > 0) adAlaniRef.current?.focus()
   }, [adOdakIstegi])
@@ -193,11 +206,14 @@ export function DanisanlarSekmesi({
         data-testid="danisan-listesi-sutunu"
         className="sticky top-0 self-start max-h-[100dvh] overflow-y-auto"
       >
+        {/* `ODAK_HALKASI`: "Danışan ekle" kolonun üst kenarında; arama
+            kutusu, form alanları ve "Ekle" sol kenarında. */}
         <div className="flex items-center gap-3">
           <span className="text-sm font-medium text-slate-600">Danışanlar</span>
           <button
+            ref={ekleDugmesiRef}
             type="button"
-            className="rounded border px-3 py-1 text-sm"
+            className={`rounded border px-3 py-1 text-sm ${ODAK_HALKASI}`}
             onClick={() => (liste.formAcik ? liste.setFormAcik(false) : formuAc())}
           >
             Danışan ekle
@@ -211,7 +227,7 @@ export function DanisanlarSekmesi({
           placeholder="Danışan ara…"
           aria-controls={suzulmus.length > 0 ? 'danisan-listesi' : undefined}
           aria-activedescendant={vurguluId === null ? undefined : `danisan-ac-${vurguluId}`}
-          className="mt-3 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+          className={`mt-3 w-full rounded border border-slate-300 px-2 py-1 text-sm ${ODAK_HALKASI}`}
           value={sorgu}
           onChange={(olay) => sorguDegisti(olay.target.value)}
           onKeyDown={aramaTusu}
@@ -226,9 +242,13 @@ export function DanisanlarSekmesi({
               void ekleVeAc()
             }}
             onKeyDown={(olay) => {
-              if (olay.key !== 'Escape') return
+              // IME birleştirmesi sürerken Esc birleştirmeyi iptal eder,
+              // formu kapatmaz (yazılan ad kaybolmasın); `keyCode` 229:
+              // Safari (bkz. `aramaTusu`).
+              if (olay.key !== 'Escape' || olay.nativeEvent.isComposing || olay.keyCode === 229) return
               olay.preventDefault()
               liste.setFormAcik(false)
+              ekleDugmesiRef.current?.focus()
             }}
           >
             <div>
@@ -238,7 +258,7 @@ export function DanisanlarSekmesi({
               <input
                 id="yeni-danisan-ad-soyad"
                 ref={adAlaniRef}
-                className="mt-1 w-full rounded border p-2"
+                className={`mt-1 w-full rounded border p-2 ${ODAK_HALKASI}`}
                 value={liste.yeniAdSoyad}
                 onChange={(e) => liste.setYeniAdSoyad(e.target.value)}
               />
@@ -249,7 +269,7 @@ export function DanisanlarSekmesi({
               </label>
               <input
                 id="yeni-danisan-telefon"
-                className="mt-1 w-full rounded border p-2"
+                className={`mt-1 w-full rounded border p-2 ${ODAK_HALKASI}`}
                 value={liste.yeniTelefon}
                 onChange={(e) => liste.setYeniTelefon(e.target.value)}
               />
@@ -259,7 +279,7 @@ export function DanisanlarSekmesi({
                 kancada (`useDanisanListesi.ekle`). */}
             <button
               type="submit"
-              className="rounded bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-50"
+              className={`rounded bg-slate-900 px-3 py-2 text-sm text-white disabled:opacity-50 ${ODAK_HALKASI}`}
               disabled={liste.ekleniyor}
             >
               Ekle

@@ -527,11 +527,17 @@ describe('DanisanDosyasi — başlık özeti (tasarım B2)', () => {
     await userEvent.click(within(ozet()).getByRole('button', { name: 'Son: 8 Eylül' }))
     expect(screen.getByRole('tab', { name: 'Seanslar' }).getAttribute('aria-selected')).toBe('true')
     expect(aktifSatir()).toContain('8 Eylül 2026, 10:00')
+    // Odak TAŞINMAZ (tasarım B2): bağlantı seçer ve gösterir, imleci
+    // listeye ya da nota götürmez; tıklanan bağlantı odakta kalır.
+    expect(document.activeElement).toBe(within(ozet()).getByRole('button', { name: 'Son: 8 Eylül' }))
 
     await userEvent.click(within(ozet()).getByRole('button', { name: "Mart 2026'dan beri" }))
     expect(aktifSatir()).toContain('3 Mart 2026, 10:00')
     await userEvent.click(within(ozet()).getByRole('button', { name: 'Sıradaki: Perşembe 24 Eylül 14:00' }))
     expect(aktifSatir()).toContain('24 Eylül 2026, 14:00')
+    expect(document.activeElement).toBe(
+      within(ozet()).getByRole('button', { name: 'Sıradaki: Perşembe 24 Eylül 14:00' }),
+    )
   })
 
   it('seans etiket süzgecinde gizliyse süzgeç "Tüm seanslar"a çekilir; görünüyorsa süzgeç korunur', async () => {

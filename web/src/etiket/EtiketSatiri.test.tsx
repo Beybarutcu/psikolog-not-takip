@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import type { Etiket } from '../api'
@@ -52,6 +52,22 @@ describe('EtiketSatiri', () => {
     await userEvent.type(kutu(), '  aile   içi {Enter}')
     expect(onEkle).toHaveBeenCalledWith('aile içi')
     expect(kutu().value).toBe('')
+  })
+
+  // macOS'ta "kâ" (ölü tuş ya da basılı tutma) bir IME birleştirmesidir:
+  // Return harfi onaylar, etiket eklemez. Safari birleştirmeyi bitiren
+  // Enter'ı `compositionend`'den SONRA, `isComposing: false` ve `keyCode`
+  // 229 ile gönderir (bkz. `DanisanlarSekmesi.aramaTusu`).
+  it('IME birleştirmesi sürerken Enter eklemez (isComposing ya da Safari keyCode 229); birleştirme dışında ekler', async () => {
+    const { onEkle } = kur()
+    await userEvent.type(kutu(), 'kâ')
+    fireEvent.keyDown(kutu(), { key: 'Enter', isComposing: true })
+    fireEvent.keyDown(kutu(), { key: 'Enter', keyCode: 229 })
+    expect(onEkle).not.toHaveBeenCalled()
+    expect(kutu().value).toBe('kâ')
+
+    fireEvent.keyDown(kutu(), { key: 'Enter' })
+    await waitFor(() => expect(onEkle).toHaveBeenCalledExactlyOnceWith('kâ'))
   })
 
   it('boş ya da yalnızca boşluk: Enter hiçbir şey göndermez', async () => {

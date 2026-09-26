@@ -209,8 +209,9 @@ export function EtiketSatiri({
           }}
           onKeyDown={(olay) => {
             // IME birleştirmesi sürerken Enter bir harfi onaylar, etiketi
-            // değil.
-            if (olay.key !== 'Enter' || olay.nativeEvent.isComposing) return
+            // değil. `keyCode` 229: Safari birleştirmeyi bitiren Enter'ı
+            // `compositionend`'den SONRA, `isComposing: false` ile gönderir.
+            if (olay.key !== 'Enter' || olay.nativeEvent.isComposing || olay.keyCode === 229) return
             olay.preventDefault()
             void ekle()
           }}

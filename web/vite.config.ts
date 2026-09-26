@@ -1,10 +1,14 @@
 /// <reference types="vitest/config" />
+import { fileURLToPath, URL } from 'node:url'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // `@/…` → `web/src/…` (TipTap şablonunun içe aktarma kökü, tasarım E1).
+  // Vitest aynı yapılandırmayı kullanır.
+  resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   build: { outDir: 'dist', emptyOutDir: true },
   server: {
     port: 5173,

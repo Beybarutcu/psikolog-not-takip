@@ -1,0 +1,62 @@
+// Tasarım E4: şablon değişkenleri uygulamanın AÇIK temasına bağlanır —
+// slate tonları, uygulamanın yazı tipi (`--sans`, index.css), 16 px gövde.
+:root {
+  --tt-brand-color-50: #f8fafc;
+  --tt-brand-color-100: #f1f5f9;
+  --tt-brand-color-200: #e2e8f0;
+  --tt-brand-color-300: #cbd5e1;
+  --tt-brand-color-400: #94a3b8;
+  --tt-brand-color-500: #475569;
+  --tt-brand-color-600: #334155;
+  --tt-brand-color-700: #1e293b;
+  --tt-brand-color-800: #0f172a;
+  --tt-brand-color-900: #0f172a;
+  --tt-brand-color-950: #020617;
+  --tt-cursor-color: #0f172a;
+  --tt-selection-color: rgba(100, 116, 139, 0.25);
+}
+
+.tiptap.ProseMirror.not-yuzeyi {
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.6;
+  color: #0f172a;
+  min-height: 16rem;
+  padding: 0.75rem 1rem;
+  outline: none;
+  overflow-wrap: break-word;
+}
+
+.tiptap.ProseMirror.not-okuma {
+  min-height: 0;
+  padding: 0.5rem 0.75rem;
+}
+
+.tiptap.ProseMirror.not-yuzeyi p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: #94a3b8;
+}
+
+// Önceki notlarda aranan terim (tasarım N7).
+.not-vurgu {
+  background-color: #fde68a;
+  border-radius: 2px;
+}
+
+// Bul-değiştir sonuçları (`FindAndReplace`, `injectCSS: false`).
+.find-and-replace-result {
+  background-color: #fef3c7;
+}
+.find-and-replace-result-current {
+  background-color: #fcd34d;
+}
+
+.not-bul-paneli {
+  position: absolute;
+  top: calc(var(--tt-toolbar-height, 44px) + 0.25rem);
+  right: 0.5rem;
+  z-index: 20;
+}

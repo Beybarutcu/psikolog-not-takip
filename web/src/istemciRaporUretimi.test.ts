@@ -99,6 +99,9 @@ const tumDosyalar = Object.keys(import.meta.glob('./**/*'))
 /** Taranmadan geçmesine izin verilen, kod OLMAYAN uzantılar. */
 const KOD_OLMAYAN_UZANTILAR = new Set([
   'css',
+  // Şablonun stil dosyaları; kod değil, `sablonKodu.test.ts` dış adres ve
+  // koyu tema için ayrıca tarar.
+  'scss',
   'svg',
   'png',
   'jpg',

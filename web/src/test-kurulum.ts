@@ -24,9 +24,62 @@
  * ve "flake" diye görmezden gelinmeye başlanır — asıl zarar odur.
  */
 import { configure } from '@testing-library/react'
+import { createElement } from 'react'
+import { vi } from 'vitest'
+import type { BicimliYuzeyProps } from './not/BicimliYuzey'
 
 configure({ asyncUtilTimeout: 5_000 })
 
 // jsdom `scrollIntoView` uygulamıyor. Tasarım A6'nın kaydırması bu casusla
 // SAYILIR (tıklamada 1, sekme dönüşünde/tazelemede 0).
 Element.prototype.scrollIntoView = function scrollIntoView() {}
+
+// # Not yüzeyinin test yüzeyi (tasarım §11 "Test yüzeyi kararı")
+//
+// jsdom'da `contenteditable` üzerinde `userEvent.type`/`fireEvent.change`
+// güvenilir değil. `NotEditoru`, `SeansPaneli`, `AnaEkran`, `DanisanDosyasi`
+// sözleşme testleri metni AYNI sözleşmeyi (`html`, `onChange`, `etiket`,
+// `editable`) sağlayan bir `<textarea>` ile sürer; gerçek TipTap yüzeyi
+// `not/BicimliYuzey.test.tsx`, `seans/NotEditoru.gercekYuzey.test.tsx` ve
+// e2e'de sınanır. Gerçeği isteyen dosya bu taklidi kendi `vi.mock`'uyla
+// (`importOriginal`) geri alır.
+vi.mock('./not/BicimliYuzey', () => ({
+  BicimliYuzey: ({ html, onChange, etiket, editable = true }: BicimliYuzeyProps) =>
+    createElement('textarea', {
+      'aria-label': etiket,
+      value: html,
+      readOnly: !editable,
+      onChange: (olay: { target: { value: string } }) => onChange?.(olay.target.value),
+    }),
+}))
+
+// jsdom Range geometri API'lerini, `elementFromPoint`'i, ResizeObserver'ı
+// ve `window.matchMedia`'yı uygulamıyor; gerçek TipTap/ProseMirror ve
+// şablonun açılır pencereleri bunlara dokunabiliyor (şablonun
+// `useIsBreakpoint`'i araç çubuğu kurulurken `matchMedia` çağırır —
+// preflight F1). Boş dikdörtgenler ve "hiçbir sorgu eşleşmez" yanıtı
+// yerleşim İDDİA etmez, yalnızca çökmeyi önler (yerleşim e2e'de ölçülür).
+if (typeof window.matchMedia !== 'function') {
+  window.matchMedia = (sorgu: string) =>
+    ({
+      matches: false,
+      media: sorgu,
+      onchange: null,
+      addEventListener() {},
+      removeEventListener() {},
+      addListener() {},
+      removeListener() {},
+      dispatchEvent: () => false,
+    }) as unknown as MediaQueryList
+}
+const bosDikdortgen = { x: 0, y: 0, width: 0, height: 0, top: 0, left: 0, right: 0, bottom: 0, toJSON: () => ({}) } as DOMRect
+Range.prototype.getBoundingClientRect = () => bosDikdortgen
+Range.prototype.getClientRects = () => Object.assign([], { item: () => null }) as unknown as DOMRectList
+if (typeof document.elementFromPoint !== 'function') document.elementFromPoint = () => null
+if (!('ResizeObserver' in globalThis)) {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  } as unknown as typeof ResizeObserver
+}

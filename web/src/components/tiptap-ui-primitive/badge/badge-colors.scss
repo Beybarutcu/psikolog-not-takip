@@ -1,0 +1,211 @@
+.tiptap-badge {
+  /************************************************** 
+    Default 
+  **************************************************/
+
+  /* Light mode */
+  --tt-badge-border-color: var(--tt-gray-light-a-200);
+  --tt-badge-border-color-subdued: var(--tt-gray-light-a-200);
+  --tt-badge-border-color-emphasized: var(--tt-gray-light-a-600);
+  --tt-badge-text-color: var(--tt-gray-light-a-500);
+  --tt-badge-text-color-subdued: var(
+    --tt-gray-light-a-400
+  ); 
+  --tt-badge-text-color-emphasized: var(
+    --tt-gray-light-a-600
+  ); 
+  --tt-badge-bg-color: var(--white);
+  --tt-badge-bg-color-subdued: var(--white); 
+  --tt-badge-bg-color-emphasized: var(--white); 
+  --tt-badge-icon-color: var(--tt-gray-light-a-500);
+  --tt-badge-icon-color-subdued: var(
+    --tt-gray-light-a-400
+  ); 
+  --tt-badge-icon-color-emphasized: var(
+    --tt-brand-color-600
+  );
+
+  /************************************************** 
+    Ghost 
+  **************************************************/
+
+  &[data-style="ghost"] {
+    /* Light mode */
+    --tt-badge-border-color: var(--tt-gray-light-a-200);
+    --tt-badge-border-color-subdued: var(--tt-gray-light-a-200);
+    --tt-badge-border-color-emphasized: var(--tt-gray-light-a-600);
+    --tt-badge-text-color: var(--tt-gray-light-a-500);
+    --tt-badge-text-color-subdued: var(
+      --tt-gray-light-a-400
+    ); 
+    --tt-badge-text-color-emphasized: var(
+      --tt-gray-light-a-600
+    ); 
+    --tt-badge-bg-color: var(--transparent);
+    --tt-badge-bg-color-subdued: var(--transparent); 
+    --tt-badge-bg-color-emphasized: var(--transparent); 
+    --tt-badge-icon-color: var(--tt-gray-light-a-500);
+    --tt-badge-icon-color-subdued: var(
+      --tt-gray-light-a-400
+    ); 
+    --tt-badge-icon-color-emphasized: var(
+      --tt-brand-color-600
+    );
+  }
+
+  /************************************************** 
+    Gray 
+  **************************************************/
+
+  &[data-style="gray"] {
+    /* Light mode */
+    --tt-badge-border-color: var(--tt-gray-light-a-200);
+    --tt-badge-border-color-subdued: var(--tt-gray-light-a-200);
+    --tt-badge-border-color-emphasized: var(--tt-gray-light-a-500);
+    --tt-badge-text-color: var(--tt-gray-light-a-500);
+    --tt-badge-text-color-subdued: var(
+      --tt-gray-light-a-400
+    ); 
+    --tt-badge-text-color-emphasized: var(--white); 
+    --tt-badge-bg-color: var(--tt-gray-light-a-100);
+    --tt-badge-bg-color-subdued: var(
+      --tt-gray-light-a-50
+    ); 
+    --tt-badge-bg-color-emphasized: var(
+      --tt-gray-light-a-700
+    ); 
+    --tt-badge-icon-color: var(--tt-gray-light-a-500);
+    --tt-badge-icon-color-subdued: var(
+      --tt-gray-light-a-400
+    ); 
+    --tt-badge-icon-color-emphasized: var(--white);
+  }
+
+  /************************************************** 
+    Green 
+  **************************************************/
+
+  &[data-style="green"] {
+    /* Light mode */
+    --tt-badge-border-color: var(--tt-color-green-inc-2);
+    --tt-badge-border-color-subdued: var(--tt-color-green-inc-3);
+    --tt-badge-border-color-emphasized: var(--tt-color-green-dec-2);
+    --tt-badge-text-color: var(--tt-color-green-dec-3);
+    --tt-badge-text-color-subdued: var(
+      --tt-color-green-dec-2
+    ); 
+    --tt-badge-text-color-emphasized: var(
+      --tt-color-green-inc-5
+    ); 
+    --tt-badge-bg-color: var(--tt-color-green-inc-4);
+    --tt-badge-bg-color-subdued: var(
+      --tt-color-green-inc-5
+    ); 
+    --tt-badge-bg-color-emphasized: var(
+      --tt-color-green-dec-1
+    ); 
+    --tt-badge-icon-color: var(--tt-color-green-dec-3);
+    --tt-badge-icon-color-subdued: var(
+      --tt-color-green-dec-2
+    ); 
+    --tt-badge-icon-color-emphasized: var(
+      --tt-color-green-inc-5
+    );
+  }
+
+  /************************************************** 
+    Yellow 
+  **************************************************/
+
+  &[data-style="yellow"] {
+    /* Light mode */
+    --tt-badge-border-color: var(--tt-color-yellow-inc-2);
+    --tt-badge-border-color-subdued: var(--tt-color-yellow-inc-3);
+    --tt-badge-border-color-emphasized: var(--tt-color-yellow-dec-1);
+    --tt-badge-text-color: var(--tt-color-yellow-dec-3);
+    --tt-badge-text-color-subdued: var(
+      --tt-color-yellow-dec-2
+    ); 
+    --tt-badge-text-color-emphasized: var(
+      --tt-color-yellow-dec-3
+    ); 
+    --tt-badge-bg-color: var(--tt-color-yellow-inc-4);
+    --tt-badge-bg-color-subdued: var(
+      --tt-color-yellow-inc-5
+    ); 
+    --tt-badge-bg-color-emphasized: var(
+      --tt-color-yellow-base
+    ); 
+    --tt-badge-icon-color: var(--tt-color-yellow-dec-3);
+    --tt-badge-icon-color-subdued: var(
+      --tt-color-yellow-dec-2
+    ); 
+    --tt-badge-icon-color-emphasized: var(
+      --tt-color-yellow-dec-3
+    );
+  }
+
+  /************************************************** 
+    Red 
+  **************************************************/
+
+  &[data-style="red"] {
+    /* Light mode */
+    --tt-badge-border-color: var(--tt-color-red-inc-2);
+    --tt-badge-border-color-subdued: var(--tt-color-red-inc-3);
+    --tt-badge-border-color-emphasized: var(--tt-color-red-dec-2);
+    --tt-badge-text-color: var(--tt-color-red-dec-3);
+    --tt-badge-text-color-subdued: var(
+      --tt-color-red-dec-2
+    ); 
+    --tt-badge-text-color-emphasized: var(
+      --tt-color-red-inc-5
+    ); 
+    --tt-badge-bg-color: var(--tt-color-red-inc-4);
+    --tt-badge-bg-color-subdued: var(
+      --tt-color-red-inc-5
+    ); 
+    --tt-badge-bg-color-emphasized: var(
+      --tt-color-red-dec-1
+    ); 
+    --tt-badge-icon-color: var(--tt-color-red-dec-3);
+    --tt-badge-icon-color-subdued: var(
+      --tt-color-red-dec-2
+    ); 
+    --tt-badge-icon-color-emphasized: var(
+      --tt-color-red-inc-5
+    );
+  }
+
+  /************************************************** 
+    Brand 
+  **************************************************/
+
+  &[data-style="brand"] {
+    /* Light mode */
+    --tt-badge-border-color: var(--tt-brand-color-300);
+    --tt-badge-border-color-subdued: var(--tt-brand-color-200);
+    --tt-badge-border-color-emphasized: var(--tt-brand-color-600);
+    --tt-badge-text-color: var(--tt-brand-color-800);
+    --tt-badge-text-color-subdued: var(
+      --tt-brand-color-700
+    ); 
+    --tt-badge-text-color-emphasized: var(
+      --tt-brand-color-50
+    ); 
+    --tt-badge-bg-color: var(--tt-brand-color-100);
+    --tt-badge-bg-color-subdued: var(
+      --tt-brand-color-50
+    ); 
+    --tt-badge-bg-color-emphasized: var(
+      --tt-brand-color-600
+    ); 
+    --tt-badge-icon-color: var(--tt-brand-color-800);
+    --tt-badge-icon-color-subdued: var(
+      --tt-brand-color-700
+    ); 
+    --tt-badge-icon-color-emphasized: var(
+      --tt-brand-color-100
+    );
+  }
+}

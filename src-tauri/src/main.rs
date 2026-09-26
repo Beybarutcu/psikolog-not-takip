@@ -1,8 +1,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod pencere;
+
+use pencere::{gezinme_izni, pencere_karari, PencereKarari};
 use psikolog_core::crypto::keyring::KdfParams;
 use psikolog_server::{router, AppState, YEREL_ADRES};
 use std::path::PathBuf;
+use tauri::webview::NewWindowResponse;
+use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder, Wry};
+use tauri_plugin_opener::OpenerExt;
+
+/// Ana pencerenin etiketi; kapanınca uygulama çıkar (tasarım P5).
+const ANA_PENCERE: &str = "ana";
 
 fn veri_dizini() -> PathBuf {
     // macOS: ~/Library/Application Support/com.psikolog.notlar
@@ -34,23 +43,99 @@ fn sunucuyu_baslat(veri_dizini: PathBuf) -> u16 {
     port
 }
 
+/// Her pencerenin ORTAK kurucusu (tasarım P6b, §9). Gezinme yalnızca kendi
+/// kökenine; başka bir `http(s)`/`mailto` adresine gezinme de yeni pencere
+/// isteği de sistemin varsayılan uygulamasına devredilir ve REDDEDİLİR.
+/// `window.open` isteği hiçbir zaman webview'in kendi penceresine
+/// bırakılmaz (`Deny`): okuma penceresini bu kurucu kendisi açar.
+fn korumali_pencere<'a>(
+    app: &'a AppHandle,
+    etiket: &str,
+    adres: Url,
+    koken: Url,
+) -> WebviewWindowBuilder<'a, Wry, AppHandle> {
+    let gezinme_app = app.clone();
+    let gezinme_koken = koken.clone();
+    let yeni_app = app.clone();
+    WebviewWindowBuilder::new(app, etiket, WebviewUrl::External(adres))
+        .theme(Some(tauri::Theme::Light))
+        .on_navigation(move |hedef| {
+            if gezinme_izni(hedef, &gezinme_koken) {
+                return true;
+            }
+            if pencere_karari(hedef, &gezinme_koken) == PencereKarari::DisaAc {
+                disarida_ac(&gezinme_app, hedef);
+            }
+            false
+        })
+        .on_new_window(move |hedef, _ozellikler| {
+            match pencere_karari(&hedef, &koken) {
+                PencereKarari::OkumaPenceresi { randevu_id } => {
+                    okuma_penceresi_ac(&yeni_app, randevu_id, &koken)
+                }
+                PencereKarari::DisaAc => disarida_ac(&yeni_app, &hedef),
+                PencereKarari::Reddet => {}
+            }
+            NewWindowResponse::Deny
+        })
+}
+
+/// Salt okunur okuma penceresi (tasarım P1-P3): etiket `okuma-<id>`, aynı
+/// seans ikinci kez istenirse var olan öne gelir. Başlık danışan adı
+/// TAŞIMAZ (pencere listelerinde görünür); ad sayfanın içinde.
+fn okuma_penceresi_ac(app: &AppHandle, randevu_id: i64, koken: &Url) {
+    let etiket = format!("okuma-{randevu_id}");
+    if let Some(var_olan) = app.get_webview_window(&etiket) {
+        let _ = var_olan.set_focus();
+        return;
+    }
+    let mut adres = koken.clone();
+    adres.set_path("/");
+    adres.set_query(Some(&format!("okuma={randevu_id}")));
+    let app = app.clone();
+    let koken = koken.clone();
+    // Pencere webview'in kendi geri çağrısının İÇİNDE kurulmaz (Windows'ta
+    // olay döngüsü kilitlenebilir); ayrı bir görevde.
+    tauri::async_runtime::spawn(async move {
+        let sonuc = korumali_pencere(&app, &etiket, adres, koken)
+            .title("Seans notu (salt okunur)")
+            .inner_size(720.0, 800.0)
+            .build();
+        if sonuc.is_err() {
+            eprintln!("okuma penceresi acilamadi");
+        }
+    });
+}
+
+/// Sistemin varsayılan tarayıcısı/posta uygulaması. Hata satırı ADRES
+/// BASMAZ: bağlantı hassas bilgi taşıyabilir.
+fn disarida_ac(app: &AppHandle, adres: &Url) {
+    if app.opener().open_url(adres.as_str(), None::<&str>).is_err() {
+        eprintln!("baglanti sistem uygulamasinda acilamadi");
+    }
+}
+
 fn main() {
     let port = sunucuyu_baslat(veri_dizini());
-    let adres = format!("http://{YEREL_ADRES}:{port}");
+    let koken: Url = format!("http://{YEREL_ADRES}:{port}/").parse().expect("yerel adres gecersiz");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
-            tauri::WebviewWindowBuilder::new(
-                app,
-                "ana",
-                tauri::WebviewUrl::External(adres.parse().unwrap()),
-            )
-            .title("Terapi Notlari")
-            .inner_size(1200.0, 760.0)
-            .min_inner_size(1024.0, 680.0)
-            .theme(Some(tauri::Theme::Light))
-            .build()?;
+            korumali_pencere(app.handle(), ANA_PENCERE, koken.clone(), koken.clone())
+                .title("Terapi Notlari")
+                .inner_size(1200.0, 760.0)
+                .min_inner_size(1024.0, 680.0)
+                .theme(Some(tauri::Theme::Light))
+                .build()?;
             Ok(())
+        })
+        // Tasarım P5: ana pencere kapanınca uygulama çıkar, okuma pencereleri
+        // de kapanır (yoksa son okuma penceresi kapanana kadar süreç yaşardı).
+        .on_window_event(|pencere, olay| {
+            if pencere.label() == ANA_PENCERE && matches!(olay, tauri::WindowEvent::Destroyed) {
+                pencere.app_handle().exit(0);
+            }
         })
         .run(tauri::generate_context!())
         .expect("uygulama baslatilamadi");
@@ -140,5 +225,11 @@ mod tests {
         assert!(kurucu.contains(".inner_size(1200.0, 760.0)"), "varsayilan boyut");
         assert!(kurucu.contains(".min_inner_size(1024.0, 680.0)"), "asgari boyut");
         assert!(kurucu.contains(".theme(Some(tauri::Theme::Light))"), "acik tema");
+        assert!(kurucu.contains(".inner_size(720.0, 800.0)"), "okuma penceresi boyutu (P2)");
+        assert!(kurucu.contains(".on_navigation(") && kurucu.contains(".on_new_window("), "gezinme korumasi (P6b)");
+        assert!(kurucu.contains("NewWindowResponse::Deny"), "yeni pencere istegi webview'e birakilmaz");
+        assert!(kurucu.contains(".plugin(tauri_plugin_opener::init())"), "opener eklentisi (P6b)");
+        assert!(kurucu.contains("WindowEvent::Destroyed") && kurucu.contains("exit(0)"), "ana pencere kapaninca cikis (P5)");
+        assert!(kurucu.contains("korumali_pencere(app.handle(), ANA_PENCERE"), "ana pencere de korumali kurucudan");
     }
 }

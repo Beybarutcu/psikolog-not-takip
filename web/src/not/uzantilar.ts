@@ -85,7 +85,16 @@ export function notUzantilari({ duzenlenebilir }: { duzenlenebilir: boolean }): 
     HorizontalRule,
     TextAlign.configure({ types: ['heading', 'paragraph'] }),
     TaskList,
-    TaskItem.configure({ nested: true }),
+    TaskItem.configure({
+      nested: true,
+      // Varsayılan erişilebilir etiket İngilizce ("Task item checkbox for
+      // …", E3 ihlali — preflight/Görev 10 bulgusu); Türkçe ve bilgilendirici
+      // bir etiketle değiştirilir.
+      a11y: {
+        checkboxLabel: (node, checked) =>
+          `Görev onay kutusu: ${node.textContent || 'boş görev'}${checked ? ', tamamlandı' : ''}`,
+      },
+    }),
     Highlight.configure({ multicolor: true }),
     Typography,
     Superscript,

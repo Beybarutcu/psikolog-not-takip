@@ -1,12 +1,12 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { kurulumYap } from './yardimcilar'
+import { kurulumYap, sonSozcuguSec } from './yardimcilar'
 
 /**
  * Görev 8'in uçtan uca doğrulaması: Plan 6'nın yedi görevde yazdığı üç
- * parçanın (Markdown editörü + biçim çubuğu, etiketler, arama) GERÇEK bir
+ * parçanın (biçimli editör + araç çubuğu, etiketler, arama) GERÇEK bir
  * tarayıcıda, GERÇEK bir sunucuyla birbirine bağlı çalıştığı — birim
  * testler her parçayı kendi izolasyonunda (jsdom, sahte `fetch`) doğruluyor;
- * parçaların ZİNCİRİ (biçim çubuğu → textarea → otomatik kayıt → sunucu →
+ * parçaların ZİNCİRİ (araç çubuğu → editör → otomatik kayıt → sunucu →
  * yeniden yükleme, etiket ekle → Cmd+K → etiketli seanslar → danışan
  * dosyası, not içeriğinde ara → danışan dosyası) yalnızca burada ölçülebilir.
  *
@@ -87,38 +87,11 @@ function seansPaneli(page: Page): Locator {
   return page.getByRole('region', { name: 'Seans', exact: true })
 }
 
-/**
- * Editördeki SON sözcüğü klavyeyle seçer: satır sonuna git, Ctrl+Shift+←.
- *
- * # Senkronizasyon bariyeri: ProseMirror'un KENDİ seçimi
- *
- * Satır sonu ve sözcük seçimi tarayıcının yerli davranışı; ProseMirror yeni
- * seçimi ancak `selectionchange` olayında okur ve o olay bir sonraki tuştan
- * SONRA işlenebilir. Tam e2e koşusunda (dokuz işçi, yüklü makine) Ctrl+B
- * bu yüzden bir kez ESKİ (boş) seçime uygulandı: `<strong>` hiç oluşmadı
- * (tek başına koşuda geçiyordu). Yardımcı bu yüzden editörün kendi
- * durumundaki seçim `beklenen` olana kadar bekler (TipTap editörü
- * `.ProseMirror` öğesinde `editor` olarak durur); sabit bekleme YOK.
- *
- * macOS'ta (hedef platform) satır sonu Cmd+→, sözcük seçimi Alt+Shift+←
- * (preflight F16); Windows/Linux'ta End ve Ctrl+Shift+←. Bu makinede
- * yalnızca Windows dalı koşuyor.
- */
-async function sonSozcuguSec(page: Page, alan: Locator, beklenen: string) {
-  const mac = process.platform === 'darwin'
-  await alan.click()
-  await page.keyboard.press(mac ? 'Meta+ArrowRight' : 'End')
-  await page.keyboard.press(mac ? 'Alt+Shift+ArrowLeft' : 'Control+Shift+ArrowLeft')
-  await expect
-    .poll(() =>
-      alan.evaluate((el) => {
-        type Durum = { doc: { textBetween(a: number, b: number): string }; selection: { from: number; to: number } }
-        const durum = (el as HTMLElement & { editor?: { state: Durum } }).editor?.state
-        return durum ? durum.doc.textBetween(durum.selection.from, durum.selection.to) : null
-      }),
-    )
-    .toBe(beklenen)
-}
+// `sonSozcuguSec` (satırın son sözcüğünü seçip ProseMirror'un kendi
+// seçimini bekleyen, yarışta yeniden deneyen bariyer) `./yardimcilar`'da:
+// `editor.spec.ts` ile PAYLAŞILIYOR (Görev 10 bulgusu — bu dosyanın önceki
+// tek denemelik hâli aynı 20 ms odak-zamanlayıcı yarışına açıktı; Görev 11
+// paylaşılan yeniden deneyen sürüme geçirdi).
 
 /** Araç çubuğundaki bir düğme (Türkçe ad). */
 function aracDugmesi(page: Page, ad: string): Locator {
@@ -136,11 +109,12 @@ test('bicim cubugu: secili kelime kalinlasir, isaret gorunmez, sayfa yenilenince
   const blok = await danisanVeRandevu(page, ad, '08:00')
   const alan = await seansiAc(page, blok)
   await alan.fill(cumle)
+  await alan.click()
   await sonSozcuguSec(page, alan, kelime)
   await aracDugmesi(page, 'Kalın').click()
 
-  // ARTI YÖN: gerçek <strong> — ve EKSİ YÖN: metinde işaret yok (Markdown
-  // yığını gitti; ekranda `**` görünmez, tasarım §1).
+  // ARTI YÖN: gerçek <strong> — ve EKSİ YÖN: metinde işaret yok (eski biçim
+  // işareti kalmadı; ekranda `**` görünmez, tasarım §1).
   await expect(alan.locator('strong')).toHaveText(kelime)
   await expect(alan).toHaveText(cumle)
   await kaydedildiBekle(page)
@@ -254,6 +228,7 @@ test('Ctrl+Z gercek tarayicida: yalnizca bicimi geri alir, cumle kaybolmaz, sunu
   // 500 ms'lik birleştirme penceresi kapanır; Ctrl+B ayrı bir adım olur.
   await kaydedildiBekle(page)
 
+  await alan.click()
   await sonSozcuguSec(page, alan, kelime)
   await page.keyboard.press('Control+b')
   await expect(alan.locator('strong')).toHaveText(kelime)

@@ -164,6 +164,25 @@ describe('BicimliYuzey (gerçek TipTap)', () => {
     expect(html).not.toContain('"opener"')
   })
 
+  it('görev onay kutusunun erişilebilir etiketi Türkçe (Görev 10 bulgusu, E3)', () => {
+    // TipTap'ın TaskItem varsayılanı İngilizce ("Task item checkbox for …");
+    // bu bir E3 ihlali. `uzantilar.ts` `a11y.checkboxLabel` ile Türkçe,
+    // bilgilendirici bir etiket vermeli.
+    render(
+      <BicimliYuzey
+        html='<ul data-type="taskList"><li data-checked="false" data-type="taskItem"><label><input type="checkbox"></label><div><p>sudan cik</p></div></li></ul>'
+        onChange={vi.fn()}
+        etiket="Seans notu"
+      />,
+    )
+    const alan = screen.getByRole('textbox', { name: 'Seans notu' })
+    const kutu = alan.querySelector('input[type="checkbox"]')
+    const etiket = kutu?.getAttribute('aria-label') ?? ''
+    expect(etiket).toContain('sudan cik')
+    expect(etiket).not.toMatch(/task item checkbox/i)
+    expect(etiket).toMatch(/görev|onay kutusu/i)
+  })
+
   it('editable=false: düzenlenemez ve araç çubuğu yok', () => {
     render(<BicimliYuzey html="<p>okunur</p>" etiket="Not" editable={false} />)
     expect(screen.getByRole('textbox', { name: 'Not' }).getAttribute('contenteditable')).toBe('false')

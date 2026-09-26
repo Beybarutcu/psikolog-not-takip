@@ -485,11 +485,14 @@ describe('SeansPaneli — yeni notun şablon başlıkları', () => {
     // açılır.
     kur({ not: { ...resmiNot, icerik: '' } })
     const alan = screen.getByLabelText('Seans notu') as HTMLTextAreaElement
-    // Görev 2: başlıklar artık Markdown ikinci düzey başlık biçiminde
-    // (`sablon.ts::sablonMetni`) — adlar aynı, yalnızca biçim değişti.
-    expect(alan.value).toContain('## Veri')
-    expect(alan.value).toContain('## Değerlendirme')
-    expect(alan.value).toContain('## Plan')
+    // Bu dosya not yüzeyini `test-kurulum.ts`'in textarea test yüzeyiyle
+    // sürüyor (gerçek TipTap değil); `.value` iddiaları buna dayanıyor.
+    expect(alan.tagName).toBe('TEXTAREA')
+    // Başlıklar HTML ikinci düzey başlık (`sablon.ts::sablonMetni`) — adlar
+    // aynı, yalnızca biçim değişti.
+    expect(alan.value).toContain('<h2>Veri</h2>')
+    expect(alan.value).toContain('<h2>Değerlendirme</h2>')
+    expect(alan.value).toContain('<h2>Plan</h2>')
   })
 
   it('basliklar acilista HICBIR kayit uretmez', async () => {

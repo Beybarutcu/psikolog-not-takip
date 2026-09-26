@@ -171,7 +171,7 @@ test('danışana tıklayınca geçmiş seansları ve notu açılır', async ({ p
   // (strict mode ihlali, iki eşleşme) — bu da ürünün çalıştığının bir
   // kanıtı; ikisi ayrı ayrı, kendi rolleriyle doğrulanıyor.
   await expect(page.getByTestId('seans-listesi')).toContainText('Geçen haftanın notu')
-  await expect(page.getByRole('textbox', { name: 'Seans notu' })).toHaveValue(
+  await expect(page.getByRole('textbox', { name: 'Seans notu' })).toHaveText(
     'Geçen haftanın notu',
   )
 })

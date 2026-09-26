@@ -12,15 +12,12 @@ import { kurulumYap } from './yardimcilar'
  *
  * # Ctrl+Z testi neden burada ve neden ÖZEL
  *
- * `NotEditoru::yerelDuzenlemeDene` biçimi `document.execCommand('insertText',
- * …)` ile uyguluyor — amaç tarayıcının YERLİ geri alma (Ctrl+Z) yığınını
- * `setIcerik` ile tüm metni programatik olarak değiştirerek BOZMAMAK (bkz. o
- * fonksiyonun kod başlığı). `document.execCommand` jsdom'da TANIMLI DEĞİL,
- * yani hiçbir birim testi bunu gerçekten ÖLÇEMEZ — testler yalnızca
- * fonksiyonun `execCommand`'i çağırdığını (ya da `false` dönünce düşüş
- * yoluna geçtiğini) doğrulayabilir, geri almanın FİİLEN çalıştığını değil.
- * Gerçek geri alma davranışı yalnızca gerçek bir tarayıcı motorunda ölçülür
- * — bu dosyadaki `test('Ctrl+Z ...')` bu boşluğu kapatıyor.
+ * TipTap'ın geri alma yığını (prosemirror-history) gerçek tarayıcıda: tek
+ * Ctrl+Z yalnızca son biçimi geri alır. jsdom'da seçim ve tuş haritası
+ * gerçek tarayıcıdaki gibi davranmıyor; birim testleri (`BicimliYuzey.test`,
+ * `NotEditoru.gercekYuzey.test`) komutları doğrudan çağırıyor. Klavyeyle
+ * seçip Ctrl+B / Ctrl+Z'ye basmanın zinciri yalnızca burada ölçülür — bu
+ * dosyadaki `test('Ctrl+Z ...')` bu boşluğu kapatıyor.
  *
  * # Paylaşılan sunucu durumu — saat seçimi
  *
@@ -91,71 +88,68 @@ function seansPaneli(page: Page): Locator {
 }
 
 /**
- * Bir textarea'da geçen bir sözcüğü GERÇEK tarayıcı seçimiyle işaretler.
+ * Editördeki SON sözcüğü klavyeyle seçer: satır sonuna git, Ctrl+Shift+←.
  *
- * `setSelectionRange` DOM'un standart seçim API'sidir — çift tıklamayla aynı
- * temel mekanizmayı (tarayıcının kendi seçim durumunu) kullanır, yalnızca
- * piksel koordinatına bağımlı olmadığı için kararlıdır. Asıl ölçülen şey
- * (`document.execCommand('insertText', …)`'in tarayıcının YERLİ geri alma
- * yığınına tek adım olarak girmesi) seçimin NASIL kurulduğundan bağımsızdır:
- * `NotEditoru::bicimUygulaVeYaz` biçim düğmesine basıldığı ANDAKİ
- * `selectionStart`/`selectionEnd`'i okur ve `execCommand`'i KENDİ hesapladığı
- * (değişen aralık) sınırlarıyla çağırır (bkz. `degisenAralikHesapla`).
+ * # Senkronizasyon bariyeri: ProseMirror'un KENDİ seçimi
+ *
+ * Satır sonu ve sözcük seçimi tarayıcının yerli davranışı; ProseMirror yeni
+ * seçimi ancak `selectionchange` olayında okur ve o olay bir sonraki tuştan
+ * SONRA işlenebilir. Tam e2e koşusunda (dokuz işçi, yüklü makine) Ctrl+B
+ * bu yüzden bir kez ESKİ (boş) seçime uygulandı: `<strong>` hiç oluşmadı
+ * (tek başına koşuda geçiyordu). Yardımcı bu yüzden editörün kendi
+ * durumundaki seçim `beklenen` olana kadar bekler (TipTap editörü
+ * `.ProseMirror` öğesinde `editor` olarak durur); sabit bekleme YOK.
+ *
+ * macOS'ta (hedef platform) satır sonu Cmd+→, sözcük seçimi Alt+Shift+←
+ * (preflight F16); Windows/Linux'ta End ve Ctrl+Shift+←. Bu makinede
+ * yalnızca Windows dalı koşuyor.
  */
-async function kelimeSec(alan: Locator, kelime: string) {
-  await alan.evaluate((el, kelime) => {
-    const textarea = el as HTMLTextAreaElement
-    const bas = textarea.value.indexOf(kelime)
-    if (bas === -1) throw new Error(`kelime metinde bulunamadi: ${kelime}`)
-    textarea.focus()
-    textarea.setSelectionRange(bas, bas + kelime.length)
-  }, kelime)
+async function sonSozcuguSec(page: Page, alan: Locator, beklenen: string) {
+  const mac = process.platform === 'darwin'
+  await alan.click()
+  await page.keyboard.press(mac ? 'Meta+ArrowRight' : 'End')
+  await page.keyboard.press(mac ? 'Alt+Shift+ArrowLeft' : 'Control+Shift+ArrowLeft')
+  await expect
+    .poll(() =>
+      alan.evaluate((el) => {
+        type Durum = { doc: { textBetween(a: number, b: number): string }; selection: { from: number; to: number } }
+        const durum = (el as HTMLElement & { editor?: { state: Durum } }).editor?.state
+        return durum ? durum.doc.textBetween(durum.selection.from, durum.selection.to) : null
+      }),
+    )
+    .toBe(beklenen)
+}
+
+/** Araç çubuğundaki bir düğme (Türkçe ad). */
+function aracDugmesi(page: Page, ad: string): Locator {
+  return seansPaneli(page).getByRole('toolbar', { name: 'Biçim araçları' }).getByRole('button', { name: ad, exact: true })
 }
 
 // ---------------------------------------------------------------------------
 
-test('bicim cubugu: secili kelime kalinlasir, Onizle gosterir, sayfa yenilenince kalici', async ({
-  page,
-}) => {
+test('bicim cubugu: secili kelime kalinlasir, isaret gorunmez, sayfa yenilenince kalici', async ({ page }) => {
   await kurulumYap(page)
   const ad = 'Gamze Aydemir'
   const kelime = 'KALINSOZ25'
-  const cumle = `Danisan bu hafta ${kelime} konusunda ilerleme kaydetti.`
+  const cumle = `Danisan bu hafta ilerleme kaydetti ${kelime}`
 
   const blok = await danisanVeRandevu(page, ad, '08:00')
   const alan = await seansiAc(page, blok)
-
   await alan.fill(cumle)
-  await kelimeSec(alan, kelime)
+  await sonSozcuguSec(page, alan, kelime)
+  await aracDugmesi(page, 'Kalın').click()
 
-  // Fare tıklamasında odağın textarea'dan düğmeye kaymaması BicimCubugu'nun
-  // kendi `onMouseDown` engellemesiyle sağlanıyor (bkz. o dosyanın kod
-  // başlığı); bu satır o davranışa güveniyor.
-  await seansPaneli(page).getByRole('button', { name: 'Kalın (Ctrl+B)' }).click()
-
-  // ARTI YÖN: metin `**KALINSOZ25**` içeriyor (saklanan biçim düz metin
-  // Markdown işareti — `progress_notes.icerik` biçim DEĞİŞTİRMEZ) VE
-  // cümlenin geri kalanı kayıp değil — `bicimUygula` yalnızca seçili
-  // sözcüğü sarmalı, TAM EŞİTLİK bunu birlikte ölçüyor.
-  await expect(alan).toHaveValue(cumle.replace(kelime, `**${kelime}**`))
-
-  await seansPaneli(page).getByRole('button', { name: 'Önizle', exact: true }).click()
-  // Önizlemede GERÇEK bir <strong> elemanı var (dangerouslySetInnerHTML
-  // yasak — `markdownOgeleri` React elemanı üretir, HTML dizgisi değil).
-  await expect(
-    seansPaneli(page).locator('strong', { hasText: kelime }),
-  ).toBeVisible()
-
-  await seansPaneli(page).getByRole('button', { name: 'Yaz', exact: true }).click()
+  // ARTI YÖN: gerçek <strong> — ve EKSİ YÖN: metinde işaret yok (Markdown
+  // yığını gitti; ekranda `**` görünmez, tasarım §1).
+  await expect(alan.locator('strong')).toHaveText(kelime)
+  await expect(alan).toHaveText(cumle)
   await kaydedildiBekle(page)
 
-  // Yenileme: metnin SUNUCUDA olduğunu kanıtlar (taslak deposu bellekte,
-  // sayfa yenilenince sıfırlanır — bkz. `notlar.spec.ts` aynı gerekçe).
   await page.reload()
   await kurulumYap(page)
-
   const yenidenAlan = await seansiAc(page, blok)
-  await expect(yenidenAlan).toHaveValue(cumle.replace(kelime, `**${kelime}**`))
+  await expect(yenidenAlan.locator('strong')).toHaveText(kelime)
+  await expect(yenidenAlan).toHaveText(cumle)
 })
 
 test('etiket: seansa eklenir, Cmd+K etiketi bulur, etiketli seanslardan danisan dosyasina gecilir', async ({
@@ -208,7 +202,7 @@ test('etiket: seansa eklenir, Cmd+K etiketi bulur, etiketli seanslardan danisan 
   // SENKRONİZASYON BARİYERİ: seans listesi sunucu yanıtını aldı.
   await expect(page.locator('[data-testid="seans-listesi"][data-yuklendi="evet"]')).toBeVisible()
   // ASIL İDDİA: açılan not editörü DOĞRU seansın (kanaryalı) notunu taşıyor.
-  await expect(page.getByLabel('Seans notu', { exact: true })).toHaveValue(
+  await expect(page.getByLabel('Seans notu', { exact: true })).toHaveText(
     new RegExp(notKanaryasi),
   )
 })
@@ -239,7 +233,7 @@ test('arama: not iceriginden danisan dosyasina gecilir', async ({ page }) => {
   )
   await expect(page.getByRole('heading', { name: ad, exact: true })).toBeVisible()
   await expect(page.locator('[data-testid="seans-listesi"][data-yuklendi="evet"]')).toBeVisible()
-  await expect(page.getByLabel('Seans notu', { exact: true })).toHaveValue(new RegExp(notTerimi))
+  await expect(page.getByLabel('Seans notu', { exact: true })).toHaveText(new RegExp(notTerimi))
 })
 
 // ---------------------------------------------------------------------------
@@ -247,55 +241,63 @@ test('arama: not iceriginden danisan dosyasina gecilir', async ({ page }) => {
 // gerçek tarayıcıda. Bkz. dosya başlığı "Ctrl+Z testi neden burada".
 // ---------------------------------------------------------------------------
 
-test('Ctrl+Z gercek tarayicida: yalnizca bicimi geri alir, cumlenin geri kalani kaybolmaz, geri alinan hal kaydedilir', async ({
-  page,
-}) => {
+test('Ctrl+Z gercek tarayicida: yalnizca bicimi geri alir, cumle kaybolmaz, sunucudaki hal bicimsiz', async ({ page }) => {
   await kurulumYap(page)
   const ad = 'Onur Aslan'
   const kelime = 'GERIALKANARYA28'
-  const cumle = `Danisan ${kelime} ile ilgili konustu ve devam plani belirlendi.`
+  const cumle = `Danisan devam plani ile ilgili konustu ${kelime}`
 
   const blok = await danisanVeRandevu(page, ad, '11:00')
   const alan = await seansiAc(page, blok)
-
   await alan.fill(cumle)
-  await kelimeSec(alan, kelime)
-
-  // Bu kez KISAYOLLA (Ctrl+B), araç çubuğu düğmesiyle DEĞİL — brief'in ek
-  // testi ikisini de kabul ediyor ("Kalın'a bas ya da Ctrl+B"); kısayol yolu
-  // burada tercih edildi çünkü `kisayolTusu` FİZİKSEL tuş koduyla
-  // (`event.code`) eşleşiyor ve Playwright'ın `Control+b`'si doğru `code`'u
-  // üretiyor (bkz. dosya başlığındaki bağlam notu) — bu da ayrı bir yol.
-  await page.keyboard.press('Control+b')
-
-  await expect(alan).toHaveValue(new RegExp(`\\*\\*${kelime}\\*\\*`))
-
-  // ASIL İDDİA: TEK bir Ctrl+Z yalnızca biçimi geri alır. `execCommand`
-  // yerli geri alma yığınına TEK adım olarak girdiyse (bkz.
-  // `yerelDuzenlemeDene` kod başlığı), bir geri alma cümleyi BAŞLANGIÇ
-  // hâline (biçimsiz) döndürmeli — ne bir kısmını, ne fazlasını.
-  await page.keyboard.press('Control+z')
-  await expect(alan).toHaveValue(cumle)
-
-  // EKSİ YÖN + ARTI YÖN AYNI İDDİADA: yukarıdaki `toHaveValue(cumle)` zaten
-  // hem "biçim gitti" hem "cümlenin geri kalanı kayıp değil"i birlikte
-  // ölçüyor — TAM EŞİTLİK, yalnızca `**` işaretlerinin yokluğu değil.
-
-  // Geri alınan (biçimsiz) hâlin OTOMATİK KAYITLA sunucuya gittiğini
-  // doğrula: native undo bir `input` olayı üretiyor (`inputType:
-  // 'historyUndo'`), React'in `onChange`'i bunu yakalıyor ve metin yine TEK
-  // giriş noktasından (`icerikDegistir` → `setIcerik`) geçiyor — otomatik
-  // kayıt bunun "kullanıcı yazdı" ile aynı olduğunu bilmeden çalışmaya
-  // devam ediyor.
+  // BARİYER + geri alma grubu ayrımı: kayıt ~2 sn sürer, ProseMirror'un
+  // 500 ms'lik birleştirme penceresi kapanır; Ctrl+B ayrı bir adım olur.
   await kaydedildiBekle(page)
+
+  await sonSozcuguSec(page, alan, kelime)
+  await page.keyboard.press('Control+b')
+  await expect(alan.locator('strong')).toHaveText(kelime)
+
+  // ASIL İDDİA: TEK Ctrl+Z yalnızca biçimi geri alır; cümle TAM kalır.
+  await page.keyboard.press('Control+z')
+  await expect(alan.locator('strong')).toHaveCount(0)
+  await expect(alan).toHaveText(cumle)
+  // Bekleyen kayıt yok: ya hiç yazılmadı (sunucudaki hâle dönüldü) ya da
+  // biçimsiz hâl yazıldı. İkisinde de sunucudaki metin biçimsiz.
+  await expect(page.getByRole('status').filter({ hasText: /Kaydedilmemiş|Yazılıyor/ })).toHaveCount(0)
 
   await page.reload()
   await kurulumYap(page)
   const yenidenAlan = await seansiAc(page, blok)
-  await expect(yenidenAlan).toHaveValue(cumle)
+  await expect(yenidenAlan).toHaveText(cumle)
+  await expect(yenidenAlan.locator('strong')).toHaveCount(0)
+})
 
-  // Playwright tarayıcı önbelleğinde WebKit KURULU DEĞİLSE (görev kısıtı:
-  // yeni bir tarayıcı motoru İNDİRİLMEZ) bu proje yalnızca Chromium'da
-  // koşar; WebKit kuruluysa `--project` ile AYNI dosya orada da koşturulup
-  // sonucu görev raporuna yazılır (bkz. görev raporu).
+// ---------------------------------------------------------------------------
+// Görev 4 incelemesinin bıraktığı denetim (d): `not/not-yuzeyi.scss`'in
+// `:root` teması şablonun `styles/_variables.scss` varsayılanlarını (mor
+// "brand" tonları) YALNIZCA paket CSS'inde ondan SONRA gelirse ezer — ikisi
+// de katmansız ve aynı seçicide. Sıra `main.tsx`'in `index.css`'i
+// `App`'ten ÖNCE içe aktarmasına bağlı; bu test o sırayı derlenmiş
+// uygulamada ölçer.
+// ---------------------------------------------------------------------------
+
+test('editor uygulamanin acik slate paletini kullanir, sablonun mor varsayilanini degil', async ({ page }) => {
+  await kurulumYap(page)
+  const blok = await danisanVeRandevu(page, 'Deniz Kaya', '12:00')
+  const alan = await seansiAc(page, blok)
+
+  const renkler = await alan.evaluate((el) => {
+    const kok = getComputedStyle(document.documentElement)
+    return {
+      marka500: kok.getPropertyValue('--tt-brand-color-500').trim(),
+      imlec: getComputedStyle(el).caretColor,
+    }
+  })
+  // ARTI YÖN: uygulamanın slate tonları (`not-yuzeyi.scss`).
+  expect(renkler.marka500).toBe('#475569')
+  // Değişkenin KULLANILDIĞI yer: şablonun `paragraph-node.scss`'i
+  // `caret-color: var(--tt-cursor-color)` yazar; tema `#0f172a` verir.
+  // Şablon varsayılanı kazansaydı `rgb(98, 41, 255)` (mor) olurdu.
+  expect(renkler.imlec).toBe('rgb(15, 23, 42)')
 })

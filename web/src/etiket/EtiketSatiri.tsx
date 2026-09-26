@@ -75,8 +75,8 @@ export const RAPOR_BILGISI = 'Etiketler danışan veri raporunda görünür.'
  * # Ad yalnızca React METNİ olarak basılır
  *
  * Etiket adı serbest metin (`<b>`, `<script>` içerebilir) ve her yerde JSX
- * çocuğu olarak yazılır; HTML olarak yorumlanmaz (bkz. `not/markdown.test.
- * tsx`'teki yapısal tarama).
+ * çocuğu olarak yazılır; HTML olarak yorumlanmaz (bkz. `htmlBasmaYok.test.ts`'teki
+ * yapısal tarama).
  *
  * # Doğrulama
  *

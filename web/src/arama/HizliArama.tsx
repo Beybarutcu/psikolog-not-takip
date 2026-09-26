@@ -167,15 +167,15 @@ export function HizliArama({ ara, onDanisanSec, onEtiketSec, gecikmeMs = GECIKME
   // yani o gerekçe hiç geçerli olmamış. Hedef platform macOS ve orada
   // Ctrl+K, metin alanlarında (textarea/input) sistemin kendi Emacs-stili
   // kısayolu: "imleçten satır sonuna kadar sil". Koşulsuz dinleyici bunu
-  // odak `NotEditoru`'nun textarea'sındayken de yutuyordu — terapist seans
+  // odak `NotEditoru`'nun metin alanındayken de yutuyordu — terapist seans
   // notu yazarken satırını silmek isteyip yerine hızlı arama katmanının
   // açıldığını görüyordu. Cmd+K'nin macOS'ta böyle bir varsayılan anlamı
   // yok, dolayısıyla yalnızca onu kabul etmek çakışmayı olay hedefine
   // bakmadan çözer.
   //
-  // `event.code` kullanılıyor, `event.key` DEĞİL — aynı gerekçe
-  // `NotEditoru::kisayolTusu` ile birebir aynı: Türkçe Q klavyede fiziksel K
-  // tuşu her zaman `code === 'KeyK'` üretir, `key` düzene göre değişebilir.
+  // `event.code` kullanılıyor, `event.key` DEĞİL: Türkçe Q klavyede fiziksel
+  // K tuşu her zaman `code === 'KeyK'` üretir, `key` düzene göre değişebilir.
+  // (Not editörünün kısayollarını artık TipTap'ın tuş haritası uygular.)
   useEffect(() => {
     function tus(olay: KeyboardEvent) {
       if (olay.metaKey && olay.code === 'KeyK') {

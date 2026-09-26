@@ -285,9 +285,11 @@ describe('DanisanDosyasi — bos not, takvimdeki SeansPaneli ile AYNI acilir (Go
       />,
     )
     const alan = screen.getByLabelText('Seans notu') as HTMLTextAreaElement
-    expect(alan.value).toContain('## Veri')
-    expect(alan.value).toContain('## Değerlendirme')
-    expect(alan.value).toContain('## Plan')
+    // Textarea test yüzeyi (`test-kurulum.ts`): `.value` iddiaları buna dayanıyor.
+    expect(alan.tagName).toBe('TEXTAREA')
+    expect(alan.value).toContain('<h2>Veri</h2>')
+    expect(alan.value).toContain('<h2>Değerlendirme</h2>')
+    expect(alan.value).toContain('<h2>Plan</h2>')
   })
 
   it('basliklar acilista HICBIR kayit uretmez', async () => {

@@ -143,7 +143,7 @@ test('seans notu otomatik kaydedilir, sayfa yenilenince yerinde durur', async ({
   await kurulumYap(page)
 
   const yenidenAlan = await seansiAc(page, blok)
-  await expect(yenidenAlan).toHaveValue(icerik)
+  await expect(yenidenAlan).toHaveText(icerik)
 })
 
 // SINIR — bu test rapor İÇERİĞİNİ DOĞRULAMAZ. Rapor sunucuda AES-256 ile
@@ -344,10 +344,10 @@ test('kilitle ve tekrar ac, not korunur', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Terapi Notları' })).toBeVisible()
 
   const yenidenAlan = await seansiAc(page, blok)
-  await expect(yenidenAlan).toHaveValue(resmi)
+  await expect(yenidenAlan).toHaveText(resmi)
 
   const yenidenOzel = await ozelSekmeyeGec(page)
-  await expect(yenidenOzel).toHaveValue(gizli)
+  await expect(yenidenOzel).toHaveText(gizli)
 })
 
 test('arama resmi notu bulur, ozel notu bulmaz', async ({ page, request }) => {

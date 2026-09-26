@@ -1453,6 +1453,9 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
 
   it('sekme degisince yazilan icerik kaybolmaz (sunucudan tazelenir)', async () => {
     await seansAc()
+    // Bu dosya not yüzeyini `test-kurulum.ts`'in textarea test yüzeyiyle
+    // sürüyor (gerçek TipTap değil): `userEvent.type` ve `.value` buna dayanır.
+    expect(screen.getByLabelText('Seans notu').tagName).toBe('TEXTAREA')
     await userEvent.type(screen.getByLabelText('Seans notu'), 'yazilan metin')
     await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
     await screen.findByLabelText('Özel notum')

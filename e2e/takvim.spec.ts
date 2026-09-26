@@ -223,14 +223,14 @@ test('randevu silinmeden baska gune tasinir, notu onunla gider', async ({ page }
   // Seans bolumu acik kaldi ve not onunla geldi.
   const seansPaneli = page.getByRole('region', { name: 'Seans', exact: true })
   await expect(seansPaneli).toContainText(`${yeni.getUTCDate()} ${AYLAR[yeni.getUTCMonth()]}`)
-  await expect(page.getByLabel('Seans notu', { exact: true })).toHaveValue(not)
+  await expect(page.getByLabel('Seans notu', { exact: true })).toHaveText(not)
 
   // Not SUNUCUDAN da onunla geliyor: bolumu kapatip blogu yeniden ac (editor
   // yeniden monte olur, metin `GET .../not` yanitindan okunur).
   await page.getByRole('button', { name: 'Seansı kapat' }).click()
   await expect(page.getByTestId('seans-bolumu')).toHaveCount(0)
   await bloklar.first().click()
-  await expect(page.getByLabel('Seans notu', { exact: true })).toHaveValue(not)
+  await expect(page.getByLabel('Seans notu', { exact: true })).toHaveText(not)
 })
 
 // Dal incelemesi I4a: seri kurulabiliyor ama iptal edilemiyordu

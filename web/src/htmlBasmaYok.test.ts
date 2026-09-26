@@ -47,7 +47,7 @@ describe('yapısal: dangerouslySetInnerHTML / innerHTML web/src üretim kodunda 
    * Asgari sayı koruması (`AyarlarSekmesi.test.tsx` emsali). Glob boşa
    * düşerse (yanlış kök, yanlış desen) bu test SIFIR dosya tarar ve
    * aşağıdaki iddia hiçbir şeyi ölçmeden koşulsuz YEŞİL kalırdı. Eşik
-   * bugünkü üretim dosyası sayısının (şablon koduyla 200+) belirgin altında
+   * bugünkü üretim dosyası sayısının (şablon koduyla 172) belirgin altında
    * ama "boş tarama" ile "gerçek tarama"yı kesin ayıracak kadar yüksek.
    */
   it('taranan dosya sayısı asgari korumayı karşılar', () => {

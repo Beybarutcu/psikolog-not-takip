@@ -102,7 +102,9 @@ export default function App() {
   useEffect(() => {
     if ((okumaId === null && !okumaAdresiGecersiz) || !oturumAcik) return
     const zamanlayici = setInterval(() => {
-      void yenile()
+      // Sunucuya ulaşılamazsa (uygulama kapanıyor, ağ yığını hatası) ret
+      // yutulur: bir sonraki yoklama yeniden sorar (`bostaKalma.ts` ile aynı).
+      yenile().catch(() => {})
     }, OKUMA_YOKLAMA_MS)
     return () => clearInterval(zamanlayici)
   }, [okumaId, okumaAdresiGecersiz, oturumAcik, yenile])

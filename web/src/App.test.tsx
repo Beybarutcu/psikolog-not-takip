@@ -422,6 +422,50 @@ describe('App — okuma penceresi (tasarım P2, P4)', () => {
     expect(document.body.textContent).not.toContain('Ayşe Yılmaz')
   })
 
+  it('9.4b yoklama isteği başarısızsa (sunucuya ulaşılamıyor) işlenmemiş ret OLUŞMAZ; yoklama sürer ve kilidi yine görür', async () => {
+    // Dal sonu incelemesi (Görev 9 minor): tekrarlayan `void yenile()`
+    // `.catch`'sizdi; sunucuya ulaşılamayan her 5 sn bir işlenmemiş ret.
+    window.history.replaceState({}, '', '/?okuma=42')
+    let kilitli = false
+    let ulasilamaz = false
+    const cagrilar = sunucu(() => kilitli)
+    const taklit = globalThis.fetch
+    globalThis.fetch = (async (girdi: RequestInfo | URL, secenekler?: RequestInit) => {
+      const yol = typeof girdi === 'string' ? girdi : girdi.toString()
+      if (ulasilamaz && yol.startsWith('/api/durum')) {
+        cagrilar.push(yol)
+        throw new TypeError('Failed to fetch')
+      }
+      return taklit(girdi, secenekler)
+    }) as typeof fetch
+    const retler: unknown[] = []
+    const dinleyici = (sebep: unknown) => { retler.push(sebep) }
+    process.on('unhandledRejection', dinleyici)
+    try {
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+      render(<App />)
+      expect(await screen.findByText('OKUMA-KANARYA')).toBeDefined()
+      ulasilamaz = true
+      const once = durumSayisi(cagrilar)
+      await act(() => vi.advanceTimersByTimeAsync(5_000))
+      await act(() => vi.advanceTimersByTimeAsync(5_000))
+      // Node işlenmemiş reti bir sonraki makro görevde bildirir (gerçek `setTimeout`).
+      await new Promise((coz) => setTimeout(coz, 0))
+      expect(retler).toEqual([])
+      expect(durumSayisi(cagrilar)).toBe(once + 2)
+      expect(screen.getByText('OKUMA-KANARYA')).toBeDefined()
+
+      // Sunucu geri gelir ve oturum kilitlidir: sonraki yoklama kilidi görür.
+      ulasilamaz = false
+      kilitli = true
+      await act(() => vi.advanceTimersByTimeAsync(5_000))
+      expect(await screen.findByRole('heading', { name: 'Kilitli' })).toBeDefined()
+      expect(document.body.textContent).not.toContain('OKUMA-KANARYA')
+    } finally {
+      process.off('unhandledRejection', dinleyici)
+    }
+  })
+
   it('9.5 ana pencerede (parametresiz) durum 5 sn\'de bir YOKLANMAZ', async () => {
     const cagrilar = sunucu(() => false)
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })

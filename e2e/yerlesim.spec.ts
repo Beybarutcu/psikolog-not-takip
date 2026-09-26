@@ -139,6 +139,17 @@ test('not sayfasinda editor ekranin kalanini doldurur; danisan dosyasinda asgari
   expect(k!.y + k!.height).toBeLessThanOrEqual(boyut.height)
   // Asgari (16rem = 256 px) yükseklikte kalmış bir yüzey bu eşiği geçemez.
   expect(k!.height).toBeGreaterThan(boyut.height / 2)
+  // Editör KALANI alır, sekme gövdesinin TAMAMINI değil: altındaki etiket
+  // satırı da ekranda ve sekme gövdesinin içinde kalır (`NotEditoru` kökü
+  // `h-full` olsaydı editör gövdenin tamamını alır, etiket satırı gövdenin
+  // dışına — ekranın altına — taşardı; mutasyonla ölçüldü).
+  const etiket = await sayfa.getByLabel('Etiket ekle', { exact: true }).boundingBox()
+  const govde = await sayfa.getByRole('tabpanel').boundingBox()
+  expect(etiket).not.toBeNull()
+  expect(govde).not.toBeNull()
+  expect(etiket!.y).toBeGreaterThanOrEqual(k!.y + k!.height)
+  expect(etiket!.y + etiket!.height).toBeLessThanOrEqual(govde!.y + govde!.height)
+  expect(govde!.y + govde!.height).toBeLessThanOrEqual(boyut.height)
 
   // Danışan dosyası: aynı editör, yükseklik vermeyen bir kapta — asgari korunur.
   await page.getByRole('button', { name: `${ad} dosyasını aç`, exact: true }).click()

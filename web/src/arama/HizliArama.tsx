@@ -399,7 +399,9 @@ export function HizliArama({ ara, onDanisanSec, onEtiketSec, gecikmeMs = GECIKME
       )}
 
       {sonuclar.length > 0 && (
-        <ul className="mt-2 max-h-80 space-y-1 overflow-y-auto">
+        // `anywhere`: boşluksuz uzun ad ya da not parçası satırında bölünür,
+        // kaydırılan liste yatay taşmaz (`e2e/uzun-metin.spec.ts`).
+        <ul className="mt-2 max-h-80 space-y-1 overflow-y-auto [overflow-wrap:anywhere]">
           {sonuclar.map((s) => {
             if (s.tur === 'not' && s.appointment_id !== null && s.tarih !== null) {
               return (

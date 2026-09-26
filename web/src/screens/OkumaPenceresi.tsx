@@ -55,7 +55,8 @@ export function OkumaPenceresi({ randevuId }: { randevuId: number }) {
       )}
       {durum.tur === 'hazir' && (
         <article aria-labelledby="okuma-basligi">
-          <h1 id="okuma-basligi" className="text-xl font-semibold text-slate-900">
+          {/* Uzun ad satır sonunda bölünür (`e2e/uzun-metin.spec.ts`). */}
+          <h1 id="okuma-basligi" className="text-xl font-semibold text-slate-900 [overflow-wrap:anywhere]">
             {durum.not.danisan_adi}{' '}
             <span className="font-normal text-slate-600">· {zamanMetni(durum.not.seans_zamani)}</span>
           </h1>

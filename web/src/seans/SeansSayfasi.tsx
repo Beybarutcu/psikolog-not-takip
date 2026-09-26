@@ -98,9 +98,12 @@ export function SeansSayfasi({
         </button>
         {/* CRITICAL-1: takvimden danışana giden yol. Erişilebilir ad danışan
             listesindeki çiple AYNI kalıp ("… dosyasını aç"). */}
+        {/* Uzun ad satır sonunda bölünür (`min-w-0 max-w-full` + `anywhere`):
+            esnek satırda öğenin asgarisi boşluksuz adın tamamıydı ve üst
+            satır belgeyi yatay taşırıyordu (`e2e/uzun-metin.spec.ts`). */}
         <button
           type="button"
-          className="text-lg font-semibold underline"
+          className="min-w-0 max-w-full text-left text-lg font-semibold underline [overflow-wrap:anywhere]"
           aria-label={`${randevu.danisan_adi} dosyasını aç`}
           onClick={() => onDanisanAc(randevu.client_id)}
         >

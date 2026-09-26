@@ -210,10 +210,12 @@ export function HaftalikTakvim({
           </h3>
           <ul className="mt-1 flex flex-wrap gap-2 text-sm">
             {gizliRandevular.map((r) => (
-              <li key={r.id}>
+              // Uzun ad satır sonunda bölünür: `min-w-0 max-w-full` esnek öğenin
+              // asgarisini (boşluksuz adın tamamı) kaldırır (`e2e/uzun-metin.spec.ts`).
+              <li key={r.id} className="min-w-0 max-w-full">
                 <button
                   type="button"
-                  className="rounded border border-amber-300 bg-white px-2 py-1 underline"
+                  className="rounded border border-amber-300 bg-white px-2 py-1 text-left underline [overflow-wrap:anywhere]"
                   aria-label={`${r.danisan_adi} — ${kisaZaman(r.baslangic)} (aralık dışı) randevusunu aç`}
                   onClick={() => onRandevuSec(r)}
                 >

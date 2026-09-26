@@ -89,6 +89,23 @@ describe('SeansListesi', () => {
     expect(screen.getByText('Danışan bu hafta daha rahat görünüyordu')).toBeDefined()
   })
 
+  // Kullanıcı isteği 2026-09-27 ("uzun metinleri de"): yerleşim
+  // `e2e/uzun-metin.spec.ts`'te ölçülür; burada tek satırın sınıfları ve title.
+  it('uzun önizleme ve uzun etiket satırda üç noktayla kısalır, tamamı title\'da', () => {
+    const satir = 'Notbaşı' + 'ç'.repeat(113)
+    const etiket = 'kaygıuykusuzlukdikkat'.repeat(2).slice(0, 40)
+    render(
+      <SeansListesi seanslar={[seans({ not_ilk_satiri: satir, etiketler: [etiket] })]} secili={null} onSecim={() => {}} simdi={SIMDI} />,
+    )
+    const onizleme = screen.getByText(satir)
+    expect(onizleme.getAttribute('title')).toBe(satir)
+    for (const sinif of ['min-w-0', 'truncate']) expect(onizleme.classList.contains(sinif), sinif).toBe(true)
+    const cip = screen.getByText(etiket)
+    expect(cip.getAttribute('title')).toBe(etiket)
+    for (const sinif of ['max-w-full', 'truncate']) expect(cip.classList.contains(sinif), sinif).toBe(true)
+    expect(screen.getByTestId('satir-etiketleri').classList.contains('max-w-full')).toBe(true)
+  })
+
   it('açılışta en yeni seans seçilidir', () => {
     // Sunucu listeyi en yeniden eskiye döndürür (bkz. api.ts::danisanApi.seanslar);
     // seanslar[0] burada bilerek EN YENİ seans.

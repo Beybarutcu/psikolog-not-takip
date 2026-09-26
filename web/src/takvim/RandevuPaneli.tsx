@@ -515,7 +515,7 @@ export function RandevuPaneli({
       {/* Karar değişmedi: çakışma ENGELLEMEZ, UYARIR (üç katmanda tutarlı).
           Seri kuruluyorsa uyarı kaç haftada çakışma olduğunu da söyler. */}
       {cakisma && cakisma.cakisanlar.length > 0 && (
-        <p className="mt-3 rounded bg-amber-50 p-2 text-sm text-amber-800">
+        <p className="mt-3 rounded bg-amber-50 p-2 text-sm text-amber-800 [overflow-wrap:anywhere]">
           {cakisma.kontrol_edilen_hafta > 1
             ? `${cakisma.kontrol_edilen_hafta} haftalık serinin ` +
               `${cakisma.cakisan_hafta_sayisi} haftasında başka randevu var: `

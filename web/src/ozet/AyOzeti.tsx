@@ -193,9 +193,10 @@ export function AyOzeti({
           <ul className="mt-2 space-y-1">
             {veri.borclular.map((b) => (
               <li key={b.client_id}>
+                {/* Uzun ad satır sonunda bölünür (`e2e/uzun-metin.spec.ts`). */}
                 <button
                   type="button"
-                  className="underline"
+                  className="text-left underline [overflow-wrap:anywhere]"
                   onClick={() => onDanisanAc(b.client_id)}
                 >
                   {b.ad_soyad} — {tlMetni(b.borc_kurus)} ({b.seans_sayisi} ödenmemiş seans)

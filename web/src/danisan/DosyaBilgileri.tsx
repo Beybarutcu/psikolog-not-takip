@@ -337,7 +337,9 @@ export function DosyaBilgileri({
         </button>
       </div>
 
-      <dl className="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-2">
+      {/* Serbest metin alanları (telefon, başvuru nedeni, risk notu)
+          boşluksuz uzun olsa da hücresinde bölünür (`e2e/uzun-metin.spec.ts`). */}
+      <dl className="grid gap-x-4 gap-y-1 text-sm [overflow-wrap:anywhere] sm:grid-cols-2">
         <dt className="font-medium text-slate-600">Telefon</dt>
         <dd>{danisan.telefon ?? 'Kayıtlı değil'}</dd>
         <dt className="font-medium text-slate-600">Doğum tarihi</dt>
@@ -446,7 +448,8 @@ export function DosyaBilgileri({
         {ekler.length === 0 ? (
           <p className="mt-1 text-slate-600">Bu danışana henüz dosya eklenmemiş.</p>
         ) : (
-          <ul className="mt-1 space-y-1">
+          // Uzun dosya adı satırında bölünür (`e2e/uzun-metin.spec.ts`).
+          <ul className="mt-1 space-y-1 [overflow-wrap:anywhere]">
             {ekler.map((ek) => (
               <li key={ek.id}>
                 {/* İçerik gömülü GÖSTERİLMEZ; dosya diske indirilir.
@@ -502,7 +505,7 @@ export function DosyaBilgileri({
             korunuyor — rızanın alındığı gerçeği dosyayla birlikte gitmez. */}
         {ekSilmeOnayi && (
           <div className="mt-2 rounded bg-amber-50 p-2">
-            <p className="text-sm text-amber-900">
+            <p className="text-sm text-amber-900 [overflow-wrap:anywhere]">
               {ekSilmeOnayi.dosya_adi} kalıcı olarak silinsin mi? Dosyanın içeriği geri
               alınamaz. Bu dosya danışanın rıza belgesi olarak işaretliyse rıza bağı da
               kaldırılır; rıza tarihi kaydı silinmez.

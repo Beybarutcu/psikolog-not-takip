@@ -259,6 +259,28 @@ describe('DanisanlarSekmesi', () => {
     expect(screen.queryByText(/dosyasını açmak için soldaki listeden/i)).not.toBeNull()
   })
 
+  // Kullanıcı isteği 2026-09-27 ("uzun metinleri de"): yerleşim
+  // `e2e/uzun-metin.spec.ts`'te ölçülür; burada sınıflar.
+  it('uzun ad listede satır sonunda bölünür (kısaltılmaz); Arşivle küçülmez', () => {
+    const uzun = 'ŞebnemÜnalKaraosmanoğlu'.repeat(6).slice(0, 120)
+    const danisan = { id: 7, ad_soyad: uzun } as Danisan
+    render(
+      <DanisanlarSekmesi
+        liste={sahteListe([danisan])}
+        dosya={sahteDosya(null)}
+        seanslar={bosSeanslar()}
+        dosyaNotu={bosDosyaNotu()}
+        altSekme="seanslar"
+        onAltSekme={() => {}}
+        {...ILGISIZ}
+      />,
+    )
+    const ad = screen.getByRole('button', { name: `${uzun} dosyasını aç` })
+    for (const sinif of ['min-w-0', 'text-left', '[overflow-wrap:anywhere]']) expect(ad.classList.contains(sinif), sinif).toBe(true)
+    expect(ad.classList.contains('truncate')).toBe(false)
+    expect(screen.getByRole('button', { name: `${uzun} adlı danışanı arşivle` }).classList.contains('shrink-0')).toBe(true)
+  })
+
   it('seçili danışan değişince seans listesi yeniden çekilir', async () => {
     const cagrilanIdler: number[] = []
     taklit.seanslar = (clientId: number) => {

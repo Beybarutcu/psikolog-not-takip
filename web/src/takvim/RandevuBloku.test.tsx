@@ -60,6 +60,19 @@ describe('RandevuBloku — durum simgeleri (tasarım T1-T4)', () => {
     }
   })
 
+  // Kullanıcı isteği 2026-09-27 ("uzun metinleri de"): yerleşim
+  // `e2e/uzun-metin.spec.ts`'te ölçülür.
+  it('uzun ad blokta bölünür; kırpılan tam metin adın title\'ında, düğmenin açıklamasında DEĞİL', () => {
+    const uzun = 'ŞebnemÜnalKaraosmanoğlu'.repeat(6).slice(0, 120)
+    const b = ciz({ danisan_adi: uzun })
+    const ad = b.querySelector('[data-testid="blok-adi"]') as HTMLElement
+    expect(ad.getAttribute('title')).toBe(`10:00 ${uzun}`)
+    expect(ad.className).toContain('[overflow-wrap:anywhere]')
+    expect(b.className).toContain('overflow-hidden')
+    expect(b.getAttribute('title')).toBeNull()
+    expect(screen.getByRole('button', { name: `10:00 ${uzun}` })).toBe(b)
+  })
+
   it('T4: yarım genişlikte simge kutusu küçülmez ve adın İÇİNDE değildir', () => {
     const b = ciz({ durum: 'gelmedi' }, { ...tamKonum, sutun: 1, sutunSayisi: 2 })
     const simgeler = b.querySelector('[data-testid="durum-simgeleri"]') as HTMLElement

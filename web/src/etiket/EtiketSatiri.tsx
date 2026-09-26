@@ -165,15 +165,21 @@ export function EtiketSatiri({
   return (
     <div className="mt-3" data-testid="etiket-satiri">
       <div className="flex flex-wrap items-center gap-2">
-        <ul aria-label="Seansın etiketleri" className="flex flex-wrap gap-1">
+        {/* Çip tek satır: uzun etiket (en çok 40 karakter, boşluksuz olabilir)
+            satırın genişliğinde üç noktayla kısalır, tamamı `title`'da; ×
+            her zaman görünür. `min-w-0 max-w-full` liste ve çipte: esnek
+            öğenin asgarisi boşluksuz adın tamamıydı, dar sütunda satırı
+            taşırırdı (`e2e/uzun-metin.spec.ts`). */}
+        <ul aria-label="Seansın etiketleri" className="flex min-w-0 max-w-full flex-wrap gap-1">
           {etiketler.map((e) => (
             <li
               key={e.id}
-              className="flex items-center rounded-full border border-sky-300 bg-sky-50 text-sm text-sky-900"
+              className="flex min-w-0 max-w-full items-center rounded-full border border-sky-300 bg-sky-50 text-sm text-sky-900"
             >
               <button
                 type="button"
-                className="px-2 py-0.5"
+                className="min-w-0 truncate px-2 py-0.5"
+                title={e.ad}
                 aria-label={`${e.ad} etiketli seansları göster`}
                 onClick={() => onEtiketAc(e)}
               >
@@ -181,7 +187,7 @@ export function EtiketSatiri({
               </button>
               <button
                 type="button"
-                className="rounded-full px-1.5 py-0.5 text-sky-700 hover:bg-sky-100"
+                className="shrink-0 rounded-full px-1.5 py-0.5 text-sky-700 hover:bg-sky-100"
                 aria-label={`${e.ad} etiketini kaldır`}
                 onClick={() => void kaldir(e)}
               >

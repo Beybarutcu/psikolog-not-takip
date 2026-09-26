@@ -108,7 +108,7 @@ export function RizaBolumu({ rizaTarihi, rizaDosyaId, ekler, onKaydet }: Props) 
 
       {rizaDosyaId !== null &&
         (bagliEk ? (
-          <p className="mt-1 text-sm">
+          <p className="mt-1 text-sm [overflow-wrap:anywhere]">
             {/* `href` duruyor (bağlam menüsü gerçek bir adres görsün) ama
                 tıklama `ekIndir`'den geçiyor: kilitli oturumda düz gezinme
                 SPA'yı yıkıyor ve yazılmamış not taslağını götürüyordu
@@ -147,13 +147,18 @@ export function RizaBolumu({ rizaTarihi, rizaDosyaId, ekler, onKaydet }: Props) 
             onChange={(e) => setTarih(e.target.value)}
           />
         </div>
-        <div>
+        {/* Seçimin doğal genişliği EN UZUN seçeneğinki: boşluksuz uzun bir
+            dosya adı seçimi ve belgeyi yatay taşırıyordu (ölçüldü: 1024 px
+            pencerede belge 1553 px). `max-w-full` seçimi bölüme sığdırır,
+            seçili ad kutuda kırpılır; tam ad açılan listede ve bağlı belge
+            bağlantısında (`e2e/uzun-metin.spec.ts`). */}
+        <div className="min-w-0 max-w-full">
           <label className="block text-sm" htmlFor="riza-dosyasi">
             İmzalı onam dosyası
           </label>
           <select
             id="riza-dosyasi"
-            className="mt-1 rounded border p-1 text-sm"
+            className="mt-1 max-w-full rounded border p-1 text-sm"
             value={dosyaSecimi}
             onChange={(e) => setDosyaSecimi(e.target.value)}
           >

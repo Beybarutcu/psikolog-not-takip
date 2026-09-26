@@ -41,6 +41,24 @@ describe('EtiketSatiri', () => {
     expect(onKaldir).toHaveBeenCalledWith(KAYGI)
   })
 
+  // Kullanıcı isteği 2026-09-27 ("uzun metinleri de"): yerleşim
+  // `e2e/uzun-metin.spec.ts`'te ölçülür; burada tek satır tasarımın sınıfları
+  // ve tam adın `title`'da olduğu.
+  it('uzun etiket çipte üç noktayla kısalır, tamamı title\'da; × küçülmez', () => {
+    const uzun: Etiket = { id: 3, ad: 'kaygıuykusuzlukdikkat'.repeat(2).slice(0, 40), kullanim: 1 }
+    kur({ etiketler: [uzun] })
+    const liste = screen.getByRole('list', { name: 'Seansın etiketleri' })
+    const cip = within(liste).getByRole('listitem')
+    const ad = within(cip).getByRole('button', { name: `${uzun.ad} etiketli seansları göster` })
+    expect(ad.getAttribute('title')).toBe(uzun.ad)
+    for (const sinif of ['min-w-0', 'truncate']) expect(ad.classList.contains(sinif), sinif).toBe(true)
+    for (const sinif of ['min-w-0', 'max-w-full']) {
+      expect(cip.classList.contains(sinif), `çip ${sinif}`).toBe(true)
+      expect(liste.classList.contains(sinif), `liste ${sinif}`).toBe(true)
+    }
+    expect(within(cip).getByRole('button', { name: `${uzun.ad} etiketini kaldır` }).classList.contains('shrink-0')).toBe(true)
+  })
+
   it('çipe tıklamak o etiketin seanslarını açar', async () => {
     const { onEtiketAc } = kur()
     await userEvent.click(screen.getByRole('button', { name: 'kaygı etiketli seansları göster' }))

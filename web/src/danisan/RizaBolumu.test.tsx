@@ -88,6 +88,19 @@ describe('RizaBolumu — imzalı onam dosyası', () => {
     expect(bag.getAttribute('href')).toBe('/api/ekler/5')
   })
 
+  // Kullanıcı isteği 2026-09-27: seçimin doğal genişliği en uzun seçeneğinki;
+  // yerleşim `e2e/uzun-metin.spec.ts`'te ölçülür (1024 px'te belge 1553 px'e
+  // taşıyordu).
+  it('uzun dosya adlı seçim bölümüne sığar (max-w-full); bağlı belge adı satırında bölünür', () => {
+    const uzunEk = { ...onamEki, id: 9, dosya_adi: 'onam-' + 'imzaliformtaramasi'.repeat(9) + '.txt' }
+    kur({ ekler: [uzunEk], rizaTarihi: '2026-03-01', rizaDosyaId: 9 })
+    const secici = screen.getByLabelText('İmzalı onam dosyası')
+    expect(secici.classList.contains('max-w-full')).toBe(true)
+    for (const sinif of ['min-w-0', 'max-w-full']) expect(secici.parentElement!.classList.contains(sinif), sinif).toBe(true)
+    const bag = screen.getByRole('link', { name: `İmzalı onam belgesi: ${uzunEk.dosya_adi}` })
+    expect(bag.parentElement!.className).toContain('[overflow-wrap:anywhere]')
+  })
+
   it('yalnizca `onam` turundeki ekler secilebilir', () => {
     // Beck envanteri bir test sonucudur, onam belgesi değil; onu "imzalı
     // onam" diye bağlamak dosyayı yanlış gösterirdi.

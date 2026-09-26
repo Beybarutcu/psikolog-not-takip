@@ -95,6 +95,17 @@ describe('SeansSayfasi (tasarım N1-N4)', () => {
     expect(p.onDanisanAc).toHaveBeenCalledWith(1)
   })
 
+  // Kullanıcı isteği 2026-09-27 ("uzun metinleri de"): yerleşim
+  // `e2e/uzun-metin.spec.ts`'te ölçülür; burada sınıflar.
+  it('uzun danışan adı üst satırda bölünür (esnek öğenin asgarisi kaldırılır)', () => {
+    const uzun = 'ŞebnemÜnalKaraosmanoğlu'.repeat(6).slice(0, 120)
+    kur({ randevu: { ...randevu, danisan_adi: uzun } })
+    const ad = screen.getByRole('button', { name: `${uzun} dosyasını aç` })
+    for (const sinif of ['min-w-0', 'max-w-full', 'text-left', '[overflow-wrap:anywhere]']) {
+      expect(ad.classList.contains(sinif), sinif).toBe(true)
+    }
+  })
+
   it('7.6 N3: randevu formu KAPALI başlar; "Randevuyu düzenle" açar, "Kapat" gizler', async () => {
     kur()
     expect(screen.queryByRole('heading', { name: 'Randevu' })).toBeNull()

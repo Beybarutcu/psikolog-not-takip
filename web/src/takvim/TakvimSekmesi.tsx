@@ -327,7 +327,8 @@ export function TakvimSekmesi({
                 {' · sıradaki '}
                 <button
                   type="button"
-                  className="underline"
+                  // Uzun ad satır sonunda bölünür (`e2e/uzun-metin.spec.ts`).
+                  className="text-left underline [overflow-wrap:anywhere]"
                   // Kullanıcı seçimi: not sayfasını açar (tasarım N1, A6).
                   onClick={() => takvim.randevuSec(o.siradaki as Randevu, { kaydir: true })}
                 >

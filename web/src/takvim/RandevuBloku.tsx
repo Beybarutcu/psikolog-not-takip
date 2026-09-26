@@ -70,7 +70,12 @@ export function RandevuBloku({ randevu, onSec, konum }: Props) {
           arasında GERÇEK bir metin boşluğu (`{' '}`) var: yalnızca CSS margin
           kullanılsaydı erişilebilir ad "10:50Ayşe Yılmaz" çıkardı —
           erişilebilir ad hesaplaması CSS'i değil metni okur. */}
-      <span data-testid="blok-adi" className="min-w-0 flex-1 break-words">
+      {/* Uzun ad satır sonunda bölünür (`anywhere` + `min-w-0`); bloğun boyu
+          süreyle sınırlı ve taşan satırlar kırpılır (`overflow-hidden`), tam
+          metin fareyle görünür (`title`). `title` düğmede değil burada: düğmede
+          erişilebilir açıklama olur ve ekran okuyucu adı ikinci kez okurdu.
+          Ölçen test: `e2e/uzun-metin.spec.ts`. */}
+      <span data-testid="blok-adi" className="min-w-0 flex-1 [overflow-wrap:anywhere]" title={`${saat} ${randevu.danisan_adi}`}>
         <span className="tabular-nums">{saat}</span>{' '}
         {randevu.danisan_adi}
       </span>

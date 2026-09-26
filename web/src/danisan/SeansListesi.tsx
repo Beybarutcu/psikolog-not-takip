@@ -114,7 +114,13 @@ function notOnizlemesi(satir: string | null, gelecek: boolean) {
   if (satir === '') {
     return <span className="italic text-slate-400">Not açıldı, henüz boş</span>
   }
-  return <span className="truncate text-slate-600">{satir}</span>
+  // Tek satır tasarım: uzun satır üç noktayla kısalır, tamamı `title`'da
+  // (sunucu önizlemeyi zaten 120 karakterde kırpar).
+  return (
+    <span className="min-w-0 truncate text-slate-600" title={satir}>
+      {satir}
+    </span>
+  )
 }
 
 const BOS_NUMARALAR: ReadonlyMap<number, number> = new Map()
@@ -197,9 +203,13 @@ export function SeansListesi({
             </span>
           </span>
           {s.etiketler.length > 0 && (
-            <span className="flex flex-wrap gap-1" data-testid="satir-etiketleri">
+            // Çip tek satır: uzun etiket (en çok 40 karakter) satırın
+            // genişliğinde üç noktayla kısalır, tamamı `title`'da. `max-w-full`
+            // kapta da gerekli: satır `items-start`, kap içeriğinin asgarisi
+            // (boşluksuz en uzun çip) kadar genişleyip satırı taşırırdı.
+            <span className="flex max-w-full flex-wrap gap-1" data-testid="satir-etiketleri">
               {s.etiketler.map((ad) => (
-                <span key={ad} className="rounded-full bg-sky-50 px-1.5 text-[11px] text-sky-800">
+                <span key={ad} title={ad} className="max-w-full truncate rounded-full bg-sky-50 px-1.5 text-[11px] text-sky-800">
                   {ad}
                 </span>
               ))}

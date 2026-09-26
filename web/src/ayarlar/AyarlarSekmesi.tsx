@@ -181,10 +181,12 @@ export function AyarlarSekmesi({
           </h2>
           <ul className="mt-1 flex flex-wrap gap-2 text-sm">
             {saklama.dolanlar.map((d) => (
-              <li key={d.id}>
+              // Uzun ad satır sonunda bölünür: `min-w-0 max-w-full` esnek öğenin
+              // asgarisini (boşluksuz adın tamamı) kaldırır.
+              <li key={d.id} className="min-w-0 max-w-full">
                 <button
                   type="button"
-                  className="underline"
+                  className="text-left underline [overflow-wrap:anywhere]"
                   aria-label={`${d.ad_soyad} dosyasını aç (saklama süresi doldu)`}
                   onClick={() => saklama.onAc(d.id)}
                 >

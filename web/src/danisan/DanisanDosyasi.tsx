@@ -218,7 +218,8 @@ export function DanisanDosyasi({
 
   return (
     <div>
-      <h2 id="danisan-dosyasi-basligi" className="mb-2 text-lg font-semibold">
+      {/* Uzun ad satır sonunda bölünür (`e2e/uzun-metin.spec.ts`). */}
+      <h2 id="danisan-dosyasi-basligi" className="mb-2 text-lg font-semibold [overflow-wrap:anywhere]">
         {adSoyad}
       </h2>
       <DosyaOzetiSatiri randevular={kart.randevular} simdi={simdi} onSec={ozettenSec} />

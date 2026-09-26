@@ -51,11 +51,13 @@ export function EtiketliSeanslar({
       aria-labelledby={baslikId}
       className="mb-4 rounded-lg border border-sky-300 bg-sky-50/40 p-4"
     >
+      {/* Uzun etiket ve danışan adı satır sonunda bölünür (`min-w-0`: esnek
+          başlığın asgarisi boşluksuz adın tamamıydı; `e2e/uzun-metin.spec.ts`). */}
       <div className="mb-2 flex items-center justify-between gap-3">
-        <h2 id={baslikId} className="text-base font-semibold">
+        <h2 id={baslikId} className="min-w-0 text-base font-semibold [overflow-wrap:anywhere]">
           {etiket.ad} etiketli seanslar
         </h2>
-        <button type="button" className="rounded border px-3 py-1 text-sm" onClick={onKapat}>
+        <button type="button" className="shrink-0 rounded border px-3 py-1 text-sm" onClick={onKapat}>
           Kapat
         </button>
       </div>
@@ -75,7 +77,7 @@ export function EtiketliSeanslar({
       ) : liste.length === 0 ? (
         <p className="text-sm text-slate-600">Bu etiketi taşıyan seans kalmadı.</p>
       ) : (
-        <ul className="flex flex-col gap-1 text-sm">
+        <ul className="flex flex-col gap-1 text-sm [overflow-wrap:anywhere]">
           {liste.map((s: EtiketliSeans) => (
             <li key={s.appointment_id}>
               <button

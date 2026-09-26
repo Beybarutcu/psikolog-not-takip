@@ -43,6 +43,10 @@ const SUNUCULAR = [
   // ve klavye, ekleme kısayolu, başlık özeti ve bağlantıları, katlı
   // Yaklaşan, yapışkan ay başlıkları, kendi içinde kayan liste.
   { ad: 'danisan-dosyasi', spec: 'danisan-dosyasi.spec.ts', port: 7709 },
+  // Uzun metinler kutularını taşırmaz (kullanıcı isteği 2026-09-27): boşluksuz
+  // uzun ad, Bilgiler alanları, ek adı, etiket ve not satırı her ekranda
+  // kutusunda bölünür ya da title'lı üç noktayla kısalır; belge taşmaz.
+  { ad: 'uzun-metin', spec: 'uzun-metin.spec.ts', port: 7710 },
 ] as const
 
 // Bir spec dosyası hiçbir projeye bağlı değilse Playwright onu SESSİZCE

@@ -325,10 +325,17 @@ export function DanisanlarSekmesi({
                       düğme hem ekran okuyucu kullanıcısını hem de ada göre
                       arayan testleri belirsiz bırakırdı. `id`: arama
                       kutusunun `aria-activedescendant`'ı. */}
+                  {/* Uzun ad satır sonunda bölünür, kısaltılmaz (kullanıcı
+                      isteği 2026-09-27): ad kimliktir ve aynı önekle başlayan
+                      iki danışan üç noktayla ayırt edilemezdi. `min-w-0`:
+                      esnek öğenin asgarisi boşluksuz adın tamamıydı, satır ve
+                      sütun yatay taşıyordu. `anywhere` asgari genişliği de
+                      küçültür (`break-word` küçültmez). Ölçen test:
+                      `e2e/uzun-metin.spec.ts`. */}
                   <button
                     type="button"
                     id={`danisan-ac-${d.id}`}
-                    className="underline"
+                    className="min-w-0 text-left underline [overflow-wrap:anywhere]"
                     aria-label={`${d.ad_soyad} dosyasını aç`}
                     aria-current={d.id === seciliDanisanId ? 'true' : undefined}
                     onClick={() => onDanisanSec(d.id)}
@@ -340,7 +347,7 @@ export function DanisanlarSekmesi({
                       kullanıcısı için ayırt edilemezdi). */}
                   <button
                     type="button"
-                    className="text-slate-500 underline disabled:opacity-50"
+                    className="shrink-0 text-slate-500 underline disabled:opacity-50"
                     aria-label={`${d.ad_soyad} adlı danışanı arşivle`}
                     title="Danışanı arşivle"
                     disabled={liste.arsivSuruyor}
@@ -359,7 +366,7 @@ export function DanisanlarSekmesi({
 
         {sorgu.trim() !== '' && suzulmus.length === 0 && (
           <div className="mt-2 text-sm">
-            <button type="button" className="text-left underline" onClick={() => formuAc(sorgu.trim())}>
+            <button type="button" className="text-left underline [overflow-wrap:anywhere]" onClick={() => formuAc(sorgu.trim())}>
               {`'${sorgu.trim()}' adıyla yeni danışan ekle`}
             </button>
             <p className="mt-1 text-xs text-slate-500">
@@ -373,7 +380,7 @@ export function DanisanlarSekmesi({
             sanmalı. */}
         {arsivOnayi && (
           <div className="mt-2 rounded bg-amber-50 p-2">
-            <p className="text-sm text-amber-900">
+            <p className="text-sm text-amber-900 [overflow-wrap:anywhere]">
               {arsivOnayi.ad_soyad} arşivlensin mi? Danışan listeden ve randevu seçiminden
               kaldırılır. Geçmiş randevuları, notları ve dosyaları silinmez — kayıtlar
               durmaya devam eder, yalnızca listede görünmez.

@@ -343,7 +343,9 @@ export function OncekiNotlar({
                   </>
                 )}
               </span>
-              <span className="block truncate text-slate-600">
+              {/* Tek satır: üç noktayla kısalır, tamamı `title`'da
+                  (`e2e/uzun-metin.spec.ts`). */}
+              <span className="block truncate text-slate-600" title={s.parca ?? notOnizlemesi(s.seans?.not_ilk_satiri ?? null)}>
                 {s.parca !== null
                   ? vurguParcalari(s.parca, kirpilmis).map((p, i) => (p.vurgu ? <mark key={i}>{p.metin}</mark> : <span key={i}>{p.metin}</span>))
                   : notOnizlemesi(s.seans?.not_ilk_satiri ?? null)}

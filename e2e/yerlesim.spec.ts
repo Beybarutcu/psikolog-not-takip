@@ -171,7 +171,8 @@ test('not sayfasinda editor ekranin kalanini doldurur; danisan dosyasinda asgari
 // Takvimdeki not sayfasında sütun daralabiliyor (`min-w-0`) ama araç çubuğu
 // kendi içinde (gizli kaydırma çubuğuyla) kesiliyordu. İki sayfada da:
 // belge pencereden geniş değil, düğme tamamen ekranda ve araç çubuğunun
-// sağ kenarını aşmıyor (kendi içinde kaydırılarak gizlenmemiş).
+// sağ kenarını aşmıyor (kendi içinde kaydırılarak gizlenmemiş). Danışan
+// dosyasında nota uzun bir bağlantı yazılınca da belge taşmaz.
 test.describe('editor arac cubugu pencereye sigar', () => {
   // Açılış kaydırması (yumuşak, index.css) ölçümleri oynatmasın.
   test.use({ reducedMotion: 'reduce' })
@@ -249,6 +250,18 @@ test.describe('editor arac cubugu pencereye sigar', () => {
       await expect(page.getByLabel('Seans notu', { exact: true })).toBeVisible()
       await tasmaYok(page, `${boyut.width}x${boyut.height} danışan dosyası`)
       await bulPaneliCubugunAltinda(page, `${boyut.width}x${boyut.height} danışan dosyası`)
+
+      // Nota yapıştırılmış boşluksuz uzun bir bağlantı: yüzey onu satır
+      // sonunda böler (`overflow-wrap: break-word`), ama bu kural içeriğin
+      // ASGARİ genişliğini küçültmez. Düz `1fr` izi (iki ızgaranın ikisi de)
+      // o asgariye kadar büyüyüp belgeyi taşırırdı; `minmax(0,1fr)` izi
+      // pencerede tutar. (Kırılan araç çubuğu artık izi genişletmiyor; bu
+      // adım olmadan `1fr`e dönüş ölçülemezdi.)
+      const alan = page.getByLabel('Seans notu', { exact: true })
+      const uzunBaglanti = `https://ornek.invalid/${'a'.repeat(300)}`
+      await alan.fill(uzunBaglanti)
+      await expect(alan).toHaveText(uzunBaglanti)
+      await tasmaYok(page, `${boyut.width}x${boyut.height} danışan dosyası, uzun bağlantı`)
     })
   }
 })

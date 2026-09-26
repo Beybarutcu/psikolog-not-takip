@@ -49,6 +49,10 @@ describe('şablon kodu dışarı bağlanmaz, koyu tema ve resim taşımaz', () =
     for (const [yol, metin] of Object.entries(stiller)) {
       if (/@import\s+url\(/i.test(metin)) ihlal.push(`${yol}: @import url(`)
       if (/url\(\s*["']?(https?:)?\/\//i.test(metin)) ihlal.push(`${yol}: uzak url(`)
+      // CSP `default-src 'self'` (`img-src` yok) `data:` görselini engeller:
+      // şablonun onay kutusu tiki (`data:image/svg+xml` maskesi) bu yüzden
+      // hiç görünmüyordu (dal sonu incelemesi I1). Çizim saf CSS ile yapılır.
+      if (/url\(\s*["']?data:/i.test(metin)) ihlal.push(`${yol}: data: url( (CSP engeller)`)
       if (/fonts\.(googleapis|gstatic)/i.test(metin)) ihlal.push(`${yol}: Google Fonts`)
       if (/\.dark\b/.test(metin)) ihlal.push(`${yol}: .dark`)
     }

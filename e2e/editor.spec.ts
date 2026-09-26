@@ -158,6 +158,70 @@ async function sunucuNotu(request: APIRequestContext, id: number): Promise<strin
   return ((await yanit.json()) as { icerik: string }).icerik
 }
 
+type Bolge = { x: number; y: number; width: number; height: number }
+type PikselKutusu = { x0: number; y0: number; x1: number; y1: number }
+
+/**
+ * Bir sayfa bölgesinin EKRANDA ne gösterdiğini piksellerle özetler.
+ *
+ * Neden hesaplanmış stil değil de piksel: onay kutusunun iki gerçek arızası
+ * da stil okuyarak görünmüyordu. (1) TipTap 3.x'in görev öğesi düğüm
+ * görünümü `label > span`'ı görünmez erişilebilir etikete çevirdi (satır
+ * içi `clip: rect(0,0,0,0)`, 1×1 px); şablonun kutusu o `span`'da
+ * çizildiği için ekranda HİÇ kutu yoktu, oysa `span::before`'un stili
+ * (12 px, beyaz, opaklık 1) "tik var" diyordu. (2) Tik bir `data:` SVG
+ * maskesiyle çiziliyordu ve CSP (`default-src 'self'`, `img-src` yok) o
+ * görseli engelliyor; engellenen maske öğeyi tamamen gizler, stil yine aynı.
+ * Bu ölçü uygulamaya bağlı değil: kutu ne ile çizilirse çizilsin, ekranda
+ * görünmesi gereken şeyi arar.
+ *
+ * Görüntü tarayıcıda `createImageBitmap(Blob)` ile çözülür: URL
+ * yüklenmediği için sayfanın CSP'sine takılmaz, yeni bağımlılık gerekmez.
+ *
+ * - `murekkep`: beyaz zeminden seçilir biçimde ayrılan piksellerin sınır
+ *   kutusu (boş kutunun %10'luk çerçevesi dahil).
+ * - `koyu`: koyu (dolu) piksellerin sınır kutusu — işaretli kutunun zemini.
+ * - `koyuIcindeAcik`: `koyu` kutusunun İÇİNDE (kenardan 2 px içeride) açık
+ *   piksel sayısı — dolu kutunun üstündeki tik.
+ */
+async function pikselOzeti(page: Page, bolge: Bolge) {
+  const png = await page.screenshot({ clip: bolge, scale: 'css' })
+  return page.evaluate(async (b64) => {
+    const baytlar = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
+    const resim = await createImageBitmap(new Blob([baytlar], { type: 'image/png' }))
+    const tuval = new OffscreenCanvas(resim.width, resim.height)
+    const baglam = tuval.getContext('2d')!
+    baglam.drawImage(resim, 0, 0)
+    const { data, width, height } = baglam.getImageData(0, 0, resim.width, resim.height)
+    const parlaklik = (x: number, y: number) => {
+      const i = (y * width + x) * 4
+      return { enKoyu: Math.min(data[i], data[i + 1], data[i + 2]), ort: (data[i] + data[i + 1] + data[i + 2]) / 3 }
+    }
+    const sinirKutusu = (kosul: (x: number, y: number) => boolean) => {
+      let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          if (!kosul(x, y)) continue
+          x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y)
+        }
+      }
+      return x1 < 0 ? null : { x0, y0, x1, y1 }
+    }
+    const murekkep = sinirKutusu((x, y) => 255 - parlaklik(x, y).enKoyu >= 15)
+    const koyu = sinirKutusu((x, y) => parlaklik(x, y).ort < 100)
+    let koyuIcindeAcik = 0
+    if (koyu !== null) {
+      for (let y = koyu.y0 + 2; y <= koyu.y1 - 2; y++) {
+        for (let x = koyu.x0 + 2; x <= koyu.x1 - 2; x++) if (parlaklik(x, y).ort > 200) koyuIcindeAcik++
+      }
+    }
+    return { murekkep, koyu, koyuIcindeAcik }
+  }, png.toString('base64'))
+}
+
+/** Sınır kutusunun KISA kenarı (piksel); kutu yoksa 0. */
+const kisaKenar = (k: PikselKutusu | null) => (k === null ? 0 : Math.min(k.x1 - k.x0, k.y1 - k.y0) + 1)
+
 // ---------------------------------------------------------------------------
 
 test('bicim kalici: "## " basliga, Ctrl/Cmd+B kalina doner; isaret ne ekranda ne sunucuda', async ({ page, request }) => {
@@ -413,6 +477,64 @@ test('dis baglanti: editorde tiklamak gezinmez; okuma gorunumunde yeni sekmede a
   expect(page.url()).toBe(adres)
   await expect(page.getByLabel('Seans notu', { exact: true })).toBeVisible()
   await dis.close()
+})
+
+test('onay kutusu: kutu ekranda gorunur, tiklayinca dolu kutunun icinde tik cizilir; CSP ihlali yok (tasarim E6)', async ({ page }) => {
+  // Tik eskiden `data:` SVG maskesiydi: CSP görseli engelliyor ve Chromium
+  // bunu konsola yazıyor ("… violates the following Content Security Policy
+  // directive …"). CSP gevşetilmez; tik saf CSS ile çizilir.
+  const cspIhlalleri: string[] = []
+  page.on('console', (mesaj) => {
+    if (/Content Security Policy|violates/i.test(mesaj.text())) cspIhlalleri.push(mesaj.text())
+  })
+  await kurulumYap(page)
+  const ad = 'Jale Tikli'
+  await danisanEkle(page, ad)
+  const alan = await seansiAc(page, await randevuKur(page, ad, '20:00'))
+  await alan.click()
+  await page.keyboard.type('[ ] TIK38')
+  const liste = alan.locator('ul[data-type="taskList"]')
+  const oge = liste.locator(':scope > li')
+  await expect(oge.locator('p')).toHaveText('TIK38')
+  const kutu = oge.getByRole('checkbox', { name: 'Görev onay kutusu: TIK38' })
+  await expect(kutu).not.toBeChecked()
+
+  // Kutunun sütunu: listenin sol kenarından öğe metninin başladığı yere.
+  // Metin, imleç ve üstü çizgi bu bölgenin DIŞINDA.
+  const bolge = async (): Promise<Bolge> => {
+    const l = (await liste.boundingBox())!
+    const o = (await oge.boundingBox())!
+    const metin = (await oge.locator(':scope > div').boundingBox())!
+    return { x: l.x, y: o.y, width: Math.max(1, metin.x - l.x), height: o.height }
+  }
+  // Görev öğesi çizildi ve bir kare boyandı: maske (varsa) bu noktada
+  // istenmiş ve CSP'ye takılmıştır.
+  let bos = await pikselOzeti(page, await bolge())
+  expect(cspIhlalleri).toEqual([])
+
+  // İşaretsiz: bir kutu GÖRÜNÜR (kullanıcı nereye tıklayacağını görür), dolu değil.
+  await expect
+    .poll(async () => {
+      bos = await pikselOzeti(page, await bolge())
+      return { kutuGorunur: kisaKenar(bos.murekkep) >= 10, dolu: bos.koyu !== null }
+    })
+    .toEqual({ kutuGorunur: true, dolu: false })
+
+  // Kullanıcının GÖRDÜĞÜ kutunun ortasına tıklanır (gizli `input`'a değil).
+  const b = await bolge()
+  const k = bos.murekkep!
+  await page.mouse.click(b.x + (k.x0 + k.x1 + 1) / 2, b.y + (k.y0 + k.y1 + 1) / 2)
+  await expect(kutu).toBeChecked()
+
+  // İşaretli: kutu koyu dolu ve İÇİNDE açık renkli bir tik var (dolu ama
+  // tiksiz kare — engellenen maske — burada kırılır).
+  await expect
+    .poll(async () => {
+      const dolu = await pikselOzeti(page, await bolge())
+      return { doluKutu: kisaKenar(dolu.koyu) >= 10, tik: dolu.koyuIcindeAcik >= 8 }
+    })
+    .toEqual({ doluKutu: true, tik: true })
+  expect(cspIhlalleri).toEqual([])
 })
 
 test('okuma penceresi kilitte icerigi kaldirir: sag tik "Yeni pencerede ac", salt okunur, ayni seans ayni pencere (P2-P4)', async ({ page, context }) => {

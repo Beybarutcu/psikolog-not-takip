@@ -405,7 +405,13 @@ test('dis baglanti: editorde tiklamak gezinmez; okuma gorunumunde yeni sekmede a
   const ad = 'Fikret Oral'
   await danisanEkle(page, ad)
   const onceki = await seansiAc(page, await randevuKur(page, ad, '14:00'))
-  await htmlYapistir(onceki, '<p>Kaynak BAGLANTI34: <a href="https://ornek.invalid/makale">makale</a></p>')
+  // Web sayfasından kopyalanan bağlantı kendi `target`/`rel`'ini taşıyabilir;
+  // `_self` uygulama penceresini bağlantıya götürürdü. Şema ikisini de
+  // ayrıştırmada ZORLAR (`uzantilar.ts`, preflight F13).
+  await htmlYapistir(
+    onceki,
+    '<p>Kaynak BAGLANTI34: <a href="https://ornek.invalid/makale" target="_self" rel="opener">makale</a></p>',
+  )
   const editordeki = onceki.getByRole('link', { name: 'makale' })
   await expect(editordeki).toHaveAttribute('href', 'https://ornek.invalid/makale')
   await expect(editordeki).toHaveAttribute('target', '_blank')
@@ -414,6 +420,8 @@ test('dis baglanti: editorde tiklamak gezinmez; okuma gorunumunde yeni sekmede a
   const icerik = await sunucuNotu(request, await randevuKimligi(request, ad, '14:00'))
   expect(icerik).toContain('href="https://ornek.invalid/makale"')
   expect(icerik).toContain('noopener')
+  expect(icerik).not.toContain('_self')
+  expect(icerik).not.toContain('"opener"')
 
   const adres = page.url()
   // EKSİ YÖN için SINIRLI pencere: tıkta açılan bir sekme (`window.open` ya da

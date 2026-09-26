@@ -39,6 +39,10 @@ const SUNUCULAR = [
   // kalıcılığı, Türkçe Q kısayolu, yapıştırma temizliği, önceki notlarda
   // arama + geniş okuma, dış bağlantı, okuma penceresi ve kilit.
   { ad: 'editor', spec: 'editor.spec.ts', port: 7708 },
+  // Danışan listesi ve dosyası (tasarım 2026-09-24 §6 B1–B3): Türkçe arama
+  // ve klavye, ekleme kısayolu, başlık özeti ve bağlantıları, katlı
+  // Yaklaşan, yapışkan ay başlıkları, kendi içinde kayan liste.
+  { ad: 'danisan-dosyasi', spec: 'danisan-dosyasi.spec.ts', port: 7709 },
 ] as const
 
 // Bir spec dosyası hiçbir projeye bağlı değilse Playwright onu SESSİZCE

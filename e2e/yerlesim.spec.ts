@@ -465,6 +465,10 @@ test.describe('arac cubugu notu ortmez; uzun not editorun icinde kayar', () => {
       await expect.poll(() => sayfaKaymasi(page)).toBe(0)
       await cubukNotuOrtmez(page, dosyaAlani, `${boyut.width}x${boyut.height} danışan dosyası`, 0)
       await etiketSatiriYaziAlanininAltinda(page, dosyaAlani, `${boyut.width}x${boyut.height} danışan dosyası`)
+      // Not sütunu ekranın kalanını doldurur (yalnızca 16rem'lik asgarisinde
+      // durmaz): alt kenarı pencerenin alt kenarına 40 px'ten yakın.
+      const sutun = (await page.getByTestId('seans-notu-sutunu').boundingBox())!
+      expect(sutun.y + sutun.height, 'not sütunu ekranın kalanını doldurmuyor').toBeGreaterThan(boyut.height - 40)
       // 1200x760'da sütunun tamamı (etiket ve durum satırı dahil) sayfa
       // kaymadan ekranda. 1024x680'de üç satırlık araç çubuğu + 16rem
       // asgari yazı alanı sığmaz: sayfa ~50 px kayar (bkz. `DanisanDosyasi`).

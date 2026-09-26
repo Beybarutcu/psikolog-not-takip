@@ -21,8 +21,11 @@ function seans(ozel: Partial<DanisanSeansi>): DanisanSeansi {
   }
 }
 // Sunucu sırası: yeniden eskiye. Bu seans 14 Eylül; bir SONRAKİ ve bir de kendisi listede.
+// AYNI dakikada başlayan başka bir seans (çift kayıt) "önceki" DEĞİL: kesme
+// sunucunun aramasıyla aynı, KESİN küçük (`<`).
 const LISTE: DanisanSeansi[] = [
   seans({ appointment_id: 400, baslangic: '2026-09-21T10:00', not_ilk_satiri: 'SONRAKI SEANS' }),
+  seans({ appointment_id: 301, baslangic: '2026-09-14T10:00', not_ilk_satiri: 'AYNI DAKIKA' }),
   seans({ appointment_id: 300, baslangic: '2026-09-14T10:00', not_ilk_satiri: 'BU SEANS' }),
   seans({ appointment_id: 200, baslangic: '2026-09-07T10:00', not_ilk_satiri: 'Uyku düzeni iyileşmiş', durum: 'gelmedi', odendi: false }),
   seans({ appointment_id: 100, baslangic: '2026-08-31T10:00', not_ilk_satiri: null }),
@@ -82,6 +85,7 @@ describe('OncekiNotlar (tasarım N5-N9)', () => {
     expect(s[1].textContent).toContain('31 Ağustos 2026, 10:00')
     expect(s[1].textContent).toContain('Not yazılmamış')
     expect(bolge().textContent).not.toContain('BU SEANS')
+    expect(bolge().textContent).not.toContain('AYNI DAKIKA')
     expect(bolge().textContent).not.toContain('SONRAKI SEANS')
     expect(t.seanslar).toHaveBeenCalledTimes(1)
     expect(t.seanslar).toHaveBeenCalledWith(1)
@@ -200,6 +204,25 @@ describe('OncekiNotlar (tasarım N5-N9)', () => {
     fireEvent.mouseDown(document.body)
     expect(screen.queryByRole('menu')).toBeNull()
     expect(t.pencere).toHaveBeenCalledTimes(6)
+  })
+
+  // Taşıma (tasarım A6): sayfa AYNI seans kimliğiyle kalır, yalnızca başlangıç
+  // değişir; liste yeniden İSTENMEZ ve YENİ başlangıçla süzülür. Listedeki bu
+  // seansın kaydı ESKİ başlangıcı taşır: taşıma ileriyeyse o eski kayıt yeni
+  // başlangıçtan "önce" kalır ve kimlik süzgeci olmadan seans kendi önceki
+  // notları arasında görünürdü (dördüncü biçim: geçiş).
+  it('seans ileri taşınınca liste YENİ başlangıçla süzülür, yeniden İSTENMEZ; bu seansın eski kaydı listeye GİRMEZ', async () => {
+    const p = kur()
+    await ilerle(0)
+    expect(satirlar()).toHaveLength(2)
+    p.rerender(<OncekiNotlar {...p} seansBaslangici="2026-09-28T10:00" />)
+    await ilerle(0)
+    const metin = bolge().textContent
+    expect(metin).toContain('SONRAKI SEANS')
+    expect(metin).toContain('AYNI DAKIKA')
+    expect(metin).not.toContain('BU SEANS')
+    expect(satirlar()).toHaveLength(4)
+    expect(t.seanslar).toHaveBeenCalledTimes(1)
   })
 
   it('liste yüklenemezse hata gösterilir, "önceki seans yok" DENMEZ', async () => {

@@ -254,9 +254,12 @@ function oncekiNotlarYaniti(yol: string): Response | null {
     const q = new URLSearchParams(ara[2])
     const once = q.get('once') ?? '9999'
     const terim = (q.get('q') ?? '').toLocaleLowerCase('tr')
+    // Sunucu `duz_metin`'de arar (preflight F23): etiket adları ("strong")
+    // eşleşmemeli, bu yüzden etiketler atılır.
+    const duzMetin = (html: string) => html.replace(/<[^>]*>/g, ' ').toLocaleLowerCase('tr')
     return jsonYanit(
       sunucuGecmisi
-        .filter((n) => n.client_id === Number(ara[1]) && n.seans_zamani < once && n.icerik.toLocaleLowerCase('tr').includes(terim))
+        .filter((n) => n.client_id === Number(ara[1]) && n.seans_zamani < once && duzMetin(n.icerik).includes(terim))
         .map((n) => ({ appointment_id: n.appointment_id, seans_zamani: n.seans_zamani, parca: onizlemeTaklidi(n.icerik) })),
     )
   }
@@ -1588,6 +1591,9 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     // görüntüleme satırı yalnızca terapistin baktığı not için).
     expect(istekler.filter((i) => /\/seanslar$/.test(i.yol))).toHaveLength(1)
     expect(istekler.some((i) => /\/randevular\/(88|89|90)\/not$/.test(i.yol))).toBe(false)
+    // Eski geçmiş isteği (notların TAM İÇERİĞİ, `danisan_listesi`) artık hiç
+    // atılmıyor: ekranda gösterilmeyen içerik için görüntüleme satırı olurdu.
+    expect(istekler.some((i) => /\/notlar/.test(i.yol))).toBe(false)
 
     await userEvent.click(within(gecmis).getAllByRole('button')[0])
     expect(await within(gecmis).findByText('birinci gecmis')).toBeDefined()
@@ -2482,11 +2488,22 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     // Geniş okuma: not 88 BİR kez okundu ve ekranda.
     expect(await within(bolge).findByText('GECEN HAFTA NOTU')).toBeDefined()
     expect(notGetSayisi(88)).toBe(1)
+    // Hedef haftanın yanıtı KAPIDA (mount yüklemesi 1., hedef hafta 2.):
+    // giden sayfa hafta gelmeden KAPANMALI ve bekleyen metin o anda yazılmalı
+    // (tasarım N8 "gitmeden önce kaydedilir"). Kapı olmasa, sayfayı hafta
+    // gelene kadar açık tutan bir `randevuyaGit` de aşağıdaki iddiaları
+    // geçerdi (tahliye yalnızca geç olurdu).
+    const hedefHafta = kapi()
+    haftaKapilari[2] = hedefHafta.bekle
     await userEvent.click(within(bolge).getByRole('button', { name: 'Bu seansa git' }))
 
+    expect(await screen.findByText('Seans açılıyor…')).toBeDefined()
+    expect(screen.queryByRole('region', { name: 'Seans' })).toBeNull()
     await waitFor(() =>
       expect((notYazmalari(randevuA.id).at(-1)?.govde as { icerik: string } | undefined)?.icerik).toContain('YARIM KALAN'),
     )
+    expect(haftaGetleri()).toHaveLength(2)
+    hedefHafta.ac()
     await waitFor(() => expect(screen.getByRole('region', { name: 'Seans' }).textContent).toContain('31 Ağustos 2026, 10:00'))
     expect(haftaBasligi()).toContain('31 Ağustos')
     const editor = (await screen.findByLabelText('Seans notu')) as HTMLTextAreaElement

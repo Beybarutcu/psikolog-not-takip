@@ -118,7 +118,7 @@ okunsun, gerekirse ayrı bir pencerede yanda dursun.**
   bunu kendiliğinden yapar); resim, betik, stil, bilinmeyen etiket düşer.
 - **E12. Kullanıldığı yerler.** Takvimden açılan not sayfası (resmî not ve
   Özel notlarım), danışan dosyasındaki not editörü. Salt okunur görünüm
-  (`NotOkuma`, `NotGorunumu`'nun yerini alır) önceki notlar panelinde, okuma penceresinde
+  (`NotOkuma`, `NotGorunumu`'nun yerini alır) "Diğer seanslar" panelinde, okuma penceresinde
   ve danışan dosyasının okuma yerlerinde kullanılır; hepsi aynı tipografiyle.
 - **E13. Eski Markdown yığını kalkar.** `not/bicim.ts`, `not/BicimCubugu.tsx`,
   `not/markdown.tsx`, `not/desenler.ts` ve onların testleri, başka tüketicisi
@@ -165,9 +165,15 @@ okunsun, gerekirse ayrı bir pencerede yanda dursun.**
   `on*` olayları, `javascript:` bağlantıları düşer).
 - **S8. Danışana özel not araması.** Yeni uç: `GET
   /api/danisanlar/{id}/not-ara?q=<terim>&once=<YYYY-AA-GGTSS:DD>` →
-  `[{ appointment_id, seans_zamani, parca }]`, yeniden eskiye, en fazla 50.
-  Yalnızca `progress_notes.duz_metin`, yalnızca o danışan, yalnızca `once`'den
-  önce başlayan seanslar; `search.rs`'in Türkçe harf katlama kuralını ve parça
+  `{ sonuclar: [{ appointment_id, seans_zamani, parca }], kirpildi }`,
+  yeniden eskiye, en fazla 500 (`AZAMI_DANISAN_NOT_SONUCU`; genel aramanın
+  50'si değişmedi); fazlası varsa en yeniler döner ve `kirpildi: true`
+  (sunucu bir fazlasını ister: ölçüm, tahmin değil). *(2026-09-27: eskiden
+  çıplak dizi ve en fazla 50; "Diğer seanslar" `once` göndermeyince sonraki
+  seansların eşleşmeleri önceki eşleşmeleri sınırın dışına sessizce
+  itiyordu.)* Yalnızca `progress_notes.duz_metin`, yalnızca o danışan;
+  `once` verilirse yalnızca ondan önce başlayan seanslar (isteğe bağlı,
+  panel göndermez); `search.rs`'in Türkçe harf katlama kuralını ve parça
   (snippet) üretimini yeniden kullanır. Denetim: genel aramayla aynı kural
   (`OturumBasi`, `ayrinti` yok, terim ve sonuç sayısı yazılmaz). `private_notes`
   bu uçta da hiç geçmez. Boş ya da tek karakterlik terim boş liste döner.
@@ -210,7 +216,7 @@ okunsun, gerekirse ayrı bir pencerede yanda dursun.**
   değişimi kuralıyla gitmeden önce kaydedilir). Hedef seans görünen haftada
   değilse takvim önce o haftaya geçer, seçim hafta yüklenince yapılır
   (`useTakvimAkisi`'ne `randevuyaGit(id, baslangic)` eklenir); "Takvime dön"
-  o haftayı gösterir. Önceki seanslar `DanisanSeansi` kayıtlarından gelir.
+  o haftayı gösterir. Paneldeki seanslar `DanisanSeansi` kayıtlarından gelir.
 - **N9. Yeni pencere.** Listedeki satıra ya da "Bu seansa git"e sağ tıklamak
   küçük bir menü açar: "Yeni pencerede aç". Cmd+tık (Windows'ta Ctrl+tık)
   aynı işi menüsüz yapar. Bkz. §8.
@@ -231,11 +237,16 @@ değişti; N7-N9 aynı (sonraki seanslar için de geçerli):
   seans listelenir. Tam şimdi başlayan seans gelecek sayılmaz (geçmiş =
   `baslangic <= şimdi`, danışan dosyasıyla aynı sınır). Boş durum: "Bu
   danışanın başka seansı yok."; elenenlerin hepsi notsuz gelecek seanssa
-  "Başka geçmiş seans yok; ileri tarihli seansların notu henüz yazılmamış."
+  "Geçmişte başka seans yok; yaklaşan seanslara henüz not yazılmadı." (uygulama
+  bu seanslara her yerde "Yaklaşan" diyor).
 - **N6'.** Kutu "Diğer seanslarda ara". Arama bütün diğer seansların resmî
   notlarında yapılır: istemci `once` kesmesini **göndermez** (uç `once`'ı
   isteğe bağlı olarak desteklemeye devam ediyor) ve açık seansın kendi
   notunu sonuçlardan atar. Sonuçlarda da işaret aynı kuralla yerleşir.
+  Sunucu en fazla 500 sonuç döndürür (S8); `kirpildi` ise listenin altında
+  "Yalnızca en yeni {N} eşleşme gösteriliyor; daha eskileri için terimi
+  daraltın." yazar (N ekrandaki satır sayısı) — yoksa işaretin altındaki
+  boşluk "önceki seanslarda geçmiyor" diye okunurdu.
   Terim yine yalnızca o sorgunun adresinde; denetim kaydı değişmedi
   (`Goruntuleme | arama | danisan:<id>`, terim ve sonuç sayısı yok).
 
@@ -277,7 +288,7 @@ değişti; N7-N9 aynı (sonraki seanslar için de geçerli):
 - Uygulama penceresi (ana ve okuma) yalnızca kendi yerel adresinde gezinebilir;
   başka her adrese gezinme iptal edilir, `http(s)`/`mailto` ise sistemin
   varsayılan uygulamasına devredilir.
-- Özel notlar: aramaya, önceki notlar paneline, okuma penceresine, önizlemeye,
+- Özel notlar: aramaya, "Diğer seanslar" paneline, okuma penceresine, önizlemeye,
   rapora girmez (bugünkü ayrı tablo kuralı).
 - Denetim kaydına not içeriği, arama terimi, şablon adı girmez.
 - Parolalar, kurtarma kodu vb. hiçbir yeni yolda görünmez.
@@ -299,11 +310,11 @@ danışan dosyasından not sayfasına geçiş, okuma penceresinde düzenleme.
   `editable:false`, şema süzmesi, bağlantı özniteliği) ve e2e ile sınanır.
 - Birim: editör sözleşmesi (E7, E8); düz metin kuralı ortak örneklerle Rust'ta;
   önizleme ve not araması Rust'ta; takvim simgeleri; not sayfası akışları
-  (açılış, geri dönüş, form aç/kapa, önceki notlar arama/okuma/ikinci tık,
+  (açılış, geri dönüş, form aç/kapa, diğer seanslar arama/okuma/ikinci tık,
   başka haftadaki seansa geçiş); okuma penceresi (kilitte içerik kalkar).
 - E2E (Chromium): gerçek editörde yazma → otomatik kayıt → yeniden açınca aynı
-  biçim; Türkçe Q Cmd/Ctrl+I; yapıştırmada resim/betik düşer; önceki notlarda
-  arama ve vurgulu okuma; okuma penceresi `window.open` ile açılır ve kilitte
+  biçim; Türkçe Q Cmd/Ctrl+I; yapıştırmada resim/betik düşer; diğer seanslarda
+  arama ve vurgulu okuma (eski seans açıkken sonraki seansın notu dahil); okuma penceresi `window.open` ile açılır ve kilitte
   içeriği kaldırır; bağlantıya tıklamak uygulamayı başka siteye götürmez.
 - Elle (Mac): Tauri okuma penceresi, bağlantının Safari'de açılması, Türkçe
   klavye kısayolları, Word'den yapıştırma.

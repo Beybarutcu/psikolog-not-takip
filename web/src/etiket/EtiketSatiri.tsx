@@ -169,7 +169,13 @@ export function EtiketSatiri({
             satırın genişliğinde üç noktayla kısalır, tamamı `title`'da; ×
             her zaman görünür. `min-w-0 max-w-full` liste ve çipte: esnek
             öğenin asgarisi boşluksuz adın tamamıydı, dar sütunda satırı
-            taşırırdı (`e2e/uzun-metin.spec.ts`). */}
+            taşırırdı (`e2e/uzun-metin.spec.ts`).
+
+            `title` düğmede DEĞİL, içindeki ad öğesinde: adı `aria-label`
+            veren bir düğmede `title` erişilebilir AÇIKLAMA olur ve ekran
+            okuyucu etiketin adını iki kez okurdu ("aile etiketli seansları
+            göster, aile"). Üç nokta da aynı öğede (`block truncate`), ipucu
+            kısalan metnin üstünde çıkar. */}
         <ul aria-label="Seansın etiketleri" className="flex min-w-0 max-w-full flex-wrap gap-1">
           {etiketler.map((e) => (
             <li
@@ -178,12 +184,13 @@ export function EtiketSatiri({
             >
               <button
                 type="button"
-                className="min-w-0 truncate px-2 py-0.5"
-                title={e.ad}
+                className="min-w-0 px-2 py-0.5"
                 aria-label={`${e.ad} etiketli seansları göster`}
                 onClick={() => onEtiketAc(e)}
               >
-                {e.ad}
+                <span className="block truncate" title={e.ad}>
+                  {e.ad}
+                </span>
               </button>
               <button
                 type="button"

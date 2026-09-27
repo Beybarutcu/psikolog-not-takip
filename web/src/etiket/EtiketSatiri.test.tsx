@@ -49,9 +49,15 @@ describe('EtiketSatiri', () => {
     kur({ etiketler: [uzun] })
     const liste = screen.getByRole('list', { name: 'Seansın etiketleri' })
     const cip = within(liste).getByRole('listitem')
-    const ad = within(cip).getByRole('button', { name: `${uzun.ad} etiketli seansları göster` })
-    expect(ad.getAttribute('title')).toBe(uzun.ad)
-    for (const sinif of ['min-w-0', 'truncate']) expect(ad.classList.contains(sinif), sinif).toBe(true)
+    // Düğmenin erişilebilir AÇIKLAMASI boş: `title` düğmede olsaydı
+    // `aria-label`'lı düğmede açıklama olur, ekran okuyucu adı iki kez okurdu.
+    const ad = within(cip).getByRole('button', { name: `${uzun.ad} etiketli seansları göster`, description: '' })
+    expect(ad.hasAttribute('title')).toBe(false)
+    expect(ad.classList.contains('min-w-0')).toBe(true)
+    // Üç nokta ve tam ad düğmenin içindeki ad öğesinde.
+    const metin = within(ad).getByText(uzun.ad)
+    expect(metin.getAttribute('title')).toBe(uzun.ad)
+    for (const sinif of ['block', 'truncate']) expect(metin.classList.contains(sinif), sinif).toBe(true)
     for (const sinif of ['min-w-0', 'max-w-full']) {
       expect(cip.classList.contains(sinif), `çip ${sinif}`).toBe(true)
       expect(liste.classList.contains(sinif), `liste ${sinif}`).toBe(true)

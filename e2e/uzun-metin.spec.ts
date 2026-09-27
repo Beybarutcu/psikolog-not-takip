@@ -150,7 +150,12 @@ test('uzun metinler kutularini tasirmaz: liste, dosya (Seanslar + Bilgiler), tak
   const etiketSatiri = page.getByTestId('etiket-satiri')
   const cip = etiketSatiri.getByRole('listitem')
   await icinde('dosya: etiket çipi', cip, etiketSatiri)
-  await icinde('dosya: etiket adı', cip.getByRole('button', { name: `${UZUN_ETIKET} etiketli seansları göster`, exact: true }), cip)
+  const cipDugmesi = cip.getByRole('button', { name: `${UZUN_ETIKET} etiketli seansları göster`, exact: true })
+  await icinde('dosya: etiket düğmesi', cipDugmesi, cip)
+  // Üç nokta ve tam ad (`title`) düğmenin içindeki ad öğesinde; düğmenin
+  // kendisinde `title` yok (erişilebilir açıklama olup adı iki kez okuturdu).
+  await icinde('dosya: etiket adı', cipDugmesi.getByText(UZUN_ETIKET, { exact: true }), cipDugmesi)
+  await expect.soft(cipDugmesi, 'dosya: etiket düğmesinde title var').not.toHaveAttribute('title')
   await belgeTasmaz(page, 'dosya, Seanslar')
 
   // --- Dosya: Bilgiler ---

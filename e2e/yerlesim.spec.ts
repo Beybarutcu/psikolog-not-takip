@@ -687,3 +687,45 @@ test.describe('bul paneli: bulunan eslesme yazi alaninda gorunur, panelin altind
     })
   }
 })
+
+// İnceleme M1 (2026-09-27): danışan dosyasının not sütunu ekranın kalanını
+// sütunun ÖLÇÜLEN üst kenarından doldurur (`DanisanDosyasi`). Eski sabit
+// (`13rem` = kısa adla ölçülen 191 px + 16 px) başlığın yüksekliğini sabit
+// sayıyordu; iki satıra kırılan uzun ad ve borç özetiyle sütun pencerenin
+// altına taşıyor, durum satırı için sayfa kaydırmak gerekiyordu (ölçüldü:
+// 1200x760'ta sütun 219–771).
+test('1200x760: uzun kirilan ad ve borc ozetiyle danisan dosyasinda durum satiri sayfa kaymadan gorunur', async ({ page }, testBilgisi) => {
+  await page.setViewportSize({ width: 1200, height: 760 })
+  await kurulumYap(page)
+  // En çok 120 karakter (`AZAMI_AD_UZUNLUGU`); geniş büyük harfler 1200
+  // px'te iki satıra kırılır. Tekrar koşulabilir: ad ve saat tekrar başına.
+  const tekrar = testBilgisi.repeatEachIndex
+  const ad = `${'MEHMET ŞÜKRÜ WAGNER KARAMUSTAFAOĞLU '.repeat(3)}${tekrar}`
+  await danisanEkle(page, ad)
+  await randevuOlustur(page, ad, ['17:00', '19:00', '20:00'][tekrar % 3], '400')
+
+  // Seans "Geldi", ödenmedi: dosya özetinde borç.
+  await page.locator('button[data-durum]', { hasText: ad }).click()
+  const bolum = page.getByTestId('seans-bolumu')
+  const geldi = bolum.getByRole('group', { name: 'Seans durumu', exact: true }).getByRole('button', { name: 'Geldi', exact: true })
+  await geldi.click()
+  await expect(geldi).toHaveAttribute('aria-pressed', 'true')
+
+  await bolum.getByRole('button', { name: `${ad} dosyasını aç`, exact: true }).click()
+  const baslik = page.getByRole('heading', { level: 2, name: ad, exact: true })
+  await expect(baslik).toBeVisible()
+  await expect(page.getByTestId('dosya-ozeti')).toContainText('Ödenmemiş')
+  await expect(page.getByLabel('Seans notu', { exact: true })).toBeVisible()
+  // ÖN KOŞUL: ad gerçekten kırıldı (tek satır ~28 px).
+  expect((await baslik.boundingBox())!.height, 'ön koşul: ad iki satıra kırılmadı').toBeGreaterThan(40)
+
+  await page.evaluate(() => window.scrollTo(0, 0))
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
+  const sutun = page.getByTestId('seans-notu-sutunu')
+  await expect(sutun.getByRole('group', { name: 'Seans durumu', exact: true })).toBeInViewport({ ratio: 1 })
+  await expect(sutun.getByLabel('Etiket ekle', { exact: true })).toBeInViewport({ ratio: 1 })
+  // Sütun yine ekranın kalanını doldurur (asgarisinde durmaz) ve ekranın içinde.
+  const s = (await sutun.boundingBox())!
+  expect(s.y + s.height, 'not sütunu ekranın kalanını doldurmuyor').toBeGreaterThan(760 - 40)
+  expect(s.y + s.height, 'not sütunu pencerenin altına taşıyor').toBeLessThanOrEqual(760)
+})

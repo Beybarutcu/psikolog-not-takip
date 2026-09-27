@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 import type { DanisanSeansi, SeansNotu } from '../api'
 import { EtiketSatiri, type EtiketBaglami } from '../etiket/EtiketSatiri'
 import { etiketSirasi } from '../etiket/etiketAdi'
@@ -216,8 +216,38 @@ export function DanisanDosyasi({
   const seanslarSekmesiSecili = altSekme === 'seanslar'
   const adSoyad = kart.dosya?.ad_soyad ?? ''
 
+  // Not sütunu ekranın kalanını doldurur (aşağıdaki sütun yorumu): bunun
+  // için sütunun sayfa kaymamışken üst kenarı gerekir. SABİT DEĞİL, ölçülür
+  // (inceleme M1): başlık uzun adda iki-üç satıra, özet satırı dar pencerede
+  // ikiye kırılır ve eski sabit (`13rem`, kısa adla ölçülmüş 191 px + pay)
+  // sütunu pencerenin altına taşırıyordu (1200x760'ta 219–771, durum satırı
+  // için sayfa kaydırmak gerekiyordu). Izgaranın kutusunun üstü + `scrollY`
+  // = sayfadaki üst kenarı (ızgara yapışkan değil, kaydırmadan bağımsız);
+  // `--not-sutunu-ust` olarak ızgaraya yazılır. Üstündeki her şeyin boyu
+  // değişince (ad, özet, pencere genişliği; uygulama başlığı) belgenin ya
+  // da bu kökün boyu değişir: ikisi gözlenir. Sütunun boyu ölçüme göre
+  // değişince gözlem yeniden tetiklenir ama aynı değeri yazar (döngü yok).
+  // Değişken DOM'a doğrudan yazılır: yeniden çizim yok, `style` React'in
+  // değil.
+  const kokRef = useRef<HTMLDivElement>(null)
+  const izgaraRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const kok = kokRef.current
+    const izgara = izgaraRef.current
+    if (kok === null || izgara === null) return
+    const olc = () => {
+      const ust = Math.round(izgara.getBoundingClientRect().top + window.scrollY)
+      izgara.style.setProperty('--not-sutunu-ust', `${ust}px`)
+    }
+    olc()
+    const gozcu = new ResizeObserver(olc)
+    gozcu.observe(kok)
+    gozcu.observe(document.documentElement)
+    return () => gozcu.disconnect()
+  }, [seanslarSekmesiSecili, seansHata])
+
   return (
-    <div>
+    <div ref={kokRef}>
       {/* Uzun ad satır sonunda bölünür (`e2e/uzun-metin.spec.ts`). */}
       <h2 id="danisan-dosyasi-basligi" className="mb-2 text-lg font-semibold [overflow-wrap:anywhere]">
         {adSoyad}
@@ -260,6 +290,7 @@ export function DanisanDosyasi({
 
       {seanslarSekmesiSecili ? (
         <div
+          ref={izgaraRef}
           role="tabpanel"
           id="danisan-dosyasi-panel-seanslar"
           aria-labelledby="danisan-dosyasi-sekme-seanslar"
@@ -328,17 +359,19 @@ export function DanisanDosyasi({
                   çubuğu notu örtüyordu. Uzun not yüzeyin kendi yazı alanında
                   kayar (`BicimliYuzey`, `contain-size`); `NotEditoru`
                   (`flex-1`) sütunun etiket ve durum satırlarından artan
-                  boyunu alır. `13rem`: sütunun sayfa kaymamışken üst kenarı
-                  (1024x680 ve 1200x760'da 191 px, ölçüldü) + 16 px pay;
-                  1200x760'da sütunun tamamı ekranda. Sütunun asgarisi
-                  (satırlar + 16rem yazı alanı) daha büyükse sütun uzar: dar
-                  pencerede (1024x680, üç satırlık araç çubuğu) sayfa ~30 px
-                  kayar, hiçbir şey üst üste binmez. `sticky top-0` +
+                  boyunu alır. `--not-sutunu-ust`: sütunun sayfa kaymamışken
+                  ÖLÇÜLEN üst kenarı (yukarıdaki efekt; kısa adla 1024x680 ve
+                  1200x760'da 191 px), altında 1rem pay; 1200x760'da uzun,
+                  kırılan adla da sütunun tamamı ekranda. Ölçülmeden önce
+                  eski sabit (13rem). Sütunun asgarisi (satırlar + 16rem
+                  yazı alanı) daha büyükse sütun uzar: dar pencerede
+                  (1024x680, üç satırlık araç çubuğu) sayfa ~54 px kayar
+                  (ölçüldü), hiçbir şey üst üste binmez. `sticky top-0` +
                   `self-start`: soldaki seans listesi sütunu (`max-h-[100dvh]`)
                   sayfayı kaydırdığında not tepede, görünür kalır (B3). */}
               <div
                 data-testid="seans-notu-sutunu"
-                className="sticky top-0 flex min-h-[calc(100dvh-13rem)] flex-col self-start"
+                className="sticky top-0 flex min-h-[calc(100dvh-var(--not-sutunu-ust,13rem)-1rem)] flex-col self-start"
               >
                 {seciliSeans === null ? (
                   <p className="text-sm text-slate-500">Bu danışanın kayıtlı bir seansı yok.</p>

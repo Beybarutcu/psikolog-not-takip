@@ -690,6 +690,15 @@ describe('DanisanDosyasi — uzun geçmiş (tasarım B3)', () => {
   // alanında kayar (`BicimliYuzey`). Yerleşim `e2e/yerlesim.spec.ts` > "arac
   // cubugu notu ortmez"de ölçülür; burada yapı ve sınıflar.
   it('not sütunu ekran boyu esnek sütun: editör, etiket ve durum satırı içinde; editör kalanı alır', () => {
+    // İnceleme M1: sütunun üst kenarı sabit (`13rem`) değil, ÖLÇÜLÜR:
+    // ızgaranın sayfa kaymamışken üst kenarı (kutunun üstü + `scrollY`).
+    // jsdom yerleşim ölçmez: ızgaranın kutusu ve sayfa kayması taklit.
+    const kutu = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      const top = this.id === 'danisan-dosyasi-panel-seanslar' ? 179.4 : 0
+      return { top, bottom: top, left: 0, right: 0, x: 0, y: top, width: 0, height: 0, toJSON: () => ({}) }
+    })
+    const kayma = Object.getOwnPropertyDescriptor(window, 'scrollY')
+    Object.defineProperty(window, 'scrollY', { value: 40, configurable: true })
     render(
       <DanisanDosyasi
         {...proplar({
@@ -706,8 +715,16 @@ describe('DanisanDosyasi — uzun geçmiş (tasarım B3)', () => {
       />,
     )
     const sutun = screen.getByTestId('seans-notu-sutunu')
-    for (const sinif of ['sticky', 'top-0', 'self-start', 'flex', 'flex-col', 'min-h-[calc(100dvh-13rem)]']) {
-      expect(sutun.classList.contains(sinif), sinif).toBe(true)
+    try {
+      for (const sinif of ['sticky', 'top-0', 'self-start', 'flex', 'flex-col', 'min-h-[calc(100dvh-var(--not-sutunu-ust,13rem)-1rem)]']) {
+        expect(sutun.classList.contains(sinif), sinif).toBe(true)
+      }
+      // 179,4 + 40 = 219,4 → 219 px: sütunun sayfadaki üst kenarı.
+      expect(screen.getByRole('tabpanel').style.getPropertyValue('--not-sutunu-ust')).toBe('219px')
+    } finally {
+      kutu.mockRestore()
+      if (kayma) Object.defineProperty(window, 'scrollY', kayma)
+      else delete (window as { scrollY?: number }).scrollY
     }
     const editor = screen.getByLabelText('Seans notu')
     expect(sutun.contains(editor)).toBe(true)

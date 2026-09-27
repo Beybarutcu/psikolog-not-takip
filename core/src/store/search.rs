@@ -205,7 +205,7 @@
 //! konumu, ham metindeki karakter konumuyla aynıdır.
 //!
 //! İstemcide AYNI kural `web/src/katla.ts`'te (danışan listesi araması ve
-//! önceki notlar vurgusu; tasarım §5.2). İkisi `katlama_ornekleri.json`
+//! "Diğer seanslar" panelindeki vurgu; tasarım §5.2). İkisi `katlama_ornekleri.json`
 //! ortak örnekleriyle bağlı: `tests::katlama_ortak_ornekleri_saglar` ve
 //! `web/src/katla.test.ts` aynı dosyayı okur.
 
@@ -694,7 +694,7 @@ pub fn ara(
     Ok(AramaYaniti { sonuclar, kirpildi })
 }
 
-/// Danışana özel not aramasının bir satırı (önceki notlar paneli).
+/// Danışana özel not aramasının bir satırı ("Diğer seanslar" paneli).
 /// `Debug` elle: `seans_zamani` ve `parca` `AramaSonucu` ile aynı gerekçeyle
 /// `<gizli>`.
 #[derive(Clone, Serialize)]
@@ -714,14 +714,17 @@ impl std::fmt::Debug for NotAramaSonucu {
     }
 }
 
-/// Bir danışanın **resmî** notlarında arar (tasarım S8): önceki notlar
-/// panelinin "Önceki notlarda ara" kutusu.
+/// Bir danışanın **resmî** notlarında arar (tasarım S8): "Diğer seanslar"
+/// panelinin "Diğer seanslarda ara" kutusu. Panel 2026-09-27'den beri
+/// `once` GÖNDERMEZ: açık seansın dışındaki BÜTÜN seansların (sonrakiler
+/// dahil) notlarında arar, açık seansın kendi notunu istemci atar.
 ///
 /// `ara` ile aynı kurallar: yalnızca `progress_notes.duz_metin`, Türkçe
 /// katlama, `%`/`_` kaçırma, parça `parca_cikar`'dan; `ASGARI_SORGU` altı
 /// terim HİÇBİR tabloyu okumaz ve log yazmaz. Olmayan danışan `Bulunamadi`
-/// (log yok). Sonuçlar yeniden eskiye, en fazla `AZAMI_SONUC`; `once`
-/// verilirse yalnızca o andan KESİN önce başlamış seanslar.
+/// (log yok). Sonuçlar yeniden eskiye, en fazla `AZAMI_SONUC`. `once`
+/// isteğe bağlı bir kesmedir (başka çağıranlar için korunuyor): verilirse
+/// yalnızca o andan KESİN önce başlamış seanslar.
 ///
 /// Denetim `Goruntuleme | arama | danisan:<client_id>` (`OturumBasi`,
 /// `ayrinti` yok): terim ve sonuç sayısı YAZILMAZ. Kimlik genel aramanın

@@ -491,16 +491,18 @@ pub fn ozel_not_kaydet(
 /// olur. Bu bilinçli: depo katmanı çağıranın limitine karışmaz. Sınırı
 /// koymak rotanın işidir (Görev 7).
 ///
-/// # `once`: "bu seanstan ÖNCE" kesmesi
+/// # `once`: "bu seanstan ÖNCE" kesmesi (isteğe bağlı)
 /// `Some(baslangic)` verildiğinde yalnızca **o andan önce başlamış**
-/// seansların notları döner (`a.baslangic < ?`). Bu, arayüzdeki "Önceki
-/// seans notları" panelinin doğru olabilmesinin tek yoludur: kesme
-/// olmadan sorgu danışanın TÜM notlarını en yeniden eskiye veriyordu ve
-/// terapist üç ay önceki bir seansı açtığında (takvim hafta hafta geriye
-/// gidiyor, olağan bir işlem) sol sütun o seanstan **SONRAKİ** notları
-/// "önceki seans notları" başlığı altında gösteriyordu — kullanıcı not
-/// yazarken henüz yaşanmamış seansların içeriğini "geçen seansta
-/// konuşulan" diye okuyordu.
+/// seansların notları döner (`a.baslangic < ?`).
+///
+/// Tarihçe: kesme, eski "Önceki seans notları" paneli için eklendi (İnceleme
+/// I2). Kesme olmadan o panel, terapist üç ay önceki bir seansı açtığında o
+/// seanstan **SONRAKİ** notları "önceki" başlığı altında gösteriyordu.
+/// 2026-09-27'den beri panel "Diğer seanslar": açık seansın dışındaki
+/// BÜTÜN seansları (sonrakiler dahil) açıkça "sonraki / önceki" diye
+/// ayırarak gösteriyor, listeyi `danisan_seanslari`'ndan alıyor ve bu
+/// kesmeyi kullanmıyor. Parametre, davranışı değişmeden, başka çağıranlar
+/// için isteğe bağlı olarak korunuyor.
 ///
 /// Kesme **kesin küçüktür**: aynı `baslangic`'e sahip bir randevu "önce"
 /// sayılmaz, dolayısıyla seansın kendi notu bu listeye giremez — çağıran
@@ -765,10 +767,11 @@ mod tests {
     #[test]
     fn danisan_notlari_once_verilince_sonraki_seanslari_dondurmez() {
         // Inceleme I2: kesme yokken terapist uc ay onceki bir seansi
-        // actiginda sol sutun o seanstan SONRAKI notlari "Onceki seans
-        // notlari" basligi altinda gosteriyordu -- kullanici henuz
-        // yasanmamis seanslarin icerigini "gecen seansta konusulan" diye
-        // okuyordu.
+        // actiginda eski "Onceki seans notlari" paneli o seanstan SONRAKI
+        // notlari "onceki" diye gosteriyordu. 2026-09-27'den beri panel
+        // ("Diger seanslar") bu kesmeyi kullanmiyor, sonrakileri acikca
+        // ayirarak gosteriyor; kesme baska cagiranlar icin istege bagli
+        // kaldi ve davranisi bu testle sabit.
         let (_d, c, cid, _rid) = kurulum();
         seansli_not(&c, cid, "2026-06-01T10:00", "COK ESKI");
         let orta = seansli_not(&c, cid, "2026-07-01T10:00", "ACIK OLAN SEANS");

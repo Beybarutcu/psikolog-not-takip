@@ -142,8 +142,10 @@ pub async fn kaydet(
 ///
 /// `once` **opsiyoneldir ve varsayılanı yoktur**: verilmediğinde danışanın
 /// tüm notları döner. Zorunlu kılınsaydı veri raporu (KVKK md. 11, "elimde
-/// olan her şey") bir kesme uydurmak zorunda kalırdı. Kesmeyi geçmek
-/// "önceki seans notları" panelinin işidir ve o panel gerçekten geçiyor.
+/// olan her şey") bir kesme uydurmak zorunda kalırdı. Kesme eski "Önceki
+/// seans notları" paneli içindi; 2026-09-27'den beri panel "Diğer
+/// seanslar" (sonraki seanslar dahil) ve kesmeyi göndermiyor. Parametre
+/// başka çağıranlar için isteğe bağlı kaldı.
 pub async fn danisan_listesi(
     State(s): State<AppState>,
     Path(id): Path<i64>,
@@ -158,7 +160,8 @@ pub async fn danisan_listesi(
 }
 
 /// `GET /api/danisanlar/{id}/not-ara?q=&once=` — danışanın **resmî**
-/// notlarında arama (tasarım S8, önceki notlar paneli). Kurallar ve denetim
+/// notlarında arama (tasarım S8, "Diğer seanslar" paneli; panel `once`
+/// göndermez, bkz. `store::search::danisan_notlarinda_ara`). Kurallar ve denetim
 /// kaydı `store::search::danisan_notlarinda_ara`'da; bu handler ikinci bir
 /// satır yazmaz, terimi hiçbir yere düşürmez. Özel not bu uca giremez: depo
 /// fonksiyonu yalnızca `progress_notes.duz_metin` okur.

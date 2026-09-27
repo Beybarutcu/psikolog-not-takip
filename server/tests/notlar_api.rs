@@ -979,8 +979,12 @@ async fn not_listesi_limiti_rota_katmaninda_kirpilir() {
 
 /// İnceleme I2: `?once=` ile "bu seanstan önce" kesmesi.
 ///
-/// Kesme olmadan "Önceki seans notları" paneli, terapist geçmiş bir seansı
-/// açtığında o seanstan SONRAKİ notları gösteriyordu.
+/// Kesme, eski "Önceki seans notları" paneli için eklendi: o panel terapist
+/// geçmiş bir seansı açtığında o seanstan SONRAKİ notları "önceki" diye
+/// gösteriyordu. 2026-09-27'den beri panel "Diğer seanslar" (açık seansın
+/// dışındaki BÜTÜN seanslar, sonrakiler dahil) ve kesmeyi göndermiyor;
+/// parametre başka çağıranlar için isteğe bağlı kaldı, davranışı bu testle
+/// sabit.
 #[tokio::test]
 async fn not_listesi_once_ile_sonraki_seanslari_kesmeli() {
     let (_d, s) = kurulu_state().await;
@@ -1131,6 +1135,8 @@ async fn danisan_not_aramasi_bu_danisanin_onceki_resmi_notlarini_dondurur() {
         assert!(!sonuc.to_string().contains(yok), "{yok} sizdi: {sonuc}");
     }
     // ARTI YÖN: kesme `once`'den geliyor — verilmezse sonrakiler de döner.
+    // "Diğer seanslar" paneli (2026-09-27'den beri) tam bu biçimi, kesmesiz
+    // aramayı kullanır; açık seansın kendi notunu istemci atar.
     let (_, hepsi) = cagir(&s, "GET", &format!("/api/danisanlar/{ayse}/not-ara?q=kaygi"), None).await;
     assert_eq!(hepsi.as_array().unwrap().len(), 3, "{hepsi}");
     // Kısa terim boş liste (400 değil), olmayan danışan 404.

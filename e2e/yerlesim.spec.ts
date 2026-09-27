@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { kurulumYap } from './yardimcilar'
+import { kurulumYap, sonaGit } from './yardimcilar'
 
 // Tasarım A3 kabul ölçütü: 1200x760 ve 1280x800'de gün başlığı ile 20:00
 // satırının alt kenarı SAYFA KAYDIRILMADAN görünür. jsdom yerleşimi
@@ -295,7 +295,8 @@ test.describe('editor arac cubugu pencereye sigar', () => {
 test.describe('arac cubugu notu ortmez; uzun not editorun icinde kayar', () => {
   test.use({ reducedMotion: 'reduce' })
 
-  const MAC = process.platform === 'darwin'
+  /** (c)'de yazılan işaretin sırası (her adımın işareti ayrı). */
+  let sonaYazma = 0
 
   /** 60 paragraflık not: gerçek bir `paste` olayı (bkz. `editor.spec.ts::htmlYapistir`). */
   async function uzunNotYapistir(alan: Locator) {
@@ -364,13 +365,21 @@ test.describe('arac cubugu notu ortmez; uzun not editorun icinde kayar', () => {
     )
     expect(altindaki, `${yer}: çubuğun hemen altında not içeriği yok`).toBe('not')
 
-    // (c) Baştan Ctrl+End ve yazma: son paragraf yazı alanının içinde, sayfa yerinde.
+    // (c) Baştan Ctrl+End ve yazma: son paragraf yazı alanının içinde, sayfa
+    // yerinde. `sonaGit` editörün kendi seçimi sona gelene kadar bekler
+    // (danışan dosyasında editör tıklamayla ilk kez odak alıyor; ProseMirror'un
+    // odak zamanlayıcısı Ctrl+End'i silebiliyordu, bkz. yardımcı). İşaret her
+    // adımda AYRI: danışan dosyası aynı notu açar ve not sayfasında yazılan
+    // işaret son paragrafta zaten durur (tek işaretle, metin tıklanan
+    // paragrafa gitse de iddia geçiyordu).
     await notuKaydir(alan, 0)
     await alan.locator('p').first().click()
-    await page.keyboard.press(MAC ? 'Meta+ArrowDown' : 'Control+End')
-    await page.keyboard.type(' sonuna eklendi')
+    await sonaGit(page, alan)
+    const isaret = `sonuna eklendi #${++sonaYazma}`
+    await page.keyboard.type(` ${isaret}`)
     const son = alan.locator('p').last()
-    await expect(son).toContainText('sonuna eklendi')
+    await expect(son).toContainText(isaret)
+    await expect(alan.locator('p').first()).not.toContainText(isaret)
     const kk = (await icerik.boundingBox())!
     // İmleç (daraltılmış seçimin dikdörtgeni) yazı alanının içinde.
     const imlec = await page.evaluate(() => {
@@ -403,12 +412,16 @@ test.describe('arac cubugu notu ortmez; uzun not editorun icinde kayar', () => {
     { width: 1024, height: 680 },
     { width: 1200, height: 760 },
   ].entries()) {
-    test(`${boyut.width}x${boyut.height}: not sayfasi ve danisan dosyasinda cubuk notu ortmez, sayfa kaymaz`, async ({ page }) => {
+    test(`${boyut.width}x${boyut.height}: not sayfasi ve danisan dosyasinda cubuk notu ortmez, sayfa kaymaz`, async ({ page }, testBilgisi) => {
       await page.setViewportSize(boyut)
       await kurulumYap(page)
-      const ad = `Yerlesim Uzun Not ${sira + 1}`
+      // `--repeat-each` ile (aynı sunucu, aynı hafta) tekrar koşulabilir: ad
+      // ve saat her tekrarda ayrı (yoksa `randevuOlustur`un "tek blok"
+      // iddiası önceki tekrarın bloğunu da sayar, 15:00 satırı dolar).
+      const tekrar = testBilgisi.repeatEachIndex
+      const ad = `Yerlesim Uzun Not ${sira + 1}.${tekrar}`
       await danisanEkle(page, ad)
-      await randevuOlustur(page, ad, '15:00', '400')
+      await randevuOlustur(page, ad, `${15 + (tekrar % 5)}:00`, '400')
 
       // --- Takvimdeki not sayfası ---
       await page.locator('button[data-durum]', { hasText: ad }).click()

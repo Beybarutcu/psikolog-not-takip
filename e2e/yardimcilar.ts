@@ -87,3 +87,37 @@ export async function sonSozcuguSec(page: Page, alan: Locator, beklenen: string)
     await expect.poll(() => seciliMetin(alan), { timeout: 1_000 }).toBe(beklenen)
   }).toPass({ timeout: 15_000 })
 }
+
+/** Editörün KENDİ seçimi daraltılmış ve imleçten sonra metin yok (belgenin sonu). */
+function imlecSondaMi(alan: Locator): Promise<boolean | null> {
+  return alan.evaluate((el) => {
+    const durum = (el as EditorluKok).editor?.state
+    if (!durum) return null
+    const { from, to } = durum.selection
+    return from === to && durum.doc.textBetween(to, durum.doc.content.size) === ''
+  })
+}
+
+/**
+ * İmleci notun SONUNA götürür (macOS'ta Cmd+↓, diğerlerinde Ctrl+End) ve
+ * ProseMirror'un KENDİ seçimi belgenin sonuna gelene kadar bekler; gelmezse
+ * jesti yineler.
+ *
+ * `sonSozcuguSec` ile AYNI yarış: editör tıklamayla YENİ odak aldıysa
+ * ProseMirror'un 20 ms'lik odak zamanlayıcısı hâlâ açıktır. Tuşun seçim
+ * değişikliği ProseMirror'a ulaşmadan (`selectionchange`) zamanlayıcı
+ * çalışırsa DOM seçimini kendi kaydıyla, yani TIKLAMA konumuyla karşılaştırır,
+ * farkı görür ve tıklama konumunu DOM'a geri yazar: Ctrl+End silinir, ardından
+ * yazılan metin notun sonuna değil tıklanan paragrafa girer. `e2e/yerlesim.
+ * spec.ts` > "arac cubugu notu ortmez" danışan dosyası adımında (editör orada
+ * ilk kez tıklamayla odak alıyor) bir kez böyle kırıldı; zamanlayıcıyı tuşun
+ * seçim değişikliğiyle ProseMirror'un okuması ARASINA koyan bir enjeksiyonla
+ * her seferinde yeniden üretildi. Zamanlayıcı odak başına bir kez kurulur:
+ * yinelenen jest yarışa girmez. Ctrl+End her denemede aynı yere gider.
+ */
+export async function sonaGit(page: Page, alan: Locator) {
+  await expect(async () => {
+    await page.keyboard.press(MAC ? 'Meta+ArrowDown' : 'Control+End')
+    await expect.poll(() => imlecSondaMi(alan), { timeout: 1_000 }).toBe(true)
+  }).toPass({ timeout: 15_000 })
+}

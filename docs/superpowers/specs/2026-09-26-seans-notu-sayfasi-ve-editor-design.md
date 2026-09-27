@@ -190,11 +190,13 @@ okunsun, gerekirse ayrı bir pencerede yanda dursun.**
 - **N4. Editör alanı.** Sayfanın büyük kısmı: "Seans notu" ve "Özel notlarım"
   sekmeleri, şablon seçici, biçimli editör, altında etiketler. Özel not
   sekmesine girilmeden özel not istenmez (bugünkü kural).
-- **N5. Önceki notlar paneli.** Sağ sütun: aynı danışanın **bu seanstan önceki**
+- **N5. Önceki notlar paneli.** *(2026-09-27'de değişti: "Diğer seanslar", bkz.
+  bölüm sonundaki değişiklik.)* Sağ sütun: aynı danışanın **bu seanstan önceki**
   seansları, yeniden eskiye; her satırda tarih-saat, durum simgesi (T1 ile aynı)
   ve notun ilk satırı ya da "Not yazılmamış". Liste uzunsa panel kendi içinde
   kayar. Bu seansın kendisi ve sonraki seanslar listede yoktur.
-- **N6. Arama.** Panelin üstünde "Önceki notlarda ara" kutusu. Yazıldıkça
+- **N6. Arama.** *(2026-09-27'de değişti, bkz. bölüm sonu.)* Panelin üstünde
+  "Önceki notlarda ara" kutusu. Yazıldıkça
   (gecikmeli) liste terimin geçtiği seanslara daralır; satırda terimin geçtiği
   cümle parçası gösterilir, terim vurgulanır. Arama yalnızca bu danışanın
   resmî notlarında, `duz_metin` üzerinde, büyük/küçük harf ve Türkçe harf
@@ -212,6 +214,30 @@ okunsun, gerekirse ayrı bir pencerede yanda dursun.**
 - **N9. Yeni pencere.** Listedeki satıra ya da "Bu seansa git"e sağ tıklamak
   küçük bir menü açar: "Yeni pencerede aç". Cmd+tık (Windows'ta Ctrl+tık)
   aynı işi menüsüz yapar. Bkz. §8.
+
+**Değişiklik (2026-09-27, kullanıcı kararı): "Önceki seans notları" yerine
+"Diğer seanslar".** Kullanıcı: "önceki seans notları yerine diğer seanslar
+olsun, eski seansı görüntülerken yeni seanslarda gözüksün". N5 ve N6 şöyle
+değişti; N7-N9 aynı (sonraki seanslar için de geçerli):
+
+- **N5'.** Panelin adı "Diğer seanslar". Danışanın açık seans **dışındaki
+  bütün** seansları, yeniden eskiye (sunucu sırası `baslangic DESC, id DESC`).
+  Açık seansın yerinde tıklanamayan bir **"Bu seans · <tarih-saat>"** işareti
+  durur (`li`, `aria-current="true"`; düğme değil, açılmaz, istek atmaz):
+  üstündekiler sonraki, altındakiler önceki seanslar. İşaret açık seansın
+  güncel başlangıcıyla yerleşir (taşımada liste yeniden istenmez).
+  **Gelecekteki** (`baslangic > şimdi`, uygulamanın tek "şimdi"si) ve notu
+  hiç yazılmamış seans listelenmez — okunacak bir şey yok; notu olan gelecek
+  seans listelenir. Tam şimdi başlayan seans gelecek sayılmaz (geçmiş =
+  `baslangic <= şimdi`, danışan dosyasıyla aynı sınır). Boş durum: "Bu
+  danışanın başka seansı yok."; elenenlerin hepsi notsuz gelecek seanssa
+  "Başka geçmiş seans yok; ileri tarihli seansların notu henüz yazılmamış."
+- **N6'.** Kutu "Diğer seanslarda ara". Arama bütün diğer seansların resmî
+  notlarında yapılır: istemci `once` kesmesini **göndermez** (uç `once`'ı
+  isteğe bağlı olarak desteklemeye devam ediyor) ve açık seansın kendi
+  notunu sonuçlardan atar. Sonuçlarda da işaret aynı kuralla yerleşir.
+  Terim yine yalnızca o sorgunun adresinde; denetim kaydı değişmedi
+  (`Goruntuleme | arama | danisan:<id>`, terim ve sonuç sayısı yok).
 
 ## 8. Okuma penceresi (P)
 

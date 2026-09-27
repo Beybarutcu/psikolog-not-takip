@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { DanisanSeansi, NotAramaSonucu, SeansNotu } from '../api'
+import type { DanisanSeansi, NotAramaSonucu, NotAramaYaniti, SeansNotu } from '../api'
 import { ARAMA_GECIKMESI_MS, DigerSeanslar } from './DigerSeanslar'
 
 const t = vi.hoisted(() => ({ seanslar: vi.fn(), notAra: vi.fn(), notGetir: vi.fn(), pencere: vi.fn() }))
@@ -30,6 +30,8 @@ function seans(ozel: Partial<DanisanSeansi>): DanisanSeansi {
 // - 301: AYNI dakikada başlayan başka bir seans (çift kayıt). Sunucu
 //   sırasında 300'ün ÜSTÜNDE (büyük kimlik): işaretin üstünde.
 // - 300: bu seansın kendisi -> listede YOK, yerinde "Bu seans" işareti.
+// - 299: AYNI dakikada, kimliği KÜÇÜK: sunucu sırasında 300'ün ALTINDA,
+//   işaretin altında (eşitlikte `>=` kıyası onu yanlışlıkla üste alırdı).
 // - 200, 100: bu seanstan önceki seanslar -> işaretin altında.
 const LISTE: DanisanSeansi[] = [
   seans({ appointment_id: 500, baslangic: '2026-10-05T10:00', not_ilk_satiri: null, durum: 'planlandi', odendi: false }),
@@ -37,6 +39,7 @@ const LISTE: DanisanSeansi[] = [
   seans({ appointment_id: 400, baslangic: '2026-09-21T10:00', not_ilk_satiri: 'SONRAKI SEANS' }),
   seans({ appointment_id: 301, baslangic: '2026-09-14T10:00', not_ilk_satiri: 'AYNI DAKIKA' }),
   seans({ appointment_id: 300, baslangic: '2026-09-14T10:00', not_ilk_satiri: 'BU SEANS' }),
+  seans({ appointment_id: 299, baslangic: '2026-09-14T10:00', not_ilk_satiri: 'AYNI DAKIKA KUCUK KIMLIK' }),
   seans({ appointment_id: 200, baslangic: '2026-09-07T10:00', not_ilk_satiri: 'Uyku düzeni iyileşmiş', durum: 'gelmedi', odendi: false }),
   seans({ appointment_id: 100, baslangic: '2026-08-31T10:00', not_ilk_satiri: null }),
 ]
@@ -47,6 +50,10 @@ function not(id: number, icerik: string): SeansNotu {
     appointment_id: id, client_id: 1, danisan_adi: 'Ayşe Yılmaz', seans_zamani: '2026-09-07T10:00',
     sablon: 'serbest', icerik, onizleme: null, guncelleme_zamani: 'z',
   }
+}
+/** `notApi.notAra` yanıtı (sunucudaki `NotAramaYaniti`). */
+function yanit(sonuclar: NotAramaSonucu[], kirpildi = false): NotAramaYaniti {
+  return { sonuclar, kirpildi }
 }
 async function ilerle(ms: number) {
   await act(() => vi.advanceTimersByTimeAsync(ms))
@@ -93,7 +100,7 @@ function kapi<T>() {
 beforeEach(() => {
   vi.useFakeTimers()
   t.seanslar.mockReset().mockResolvedValue(LISTE)
-  t.notAra.mockReset().mockResolvedValue([])
+  t.notAra.mockReset().mockResolvedValue(yanit([]))
   t.notGetir.mockReset()
   t.pencere.mockReset()
 })
@@ -111,17 +118,21 @@ describe('DigerSeanslar (tasarım N5-N9, 2026-09-27 değişikliği)', () => {
       '21 Eylül 2026, 10:00',
       '14 Eylül 2026, 10:00',
       ISARET,
+      '14 Eylül 2026, 10:00',
       '7 Eylül 2026, 10:00',
       '31 Ağustos 2026, 10:00',
     ])
     const s = satirlar()
     expect(s[0].textContent).toContain('GELECEK NOTLU')
     expect(s[1].textContent).toContain('SONRAKI SEANS')
+    // Aynı dakika: büyük kimlik (301) işaretin ÜSTÜNDE, küçük kimlik (299) ALTINDA.
     expect(s[2].textContent).toContain('AYNI DAKIKA')
-    expect(s[3].textContent).toContain('Uyku düzeni iyileşmiş')
-    expect(s[3].querySelector('[data-simge="gelmedi"]')).not.toBeNull()
-    expect(s[3].querySelector('[data-simge="odeme"]')).not.toBeNull()
-    expect(s[4].textContent).toContain('Not yazılmamış')
+    expect(s[2].textContent).not.toContain('KUCUK KIMLIK')
+    expect(s[3].textContent).toContain('AYNI DAKIKA KUCUK KIMLIK')
+    expect(s[4].textContent).toContain('Uyku düzeni iyileşmiş')
+    expect(s[4].querySelector('[data-simge="gelmedi"]')).not.toBeNull()
+    expect(s[4].querySelector('[data-simge="odeme"]')).not.toBeNull()
+    expect(s[5].textContent).toContain('Not yazılmamış')
     // Açık seansın kendi satırı (önizlemesi) listede YOK; yerinde işaret.
     expect(bolge().textContent).not.toContain('BU SEANS')
     expect(isaret()!.textContent).toBe('Bu seans · 14 Eylül 2026, 10:00')
@@ -171,7 +182,7 @@ describe('DigerSeanslar (tasarım N5-N9, 2026-09-27 değişikliği)', () => {
 
   it('8.2 N6: arama gecikmeli; tek harf istek atmaz; terim sunucuya, kesme (`once`) GİTMEZ; parçada terim vurgulu', async () => {
     const sonuc: NotAramaSonucu[] = [{ appointment_id: 200, seans_zamani: '2026-09-07T10:00', parca: 'Danışan bugün KAYGI anlattı' }]
-    t.notAra.mockResolvedValue(sonuc)
+    t.notAra.mockResolvedValue(yanit(sonuc))
     kur()
     await ilerle(0)
     fireEvent.change(kutu(), { target: { value: 'k' } })
@@ -193,17 +204,52 @@ describe('DigerSeanslar (tasarım N5-N9, 2026-09-27 değişikliği)', () => {
   })
 
   it('arama sonucunda açık seans GÖRÜNMEZ; sonraki seansın eşleşmesi işaretin ÜSTÜNDE, öncekininki ALTINDA', async () => {
-    t.notAra.mockResolvedValue([
+    t.notAra.mockResolvedValue(yanit([
       { appointment_id: 400, seans_zamani: '2026-09-21T10:00', parca: 'sonra da KAYGI' },
       { appointment_id: 300, seans_zamani: '2026-09-14T10:00', parca: 'ACIK SEANSIN KAYGI PARCASI' },
       { appointment_id: 200, seans_zamani: '2026-09-07T10:00', parca: 'once KAYGI' },
-    ] satisfies NotAramaSonucu[])
+    ]))
     kur()
     await ilerle(0)
     fireEvent.change(kutu(), { target: { value: 'kaygı' } })
     await ilerle(ARAMA_GECIKMESI_MS)
     expect(sira()).toEqual(['21 Eylül 2026, 10:00', ISARET, '7 Eylül 2026, 10:00'])
     expect(bolge().textContent).not.toContain('ACIK SEANSIN KAYGI PARCASI')
+  })
+
+  // İnceleme (2026-09-27): sunucu en fazla 500 sonuç döndürür; `once`
+  // gönderilmeyince eski bir seans açıkken sonraki seansların eşleşmeleri de
+  // bu sınıra girer. Kırpılma SÖYLENMEZSE işaretin altındaki boşluk "önceki
+  // seanslarda geçmiyor" diye okunur.
+  it('kırpılmış arama: sonuçların ALTINDA kaç eşleşme gösterildiğini ve terimi daraltmayı söyler (açık seans sayılmaz)', async () => {
+    t.notAra.mockResolvedValue(yanit([
+      { appointment_id: 400, seans_zamani: '2026-09-21T10:00', parca: 'sonra KAYGI' },
+      { appointment_id: 301, seans_zamani: '2026-09-14T10:00', parca: 'ayni dakika KAYGI' },
+      { appointment_id: 300, seans_zamani: '2026-09-14T10:00', parca: 'ACIK SEANS KAYGI' },
+    ], true))
+    kur()
+    await ilerle(0)
+    fireEvent.change(kutu(), { target: { value: 'kaygı' } })
+    await ilerle(ARAMA_GECIKMESI_MS)
+    expect(satirlar()).toHaveLength(2)
+    const uyari = within(bolge()).getByText('Yalnızca en yeni 2 eşleşme gösteriliyor; daha eskileri için terimi daraltın.')
+    // Listenin ALTINDA (kayan listenin dışında, hep görünür).
+    const liste = within(bolge()).getByRole('list')
+    expect(liste.compareDocumentPosition(uyari) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(liste.contains(uyari)).toBe(false)
+    // Terim kutudan silinince uyarı da kalkar (liste kipinde kırpılma yok).
+    fireEvent.change(kutu(), { target: { value: '' } })
+    expect(within(bolge()).queryByText(/Yalnızca en yeni/)).toBeNull()
+  })
+
+  it('kırpılmamış arama: uyarı YOK', async () => {
+    t.notAra.mockResolvedValue(yanit([{ appointment_id: 400, seans_zamani: '2026-09-21T10:00', parca: 'sonra KAYGI' }]))
+    kur()
+    await ilerle(0)
+    fireEvent.change(kutu(), { target: { value: 'kaygı' } })
+    await ilerle(ARAMA_GECIKMESI_MS)
+    expect(satirlar()).toHaveLength(1)
+    expect(within(bolge()).queryByText(/Yalnızca en yeni/)).toBeNull()
   })
 
   it('8.3 eşleşme yoksa bunu SÖYLER ("başka seans yok" gibi görünmez); işaret de gösterilmez', async () => {
@@ -217,7 +263,7 @@ describe('DigerSeanslar (tasarım N5-N9, 2026-09-27 değişikliği)', () => {
   })
 
   it('yalnızca açık seansın kendisi eşleşirse "terim geçmiyor" der (açık seans sonuç SAYILMAZ)', async () => {
-    t.notAra.mockResolvedValue([{ appointment_id: 300, seans_zamani: '2026-09-14T10:00', parca: 'KAYGI' }])
+    t.notAra.mockResolvedValue(yanit([{ appointment_id: 300, seans_zamani: '2026-09-14T10:00', parca: 'KAYGI' }]))
     kur()
     await ilerle(0)
     fireEvent.change(kutu(), { target: { value: 'kaygı' } })
@@ -243,13 +289,13 @@ describe('DigerSeanslar (tasarım N5-N9, 2026-09-27 değişikliği)', () => {
     ])
     kur()
     await ilerle(0)
-    expect(bolge().textContent).toContain('Başka geçmiş seans yok; ileri tarihli seansların notu henüz yazılmamış.')
+    expect(bolge().textContent).toContain('Geçmişte başka seans yok; yaklaşan seanslara henüz not yazılmadı.')
     expect(bolge().textContent).not.toContain('Bu danışanın başka seansı yok.')
     expect(ogeler()).toHaveLength(0)
   })
 
   it('8.4 N7: tek tık geniş okuma açar, notu ister, bütün eşleşmeleri vurgular; "Listeye dön" kapatır', async () => {
-    t.notAra.mockResolvedValue([{ appointment_id: 200, seans_zamani: '2026-09-07T10:00', parca: 'KAYGI' }])
+    t.notAra.mockResolvedValue(yanit([{ appointment_id: 200, seans_zamani: '2026-09-07T10:00', parca: 'KAYGI' }]))
     t.notGetir.mockResolvedValue(not(200, '<p>Danışan <strong>KAYGI</strong> anlattı; kaygı azaldı</p>'))
     const p = kur()
     await ilerle(0)
@@ -269,7 +315,7 @@ describe('DigerSeanslar (tasarım N5-N9, 2026-09-27 değişikliği)', () => {
   // Kullanıcı kararı 2026-09-27: eski seans açıkken SONRAKİ seansın notu
   // da okunur ve oraya geçilir — N7/N8 önceki seanslarla AYNI.
   it('SONRAKİ seans: arama onu bulur, tek tık vurgulu geniş okuma, tarihe ikinci tık ve "Bu seansa git" o seansa geçer', async () => {
-    t.notAra.mockResolvedValue([{ appointment_id: 400, seans_zamani: '2026-09-21T10:00', parca: 'yeni ÇARPINTI yakınması' }])
+    t.notAra.mockResolvedValue(yanit([{ appointment_id: 400, seans_zamani: '2026-09-21T10:00', parca: 'yeni ÇARPINTI yakınması' }]))
     t.notGetir.mockResolvedValue(not(400, '<p>Bu hafta yeni <em>çarpıntı</em> yakınması</p>'))
     const p = kur()
     await ilerle(0)
@@ -391,6 +437,7 @@ describe('DigerSeanslar (tasarım N5-N9, 2026-09-27 değişikliği)', () => {
       ISARET,
       '21 Eylül 2026, 10:00',
       '14 Eylül 2026, 10:00',
+      '14 Eylül 2026, 10:00',
       '7 Eylül 2026, 10:00',
       '31 Ağustos 2026, 10:00',
     ])
@@ -434,7 +481,7 @@ describe('DigerSeanslar (tasarım N5-N9, 2026-09-27 değişikliği)', () => {
     const sonuc: NotAramaSonucu[] = [{ appointment_id: 200, seans_zamani: '2026-09-07T10:00', parca: 'KAYGI anlattı' }]
     t.notAra
       .mockRejectedValueOnce(new Error('Arama sunucuda düştü.'))
-      .mockResolvedValueOnce(sonuc)
+      .mockResolvedValueOnce(yanit(sonuc))
       .mockRejectedValueOnce(new Error('Yine düştü.'))
     kur()
     await ilerle(0)
@@ -522,7 +569,7 @@ describe('DigerSeanslar — liste kaynağı (preflight F7)', () => {
     const p = kur({ onbellek: LISTE })
     await ilerle(0)
     expect(t.seanslar).not.toHaveBeenCalled()
-    expect(satirlar()).toHaveLength(5)
+    expect(satirlar()).toHaveLength(6)
     expect(satirDugmesi('7 Eylül 2026, 10:00').textContent).toContain('Uyku düzeni iyileşmiş')
 
     const yamali = LISTE.map((s) => (s.appointment_id === 200 ? { ...s, not_ilk_satiri: 'dosyada duzeltildi' } : s))
@@ -572,7 +619,7 @@ describe('DigerSeanslar — gerçek okumaPenceresiniAc ile (Tauri: window.open n
       expect(ac).toHaveBeenCalledWith('/?okuma=200', 'okuma-200')
       expect(within(bolge()).queryByRole('alert')).toBeNull()
       expect(screen.queryByRole('menu')).toBeNull()
-      expect(satirlar()).toHaveLength(5)
+      expect(satirlar()).toHaveLength(6)
       expect(p.onGenislikDegisti).not.toHaveBeenCalled()
       expect(window.location.href).toBe(adres)
       expect(jsdomHatalari).toEqual([])

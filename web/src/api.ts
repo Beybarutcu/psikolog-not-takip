@@ -557,6 +557,18 @@ export type NotAramaSonucu = {
 }
 
 /**
+ * `GET /api/danisanlar/{id}/not-ara` yanıtı (sunucudaki `NotAramaYaniti`):
+ * yeniden eskiye en fazla 500 sonuç (`AZAMI_DANISAN_NOT_SONUCU`) ve
+ * fazlası varsa `kirpildi` — ölçüm, tahmin değil (sunucu bir fazlasını
+ * ister). Arayüz kırpılmayı söylemeli: yoksa sınıra takılan eski eşleşmeler
+ * "hiç geçmiyor" gibi okunur.
+ */
+export type NotAramaYaniti = {
+  sonuclar: NotAramaSonucu[]
+  kirpildi: boolean
+}
+
+/**
  * `GET/PUT /api/randevular/{id}/ozel-not` yanıtı (sunucudaki `OzelNot`).
  *
  * `sablon` alanı YOK ve olmamalı: özel notun şablonu yoktur. Şekil resmî
@@ -598,7 +610,7 @@ export const notApi = {
   // 2026-09-27'den beri `once` GÖNDERMEZ: sonraki seanslar da aranır). Terim
   // sunucuda loga yazılmaz; burada da hiçbir yere düşürülmez.
   notAra: (danisanId: number, sorgu: string, once?: string) =>
-    istek<NotAramaSonucu[]>(
+    istek<NotAramaYaniti>(
       `/api/danisanlar/${danisanId}/not-ara?q=${encodeURIComponent(sorgu)}` +
         (once === undefined ? '' : `&once=${encodeURIComponent(once)}`),
     ),

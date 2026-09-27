@@ -233,6 +233,18 @@ const ASGARI_SORGU: usize = 2;
 /// sınırsız bir arama toplu dışa aktarımdır.
 pub const AZAMI_SONUC: i64 = 50;
 
+/// Danışana özel not aramasının (`danisan_notlarinda_ara`, "Diğer seanslar"
+/// paneli) en fazla sonucu. Genel aramanın `AZAMI_SONUC`'undan BİLİNÇLİ
+/// olarak büyük: arama tek bir danışanın resmî notlarıyla sınırlı, yani
+/// "toplu dışa aktarım" gerekçesi burada zayıf (danışanın bütün geçmişi
+/// zaten dosyasında), ve panel 2026-09-27'den beri `once` göndermediği
+/// için eski bir seans açıkken sonraki seansların eşleşmeleri de bu sınıra
+/// girer — 50'de, en yeni 50 eşleşmenin hepsi sonraki seanslardan gelince
+/// önceki eşleşmeler SESSİZCE kayboluyordu. 500 bir danışanın haftalık
+/// seanslarla on yıllık geçmişine yeter; aşılırsa `NotAramaYaniti::kirpildi`
+/// bunu söyler.
+pub const AZAMI_DANISAN_NOT_SONUCU: i64 = 500;
+
 /// Döndürülen bağlam parçasının en fazla karakter sayısı (kırpma işaretleri
 /// hariç).
 const PARCA_UZUNLUGU: usize = 80;
@@ -694,6 +706,22 @@ pub fn ara(
     Ok(AramaYaniti { sonuclar, kirpildi })
 }
 
+/// Danışana özel not aramasının yanıtı: sonuçlar ve kırpılma işareti
+/// (`AramaYaniti` ile aynı gerekçe — çıplak bir liste "bu kadar" ile "sınıra
+/// takıldı"yı ayırt edilemez kılar; arayüz terapisti ancak gerçek bir
+/// işaretle terimi daraltmaya yönlendirebilir).
+///
+/// `Debug` türetiliyor ve güvenli: öğeler `NotAramaSonucu`'nun ELLE yazılmış
+/// `Debug`'ından geçer, `kirpildi` bir `bool`.
+#[derive(Clone, Debug, Serialize)]
+pub struct NotAramaYaniti {
+    pub sonuclar: Vec<NotAramaSonucu>,
+    /// `AZAMI_DANISAN_NOT_SONUCU`'ndan fazla eşleşme var; dönen liste en
+    /// yenileri. Tahmin değil ölçüm: sorgu `LIMIT sinir + 1` ile çalışır,
+    /// fazladan gelen satır yalnızca bu bayrağı besler ve DÖNMEZ.
+    pub kirpildi: bool,
+}
+
 /// Danışana özel not aramasının bir satırı ("Diğer seanslar" paneli).
 /// `Debug` elle: `seans_zamani` ve `parca` `AramaSonucu` ile aynı gerekçeyle
 /// `<gizli>`.
@@ -722,12 +750,13 @@ impl std::fmt::Debug for NotAramaSonucu {
 /// `ara` ile aynı kurallar: yalnızca `progress_notes.duz_metin`, Türkçe
 /// katlama, `%`/`_` kaçırma, parça `parca_cikar`'dan; `ASGARI_SORGU` altı
 /// terim HİÇBİR tabloyu okumaz ve log yazmaz. Olmayan danışan `Bulunamadi`
-/// (log yok). Sonuçlar yeniden eskiye, en fazla `AZAMI_SONUC`. `once`
+/// (log yok). Sonuçlar yeniden eskiye, en fazla `AZAMI_DANISAN_NOT_SONUCU`
+/// (aşılırsa en yenileri ve `kirpildi`). `once`
 /// isteğe bağlı bir kesmedir (başka çağıranlar için korunuyor): verilirse
 /// yalnızca o andan KESİN önce başlamış seanslar.
 ///
 /// Denetim `Goruntuleme | arama | danisan:<client_id>` (`OturumBasi`,
-/// `ayrinti` yok): terim ve sonuç sayısı YAZILMAZ. Kimlik genel aramanın
+/// `ayrinti` yok): terim, sonuç sayısı ve kırpılma YAZILMAZ. Kimlik genel aramanın
 /// sabit `genel`'i değil, çünkü danışan terimden ÖNCE seçilir — kimliği
 /// yazmak terimi sızdırmaz, yazmamak farklı danışanların notlarında yapılan
 /// aramaları tek satırın arkasına saklardı.
@@ -737,10 +766,10 @@ pub fn danisan_notlarinda_ara(
     sorgu: &str,
     once: Option<&str>,
     cihaz: Cihaz,
-) -> Result<Vec<NotAramaSonucu>, DepoHatasi> {
+) -> Result<NotAramaYaniti, DepoHatasi> {
     let katli_sorgu = katla(sorgu.trim());
     if katli_sorgu.chars().count() < ASGARI_SORGU {
-        return Ok(Vec::new());
+        return Ok(NotAramaYaniti { sonuclar: Vec::new(), kirpildi: false });
     }
     let var: Option<i64> = conn
         .query_row("SELECT id FROM clients WHERE id = ?1", [client_id], |r| r.get(0))
@@ -749,9 +778,12 @@ pub fn danisan_notlarinda_ara(
         return Err(DepoHatasi::Bulunamadi);
     }
     let desen = like_deseni(&katli_sorgu);
+    // BIR FAZLASINI iste (`ara` ile ayni olcum): fazladan gelen satir
+    // yalnizca `kirpildi`yi besler, kullaniciya donmez.
+    let yoklama_siniri = AZAMI_DANISAN_NOT_SONUCU + 1;
     let mut stmt = conn.prepare(SORGU_DANISAN_NOT)?;
-    let sonuclar = stmt
-        .query_map(rusqlite::params![client_id, desen, once, AZAMI_SONUC], |r| {
+    let mut sonuclar = stmt
+        .query_map(rusqlite::params![client_id, desen, once, yoklama_siniri], |r| {
             let duz: String = r.get(2)?;
             Ok(NotAramaSonucu {
                 appointment_id: r.get(0)?,
@@ -761,6 +793,9 @@ pub fn danisan_notlarinda_ara(
         })?
         .collect::<Result<Vec<_>, _>>()?;
     drop(stmt);
+    // Sira yeniden eskiye: fazlalik en ESKI eslesmedir, o atilir.
+    let kirpildi = sonuclar.len() > AZAMI_DANISAN_NOT_SONUCU as usize;
+    sonuclar.truncate(AZAMI_DANISAN_NOT_SONUCU as usize);
     kaydet(
         conn,
         Eylem::Goruntuleme,
@@ -770,7 +805,7 @@ pub fn danisan_notlarinda_ara(
         None,
         LogHacmi::OturumBasi(BIRLESTIRME_PENCERESI_DK),
     )?;
-    Ok(sonuclar)
+    Ok(NotAramaYaniti { sonuclar, kirpildi })
 }
 
 #[cfg(test)]
@@ -2727,7 +2762,7 @@ mod tests {
         let r2 = randevu_ekle(&c, mehmet, "2026-09-08");
         not_kaydet(&c, r2, "serbest", "<p>BASKASININ kaygısı</p>", Cihaz::Masaustu).unwrap();
 
-        let bulunan = danisan_notlarinda_ara(&c, cid, "kaygı", None, Cihaz::Masaustu).unwrap();
+        let bulunan = danisan_notlarinda_ara(&c, cid, "kaygı", None, Cihaz::Masaustu).unwrap().sonuclar;
         // ARTI YÖN: bu danışanın resmî notu bulunur, parça düz metin.
         assert_eq!(bulunan.len(), 1, "yalnizca bu danisanin resmi notu");
         assert_eq!(bulunan[0].appointment_id, rid);
@@ -2736,7 +2771,7 @@ mod tests {
         // EKSİ YÖN: başka danışan ve özel not girmez.
         let metin: String = bulunan.iter().map(|s| s.parca.as_str()).collect();
         assert!(!metin.contains("BASKASININ") && !metin.contains("OZELKAYGI"), "{metin}");
-        assert!(danisan_notlarinda_ara(&c, cid, "OZELKAYGI", None, Cihaz::Masaustu).unwrap().is_empty());
+        assert!(danisan_notlarinda_ara(&c, cid, "OZELKAYGI", None, Cihaz::Masaustu).unwrap().sonuclar.is_empty());
     }
 
     #[test]
@@ -2752,6 +2787,7 @@ mod tests {
         let kimlikler = |once: Option<&str>| -> Vec<i64> {
             danisan_notlarinda_ara(&c, cid, "ortak", once, Cihaz::Masaustu)
                 .unwrap()
+                .sonuclar
                 .iter()
                 .map(|s| s.appointment_id)
                 .collect()
@@ -2760,14 +2796,52 @@ mod tests {
         assert_eq!(kimlikler(Some("2026-09-14T14:00")), vec![eski], "ayni baslangicli seans GIRMEZ");
     }
 
+    /// Sınırlar düz sayıyla pinlenir (bkz. `sonuc_sayisi_azami_siniri_asmaz`): danışana
+    /// özel arama 500, genel arama 50'de KALIR.
     #[test]
-    fn danisan_not_aramasi_en_fazla_elli_sonuc_dondurur() {
-        let (_d, c, cid, _rid) = kurulum();
-        for i in 0..55 {
-            let r = randevu_ekle(&c, cid, &gun(i));
+    fn danisan_not_aramasi_siniri_duz_sayiyla_pinlenir() {
+        assert_eq!(AZAMI_DANISAN_NOT_SONUCU, 500, "danisan not aramasi siniri 500'dur");
+        assert_eq!(AZAMI_SONUC, 50, "genel arama siniri degismez");
+    }
+
+    /// `gun`'un iki aylık penceresinden uzun: 2020-01-01'den itibaren `i`
+    /// gün sonrası (çakışmasız, sıralı).
+    fn uzun_gun(i: usize) -> String {
+        let d = time::Date::from_calendar_date(2020, time::Month::January, 1).unwrap()
+            + time::Duration::days(i as i64);
+        format!("{:04}-{:02}-{:02}", d.year(), u8::from(d.month()), d.day())
+    }
+
+    /// İnceleme (2026-09-27): "Diğer seanslar" `once` göndermeyince eski bir
+    /// seans açıkken sonraki seansların eşleşmeleri de sınıra girer; sınır
+    /// 50'yken önceki eşleşmeler SESSİZCE kayboluyordu. Tam sınırda (500)
+    /// kırpılma YOK; bir fazlasında VAR, liste yine 500 ve düşen en ESKİ
+    /// eşleşme (en yeniler kalır). Sınır bu testte DÜZ SAYI: sabit 50'ye
+    /// çekilirse liste 50 döner ve test kırılır.
+    #[test]
+    fn danisan_not_aramasi_bes_yuz_sonuc_dondurur_fazlasini_kirpildi_diye_bildirir() {
+        let (_d, c, cid, _rid) = kurulum(); // kurulumun randevusu notsuz: eşleşmez
+        let mut gunler = std::collections::HashMap::new();
+        for i in 1..=500 {
+            let r = randevu_ekle(&c, cid, &uzun_gun(i));
             not_kaydet(&c, r, "serbest", "<p>çok tekrar</p>", Cihaz::Masaustu).unwrap();
+            gunler.insert(r, i);
         }
-        assert_eq!(danisan_notlarinda_ara(&c, cid, "tekrar", None, Cihaz::Masaustu).unwrap().len(), 50);
+        let tam = danisan_notlarinda_ara(&c, cid, "tekrar", None, Cihaz::Masaustu).unwrap();
+        assert_eq!(tam.sonuclar.len(), 500);
+        assert!(!tam.kirpildi, "tam sinirdaki arama kirpilmis SAYILMAMALI");
+
+        // Bir fazlası: en ESKİ gün. Yeniden eskiye sıra korunur, o düşer.
+        let en_eski = randevu_ekle(&c, cid, &uzun_gun(0));
+        not_kaydet(&c, en_eski, "serbest", "<p>çok tekrar</p>", Cihaz::Masaustu).unwrap();
+        let fazla = danisan_notlarinda_ara(&c, cid, "tekrar", None, Cihaz::Masaustu).unwrap();
+        assert_eq!(fazla.sonuclar.len(), 500);
+        assert!(fazla.kirpildi, "sinirin bir fazlasi kirpilma olarak bildirilmeli");
+        let sira: Vec<usize> = fazla.sonuclar.iter().map(|s| gunler[&s.appointment_id]).collect();
+        assert_eq!(sira.first(), Some(&500), "en yeni en ustte");
+        assert_eq!(sira.last(), Some(&1), "en eski (gun 0) dusmeli, gun 1 kalmali");
+        assert!(sira.windows(2).all(|w| w[0] > w[1]), "yeniden eskiye");
+        assert!(fazla.sonuclar.iter().all(|s| s.appointment_id != en_eski));
     }
 
     #[test]
@@ -2776,10 +2850,11 @@ mod tests {
         not_kaydet(&c, rid, "serbest", "<p>a b</p>", Cihaz::Masaustu).unwrap();
         let once = arama_log_sayisi(&c);
         for kisa in ["", " ", "a", " ş "] {
-            assert!(danisan_notlarinda_ara(&c, cid, kisa, None, Cihaz::Masaustu).unwrap().is_empty());
+            let yanit = danisan_notlarinda_ara(&c, cid, kisa, None, Cihaz::Masaustu).unwrap();
+            assert!(yanit.sonuclar.is_empty() && !yanit.kirpildi);
         }
         // Kısa terimde olmayan danışan bile hata değil: hiçbir tablo okunmaz.
-        assert!(danisan_notlarinda_ara(&c, 999, "a", None, Cihaz::Masaustu).unwrap().is_empty());
+        assert!(danisan_notlarinda_ara(&c, 999, "a", None, Cihaz::Masaustu).unwrap().sonuclar.is_empty());
         assert_eq!(arama_log_sayisi(&c), once);
     }
 
@@ -2798,7 +2873,7 @@ mod tests {
     fn danisan_not_aramasi_terimi_ve_sonuc_sayisini_loga_yazmaz_danisani_yazar() {
         let (_d, c, cid, rid) = kurulum();
         not_kaydet(&c, rid, "serbest", "<p>COKGIZLITERIM notu</p>", Cihaz::Masaustu).unwrap();
-        assert_eq!(danisan_notlarinda_ara(&c, cid, "COKGIZLITERIM", None, Cihaz::Masaustu).unwrap().len(), 1);
+        assert_eq!(danisan_notlarinda_ara(&c, cid, "COKGIZLITERIM", None, Cihaz::Masaustu).unwrap().sonuclar.len(), 1);
         let kayitlar = crate::store::audit::son_kayitlar(&c, 100).unwrap();
         let arama: Vec<_> = kayitlar.iter().filter(|k| k.varlik == VARLIK_ARAMA).collect();
         assert_eq!(arama.len(), 1);
@@ -2830,7 +2905,7 @@ mod tests {
             );
             not_kaydet(&c, r, "dap", &icerik, Cihaz::Masaustu).unwrap();
             for sorgu in [format!("sqlkatla{ascii}z"), format!("rustkatla{harf}z")] {
-                let bulunan = danisan_notlarinda_ara(&c, cid, &sorgu, None, Cihaz::Masaustu).unwrap();
+                let bulunan = danisan_notlarinda_ara(&c, cid, &sorgu, None, Cihaz::Masaustu).unwrap().sonuclar;
                 assert!(
                     bulunan.iter().any(|s| s.parca.contains(&format!("Seans{sira:02}"))),
                     "'{harf}' <-> '{ascii}': '{sorgu}' Seans{sira:02} notunu bulmali"

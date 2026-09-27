@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { danisanApi, notApi, YetkisizHata, type DanisanSeansi, type NotAramaSonucu, type SeansNotu } from '../api'
+import { danisanApi, notApi, YetkisizHata, type DanisanSeansi, type NotAramaYaniti, type SeansNotu } from '../api'
 import { NotOkuma } from '../not/NotOkuma'
 import { katla } from '../katla'
 import { ASGARI_VURGU, vurguParcalari } from '../not/vurgu'
@@ -36,6 +36,11 @@ import { okumaPenceresiniAc } from './okumaPenceresi'
  *   Kesme (`once`) GÖNDERİLMEZ: sonraki seansların notları da aranır; açık
  *   seansın kendi notu sonuçlardan istemcide atılır. İki harften kısa terim
  *   istek atmaz. Terim hiçbir yere yazılmaz (yalnızca o sorgunun adresinde).
+ *   Sunucu en fazla 500 sonuç döndürür; fazlası varsa (`kirpildi`, ölçüm)
+ *   listenin altında "Yalnızca en yeni N eşleşme gösteriliyor…" yazar —
+ *   `once` gitmeyince sonraki seansların eşleşmeleri de bu sınıra girer ve
+ *   söylenmeseydi işaretin altındaki boşluk "önceki seanslarda geçmiyor"
+ *   diye okunurdu (inceleme 2026-09-27).
  * - Geniş okuma (N7): tek tık sütunu yarıya büyütür (`onGenislikDegisti`),
  *   notu editörle aynı tipografiyle salt okunur gösterir, aranan terimi
  *   vurgular ve ilkine kaydırır. Not YALNIZCA açılınca istenir; notu
@@ -122,7 +127,7 @@ export function DigerSeanslar({
 }: Props) {
   const [kendiListesi, setKendiListesi] = useState<KendiListesi | null>(null)
   const [terim, setTerim] = useState('')
-  const [arama, setArama] = useState<{ terim: string; sonuclar: NotAramaSonucu[] } | null>(null)
+  const [arama, setArama] = useState<({ terim: string } & NotAramaYaniti) | null>(null)
   const [aramaHatasi, setAramaHatasi] = useState<{ terim: string; mesaj: string } | null>(null)
   const [acik, setAcik] = useState<{ id: number; baslangic: string } | null>(null)
   const [acikNot, setAcikNot] = useState<AcikNot | null>(null)
@@ -162,9 +167,9 @@ export function DigerSeanslar({
       // yanında (ya da eski sonuçlar hatanın altında) kalırdı.
       // Kesme YOK: sonraki seansların notları da aranır (bkz. modül başlığı).
       notApi.notAra(danisanId, kirpilmis).then(
-        (sonuclar) => {
+        ({ sonuclar, kirpildi }) => {
           if (iptal) return
-          setArama({ terim: kirpilmis, sonuclar })
+          setArama({ terim: kirpilmis, sonuclar, kirpildi })
           setAramaHatasi(null)
         },
         (e: unknown) => {
@@ -403,7 +408,7 @@ export function DigerSeanslar({
               ? 'Bu danışanın başka seansı yok.'
               // Elenenlerin hepsi notsuz gelecek seans: "başka seansı yok"
               // demek o seanslar varken yanlış olurdu.
-              : 'Başka geçmiş seans yok; ileri tarihli seansların notu henüz yazılmamış.'}
+              : 'Geçmişte başka seans yok; yaklaşan seanslara henüz not yazılmadı.'}
         </p>
       ) : null}
       <ul className="mt-2 min-h-0 flex-1 space-y-1 overflow-auto">
@@ -420,6 +425,13 @@ export function DigerSeanslar({
         )}
         {oncekiler.map(satirOgesi)}
       </ul>
+      {gecerliArama?.kirpildi === true && satirlar.length > 0 && (
+        // Listenin DIŞINDA: liste kendi içinde kayar, uyarı hep görünür.
+        // Sayı ekrandaki satırlar (açık seansın atılan eşleşmesi hariç).
+        <p className="mt-2 text-xs text-slate-600">
+          {`Yalnızca en yeni ${satirlar.length} eşleşme gösteriliyor; daha eskileri için terimi daraltın.`}
+        </p>
+      )}
       {menuOgesi}
     </section>
   )

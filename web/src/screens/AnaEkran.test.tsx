@@ -259,11 +259,14 @@ function digerSeanslarYaniti(yol: string): Response | null {
     // Sunucu `duz_metin`'de arar (preflight F23): etiket adları ("strong")
     // eşleşmemeli, bu yüzden etiketler atılır.
     const duzMetin = (html: string) => html.replace(/<[^>]*>/g, ' ').toLocaleLowerCase('tr')
-    return jsonYanit(
-      sunucuGecmisi
+    // Sunucu biçimi `{ sonuclar, kirpildi }` (`NotAramaYaniti`); taklit
+    // hiçbir zaman 500'e varmaz.
+    return jsonYanit({
+      sonuclar: sunucuGecmisi
         .filter((n) => n.client_id === Number(ara[1]) && n.seans_zamani < once && duzMetin(n.icerik).includes(terim))
         .map((n) => ({ appointment_id: n.appointment_id, seans_zamani: n.seans_zamani, parca: onizlemeTaklidi(n.icerik) })),
-    )
+      kirpildi: false,
+    })
   }
   return null
 }

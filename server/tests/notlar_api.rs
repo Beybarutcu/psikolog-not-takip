@@ -1125,7 +1125,10 @@ async fn danisan_not_aramasi_bu_danisanin_onceki_resmi_notlarini_dondurur() {
     )
     .await;
     assert_eq!(kod, StatusCode::OK);
-    let liste = sonuc.as_array().expect("dizi");
+    // Yanıt `{ sonuclar, kirpildi }` (2026-09-27 incelemesi: sınır 500 ve
+    // kırpılma işareti; eskiden çıplak dizi).
+    assert_eq!(sonuc["kirpildi"], json!(false), "{sonuc}");
+    let liste = sonuc["sonuclar"].as_array().expect("sonuclar dizisi");
     assert_eq!(liste.len(), 1, "{sonuc}");
     assert_eq!(liste[0]["appointment_id"], json!(eski));
     assert_eq!(liste[0]["seans_zamani"], json!("2026-09-01T14:00"));
@@ -1138,10 +1141,11 @@ async fn danisan_not_aramasi_bu_danisanin_onceki_resmi_notlarini_dondurur() {
     // "Diğer seanslar" paneli (2026-09-27'den beri) tam bu biçimi, kesmesiz
     // aramayı kullanır; açık seansın kendi notunu istemci atar.
     let (_, hepsi) = cagir(&s, "GET", &format!("/api/danisanlar/{ayse}/not-ara?q=kaygi"), None).await;
-    assert_eq!(hepsi.as_array().unwrap().len(), 3, "{hepsi}");
+    assert_eq!(hepsi["sonuclar"].as_array().unwrap().len(), 3, "{hepsi}");
+    assert_eq!(hepsi["kirpildi"], json!(false), "{hepsi}");
     // Kısa terim boş liste (400 değil), olmayan danışan 404.
     let (kod, kisa) = cagir(&s, "GET", &format!("/api/danisanlar/{ayse}/not-ara?q=k"), None).await;
-    assert_eq!((kod, kisa), (StatusCode::OK, json!([])));
+    assert_eq!((kod, kisa), (StatusCode::OK, json!({ "sonuclar": [], "kirpildi": false })));
     let (kod, _) = cagir(&s, "GET", "/api/danisanlar/9999/not-ara?q=kaygi", None).await;
     assert_eq!(kod, StatusCode::NOT_FOUND);
     // Terim loga girmedi.

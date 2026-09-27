@@ -494,6 +494,42 @@ test.describe('arac cubugu notu ortmez; uzun not editorun icinde kayar', () => {
       await page.mouse.wheel(0, -400)
       await page.evaluate(() => (window as unknown as { tekerlekIslendi: Promise<void> }).tekerlekIslendi)
       expect(await sayfaKaymasi(page), 'notun başında yukarı tekerlek sayfayı kaydırdı').toBe(kaydirma)
+
+      // (f) İnceleme M2: kısa pencerede, randevu formu açıkken sayfa
+      // editörün ÜSTÜNÜ geçecek kadar kayabilir (yazı alanının asgarisi +
+      // çubuk pencereden uzun). Yapışkan bir çubuk (şablonun kuralı) orada
+      // pencerenin tepesine yapışıp yazının üst satırlarını örterdi; akıştaki
+      // çubuk sayfayla yukarı çıkar. 1024x680 / 1200x760'ta form açıkken
+      // sayfanın en altında bile çubuk ekranda kalıyor (ölçüldü: 251 px):
+      // yapışkanlık orada görünmez, bu yüzden pencere 360 px'e kısaltılır.
+      await page.setViewportSize({ width: boyut.width, height: 360 })
+      await bolum.getByRole('button', { name: 'Randevuyu düzenle', exact: true }).click()
+      await expect(page.locator('#seans-randevu-formu')).toBeVisible()
+      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.scrollHeight - window.innerHeight - window.scrollY))
+        .toBeLessThan(1)
+      const editorKoku = (await alan.locator('xpath=ancestor::div[contains(@class, "not-editoru")][1]').boundingBox())!
+      const yk = (await alan.locator('xpath=..').boundingBox())!
+      expect(editorKoku.y, 'ön koşul: sayfa editörün üstünü geçmedi').toBeLessThan(0)
+      expect(yk.y + yk.height, 'ön koşul: yazı alanı ekranda değil').toBeGreaterThan(80)
+      const kc = (await cubuk.boundingBox())!
+      expect(kc.y + kc.height, 'kaydırılmış sayfada araç çubuğu yazı alanına biniyor').toBeLessThanOrEqual(yk.y + 0.5)
+      const tepedeki = await page.evaluate(
+        ([x, y]) => {
+          const e = document.elementFromPoint(x, y)
+          if (e === null) return 'hiçbir şey'
+          if (e.closest('[role="toolbar"]') !== null) return 'araç çubuğu'
+          return e.closest('.ProseMirror') !== null ? 'not' : e.tagName
+        },
+        [yk.x + 24, Math.max(yk.y, 0) + 4],
+      )
+      expect(tepedeki, 'kaydırılmış sayfada yazı alanının tepesinde not içeriği yok').toBe('not')
+      await bolum.getByRole('button', { name: 'Kapat', exact: true }).click()
+      await expect(page.locator('#seans-randevu-formu')).toHaveCount(0)
+      await page.setViewportSize(boyut)
+      await page.evaluate((y) => window.scrollTo(0, y), kaydirma)
+      await expect.poll(() => sayfaKaymasi(page)).toBe(kaydirma)
       const kaydedildi = page.getByRole('status').filter({ hasText: /^Kaydedildi \d{2}:\d{2}$/ })
       await expect(kaydedildi).toBeVisible()
 

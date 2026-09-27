@@ -264,12 +264,14 @@ test.describe('editor arac cubugu pencereye sigar', () => {
       await tasmaYok(page, `${boyut.width}x${boyut.height} danışan dosyası`)
       await bulPaneliCubugunAltinda(page, `${boyut.width}x${boyut.height} danışan dosyası`)
 
-      // Nota yapıştırılmış boşluksuz uzun bir bağlantı: yüzey onu satır
-      // sonunda böler (`overflow-wrap: break-word`), ama bu kural içeriğin
-      // ASGARİ genişliğini küçültmez. Düz `1fr` izi (iki ızgaranın ikisi de)
-      // o asgariye kadar büyüyüp belgeyi taşırırdı; `minmax(0,1fr)` izi
-      // pencerede tutar. (Kırılan araç çubuğu artık izi genişletmiyor; bu
-      // adım olmadan `1fr`e dönüş ölçülemezdi.)
+      // Nota yapıştırılmış boşluksuz uzun bir bağlantı belgeyi yatay
+      // taşırmaz: yüzey onu satır sonunda böler (`overflow-wrap: anywhere`,
+      // `not-yuzeyi.scss`) ve `anywhere` içeriğin ASGARİ genişliğini de
+      // küçültür, yani bağlantı izi genişletmez. Bu adım düz `1fr` ize
+      // dönüşü YAKALAMAZ (ölçüldü: `grid-cols-[16rem_1fr]` ile üç boy da
+      // geçiyor). O dönüşü `e2e/uzun-metin.spec.ts`'teki etiket çipi yakalar:
+      // tek satırlık 40 geniş büyük harf izin asgarisini sütundan büyütür
+      // ("dosya, Seanslar: belge yatay taşıyor").
       const alan = page.getByLabel('Seans notu', { exact: true })
       const uzunBaglanti = `https://ornek.invalid/${'a'.repeat(300)}`
       await alan.fill(uzunBaglanti)
@@ -558,7 +560,7 @@ test.describe('arac cubugu notu ortmez; uzun not editorun icinde kayar', () => {
       expect(sutun.y + sutun.height, 'not sütunu ekranın kalanını doldurmuyor').toBeGreaterThan(boyut.height - 40)
       // 1200x760'da sütunun tamamı (etiket ve durum satırı dahil) sayfa
       // kaymadan ekranda. 1024x680'de üç satırlık araç çubuğu + 16rem
-      // asgari yazı alanı sığmaz: sayfa ~50 px kayar (bkz. `DanisanDosyasi`).
+      // asgari yazı alanı sığmaz: sayfa ~54 px kayar (ölçüldü; bkz. `DanisanDosyasi`).
       if (boyut.width >= 1200) {
         await expect(page.getByRole('group', { name: 'Seans durumu', exact: true })).toBeInViewport({ ratio: 1 })
         await expect(page.getByLabel('Etiket ekle', { exact: true })).toBeInViewport({ ratio: 1 })

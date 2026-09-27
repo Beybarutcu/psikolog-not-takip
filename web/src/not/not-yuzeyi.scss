@@ -76,6 +76,25 @@
   background-color: #fcd34d;
 }
 
+// Bul paneli açıkken yazı alanı (`BicimliYuzey`, inceleme I1): panelin
+// örttüğü üst şerit kaydırma hedefi sayılmaz, bulunan eşleşme panelin
+// ALTINA gelir. `--bul-paneli-alti` panelin ölçülen alt kenarıdır (yazı
+// alanının üstünden; ölçülmeden önce eski sabit 15rem), üstüne 0.25rem
+// nefes payı. İki sınır, yüzdeler kaydırma kabının görünen boyuna göre:
+// - Üst pay en fazla `100% - 1.5rem`: yazı alanı çok kısaysa (panel onu
+//   neredeyse tamamen örterse) yine de bir satırlık (16 px yazı, satır
+//   kutusu ~21 px) şerit kalır.
+// - Alt pay (eşleşme kenara yapışmasın) 1rem, ama şeridi bir satırın altına
+//   indirecek kadar değil: danışan dosyasında 1024x680'de yazı alanı 256 px,
+//   panel ~225 px örtüyor; şerit ancak ~27 px (ölçüldü).
+// Şerit bir satırdan dar kalsaydı `nearest`, yukarıdan gelen eşleşmeyi
+// şeridin ALT kenarına hizalar ve üst kısmı panelin altında kalırdı.
+.not-yazi-alani.not-bul-acik {
+  --bul-paneli-payi: calc(var(--bul-paneli-alti, 15rem) + 0.25rem);
+  scroll-padding-top: min(var(--bul-paneli-payi), calc(100% - 1.5rem));
+  scroll-padding-bottom: clamp(0px, calc(100% - var(--bul-paneli-payi) - 1.5rem), 1rem);
+}
+
 // Kapsayıcısı araç çubuğunun altındaki yüksekliksiz çapa (`BicimliYuzey`):
 // çubuk kaç satıra kırılırsa kırılsın panel onun altından açılır.
 .not-bul-paneli {

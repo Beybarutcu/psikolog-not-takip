@@ -1,5 +1,5 @@
 import { EditorContent, EditorContext, useEditor } from '@tiptap/react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { SearchAndReplace } from '@/components/tiptap-ui/search-and-replace'
 import { AracCubugu } from './AracCubugu'
 import { notUzantilari } from './uzantilar'
@@ -113,6 +113,36 @@ export function BicimliYuzey({ html, onChange, etiket, editable = true, vurgu = 
     editor?.commands.vurguAyarla(vurgu)
   }, [editor, vurgu])
 
+  // Bul paneli açıkken panelin yazı alanında örttüğü şeridin boyu (panelin
+  // alt kenarı − yazı alanının üst kenarı) yazı alanında
+  // `--bul-paneli-alti` değişkenine yazılır; `not-yuzeyi.scss` üst kaydırma
+  // payını ondan kurar (bkz. aşağıdaki çapa). Ölçülür, sabit DEĞİL: panelin
+  // boyu yazı tipine göre değişir (Windows/Chromium'da 221 px; macOS'ta
+  // farklı olabilir) ve sabit bir pay (eski `scroll-pt-60`, 240 px) panelden
+  // büyük olup görünen şeridi daraltıyordu (inceleme I1). Panel ile yazı
+  // alanı birlikte kaydığından fark kaydırmayla değişmez; yalnızca panelin
+  // boyu değişince yeniden ölçülür. Değişken DOM'a doğrudan yazılır:
+  // `EditorContent`'e `style` verilmiyor, React onu ezmez; ölçüm yeniden
+  // çizim gerektirmez.
+  const panelRef = useRef<HTMLDivElement>(null)
+  const yaziAlaniRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const panel = panelRef.current
+    const alan = yaziAlaniRef.current
+    if (!bulAcik || panel === null || alan === null) return
+    const olc = () => {
+      const alt = Math.ceil(panel.getBoundingClientRect().bottom - alan.getBoundingClientRect().top)
+      if (alt > 0) alan.style.setProperty('--bul-paneli-alti', `${alt}px`)
+    }
+    olc()
+    const gozcu = new ResizeObserver(olc)
+    gozcu.observe(panel)
+    return () => {
+      gozcu.disconnect()
+      alan.style.removeProperty('--bul-paneli-alti')
+    }
+  }, [bulAcik])
+
   return (
     <EditorContext.Provider value={{ editor }}>
       {/* # Araç çubuğu notu ÖRTMEZ: çubuk üstte, not kendi kabında kayar
@@ -161,12 +191,18 @@ export function BicimliYuzey({ html, onChange, etiket, editable = true, vurgu = 
           // oynatıyordu (ölçüldü: 1200x760 not sayfasında 92 px yukarı; etiket
           // satırı ekrandan çıkıyordu). `nearest` eşleşme yazı alanının
           // içine girince durur; yazı alanı ekranda olduğundan pencere
-          // kıpırdamaz. Panel yazı alanının sağ üstünü örttüğü için (304x221
-          // px, ölçüldü) panel açıkken yazı alanının üst 15rem'i kaydırma
-          // hedefi sayılmaz (`scroll-pt-60`): yukarıdaki eşleşme panelin
-          // ALTINA gelir.
+          // kıpırdamaz. Kaydırılan eşleşmenin KENDİSİ, paragrafı değil
+          // (`scrollCurrentResultIntoView`, inceleme I1).
+          //
+          // Panel yazı alanının sağ üstünü örter (304x221 px, ölçüldü): panel
+          // açıkken (`not-bul-acik`) yazı alanının panelin altına kadarki
+          // üst şeridi kaydırma hedefi sayılmaz, yani eşleşme panelin ALTINA
+          // gelir. Pay panelin ÖLÇÜLEN alt kenarıdır (yukarıdaki efekt,
+          // `--bul-paneli-alti`) ve yazı alanı çok kısaysa en az bir satırlık
+          // şerit bırakacak kadar kısılır (`not-yuzeyi.scss`).
           <div className="relative">
             <SearchAndReplace
+              ref={panelRef}
               className="not-bul-paneli"
               open={bulAcik}
               onOpen={() => setBulAcik(true)}
@@ -176,11 +212,13 @@ export function BicimliYuzey({ html, onChange, etiket, editable = true, vurgu = 
           </div>
         )}
         <EditorContent
+          ref={yaziAlaniRef}
           editor={editor}
           role="presentation"
           data-testid="not-yazi-alani"
           className={
-            'flex min-h-64 flex-1 flex-col overflow-y-auto contain-size' + (bulAcik ? ' scroll-pt-60' : '')
+            'not-yazi-alani flex min-h-64 flex-1 flex-col overflow-y-auto contain-size' +
+            (bulAcik ? ' not-bul-acik' : '')
           }
         />
       </div>

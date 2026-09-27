@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import { act, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { Editor } from '@tiptap/react'
 import { describe, expect, it, vi } from 'vitest'
 import { BicimliYuzey } from './BicimliYuzey'
@@ -214,15 +214,62 @@ describe('BicimliYuzey (gerçek TipTap)', () => {
     expect(editor.view.someProp('scrollMargin')).toBe(16)
   })
 
-  it('bul paneli açıkken yazı alanının üst 15rem\'i kaydırma hedefi sayılmaz (eşleşme panelin altına gelir)', () => {
+  // İnceleme I1: pay sabit değil (eski `scroll-pt-60`, 240 px, panelden
+  // büyüktü), panelin ÖLÇÜLEN alt kenarı. jsdom yerleşim ölçmez: kutular
+  // taklit edilir; eşleşmenin gerçekten panelin altına geldiği
+  // `e2e/yerlesim.spec.ts` > "bul paneli"nde ölçülür.
+  it('bul paneli açıkken yazı alanı panelin ölçülen alt kenarını üst kaydırma payı alır; kapanınca kalkar', () => {
     render(<BicimliYuzey html="<p>metin</p>" onChange={vi.fn()} etiket="Seans notu" />)
     const alan = screen.getByTestId('not-yazi-alani')
-    expect(alan.classList.contains('scroll-pt-60')).toBe(false)
-    act(() => {
-      within(screen.getByRole('toolbar', { name: 'Biçim araçları' })).getByRole('button', { name: 'Bul ve değiştir' }).click()
+    const bulDugmesi = within(screen.getByRole('toolbar', { name: 'Biçim araçları' })).getByRole('button', { name: 'Bul ve değiştir' })
+    expect(alan.classList.contains('not-yazi-alani')).toBe(true)
+    expect(alan.classList.contains('not-bul-acik')).toBe(false)
+    const kutu = vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      const k = (top: number, bottom: number) => ({ top, bottom, left: 0, right: 300, x: 0, y: top, width: 300, height: bottom - top, toJSON: () => ({}) })
+      if (this.getAttribute('role') === 'dialog') return k(100, 321.3)
+      if (this === alan) return k(96, 352)
+      return k(0, 0)
     })
-    expect(screen.getByRole('dialog', { name: 'Bul ve değiştir' })).toBeDefined()
-    expect(alan.classList.contains('scroll-pt-60')).toBe(true)
+    try {
+      act(() => bulDugmesi.click())
+      expect(screen.getByRole('dialog', { name: 'Bul ve değiştir' })).toBeDefined()
+      expect(alan.classList.contains('not-bul-acik')).toBe(true)
+      // 321,3 − 96 = 225,3 → yukarı yuvarlanır (pay panelden küçük olamaz).
+      expect(alan.style.getPropertyValue('--bul-paneli-alti')).toBe('226px')
+      act(() => bulDugmesi.click())
+      expect(alan.classList.contains('not-bul-acik')).toBe(false)
+      expect(alan.style.getPropertyValue('--bul-paneli-alti')).toBe('')
+    } finally {
+      kutu.mockRestore()
+    }
+    // Kural diskten (Vitest CSS işlemez): üst pay ölçülen kenar + nefes payı,
+    // ama en az bir satırlık şerit bırakır; alt pay şeridi bir satırın
+    // altına indirmez.
+    const scss = readFileSync(path.join(process.cwd(), 'src/not/not-yuzeyi.scss'), 'utf8')
+    const kural = /\.not-yazi-alani\.not-bul-acik\s*\{([^}]*)\}/.exec(scss)
+    expect(kural, 'bul paneli kaydırma payı kuralı yok').not.toBeNull()
+    expect(kural![1]).toMatch(/--bul-paneli-payi:\s*calc\(var\(--bul-paneli-alti, 15rem\) \+ 0\.25rem\);/)
+    expect(kural![1]).toMatch(/scroll-padding-top:\s*min\(var\(--bul-paneli-payi\), calc\(100% - 1\.5rem\)\);/)
+    expect(kural![1]).toMatch(/scroll-padding-bottom:\s*clamp\(0px, calc\(100% - var\(--bul-paneli-payi\) - 1\.5rem\), 1rem\);/)
+  })
+
+  it('bul panelinde bulunan eşleşmenin KENDİSİ görünür alana kaydırılır, paragrafı değil (inceleme I1)', async () => {
+    const kaydir = vi.spyOn(Element.prototype, 'scrollIntoView')
+    try {
+      render(<BicimliYuzey html={`<p>${'uzun bir paragraf '.repeat(60)}HEDEF sonu</p>`} onChange={vi.fn()} etiket="Seans notu" />)
+      act(() => {
+        within(screen.getByRole('toolbar', { name: 'Biçim araçları' })).getByRole('button', { name: 'Bul ve değiştir' }).click()
+      })
+      const panel = screen.getByRole('dialog', { name: 'Bul ve değiştir' })
+      fireEvent.change(within(panel).getByLabelText('Bul'), { target: { value: 'hedef' } })
+      await waitFor(() => expect(kaydir).toHaveBeenCalled())
+      const hedef = kaydir.mock.contexts.at(-1) as Element
+      expect(hedef.classList.contains('find-and-replace-result-current')).toBe(true)
+      expect(hedef.textContent).toBe('HEDEF')
+      expect(kaydir.mock.calls.at(-1)?.[0]).toMatchObject({ block: 'nearest' })
+    } finally {
+      kaydir.mockRestore()
+    }
   })
 
   it('şablonun yapışkan araç çubuğu kuralı yüzeyde ezilir: static, küçülmez; asgari yükseklik ProseMirror\'da değil', () => {

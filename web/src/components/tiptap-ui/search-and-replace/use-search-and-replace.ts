@@ -161,11 +161,21 @@ function navigateSearchResult({
 }
 
 /**
- * Scrolls the current result into view without stealing focus. The element
- * is resolved from the result's document position rather than the highlight
- * decoration, so it works regardless of how decorations are rendered.
- * Skipped while the editor itself has focus so typing inside the document
- * never causes scroll jumps, and honors `prefers-reduced-motion`.
+ * Güncel sonucu odağı çalmadan görünür alana kaydırır. Kaydırılan öğe
+ * sonucun KENDİSİ: güncel sonuç süslemesi (`SEARCH_RESULT_CURRENT_CLASS`).
+ * Süsleme yoksa (başka bir süsleme biçimi) sonucun belge konumundaki öğeye
+ * düşülür.
+ *
+ * Eskiden her zaman konumdaki öğe, yani sonucun bütün PARAGRAFI
+ * kaydırılıyordu (inceleme I1, 2026-09-27). `block: 'nearest'` görünen
+ * şeritten uzun bir paragrafın yakın kenarını hizalar: aşağıdaki
+ * paragrafın başını, yukarıdakinin sonunu. Bul paneli açıkken yazı
+ * alanının üstü kaydırma hedefi sayılmadığından şerit dar
+ * (`BicimliYuzey`) ve birkaç satırlık bir paragrafta eşleşme şeridin
+ * dışında kalıyordu (ölçen test: `e2e/yerlesim.spec.ts` > "bul paneli").
+ *
+ * Editörün kendisi odaktayken atlanır (yazarken sıçrama olmaz);
+ * `prefers-reduced-motion`'a uyar.
  */
 export function scrollCurrentResultIntoView(
   editor: Editor | null,
@@ -183,12 +193,16 @@ export function scrollCurrentResultIntoView(
   const editorDom = editor.view.dom
   if (editorDom.contains(document.activeElement)) return
 
-  let target: HTMLElement | null = null
-  try {
-    const { node } = editor.view.domAtPos(result.from)
-    target = node instanceof HTMLElement ? node : node.parentElement
-  } catch {
-    return
+  let target: HTMLElement | null = editorDom.querySelector<HTMLElement>(
+    `.${SEARCH_RESULT_CURRENT_CLASS}`
+  )
+  if (target === null) {
+    try {
+      const { node } = editor.view.domAtPos(result.from)
+      target = node instanceof HTMLElement ? node : node.parentElement
+    } catch {
+      return
+    }
   }
 
   if (!target || typeof target.scrollIntoView !== "function") return

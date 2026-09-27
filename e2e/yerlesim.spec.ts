@@ -279,6 +279,21 @@ test.describe('editor arac cubugu pencereye sigar', () => {
   }
 })
 
+/**
+ * Nota HTML yapıştırır: gerçek bir `paste` olayı (bkz.
+ * `editor.spec.ts::htmlYapistir`). `son`: yapıştırılanın son metni (bariyer).
+ */
+async function notaYapistir(alan: Locator, html: string, son: string) {
+  await alan.click()
+  await alan.evaluate((el, html) => {
+    const veri = new DataTransfer()
+    veri.setData('text/html', html)
+    veri.setData('text/plain', html.replace(/<[^>]*>/g, '\n'))
+    el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: veri, bubbles: true, cancelable: true }))
+  }, html)
+  await expect(alan).toContainText(son)
+}
+
 // Kullanıcı isteği (2026-09-27, "araç çubuğu örtmesin notu"): yüzey
 // içeriğiyle uzuyor ve SAYFA kayıyordu; şablonun yapışkan (`position:
 // sticky; top: 0; z-index: 50`), opak araç çubuğu dar sütunda iki-üç satıra
@@ -298,17 +313,10 @@ test.describe('arac cubugu notu ortmez; uzun not editorun icinde kayar', () => {
   /** (c)'de yazılan işaretin sırası (her adımın işareti ayrı). */
   let sonaYazma = 0
 
-  /** 60 paragraflık not: gerçek bir `paste` olayı (bkz. `editor.spec.ts::htmlYapistir`). */
+  /** 60 paragraflık not (bkz. `notaYapistir`). */
   async function uzunNotYapistir(alan: Locator) {
     const html = Array.from({ length: 60 }, (_, i) => `<p>Paragraf ${i + 1}: seans notunun uzun bir satırı.</p>`).join('')
-    await alan.click()
-    await alan.evaluate((el, html) => {
-      const veri = new DataTransfer()
-      veri.setData('text/html', html)
-      veri.setData('text/plain', html.replace(/<[^>]*>/g, '\n'))
-      el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: veri, bubbles: true, cancelable: true }))
-    }, html)
-    await expect(alan).toContainText('Paragraf 60:')
+    await notaYapistir(alan, html, 'Paragraf 60:')
   }
 
   /**
@@ -496,6 +504,127 @@ test.describe('arac cubugu notu ortmez; uzun not editorun icinde kayar', () => {
         await expect(page.getByRole('group', { name: 'Seans durumu', exact: true })).toBeInViewport({ ratio: 1 })
         await expect(page.getByLabel('Etiket ekle', { exact: true })).toBeInViewport({ ratio: 1 })
       }
+    })
+  }
+})
+
+// İnceleme I1 (2026-09-27): bul panelinde bulunan eşleşme GÖRÜNÜR. Eskiden
+// eşleşmenin PARAGRAFI `block: 'nearest'` ile kaydırılıyordu ve panel
+// açıkken yazı alanının üst 15rem'i (`scroll-pt-60`, panelden büyük) kaydırma
+// hedefi sayılmadığından görünen şerit dardı (not sayfasında 1024x680'de
+// 80 px, danışan dosyasında ~16 px). Görünen şeritten uzun bir paragrafta
+// `nearest` paragrafın YAKIN kenarını hizalar: aşağıdaki eşleşme paragrafın
+// sonundaysa şeridin altında, yukarıdaki eşleşme paragrafın başındaysa
+// şeridin üstünde (panelin altında) kalıyordu. İki yön, iki sayfa, iki boy:
+// güncel eşleşmenin kutusu görünen yazı alanının (yazı alanı ∩ pencere)
+// içinde ve bul panelinin alt kenarının altında; sayfa kaymaz.
+test.describe('bul paneli: bulunan eslesme yazi alaninda gorunur, panelin altinda kalmaz', () => {
+  test.use({ reducedMotion: 'reduce' })
+
+  const CUMLE = 'Danışan bu hafta uyku düzeninin bozulduğunu ve işte dikkatini toplamakta zorlandığını anlattı.'
+  const kisalar = (bas: number) => Array.from({ length: 20 }, (_, i) => `<p>Kısa paragraf ${bas + i}.</p>`).join('')
+  /**
+   * Kısa paragraflar arasında iki uzun (en az altı satırlık) paragraf.
+   * ASAGIHEDEF birincinin SONUNDA (not baştayken aşağıda), YUKARIHEDEF
+   * ikincinin BAŞINDA (not sondayken yukarıda): eski kodun en kötü durumu.
+   */
+  const BELGE =
+    kisalar(1) +
+    `<p>${Array(12).fill(CUMLE).join(' ')} ASAGIHEDEF</p>` +
+    kisalar(21) +
+    `<p>YUKARIHEDEF ${Array(12).fill(CUMLE).join(' ')}</p>` +
+    kisalar(41)
+
+  /** Güncel eşleşmenin görünürlük sorunları (boş liste = görünür). */
+  function sorunlar(alan: Locator): Promise<string[]> {
+    return alan.evaluate((el) => {
+      const g = el.querySelector('.find-and-replace-result-current')
+      if (g === null) return ['güncel eşleşme yok']
+      const e = g.getBoundingClientRect()
+      const k = el.parentElement!.getBoundingClientRect()
+      const p = document.querySelector('[role="dialog"][aria-label="Bul ve değiştir"]')!.getBoundingClientRect()
+      const ust = Math.max(k.top, 0)
+      const alt = Math.min(k.bottom, window.innerHeight)
+      const liste: string[] = []
+      if (e.top < ust - 0.5) liste.push(`eşleşme görünen yazı alanının üstünde (${e.top} < ${ust})`)
+      if (e.bottom > alt + 0.5) liste.push(`eşleşme görünen yazı alanının altında (${e.bottom} > ${alt})`)
+      if (e.top < p.bottom - 0.5) liste.push(`eşleşme bul panelinin altında kaldı (${e.top} < ${p.bottom})`)
+      return liste
+    })
+  }
+
+  /**
+   * Bul panelini açar; not BAŞTAYKEN aşağıdaki, not SONDAYKEN yukarıdaki
+   * eşleşmeyi arar. Eşleşmeye gitme bir kare sonra kaydırır: koşul
+   * sağlanana kadar beklenir (eski davranışta hiç sağlanmaz).
+   */
+  async function asagiVeYukariBul(page: Page, alan: Locator, yer: string, kaydirma: number) {
+    const icerik = alan.locator('xpath=..')
+    const cubuk = page.getByRole('toolbar', { name: 'Biçim araçları', exact: true })
+    await cubuk.getByRole('button', { name: 'Bul ve değiştir', exact: true }).click()
+    const panel = page.getByRole('dialog', { name: 'Bul ve değiştir', exact: true })
+    await expect(panel).toBeInViewport({ ratio: 1 })
+    const bul = panel.getByLabel('Bul', { exact: true })
+    const guncel = alan.locator('.find-and-replace-result-current')
+
+    for (const { terim, yon, oran } of [
+      { terim: 'ASAGIHEDEF', yon: 'aşağı', oran: 0 },
+      { terim: 'YUKARIHEDEF', yon: 'yukarı', oran: 1 },
+    ]) {
+      const paragraf = alan.locator('p', { hasText: terim })
+      await icerik.evaluate((el, oran) => {
+        el.scrollTop = (el.scrollHeight - el.clientHeight) * oran
+      }, oran)
+      // ÖN KOŞUL: paragraf en az altı satır ve arama başlarken görünen
+      // alanın tamamen dışında (aşağıda / yukarıda).
+      const pk = (await paragraf.boundingBox())!
+      const kk = (await icerik.boundingBox())!
+      expect(pk.height, `${yer}: paragraf altı satırdan kısa`).toBeGreaterThanOrEqual(6 * 25.6)
+      if (yon === 'aşağı') expect(pk.y, `${yer}: ön koşul, paragraf aşağıda değil`).toBeGreaterThan(kk.y + kk.height)
+      else expect(pk.y + pk.height, `${yer}: ön koşul, paragraf yukarıda değil`).toBeLessThan(kk.y)
+
+      await bul.fill(terim)
+      await expect(guncel).toHaveText(terim)
+      await expect.poll(() => sorunlar(alan), { message: `${yer}: ${yon} aranan eşleşme görünmüyor` }).toEqual([])
+      expect(await page.evaluate(() => window.scrollY), `${yer}: ${yon} ararken sayfa kaydı`).toBe(kaydirma)
+    }
+    await page.keyboard.press('Escape')
+    await expect(panel).toHaveCount(0)
+  }
+
+  for (const [sira, boyut] of [
+    { width: 1024, height: 680 },
+    { width: 1200, height: 760 },
+  ].entries()) {
+    test(`${boyut.width}x${boyut.height}: not sayfasi ve danisan dosyasinda asagi ve yukari aranan eslesme gorunur`, async ({ page }, testBilgisi) => {
+      await page.setViewportSize(boyut)
+      await kurulumYap(page)
+      // Tekrar koşulabilir (`--repeat-each`): ad ve saat tekrar başına ayrı.
+      const tekrar = testBilgisi.repeatEachIndex
+      const ad = `Yerlesim Bul ${sira + 1}.${tekrar}`
+      await danisanEkle(page, ad)
+      await randevuOlustur(page, ad, ['10:00', '12:00', '14:00', '16:00', '18:00'][tekrar % 5], '400')
+
+      // --- Takvimdeki not sayfası ---
+      await page.locator('button[data-durum]', { hasText: ad }).click()
+      const bolum = page.getByTestId('seans-bolumu')
+      const alan = page.getByLabel('Seans notu', { exact: true })
+      await expect(alan).toBeVisible()
+      // BARİYER: açılış kaydırması (A6) bitti.
+      await expect.poll(async () => Math.round((await bolum.boundingBox())?.y ?? -1)).toBe(8)
+      const kaydirma = await page.evaluate(() => window.scrollY)
+      await notaYapistir(alan, BELGE, 'Kısa paragraf 60.')
+      await asagiVeYukariBul(page, alan, `${boyut.width}x${boyut.height} not sayfası`, kaydirma)
+      await expect(page.getByRole('status').filter({ hasText: /^Kaydedildi \d{2}:\d{2}$/ })).toBeVisible()
+
+      // --- Danışan dosyası: aynı not, sütununun içinde ---
+      await bolum.getByRole('button', { name: `${ad} dosyasını aç`, exact: true }).click()
+      await expect(page.getByRole('heading', { level: 2, name: ad, exact: true })).toBeVisible()
+      const dosyaAlani = page.getByLabel('Seans notu', { exact: true })
+      await expect(dosyaAlani).toContainText('Kısa paragraf 60.')
+      await page.evaluate(() => window.scrollTo(0, 0))
+      await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0)
+      await asagiVeYukariBul(page, dosyaAlani, `${boyut.width}x${boyut.height} danışan dosyası`, 0)
     })
   }
 })

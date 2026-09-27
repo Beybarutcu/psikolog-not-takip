@@ -35,8 +35,8 @@ const BOS_SEANS: SeansVerisi = {
 
 /**
  * Açık seansın not akışı: resmî not (sayfa açılışında) ve özel not
- * (YALNIZCA sekmeye geçilince). Önceki seansların listesi burada DEĞİL:
- * not sayfasının sağ sütunu (`seans/OncekiNotlar.tsx`, Görev 8) kendisi
+ * (YALNIZCA sekmeye geçilince). Diğer seansların listesi burada DEĞİL:
+ * not sayfasının sağ sütunu (`seans/DigerSeanslar.tsx`, Görev 8) kendisi
  * ister ya da danışan dosyasının önbelleğini kullanır.
  *
  * Kanca `Randevu` NESNESİNİ alıyor ama efektlerin bağımlılığı içeride

@@ -98,7 +98,7 @@ async function belgeTasmaz(page: Page, ad: string) {
   expect.soft(genislik, `${ad}: belge yatay taşıyor`).toBeLessThanOrEqual(pencere)
 }
 
-test('uzun metinler kutularini tasirmaz: liste, dosya (Seanslar + Bilgiler), takvim, not sayfasi, onceki notlar, okuma penceresi, etiketli seanslar, ay sonu ozeti, hizli arama', async ({ page, request, context }) => {
+test('uzun metinler kutularini tasirmaz: liste, dosya (Seanslar + Bilgiler), takvim, not sayfasi, diger seanslar, okuma penceresi, etiketli seanslar, ay sonu ozeti, hizli arama', async ({ page, request, context }) => {
   // Tek senaryo, on ekran ve iki kilit açma (kurulum + yeniden açma): 90 sn dar.
   test.setTimeout(180_000)
   await page.setViewportSize({ width: 1024, height: 680 })
@@ -206,7 +206,7 @@ test('uzun metinler kutularini tasirmaz: liste, dosya (Seanslar + Bilgiler), tak
   await belgeTasmaz(page, 'ay sonu özeti')
   await page.getByRole('button', { name: 'Ay sonu özeti', exact: true }).click()
 
-  // --- Not sayfası: üst satır, önceki notlar, geniş okuma ---
+  // --- Not sayfası: üst satır, diğer seanslar, geniş okuma ---
   await blok.click()
   const bolum = page.getByTestId('seans-bolumu')
   await expect(page.getByLabel('Seans notu', { exact: true })).toBeVisible()
@@ -222,10 +222,11 @@ test('uzun metinler kutularini tasirmaz: liste, dosya (Seanslar + Bilgiler), tak
   await expect(form).toHaveCount(0)
   const notEtiketi = bolum.getByTestId('etiket-satiri').getByRole('listitem')
   await icinde('not sayfası: etiket çipi', notEtiketi, bolum.getByTestId('etiket-satiri'))
-  const oncekiNotlar = page.getByRole('region', { name: 'Önceki seans notları' })
+  const oncekiNotlar = page.getByRole('region', { name: 'Diğer seanslar' })
   const oncekiDugme = oncekiNotlar.getByRole('button', { name: /24 Eylül 2026, 08:00/ })
-  await icinde('önceki notlar: satır', oncekiDugme, oncekiNotlar)
-  await icinde('önceki notlar: önizleme', oncekiDugme.getByText(ONIZLEME, { exact: true }), oncekiDugme)
+  await icinde('diğer seanslar: satır', oncekiDugme, oncekiNotlar)
+  await icinde('diğer seanslar: önizleme', oncekiDugme.getByText(ONIZLEME, { exact: true }), oncekiDugme)
+  await icinde('diğer seanslar: "Bu seans" işareti', oncekiNotlar.locator('li[aria-current="true"]'), oncekiNotlar)
   await belgeTasmaz(page, 'not sayfası')
 
   await oncekiDugme.click()

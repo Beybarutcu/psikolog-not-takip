@@ -223,6 +223,11 @@ test.describe('editor arac cubugu pencereye sigar', () => {
   ].entries()) {
     test(`${boyut.width}x${boyut.height}: danisan dosyasi ve not sayfasi yatay tasmaz, "Bul ve degistir" gorunur`, async ({ page }) => {
       await page.setViewportSize(boyut)
+      // 08:00'deki önceki seansın notu YOK ve "Diğer seanslar" notsuz GELECEK
+      // seansı listelemez (2026-09-27). Randevular görünen haftanın ilk boş
+      // günlerine düşer (Pzt-Çar); tarayıcı saati haftanın SONUNA sabit
+      // (Pazar 20:30), yani o seans hangi gün koşulursa koşulsun geçmişte.
+      await page.clock.setFixedTime(new Date(2026, 8, 27, 20, 30))
       await kurulumYap(page)
       const ad = `Yerlesim Tasma ${sira + 1}`
       await danisanEkle(page, ad)
@@ -235,11 +240,13 @@ test.describe('editor arac cubugu pencereye sigar', () => {
         await expect(izgara.getByRole('button', { name: `${saat} ${ad}`, exact: true })).toBeVisible()
       }
 
-      // Takvimdeki not sayfası, dar önceki notlar sütunuyla.
+      // Takvimdeki not sayfası, dar "Diğer seanslar" sütunuyla: önceki seans
+      // ve altında değil ÜSTÜNDE "Bu seans" işareti (açık seans en yenisi).
       await izgara.getByRole('button', { name: `13:00 ${ad}`, exact: true }).click()
       await expect(page.getByLabel('Seans notu', { exact: true })).toBeVisible()
-      const bolge = page.getByRole('region', { name: 'Önceki seans notları' })
-      await expect(bolge.getByRole('listitem')).toHaveCount(1)
+      const bolge = page.getByRole('region', { name: 'Diğer seanslar' })
+      await expect(bolge.getByRole('listitem')).toHaveCount(2)
+      await expect(bolge.getByRole('listitem').first()).toHaveAttribute('aria-current', 'true')
       await tasmaYok(page, `${boyut.width}x${boyut.height} not sayfası`)
 
       // Geniş okuma (N7): sütun sayfanın yarısına büyür, editör daralır.

@@ -5,8 +5,8 @@
  * 12 `replace()` zinciriyle AYNI kural. İstemci ile sunucu
  * `core/src/store/katlama_ornekleri.json` ortak örnekleriyle bağlı
  * (`katla.test.ts`, `search.rs::tests::katlama_ortak_ornekleri_saglar`).
- * Kullananlar: önceki notlarda vurgu ve arama eşiği (`not/vurgu.ts`,
- * `seans/OncekiNotlar.tsx`), danışan listesi araması
+ * Kullananlar: diğer seanslarda vurgu ve arama eşiği (`not/vurgu.ts`,
+ * `seans/DigerSeanslar.tsx`), danışan listesi araması
  * (`danisan/danisanAramasi.ts`, tasarım B1).
  *
  * Kod noktası başına bir eşleme: `ı İ I i` → `i`, `ş Ş` → `s`, `ğ Ğ` → `g`,

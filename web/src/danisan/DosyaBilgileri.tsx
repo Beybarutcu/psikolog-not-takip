@@ -60,8 +60,8 @@ import { RizaBolumu } from './RizaBolumu'
  *
  * # Risk notu KATLANMIŞ gösterilir
  *
- * Önceki notlar panelinin kuralı (not içeriği yalnızca istenince açılır,
- * `seans/OncekiNotlar.tsx` N7) burada daha da güçlü geçerli: risk notu bu
+ * Diğer seanslar panelinin kuralı (not içeriği yalnızca istenince açılır,
+ * `seans/DigerSeanslar.tsx` N7) burada daha da güçlü geçerli: risk notu bu
  * ekrandaki en hassas tek alan ve terapist bu sekmeyi danışan odadayken
  * açabiliyor (telefon, onam, ek dosya işleri için). Notun var olduğu
  * görünür kalır — bağlam bu —, içeriği yalnızca istenince basılır.
@@ -347,7 +347,7 @@ export function DosyaBilgileri({
         <dt className="font-medium text-slate-600">Başvuru nedeni</dt>
         <dd>{danisan.basvuru_nedeni ?? 'Kayıtlı değil'}</dd>
         <dt className="font-medium text-slate-600">Risk notu</dt>
-        {/* KATLANMIŞ — önceki notlar panelindeki gerekçe (içerik yalnızca
+        {/* KATLANMIŞ — diğer seanslar panelindeki gerekçe (içerik yalnızca
             istenince), daha güçlüsüyle: risk notu ("geçmişte bir kez kendine zarar verme")
             bu ekrandaki en hassas tek alan ve terapist bu sekmeyi danışan
             odadayken açabilir (telefon, onam, ek dosya işleri için).

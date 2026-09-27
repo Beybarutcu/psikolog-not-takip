@@ -9,15 +9,33 @@ import { zamanMetni } from '../tarih'
 import { okumaPenceresiniAc } from './okumaPenceresi'
 
 /**
- * Önceki notlar paneli (tasarım §7 N5-N9) — not sayfasının sağ sütunu.
+ * "Diğer seanslar" paneli (tasarım §7 N5-N9, 2026-09-27 değişikliği) — not
+ * sayfasının sağ sütunu.
  *
- * - Liste (N5): danışanın BU seanstan önceki seansları, yeniden eskiye.
- *   Kaynak `DanisanSeansi` kayıtları (aşağıda "Liste kaynağı"). Kesme
- *   istemcide ve KESİN küçük: bu seansın kendisi ve sonrakiler listede yok;
- *   seans taşınınca liste yeniden İSTENMEZ, yeni başlangıçla süzülür.
+ * - Liste (N5): danışanın açık seans DIŞINDAKİ bütün seansları, yeniden
+ *   eskiye. Kullanıcı kararı (2026-09-27): eski bir seans açıkken sonraki
+ *   seanslar da görünür. Açık seansın yerinde tıklanamayan bir "Bu seans ·
+ *   <tarih-saat>" işareti durur: üstündekiler sonraki, altındakiler önceki
+ *   seanslar. Kaynak `DanisanSeansi` kayıtları (aşağıda "Liste kaynağı").
+ * - Gelecekteki (`baslangic > simdi`) NOTU YAZILMAMIŞ seans listelenmez:
+ *   okunacak bir şey yok. Notu olan (açılmış-boş `''` dahil) gelecek seans
+ *   listelenir. Sınır uygulamanın geri kalanıyla aynı: geçmiş = `baslangic
+ *   <= simdi` (`danisan/dosyaOzeti.ts`, `seansGruplari.ts`); tam şimdi
+ *   başlayan seans gelecek SAYILMAZ. `simdi` uygulamadaki TEK "şimdi"
+ *   (`useDakikalikSimdi`, `TakvimSekmesi`'nden gelir); karşılaştırma 16
+ *   karakterlik duvar saati dizgileriyle, `Date` YOK.
+ * - İşaretin yeri (`sonrakiMi`): sunucunun sırası `baslangic DESC, id
+ *   DESC` (`danisan_seanslari`, `SORGU_DANISAN_NOT`); açık seans da o sıraya
+ *   KENDİ güncel başlangıcıyla (`seansBaslangici`) ve kimliğiyle yerleşir.
+ *   Aynı dakikada başlayan başka bir seans, kimliği büyükse işaretin
+ *   üstünde. Açık seans kimliğiyle elenir: seans taşınınca liste yeniden
+ *   İSTENMEZ (listedeki kaydı ESKİ başlangıcı taşır), işaret yeni yerine
+ *   geçer.
  * - Arama (N6): gecikmeli, yalnızca bu danışanın RESMÎ notlarında,
  *   `duz_metin` üzerinde Türkçe harf duyarsız (sunucu, `notApi.notAra`).
- *   İki harften kısa terim istek atmaz. Terim hiçbir yere yazılmaz.
+ *   Kesme (`once`) GÖNDERİLMEZ: sonraki seansların notları da aranır; açık
+ *   seansın kendi notu sonuçlardan istemcide atılır. İki harften kısa terim
+ *   istek atmaz. Terim hiçbir yere yazılmaz (yalnızca o sorgunun adresinde).
  * - Geniş okuma (N7): tek tık sütunu yarıya büyütür (`onGenislikDegisti`),
  *   notu editörle aynı tipografiyle salt okunur gösterir, aranan terimi
  *   vurgular ve ilkine kaydırır. Not YALNIZCA açılınca istenir; notu
@@ -60,6 +78,8 @@ type Props = {
   danisanId: number
   seansId: number
   seansBaslangici: string
+  /** Uygulamadaki TEK "şimdi" (`useDakikalikSimdi`); notsuz gelecek seansların sınırı. */
+  simdi: string
   onSeansaGit: (id: number, baslangic: string) => void
   onGenislikDegisti: (genis: boolean) => void
   /**
@@ -84,8 +104,21 @@ function notOnizlemesi(satir: string | null): string {
   return satir
 }
 
-export function OncekiNotlar({
-  danisanId, seansId, seansBaslangici, onSeansaGit, onGenislikDegisti, onbellek = null,
+/**
+ * Satır, sunucunun sırasında (`baslangic DESC, id DESC`) açık seansın
+ * ÜSTÜNDE mi (bkz. modül başlığı "İşaretin yeri").
+ */
+function sonrakiMi(s: { id: number; baslangic: string }, acik: { id: number; baslangic: string }): boolean {
+  return s.baslangic > acik.baslangic || (s.baslangic === acik.baslangic && s.id > acik.id)
+}
+
+/** Gelecekte ve notu hiç yazılmamış: okunacak bir şey yok, listelenmez. */
+function notsuzGelecek(s: DanisanSeansi, simdi: string): boolean {
+  return s.baslangic > simdi && s.not_ilk_satiri === null
+}
+
+export function DigerSeanslar({
+  danisanId, seansId, seansBaslangici, simdi, onSeansaGit, onGenislikDegisti, onbellek = null,
 }: Props) {
   const [kendiListesi, setKendiListesi] = useState<KendiListesi | null>(null)
   const [terim, setTerim] = useState('')
@@ -110,7 +143,7 @@ export function OncekiNotlar({
       },
       (e: unknown) => {
         if (iptal || e instanceof YetkisizHata) return
-        setKendiListesi({ id: danisanId, hata: e instanceof Error ? e.message : 'Önceki seanslar yüklenemedi.' })
+        setKendiListesi({ id: danisanId, hata: e instanceof Error ? e.message : 'Seanslar yüklenemedi.' })
       },
     )
     return () => {
@@ -127,7 +160,8 @@ export function OncekiNotlar({
       // Terimin SON aramasının sonucu geçerlidir: başarı eski hatayı, hata
       // eski sonucu kaldırır — yoksa "Arama yapılamadı." doğru sonuçların
       // yanında (ya da eski sonuçlar hatanın altında) kalırdı.
-      notApi.notAra(danisanId, kirpilmis, seansBaslangici).then(
+      // Kesme YOK: sonraki seansların notları da aranır (bkz. modül başlığı).
+      notApi.notAra(danisanId, kirpilmis).then(
         (sonuclar) => {
           if (iptal) return
           setArama({ terim: kirpilmis, sonuclar })
@@ -144,7 +178,7 @@ export function OncekiNotlar({
       iptal = true
       clearTimeout(zamanlayici)
     }
-  }, [aramaEtkin, kirpilmis, danisanId, seansBaslangici])
+  }, [aramaEtkin, kirpilmis, danisanId])
 
   useEffect(() => {
     if (menu === null) return
@@ -168,12 +202,23 @@ export function OncekiNotlar({
   const seansBul = (id: number) => seanslar?.find((s) => s.appointment_id === id)
   const gecerliArama = aramaEtkin && arama?.terim === kirpilmis ? arama : null
   const gecerliHata = aramaEtkin && aramaHatasi?.terim === kirpilmis ? aramaHatasi.mesaj : null
-  const oncekiler = (seanslar ?? []).filter((s) => s.baslangic < seansBaslangici && s.appointment_id !== seansId)
+  // Açık seans kimliğiyle elenir (listede de aramada da): taşınan seansın
+  // listedeki kaydı ESKİ başlangıcı taşır (bkz. modül başlığı).
+  const digerleri = (seanslar ?? []).filter((s) => s.appointment_id !== seansId)
   const satirlar: Satir[] = aramaEtkin
-    ? (gecerliArama?.sonuclar ?? []).map((s) => ({
-        id: s.appointment_id, baslangic: s.seans_zamani, parca: s.parca, seans: seansBul(s.appointment_id),
-      }))
-    : oncekiler.map((s) => ({ id: s.appointment_id, baslangic: s.baslangic, parca: null, seans: s }))
+    ? (gecerliArama?.sonuclar ?? [])
+        .filter((s) => s.appointment_id !== seansId)
+        .map((s) => ({
+          id: s.appointment_id, baslangic: s.seans_zamani, parca: s.parca, seans: seansBul(s.appointment_id),
+        }))
+    : digerleri
+        .filter((s) => !notsuzGelecek(s, simdi))
+        .map((s) => ({ id: s.appointment_id, baslangic: s.baslangic, parca: null, seans: s }))
+  // İşaret açık seansın yerinde: üstünde sonrakiler, altında öncekiler.
+  // Gelen sıra korunur; bölme sıraya değil karşılaştırmaya dayanır.
+  const buSeans = { id: seansId, baslangic: seansBaslangici }
+  const sonrakiler = satirlar.filter((s) => sonrakiMi(s, buSeans))
+  const oncekiler = satirlar.filter((s) => !sonrakiMi(s, buSeans))
 
   function yeniPencere(id: number) {
     setMenu(null)
@@ -224,6 +269,36 @@ export function OncekiNotlar({
     onGenislikDegisti(false)
   }
 
+  function satirOgesi(s: Satir) {
+    return (
+      <li key={s.id}>
+        <button
+          type="button"
+          className="w-full rounded border border-slate-200 px-2 py-1 text-left text-sm hover:bg-slate-50"
+          onClick={(olay) => satiriAc(olay, s)}
+          onContextMenu={(olay) => menuAc(olay, s.id)}
+        >
+          <span className="flex items-center gap-1">
+            <span className="font-medium tabular-nums">{zamanMetni(s.baslangic)}</span>
+            {s.seans !== undefined && (
+              <>
+                <DurumSimgeleri randevu={alanlar(s.seans)} />
+                <span className="sr-only">{durumSimgeMetni(alanlar(s.seans))}</span>
+              </>
+            )}
+          </span>
+          {/* Tek satır: üç noktayla kısalır, tamamı `title`'da
+              (`e2e/uzun-metin.spec.ts`). */}
+          <span className="block truncate text-slate-600" title={s.parca ?? notOnizlemesi(s.seans?.not_ilk_satiri ?? null)}>
+            {s.parca !== null
+              ? vurguParcalari(s.parca, kirpilmis).map((p, i) => (p.vurgu ? <mark key={i}>{p.metin}</mark> : <span key={i}>{p.metin}</span>))
+              : notOnizlemesi(s.seans?.not_ilk_satiri ?? null)}
+          </span>
+        </button>
+      </li>
+    )
+  }
+
   const menuOgesi = menu !== null && (
     <div
       role="menu"
@@ -250,8 +325,8 @@ export function OncekiNotlar({
     const seans = seansBul(acik.id)
     const gosterilen = acikNot?.id === acik.id ? acikNot : null
     return (
-      <section aria-labelledby="onceki-notlar-basligi" className="flex max-h-[calc(100vh-8rem)] flex-col">
-        <h3 id="onceki-notlar-basligi" className="sr-only">Önceki seans notları</h3>
+      <section aria-labelledby="diger-seanslar-basligi" className="flex max-h-[calc(100vh-8rem)] flex-col">
+        <h3 id="diger-seanslar-basligi" className="sr-only">Diğer seanslar</h3>
         <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-2 text-sm">
           <button type="button" className="underline" onClick={listeyeDon}>
             <span aria-hidden="true">← </span>Listeye dön
@@ -302,18 +377,18 @@ export function OncekiNotlar({
   }
 
   return (
-    <section aria-labelledby="onceki-notlar-basligi" className="flex max-h-[calc(100vh-8rem)] flex-col">
-      <h3 id="onceki-notlar-basligi" className="text-sm font-semibold text-slate-700">Önceki seans notları</h3>
+    <section aria-labelledby="diger-seanslar-basligi" className="flex max-h-[calc(100vh-8rem)] flex-col">
+      <h3 id="diger-seanslar-basligi" className="text-sm font-semibold text-slate-700">Diğer seanslar</h3>
       <input
         type="search"
-        aria-label="Önceki notlarda ara"
-        placeholder="Önceki notlarda ara"
+        aria-label="Diğer seanslarda ara"
+        placeholder="Diğer seanslarda ara"
         className="mt-2 rounded border border-slate-300 px-2 py-1 text-sm"
         value={terim}
         onChange={(olay) => setTerim(olay.target.value)}
       />
       {listeHatasi !== null ? (
-        <p role="alert" className="mt-2 text-sm text-red-800">Önceki seanslar yüklenemedi. {listeHatasi}</p>
+        <p role="alert" className="mt-2 text-sm text-red-800">Diğer seanslar yüklenemedi. {listeHatasi}</p>
       ) : seanslar === null ? (
         <p className="mt-2 text-sm text-slate-600">Yükleniyor…</p>
       ) : gecerliHata !== null ? (
@@ -322,37 +397,28 @@ export function OncekiNotlar({
         <p className="mt-2 text-sm text-slate-600">Aranıyor…</p>
       ) : satirlar.length === 0 ? (
         <p className="mt-2 text-sm text-slate-600">
-          {aramaEtkin ? 'Bu terim önceki notlarda geçmiyor.' : 'Bu seanstan önce kayıtlı seans yok.'}
+          {aramaEtkin
+            ? 'Bu terim diğer seanslarda geçmiyor.'
+            : digerleri.length === 0
+              ? 'Bu danışanın başka seansı yok.'
+              // Elenenlerin hepsi notsuz gelecek seans: "başka seansı yok"
+              // demek o seanslar varken yanlış olurdu.
+              : 'Başka geçmiş seans yok; ileri tarihli seansların notu henüz yazılmamış.'}
         </p>
       ) : null}
       <ul className="mt-2 min-h-0 flex-1 space-y-1 overflow-auto">
-        {satirlar.map((s) => (
-          <li key={s.id}>
-            <button
-              type="button"
-              className="w-full rounded border border-slate-200 px-2 py-1 text-left text-sm hover:bg-slate-50"
-              onClick={(olay) => satiriAc(olay, s)}
-              onContextMenu={(olay) => menuAc(olay, s.id)}
-            >
-              <span className="flex items-center gap-1">
-                <span className="font-medium tabular-nums">{zamanMetni(s.baslangic)}</span>
-                {s.seans !== undefined && (
-                  <>
-                    <DurumSimgeleri randevu={alanlar(s.seans)} />
-                    <span className="sr-only">{durumSimgeMetni(alanlar(s.seans))}</span>
-                  </>
-                )}
-              </span>
-              {/* Tek satır: üç noktayla kısalır, tamamı `title`'da
-                  (`e2e/uzun-metin.spec.ts`). */}
-              <span className="block truncate text-slate-600" title={s.parca ?? notOnizlemesi(s.seans?.not_ilk_satiri ?? null)}>
-                {s.parca !== null
-                  ? vurguParcalari(s.parca, kirpilmis).map((p, i) => (p.vurgu ? <mark key={i}>{p.metin}</mark> : <span key={i}>{p.metin}</span>))
-                  : notOnizlemesi(s.seans?.not_ilk_satiri ?? null)}
-              </span>
-            </button>
+        {sonrakiler.map(satirOgesi)}
+        {satirlar.length > 0 && (
+          // Açık seansın yeri: düğme DEĞİL, açılmaz, istek atmaz. Ekran
+          // okuyucu listede "geçerli öğe" olarak okur.
+          <li
+            aria-current="true"
+            className="rounded border border-dashed border-slate-400 bg-slate-100 px-2 py-1 text-sm font-medium text-slate-700"
+          >
+            Bu seans <span aria-hidden="true">·</span> {zamanMetni(seansBaslangici)}
           </li>
-        ))}
+        )}
+        {oncekiler.map(satirOgesi)}
       </ul>
       {menuOgesi}
     </section>

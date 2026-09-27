@@ -540,7 +540,7 @@ export function AnaEkran({
   }
 
   /**
-   * Not sayfasının önceki notlar panelinin listesi (Görev 8, preflight F7):
+   * Not sayfasının diğer seanslar panelinin listesi (Görev 8, preflight F7):
    * danışan dosyasının seans listesi (`useDanisanSeanslari`) AYNI danışan
    * için yüklü, hatasız ve taze ise o liste; değilse `null` ve panel TEK
    * istek atar. Her `/seanslar` okuması silinemez bir `Goruntuleme` satırı;

@@ -79,7 +79,7 @@ declare module '@tiptap/core' {
   }
 }
 
-/** Önceki notlarda aranan terimin okuma görünümündeki vurgusu (tasarım N7). Belgeyi DEĞİŞTİRMEZ. */
+/** Diğer seanslarda aranan terimin okuma görünümündeki vurgusu (tasarım N7). Belgeyi DEĞİŞTİRMEZ. */
 export const NotVurgusu = Extension.create({
   name: 'notVurgusu',
   addCommands() {

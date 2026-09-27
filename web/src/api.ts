@@ -593,8 +593,9 @@ export const notApi = {
       method: 'PUT',
       body: JSON.stringify({ sablon, icerik }),
     }),
-  // Önceki notlar panelinin araması (tasarım S8) — yalnızca RESMÎ notlar,
-  // yalnızca bu danışan, `once` verilirse yalnızca o seanstan önce. Terim
+  // "Diğer seanslar" panelinin araması (tasarım S8) — yalnızca RESMÎ notlar,
+  // yalnızca bu danışan, `once` verilirse yalnızca o seanstan önce (panel
+  // 2026-09-27'den beri `once` GÖNDERMEZ: sonraki seanslar da aranır). Terim
   // sunucuda loga yazılmaz; burada da hiçbir yere düşürülmez.
   notAra: (danisanId: number, sorgu: string, once?: string) =>
     istek<NotAramaSonucu[]>(

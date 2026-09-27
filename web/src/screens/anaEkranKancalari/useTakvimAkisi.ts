@@ -248,7 +248,7 @@ export function useTakvimAkisi({ onYetkisiz }: { onYetkisiz: () => void }) {
   }
 
   /**
-   * "Bu seansa git" / önceki notlarda açık satıra ikinci tık (tasarım N8).
+   * "Bu seansa git" / diğer seanslarda açık satıra ikinci tık (tasarım N8).
    * Önce açık seans KAPANIR: editörler unmount tahliyesiyle bekleyen
    * metni YAZAR (bugünkü seans değişimi kuralı) ve eski seansın notu yeni
    * seansın sayfasına bir kare bile sızmaz.

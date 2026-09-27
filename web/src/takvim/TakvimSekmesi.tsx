@@ -94,10 +94,12 @@ import { RandevuPaneli } from './RandevuPaneli'
  *
  * `simdi` (`useDakikalikSimdi`, `yerelGun.ts::simdiYerel`'in dakikada bir
  * yenilenen React durumu) BURADA okunuyor, `AnaEkran`'da DEĞİL: "Bugün"
- * düğmesinin soluklaşması (`buHafta`) ve `HaftalikTakvim`'e geçen `simdi`
- * (Görev 6) aynı tek kaynaktan besleniyor — ikinci bir `useDakikalikSimdi()`
- * çağrısı da aynı değeri üretirdi ama saniyede bir render tetikleyen bir
- * kancayı gereksiz yere ikinci bir bileşende daha çalıştırmak anlamsız.
+ * düğmesinin soluklaşması (`buHafta`), `HaftalikTakvim`'e geçen `simdi`
+ * (Görev 6) ve not sayfasının "Diğer seanslar" paneline geçen `simdi`
+ * (notsuz gelecek seanslar, 2026-09-27) aynı tek kaynaktan besleniyor —
+ * ikinci bir `useDakikalikSimdi()` çağrısı da aynı değeri üretirdi ama
+ * saniyede bir render tetikleyen bir kancayı gereksiz yere ikinci bir
+ * bileşende daha çalıştırmak anlamsız.
  *
  * Gün seçici (`<input type="date">`) yalnızca kullanıcı başlığa TIKLAYINCA
  * DOM'a girer ve `autoFocus` taşır: randevuya tıklamanın imleci hiçbir
@@ -169,7 +171,7 @@ type Props = {
    */
   onEtiketAc: (etiket: Etiket) => void
   /**
-   * Önceki notlar panelinin listesi (Görev 8, preflight F7): danışan
+   * Diğer seanslar panelinin listesi (Görev 8, preflight F7): danışan
    * dosyasının seans listesi önbelleği o danışan için yüklü ve tazeyse o
    * liste, değilse `null` (`AnaEkran.seansListesiOnbellegi`). Önbellek
    * `useDanisanSeanslari`'de, bu bileşenin görmediği bir kancada.
@@ -367,6 +369,8 @@ export function TakvimSekmesi({
           onSeriSil={onSeriSil}
           // "Bu seansa git" / açık satıra ikinci tık (tasarım N8).
           onSeansaGit={takvim.randevuyaGit}
+          // Diğer seanslar paneli notsuz gelecek seansları AYNI "şimdi"yle eler.
+          simdi={simdi}
           seansListesiOnbellegi={seansListesiOnbellegi(seciliRandevu.client_id)}
           etiket={etiketBaglami(seciliRandevu.id)}
         />

@@ -68,6 +68,7 @@ function kur(ozel: Partial<React.ComponentProps<typeof SeansSayfasi>> = {}) {
     onRandevuSil: vi.fn(async () => {}),
     onSeriSil: vi.fn(async () => {}),
     onSeansaGit: vi.fn(),
+    simdi: '2026-09-27T12:00',
     seansListesiOnbellegi: null as DanisanSeansi[] | null,
     etiket,
     ...ozel,
@@ -147,22 +148,22 @@ describe('SeansSayfasi (tasarım N1-N4)', () => {
     expect(p.seansAkisi.ozelSekmeAcildi).toHaveBeenCalledTimes(1)
   })
 
-  it('7.9 not okunamazsa hata ve Yeniden dene; durum düğmeleri YİNE var, önceki notlar sütunu yok', async () => {
+  it('7.9 not okunamazsa hata ve Yeniden dene; durum düğmeleri YİNE var, diğer seanslar sütunu yok', async () => {
     const p = kur({ seansAkisi: akis({ not: null, hata: 'Sunucuya ulaşılamadı.' }) })
     expect(screen.getByRole('alert').textContent).toContain('Sunucuya ulaşılamadı.')
     await userEvent.click(screen.getByRole('button', { name: 'Yeniden dene' }))
     expect(p.seansAkisi.yenidenDene).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('group', { name: 'Seans durumu' })).toBeDefined()
-    expect(screen.queryByRole('region', { name: 'Önceki seans notları' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Diğer seanslar' })).toBeNull()
   })
 
-  it('7.10 özel not önceki notlar sütununda HİÇBİR biçimde görünmez (özel sekme açık, eski not açılmış)', async () => {
+  it('7.10 özel not diğer seanslar sütununda HİÇBİR biçimde görünmez (özel sekme açık, eski not açılmış)', async () => {
     oncekiApi.seanslar.mockResolvedValue([GECEN_HAFTA])
     oncekiApi.notGetir.mockResolvedValue({ ...resmiNot, appointment_id: 90, icerik: '<p>gecen hafta</p>' })
     kur({ seansAkisi: akis({ ozelNot: { appointment_id: 101, icerik: GIZLI, guncelleme_zamani: 'z' } }) })
     await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
     expect((screen.getByLabelText('Özel notum') as HTMLTextAreaElement).value).toBe(GIZLI)
-    const sutun = screen.getByRole('region', { name: 'Önceki seans notları' })
+    const sutun = screen.getByRole('region', { name: 'Diğer seanslar' })
     await userEvent.click(await within(sutun).findByRole('button', { name: /31 Ağustos 2026, 10:00/ }))
     await waitFor(() => expect(sutun.textContent).toContain('gecen hafta'))
     expect(sutun.textContent).not.toContain(GIZLI)
@@ -175,7 +176,7 @@ describe('SeansSayfasi (tasarım N1-N4)', () => {
     kur()
     const editor = screen.getByLabelText('Seans notu') as HTMLTextAreaElement
     fireEvent.change(editor, { target: { value: '<p>yazılıyor</p>' } })
-    const sutun = screen.getByRole('region', { name: 'Önceki seans notları' }).parentElement!
+    const sutun = screen.getByRole('region', { name: 'Diğer seanslar' }).parentElement!
     expect(sutun.className).toContain('w-80')
     await userEvent.click(await screen.findByRole('button', { name: /31 Ağustos 2026, 10:00/ }))
     await waitFor(() => expect(sutun.className).toContain('w-1/2'))
@@ -195,7 +196,7 @@ describe('SeansSayfasi (tasarım N1-N4)', () => {
 
   it('preflight F7: sayfa danışan dosyasının önbelleğini panele geçirir; önbellek varken liste İSTENMEZ', async () => {
     kur({ seansListesiOnbellegi: [{ ...GECEN_HAFTA, not_ilk_satiri: 'ONBELLEKTEN' }] })
-    const sutun = screen.getByRole('region', { name: 'Önceki seans notları' })
+    const sutun = screen.getByRole('region', { name: 'Diğer seanslar' })
     expect(sutun.textContent).toContain('ONBELLEKTEN')
     await new Promise((r) => setTimeout(r, 0))
     expect(oncekiApi.seanslar).not.toHaveBeenCalled()
@@ -209,7 +210,7 @@ describe('SeansSayfasi (tasarım N1-N4)', () => {
     oncekiApi.seanslar.mockImplementation(async (id: number) => (id === 1 ? [GECEN_HAFTA] : []))
     oncekiApi.notGetir.mockResolvedValue({ ...resmiNot, appointment_id: 90, icerik: '<p>AYSE GECEN HAFTA</p>' })
     const { rerender, props } = kur()
-    const sutun = () => screen.getByRole('region', { name: 'Önceki seans notları' }).parentElement!
+    const sutun = () => screen.getByRole('region', { name: 'Diğer seanslar' }).parentElement!
     await userEvent.click(await screen.findByRole('button', { name: /31 Ağustos 2026, 10:00/ }))
     await waitFor(() => expect(sutun().textContent).toContain('AYSE GECEN HAFTA'))
     expect(sutun().className).toContain('w-1/2')
@@ -218,6 +219,6 @@ describe('SeansSayfasi (tasarım N1-N4)', () => {
     await waitFor(() => expect(oncekiApi.seanslar).toHaveBeenLastCalledWith(2))
     expect(document.body.textContent).not.toContain('AYSE GECEN HAFTA')
     expect(sutun().className).toContain('w-80')
-    expect(await within(sutun()).findByText('Bu seanstan önce kayıtlı seans yok.')).toBeDefined()
+    expect(await within(sutun()).findByText('Bu danışanın başka seansı yok.')).toBeDefined()
   })
 })

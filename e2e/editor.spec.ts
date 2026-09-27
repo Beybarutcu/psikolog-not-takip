@@ -386,7 +386,7 @@ test('yapistirma: gorsel, betik, cerceve ve olay ozniteligi duser; sunucudaki HT
   }
 })
 
-test('onceki notlarda arama Turkce harf duyarsiz; genis okumada vurgulu; "Bu seansa git" o seansi acar (N6-N8)', async ({ page, request }) => {
+test('diger seanslarda arama Turkce harf duyarsiz; genis okumada vurgulu; "Bu seansa git" o seansi acar (N6-N8)', async ({ page, request }) => {
   await kurulumYap(page)
   const ad = 'Deniz Şahin'
   const eskiNot = 'Danışan KAYGI anlattı; kaygı azaldı. ARAMA33'
@@ -404,12 +404,13 @@ test('onceki notlarda arama Turkce harf duyarsiz; genis okumada vurgulu; "Bu sea
 
   const alan = await seansiAc(page, await randevuKur(page, ad, '15:00'))
   await alan.fill('Bu seansin YARIM33 metni')
-  const bolge = page.getByRole('region', { name: 'Önceki seans notları' })
-  const satirlar = bolge.getByRole('listitem')
+  const bolge = page.getByRole('region', { name: 'Diğer seanslar' })
+  // Açılabilen satırlar; "Bu seans" işareti (düğmesiz `li`) hariç.
+  const satirlar = bolge.getByRole('listitem').filter({ has: page.getByRole('button') })
   await expect(satirlar).toHaveCount(2)
   const darGenislik = (await bolge.boundingBox())!.width
 
-  await bolge.getByRole('searchbox', { name: 'Önceki notlarda ara' }).fill('kaygi')
+  await bolge.getByRole('searchbox', { name: 'Diğer seanslarda ara' }).fill('kaygi')
   await expect(satirlar).toHaveCount(1)
   await expect(satirlar).toContainText(', 12:00')
   await expect(satirlar.locator('mark').first()).toHaveText('KAYGI')
@@ -429,6 +430,65 @@ test('onceki notlarda arama Turkce harf duyarsiz; genis okumada vurgulu; "Bu sea
   // Giden seansın yazılanı kaybolmadı (tahliye ya da otomatik kayıt).
   const id15 = await randevuKimligi(request, ad, '15:00')
   await expect.poll(() => sunucuNotu(request, id15)).toContain('YARIM33')
+})
+
+// Kullanıcı kararı 2026-09-27: "önceki seans notları yerine diğer seanslar
+// olsun, eski seansı görüntülerken yeni seanslarda gözüksün". Saatler
+// yukarıdaki arama testinin Pazartesi'de doldurduğu 08:00 ve 12:00: ikisi de
+// aynı sonraki boş güne düşer, eski seans (08:00) yenisinden (12:00) önce.
+// Yeni seansın notu VAR: gelecekte kalsa bile listelenir, yani sonuç koşunun
+// saatine bağlı değil.
+test('diger seanslar: eski seans acikken SONRAKI seans isaretin ustunde; arama kesmesiz onun notunu bulur, vurgulu acar, "Bu seansa git" ona gecer', async ({ page }) => {
+  await kurulumYap(page)
+  const ad = 'Gül Aksoy'
+  await danisanEkle(page, ad)
+  const eski = await seansiAc(page, await randevuKur(page, ad, '08:00'))
+  await eski.fill('Eski seansin notu ESKI40')
+  await kaydedildiBekle(page)
+  await takvimeDon(page)
+  const yeni = await seansiAc(page, await randevuKur(page, ad, '12:00'))
+  await yeni.fill('Danışan yeni bir KABUS anlattı. YENI40')
+  await kaydedildiBekle(page)
+  await takvimeDon(page)
+
+  const aramaAdresleri: string[] = []
+  page.on('request', (istek) => {
+    if (istek.url().includes('/not-ara?')) aramaAdresleri.push(istek.url())
+  })
+  await seansiAc(page, blokBul(page, ad, '08:00'))
+  const bolge = page.getByRole('region', { name: 'Diğer seanslar' })
+  const ogeler = bolge.getByRole('listitem')
+  // Sonraki seans ÜSTTE, açık seansın yerinde tıklanamayan işaret ALTTA.
+  await expect(ogeler).toHaveCount(2)
+  await expect(ogeler.nth(0).getByRole('button')).toContainText(', 12:00')
+  await expect(ogeler.nth(0)).toContainText('YENI40')
+  await expect(ogeler.nth(1)).toHaveAttribute('aria-current', 'true')
+  await expect(ogeler.nth(1)).toHaveText(/^Bu seans · .*, 08:00$/)
+  await expect(ogeler.nth(1).getByRole('button')).toHaveCount(0)
+  await expect(bolge).not.toContainText('ESKI40')
+
+  // Terim yalnızca SONRAKİ seansın notunda: kesmeli (`once`) arama onu bulamazdı.
+  await bolge.getByRole('searchbox', { name: 'Diğer seanslarda ara' }).fill('kabus')
+  const satirlar = ogeler.filter({ has: page.getByRole('button') })
+  await expect(satirlar).toHaveCount(1)
+  await expect(satirlar.locator('mark')).toHaveText('KABUS')
+  expect(aramaAdresleri.length).toBeGreaterThan(0)
+  for (const adres of aramaAdresleri) expect(adres).not.toContain('once=')
+
+  await satirlar.getByRole('button').click()
+  await expect(bolge.getByRole('document')).toContainText('YENI40')
+  await expect(bolge.locator('.not-vurgu')).toHaveText(['KABUS'])
+  // Açık (eski) seansın editörü yerinde.
+  await expect(eski).toHaveText('Eski seansin notu ESKI40')
+
+  await bolge.getByRole('button', { name: 'Bu seansa git' }).click()
+  await expect(page.getByRole('region', { name: 'Seans', exact: true })).toContainText(', 12:00')
+  await expect(page.getByLabel('Seans notu', { exact: true })).toHaveText('Danışan yeni bir KABUS anlattı. YENI40')
+  // Yeni seansın sayfasında eski seans artık işaretin ALTINDA.
+  const yeniOgeler = page.getByRole('region', { name: 'Diğer seanslar' }).getByRole('listitem')
+  await expect(yeniOgeler).toHaveCount(2)
+  await expect(yeniOgeler.nth(0)).toHaveAttribute('aria-current', 'true')
+  await expect(yeniOgeler.nth(1)).toContainText('ESKI40')
 })
 
 test('dis baglanti: editorde tiklamak gezinmez; okuma gorunumunde yeni sekmede acilir, uygulama yerinde kalir', async ({ page, context, request }) => {
@@ -468,7 +528,7 @@ test('dis baglanti: editorde tiklamak gezinmez; okuma gorunumunde yeni sekmede a
 
   await takvimeDon(page)
   await seansiAc(page, await randevuKur(page, ad, '17:00'))
-  const bolge = page.getByRole('region', { name: 'Önceki seans notları' })
+  const bolge = page.getByRole('region', { name: 'Diğer seanslar' })
   await bolge.getByRole('button', { name: /, 14:00/ }).click()
   const [dis] = await Promise.all([
     context.waitForEvent('page'),
@@ -616,7 +676,7 @@ test('okuma penceresi kilitte icerigi kaldirir: sag tik "Yeni pencerede ac", sal
   await takvimeDon(page)
   await seansiAc(page, await randevuKur(page, ad, '16:00'))
 
-  const bolge = page.getByRole('region', { name: 'Önceki seans notları' })
+  const bolge = page.getByRole('region', { name: 'Diğer seanslar' })
   const satir = bolge.getByRole('button', { name: /, 13:00/ })
   await satir.click({ button: 'right' })
   const [pencere] = await Promise.all([

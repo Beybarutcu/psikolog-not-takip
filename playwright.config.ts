@@ -36,7 +36,7 @@ const SUNUCULAR = [
   // ölçümü — gerçek tarayıcı yerleşimi gerektirir (bkz. yerlesim.spec.ts).
   { ad: 'yerlesim', spec: 'yerlesim.spec.ts', port: 7707 },
   // Seans notu sayfası ve biçimli editör (tasarım 2026-09-26 §11): biçim
-  // kalıcılığı, Türkçe Q kısayolu, yapıştırma temizliği, önceki notlarda
+  // kalıcılığı, Türkçe Q kısayolu, yapıştırma temizliği, diğer seanslarda
   // arama + geniş okuma, dış bağlantı, okuma penceresi ve kilit.
   { ad: 'editor', spec: 'editor.spec.ts', port: 7708 },
   // Danışan listesi ve dosyası (tasarım 2026-09-24 §6 B1–B3): Türkçe arama

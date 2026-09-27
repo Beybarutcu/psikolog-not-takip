@@ -788,7 +788,7 @@ describe('C1 — resmî not iki ekranda TEK yazma yolundan', () => {
     await waitFor(() => expect(editor().value).toBe('ESKI D'))
   })
 
-  it('dosyada ESKİ bir seansın notu düzeltilince takvim panelinin "Önceki seans notları" kopyası da tazelenir', async () => {
+  it('dosyada ESKİ bir seansın notu düzeltilince takvim panelinin "Diğer seanslar" kopyası da tazelenir', async () => {
     notlar[201] = { sablon: 'serbest', icerik: 'ilk hali' }
     ciz()
     await takvimde202Ac()
@@ -799,7 +799,7 @@ describe('C1 — resmî not iki ekranda TEK yazma yolundan', () => {
     await kaydedildiBekle()
 
     await takvimeDon()
-    const gecmis = await screen.findByRole('region', { name: 'Önceki seans notları' })
+    const gecmis = await screen.findByRole('region', { name: 'Diğer seanslar' })
     // Satırın önizlemesi dosyanın (yamanmış) önbelleğinden: taze.
     const satir = await within(gecmis).findByRole('button', { name: /7 Eylül 2026, 10:00/ })
     expect(satir.textContent).toContain('ilk hali duzeltildi')
@@ -936,7 +936,7 @@ describe('C2 — durum/ödeme yazmaları iki ekranda TEK yoldan', () => {
     await takvimde202Ac()
     const k = kapi()
     sonraBekle['GET /api/danisanlar/1/seanslar'] = k.bekle
-    // Görev 8: not sayfasının önceki notlar paneli AYNI adresi zaten istedi
+    // Görev 8: not sayfasının diğer seanslar paneli AYNI adresi zaten istedi
     // (dosya kapalı, önbellek yok): bariyer "bir istek var" değil, DOSYANIN
     // isteği — sayı bir arttı.
     const oncekiListeIstekleri = istekler.filter((i) => i.yol === '/api/danisanlar/1/seanslar').length
@@ -1253,12 +1253,12 @@ describe('Bayatlık — takvimin yamanamayan yazmaları dosyanın seans listesin
     // blok ızgarada (kayıt zinciri ve bayatlık bildirimi bitti).
     const yeniBlok = await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
     expect(listeGetleri()).toBe(oncekiGetler)
-    // Görev 8 (preflight F7): not sayfasının önceki notlar paneli GÖRÜNÜR bir
+    // Görev 8 (preflight F7): not sayfasının diğer seanslar paneli GÖRÜNÜR bir
     // liste çizer. Dosyanın önbelleği bayat (yeni randevu listede yok) —
     // bayat liste panele verilmez, panel TEK istek atar.
     await userEvent.click(yeniBlok)
     await screen.findByLabelText('Seans notu')
-    await within(screen.getByRole('region', { name: 'Önceki seans notları' })).findAllByRole('listitem')
+    await within(screen.getByRole('region', { name: 'Diğer seanslar' })).findAllByRole('listitem')
     expect(listeGetleri()).toBe(oncekiGetler + 1)
 
     await paneldenDosyayaGit()
@@ -1704,11 +1704,11 @@ describe('I4 — seans listesi hatası "seans yok" DEĞİLDİR (AnaEkran üzerin
 })
 
 describe('M4 — seans zamanı iki ekranda TEK biçim', () => {
-  it('takvim panelinin "Önceki seans notları" ve dosya listesi aynı seansı AYNI metinle gösterir', async () => {
+  it('takvim panelinin "Diğer seanslar" ve dosya listesi aynı seansı AYNI metinle gösterir', async () => {
     notlar[201] = { sablon: 'serbest', icerik: 'onceki not' }
     ciz()
     await takvimde202Ac()
-    const gecmis = screen.getByRole('region', { name: 'Önceki seans notları' })
+    const gecmis = screen.getByRole('region', { name: 'Diğer seanslar' })
     await waitFor(() => expect(gecmis.textContent).toContain('7 Eylül 2026, 10:00'))
 
     await paneldenDosyayaGit()
@@ -1796,7 +1796,7 @@ describe('Etiketler — çapraz önbellek: iki ekran, TEK yazma yolu', () => {
     await takvimde202Ac()
     const k = kapi()
     sonraBekle['GET /api/danisanlar/1/seanslar'] = k.bekle
-    // Görev 8: önceki notlar paneli AYNI adresi zaten istedi; bariyer
+    // Görev 8: diğer seanslar paneli AYNI adresi zaten istedi; bariyer
     // DOSYANIN isteği (sayı bir arttı), "bir istek var" değil.
     const oncekiListeIstekleri = seanslarGetleri().length
     await paneldenDosyayaGit()

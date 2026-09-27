@@ -52,8 +52,8 @@ const randevuB = {
 // --- Görev 9: seans paneli sunucu taklidi ---------------------------------
 //
 // Seans sayfası açılınca `.../not` istenir; `.../ozel-not` yalnızca özel
-// sekmede; önceki notlar paneli `/api/danisanlar/{id}/seanslar`'ı (ve aramada
-// `/not-ara`'yı) ister — `oncekiNotlarYaniti`. Aşağıdaki yardımcı not
+// sekmede; "Diğer seanslar" paneli `/api/danisanlar/{id}/seanslar`'ı (ve aramada
+// `/not-ara`'yı) ister — `digerSeanslarYaniti`. Aşağıdaki yardımcı not
 // uçlarını karşılıyor ve PUT'ları hatırlıyor (sekme değişimi/seans geçişi
 // testleri yazılanın gerçekten sunucuya gittiğini ölçebilsin diye).
 type NotKaydi = { sablon: string; icerik: string }
@@ -228,15 +228,17 @@ function notYaniti(yol: string, method: string, govde: unknown): Response | null
 }
 
 /**
- * Önceki notlar paneli (tasarım N5-N6) — sunucunun `danisan_seanslari` ve
- * `danisan_notlarinda_ara` taklidi, `sunucuGecmisi`'nden. Liste yeniden
- * eskiye ve KESMESİZ (kesme istemcinin işi: taklit kesseydi istemcideki
- * süzgecin yokluğu görünmezdi); arama sunucu gibi `once` ile keser.
- * Yalnızca seans sayfasını ölçen bloklar çağırır (Görev 9 ve Görev 10
- * blokları); diğer bloklarda istek var olan `/api/danisanlar` geri
- * dönüşüne düşer (dizi döner, istemci süzgeci hepsini eler).
+ * "Diğer seanslar" paneli (tasarım N5-N6, 2026-09-27 değişikliği) —
+ * sunucunun `danisan_seanslari` ve `danisan_notlarinda_ara` taklidi,
+ * `sunucuGecmisi`'nden. Liste yeniden eskiye ve KESMESİZ (açık seansı ve
+ * notsuz gelecek seansları elemek istemcinin işi: taklit eleseydi
+ * istemcideki süzgecin yokluğu görünmezdi); arama sunucu gibi `once`
+ * verilirse keser (panel 2026-09-27'den beri `once` göndermez). Seans
+ * sayfası açan her blok çağırır: panel artık açık seans dışındaki HER
+ * kaydı listelediği için danışan listesi geri dönüşünün dizisi (seans
+ * olmayan kayıtlar) panele düşmemeli.
  */
-function oncekiNotlarYaniti(yol: string): Response | null {
+function digerSeanslarYaniti(yol: string): Response | null {
   const seanslar = /^\/api\/danisanlar\/(\d+)\/seanslar$/.exec(yol)
   if (seanslar) {
     return jsonYanit(
@@ -363,6 +365,9 @@ describe('AnaEkran — panel kimliği (Görev 10 inceleme Bulgu 1)', () => {
       if (ekUc) return ekUc
       const notlar = notYaniti(yol, secenekler?.method ?? 'GET', null)
       if (notlar) return notlar
+      // Paneli sunucu biçiminde karşılar (bkz. `digerSeanslarYaniti`).
+      const diger = digerSeanslarYaniti(yol)
+      if (diger) return diger
       if (yol.startsWith('/api/danisanlar')) {
         return { ok: true, json: async () => danisanlar } as unknown as Response
       }
@@ -457,6 +462,9 @@ describe('AnaEkran — düzenleme kipi POST değil PUT üretir (C1)', () => {
       istekler.push({ yol, method, govde })
       const notlar = notYaniti(yol, method, govde)
       if (notlar) return notlar
+      // Paneli sunucu biçiminde karşılar (bkz. `digerSeanslarYaniti`).
+      const diger = digerSeanslarYaniti(yol)
+      if (diger) return diger
       if (yol.startsWith('/api/danisanlar')) {
         return { ok: true, json: async () => danisanlar } as unknown as Response
       }
@@ -567,6 +575,9 @@ describe('AnaEkran — gereksiz yeniden yükleme yapmaz (Plan 3 Görev 2)', () =
         secenekler?.body ? JSON.parse(String(secenekler.body)) : null,
       )
       if (notlar) return notlar
+      // Paneli sunucu biçiminde karşılar (bkz. `digerSeanslarYaniti`).
+      const diger = digerSeanslarYaniti(yol)
+      if (diger) return diger
       if (yol.startsWith('/api/danisanlar')) {
         return { ok: true, json: async () => danisanlar } as unknown as Response
       }
@@ -993,6 +1004,9 @@ describe('AnaEkran — seçili randevu yeniden yüklemede bayatlamaz (Plan 2 dev
       }
       const notlar = notYaniti(yol, method, null)
       if (notlar) return notlar
+      // Paneli sunucu biçiminde karşılar (bkz. `digerSeanslarYaniti`).
+      const diger = digerSeanslarYaniti(yol)
+      if (diger) return diger
       if (yol.startsWith('/api/danisanlar')) {
         return { ok: true, json: async () => danisanlar } as unknown as Response
       }
@@ -1106,7 +1120,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
   let istekler: { yol: string; method: string; govde: unknown }[] = []
   let notSunucuHatasi = false
   let notYetkisiz = false
-  // Yalnızca önceki notlar panelinin listesini (`/seanslar`) düşüren ayrı
+  // Yalnızca diğer seanslar panelinin listesini (`/seanslar`) düşüren ayrı
   // bayrak: "liste isteğinin başarısızlığı yutulmuyor" iddiası ancak not
   // isteği BAŞARILIYKEN ölçülebilir.
   let gecmisSunucuHatasi = false
@@ -1211,7 +1225,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
       }
       const notlar = notYaniti(yol, method, govde)
       if (notlar) return notlar
-      const onceki = oncekiNotlarYaniti(yol)
+      const onceki = digerSeanslarYaniti(yol)
       if (onceki) return onceki
 
       if (yol.startsWith('/api/danisanlar')) {
@@ -1560,7 +1574,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     expect(yazmalar(`/api/randevular/${randevuB.id}/not`)).toHaveLength(0)
   })
 
-  it('önceki notlar paneli bu seansı İÇERMEZ, önceki HER seansı listeler, notları açılmadan İSTEMEZ', async () => {
+  it('diğer seanslar paneli bu seansı İÇERMEZ, önceki HER seansı "Bu seans" işaretinin altında listeler, notları açılmadan İSTEMEZ', async () => {
     sunucuNotlari[90] = { sablon: 'dap', icerik: 'birinci gecmis' }
     sunucuGecmisi = [
       {
@@ -1582,10 +1596,14 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     ]
     await seansAc()
 
-    const gecmis = screen.getByRole('region', { name: 'Önceki seans notları' })
+    const gecmis = screen.getByRole('region', { name: 'Diğer seanslar' })
     // BARİYER: liste geldi ve çizildi. Eskiden "son üç" isteniyordu; panel
-    // artık önceki HER seansı listeler (tasarım N5, kendi içinde kayar).
-    expect(await within(gecmis).findAllByRole('listitem')).toHaveLength(3)
+    // artık HER seansı listeler (tasarım N5, kendi içinde kayar). Bu seans
+    // en yenisi: işaret en üstte, önceki üç seans altında.
+    const ogeler = await within(gecmis).findAllByRole('listitem')
+    expect(ogeler).toHaveLength(4)
+    expect(ogeler[0].getAttribute('aria-current')).toBe('true')
+    expect(ogeler[0].textContent).toBe('Bu seans · 7 Eylül 2026, 10:00')
     expect(gecmis.textContent).not.toContain('BU SEANSIN NOTU')
     // Liste TEK istek; notların hiçbiri açılmadan İSTENMEDİ (silinemez
     // görüntüleme satırı yalnızca terapistin baktığı not için).
@@ -1600,33 +1618,50 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     expect(istekler.filter((i) => i.yol === '/api/randevular/90/not')).toHaveLength(1)
   })
 
-  // İnceleme I2: "Önceki seans notları" SONRAKİ seansları listeliyordu.
-  // Hiçbir test EN YENİ OLMAYAN bir randevuyu açmadığı için yakalanmamıştı;
-  // bu test tam olarak onu yapıyor (takvimde geriye gitmek olağan bir iş).
-  // Kesme artık İSTEMCİDE (liste kesmesiz gelir, `oncekiNotlarYaniti`).
-  it('gecmiste bir seans acilinca SONRAKI seanslarin notlari listelenmez', async () => {
+  // Kullanıcı kararı 2026-09-27 ("eski seansı görüntülerken yeni seanslarda
+  // gözüksün"). Bu testin yerini aldığı "gecmiste bir seans acilinca SONRAKI
+  // seanslarin notlari listelenmez" (İnceleme I2) tam tersini ölçüyordu.
+  // Hâlâ EN YENİ OLMAYAN bir randevu açılıyor (takvimde geriye gitmek olağan
+  // bir iş): sonraki seanslar işaretin ÜSTÜNDE, öncekiler ALTINDA; arama
+  // kesmesiz (`once` yok) sonraki notu da bulur.
+  it('gecmiste bir seans acilinca SONRAKI seanslar isaretin USTUNDE listelenir; arama kesmesiz sonraki notu bulur ve vurgulu acar', async () => {
     sunucuNotlari[88] = { sablon: 'dap', icerik: 'GERCEKTEN ONCEKI' }
+    sunucuNotlari[300] = { sablon: 'dap', icerik: '<p>Yeni bir KABUS anlatti</p>' }
     sunucuGecmisi = [
       {
         appointment_id: 88, client_id: 1, seans_zamani: '2026-08-17T10:00',
         sablon: 'dap', icerik: 'GERCEKTEN ONCEKI', guncelleme_zamani: ZAMAN,
       },
       {
+        appointment_id: 95, client_id: 1, seans_zamani: '2026-09-08T09:00',
+        sablon: 'dap', icerik: 'DUNKU SEANS', guncelleme_zamani: ZAMAN,
+      },
+      {
+        // "Şimdi" 9 Eylül 12:00: gelecekte ama notu VAR, listelenir.
         appointment_id: 300, client_id: 1, seans_zamani: '2026-11-02T10:00',
-        sablon: 'dap', icerik: 'HENUZ YASANMAMIS', guncelleme_zamani: ZAMAN,
+        sablon: 'dap', icerik: '<p>Yeni bir KABUS anlatti</p>', guncelleme_zamani: ZAMAN,
       },
     ]
     await seansAc()
 
-    const gecmis = screen.getByRole('region', { name: 'Önceki seans notları' })
-    // Başlık "Önceki seans notları" ve gösterilen tek seans gerçekten önceki.
-    expect(await within(gecmis).findAllByRole('listitem')).toHaveLength(1)
-    expect(gecmis.textContent).toContain('17 Ağustos 2026')
-    // Bu seanstan SONRAKİ seansın notu ekranın hiçbir yerinde yok — açılınca
-    // içeriği de görünmemeli.
-    await userEvent.click(within(gecmis).getAllByRole('button')[0])
-    expect(await within(gecmis).findByText('GERCEKTEN ONCEKI')).toBeDefined()
-    expect(document.body.textContent).not.toContain('HENUZ YASANMAMIS')
+    const gecmis = screen.getByRole('region', { name: 'Diğer seanslar' })
+    const ogeler = await within(gecmis).findAllByRole('listitem')
+    // Her satır tarih-saatiyle başlar (`zamanMetni`); işaretin yerinde ISARET.
+    const sira = ogeler.map((li) =>
+      li.getAttribute('aria-current') === 'true' ? 'ISARET' : /^\d+ \S+ \d{4}, \d\d:\d\d/.exec(li.textContent!)?.[0],
+    )
+    expect(sira).toEqual(['2 Kasım 2026, 10:00', '8 Eylül 2026, 09:00', 'ISARET', '17 Ağustos 2026, 10:00'])
+    expect(ogeler[2].textContent).toBe('Bu seans · 7 Eylül 2026, 10:00')
+
+    await userEvent.type(within(gecmis).getByRole('searchbox', { name: 'Diğer seanslarda ara' }), 'kabus')
+    const sonuc = await within(gecmis).findByRole('button', { name: /^2 Kasım 2026, 10:00/ })
+    const aramalar = istekler.filter((i) => i.yol.includes('/not-ara?'))
+    expect(aramalar.length).toBeGreaterThan(0)
+    for (const a of aramalar) expect(a.yol).not.toContain('once=')
+    await userEvent.click(sonuc)
+    const okuma = await within(gecmis).findByRole('document')
+    await waitFor(() => expect(okuma.querySelector('.not-vurgu')?.textContent).toBe('KABUS'))
+    expect(istekler.filter((i) => i.yol === '/api/randevular/300/not')).toHaveLength(1)
   })
 
   it('"Geldi" isaretlemek not isteklerini YENIDEN ATMAZ', async () => {
@@ -1648,7 +1683,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Geldi' }).getAttribute('aria-pressed')).toBe('true'),
     )
-    // Bariyerin ARKASINDA da: önceki notlar listesi yeniden İSTENMEDİ.
+    // Bariyerin ARKASINDA da: diğer seanslar listesi yeniden İSTENMEDİ.
     expect(istekler.filter((i) => /\/seanslar$/.test(i.yol))).toHaveLength(1)
     await userEvent.click(screen.getByRole('button', { name: 'Takvime dön' }))
     expect(notGetSayisi(randevuA.id)).toBe(1)
@@ -2028,7 +2063,7 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
   // gereği yok: önceki seanslar listesi artık notla aynı `Promise.all`'da
   // değil, sağ sütunun kendi isteği ve düşmesi sayfayı hata dalına HİÇ
   // sokmuyor (editör, Geldi ve Ödendi açık). Yerine gelen test: aşağıdaki
-  // "önceki seanslar yüklenemezse BOŞ LİSTE gösterilmez; editör YİNE açılır".
+  // "diğer seanslar yüklenemezse BOŞ LİSTE gösterilmez; editör YİNE açılır".
   it.each([
     ['seans notu', () => { resmiNotSunucuHatasi = true }, 'Seans notu okunamadi.'],
   ])(
@@ -2062,10 +2097,10 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     },
   )
 
-  it('önceki seanslar yüklenemezse BOŞ LİSTE gösterilmez; editör YİNE açılır', async () => {
+  it('diğer seanslar yüklenemezse BOŞ LİSTE gösterilmez; editör YİNE açılır', async () => {
     // Yutulup boş liste gösterilseydi, notu olan bir danışan için ekranda
-    // "önceki seans yok" yazardı — sessiz bir yalan.
-    // Not BAŞARIYLA geliyor; yalnızca önceki seanslar listesi düşüyor.
+    // "başka seans yok" yazardı — sessiz bir yalan.
+    // Not BAŞARIYLA geliyor; yalnızca diğer seanslar listesi düşüyor.
     gecmisSunucuHatasi = true
     render(<AnaEkran kilitle={vi.fn()} onGeriYukle={vi.fn()} />)
     await screen.findByRole('button', { name: blokAdi('Ayşe Yılmaz') })
@@ -2074,8 +2109,8 @@ describe('AnaEkran — seans paneli (Görev 9)', () => {
     const uyari = await screen.findByRole('alert')
     expect(uyari.textContent).toContain('Gecmis notlar okunamadi.')
     // Uyarı sağ sütunun KENDİ uyarısı, sayfanın hata dalı değil.
-    expect(within(screen.getByRole('region', { name: 'Önceki seans notları' })).getByRole('alert')).toBe(uyari)
-    expect(screen.queryByText('Bu seanstan önce kayıtlı seans yok.')).toBeNull()
+    expect(within(screen.getByRole('region', { name: 'Diğer seanslar' })).getByRole('alert')).toBe(uyari)
+    expect(screen.queryByText('Bu danışanın başka seansı yok.')).toBeNull()
     // Eskiden `toBeNull()`: liste notla aynı `Promise.all`'daydı. Artık ayrı
     // istek, not yine açılır (tasarım N5'in doğrudan sonucu).
     expect(await screen.findByLabelText('Seans notu')).toBeDefined()
@@ -2132,12 +2167,19 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     istekler.filter((i) => i.method === 'PUT' && i.yol === `/api/randevular/${id}`)
   const haftaBasligi = () => document.querySelector('#hafta-basligi')?.textContent
   const odendiKutusu = () => screen.getByRole('checkbox', { name: 'Ödendi' }) as HTMLInputElement
-  const gecmis = () => screen.getByRole('region', { name: 'Önceki seans notları' })
+  const gecmis = () => screen.getByRole('region', { name: 'Diğer seanslar' })
+  /** Paneldeki sıra: ARADAKI SEANS satırı ve "Bu seans" işareti (ISARET). */
+  const aradakiVeIsaret = () =>
+    within(gecmis())
+      .queryAllByRole('listitem')
+      .map((li) => (li.getAttribute('aria-current') === 'true' ? 'ISARET' : li.textContent!.includes('ARADAKI SEANS') ? 'ARADAKI' : '?'))
 
   // A'nın 7 Eylül'deki seansından SONRA, 9 Eylül'den ÖNCE bir seansın notu:
-  // A 9 Eylül'e taşınınca "önceki seans notları"na GİRER. Listenin ekranda
-  // bir satır kazanması, taşıma sonrası listenin YENİ başlangıçla (istemcide,
-  // yeniden İSTENMEDEN) süzüldüğünün gözlemlenebilir kanıtı.
+  // "Diğer seanslar"da önce "Bu seans" işaretinin ÜSTÜNDE; A 9 Eylül'e
+  // taşınınca işaretin ALTINA geçer. İşaretin satırın öbür yanına geçmesi,
+  // taşıma sonrası listenin YENİ başlangıçla (istemcide, yeniden İSTENMEDEN)
+  // bölündüğünün gözlemlenebilir kanıtı. (2026-09-27'ye kadar panel yalnızca
+  // öncekileri listeliyordu ve kanıt "sıfır satırdan bir satıra" idi.)
   const ARADAKI_SEANS = {
     appointment_id: 90, client_id: 1, seans_zamani: '2026-09-08T09:00',
     sablon: 'serbest', icerik: 'ARADAKI SEANS', guncelleme_zamani: ZAMAN,
@@ -2174,7 +2216,7 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
       }
       const notlar = notYaniti(yol, method, govde)
       if (notlar) return notlar
-      const onceki = oncekiNotlarYaniti(yol)
+      const onceki = digerSeanslarYaniti(yol)
       if (onceki) return onceki
       if (yol.startsWith('/api/danisanlar')) return jsonYanit(danisanlar)
       if (yol.startsWith('/api/cakisma')) {
@@ -2412,11 +2454,9 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
   it('10.4 yazilmamis not metni tasimada korunur: editor AYNI dugum, metin yerinde', async () => {
     sunucuGecmisi = [ARADAKI_SEANS]
     await seansAc()
-    // Ön koşul: 8 Eylül'deki seans 7 Eylül'deki bu seanstan SONRA — listede
-    // yok. BARİYER: liste GELDİ (boş olduğu yazıyor); yüklenmemiş bir liste
-    // de "sıfır satır" verirdi (altıncı biçim).
-    expect(await within(gecmis()).findByText('Bu seanstan önce kayıtlı seans yok.')).toBeDefined()
-    expect(within(gecmis()).queryAllByRole('listitem')).toHaveLength(0)
+    // Ön koşul: 8 Eylül'deki seans 7 Eylül'deki bu seanstan SONRA —
+    // işaretin ÜSTÜNDE. BARİYER: liste GELDİ (satır çizildi).
+    await waitFor(() => expect(aradakiVeIsaret()).toEqual(['ARADAKI', 'ISARET']))
     expect(notGetSayisi(randevuA.id)).toBe(1)
 
     const editor = screen.getByLabelText('Seans notu') as HTMLTextAreaElement
@@ -2427,9 +2467,9 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     fireEvent.change(editor, { target: { value: 'Yarım kalan cümle' } })
     await tarihiTasiVeGuncelle('2026-09-09')
 
-    // BARİYER: liste YENİ başlangıçla istemcide süzüldü (yeniden
-    // İSTENMEDİ); resmî not yeniden okundu (8 Eylül artık "önceki").
-    await waitFor(() => expect(within(gecmis()).getAllByRole('listitem')).toHaveLength(1))
+    // BARİYER: liste YENİ başlangıçla istemcide bölündü (yeniden
+    // İSTENMEDİ; 8 Eylül artık işaretin ALTINDA); resmî not yeniden okundu.
+    await waitFor(() => expect(aradakiVeIsaret()).toEqual(['ISARET', 'ARADAKI']))
     await waitFor(() => expect(notGetSayisi(randevuA.id)).toBe(2))
     expect(seanslarIstekleri()).toHaveLength(1)
 
@@ -2441,19 +2481,18 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     expect(notYazmalari(randevuA.id)).toHaveLength(0)
   })
 
-  it('10.5 Ozel Notlarim acikken tasima: ozel not gorunur kalir ve yeniden ISTENMEZ; önceki liste YENİ başlangıçla süzülür, yeniden İSTENMEZ', async () => {
+  it('10.5 Ozel Notlarim acikken tasima: ozel not gorunur kalir ve yeniden ISTENMEZ; diğer seanslar listesi YENİ başlangıçla bölünür, yeniden İSTENMEZ', async () => {
     sunucuGecmisi = [ARADAKI_SEANS]
     await seansAc()
     await userEvent.click(screen.getByRole('tab', { name: 'Özel Notlarım' }))
     expect(((await screen.findByLabelText('Özel notum')) as HTMLTextAreaElement).value).toBe(GIZLI)
     expect(ozelGetleri()).toHaveLength(1)
-    expect(await within(gecmis()).findByText('Bu seanstan önce kayıtlı seans yok.')).toBeDefined()
-    expect(within(gecmis()).queryAllByRole('listitem')).toHaveLength(0)
+    await waitFor(() => expect(aradakiVeIsaret()).toEqual(['ARADAKI', 'ISARET']))
 
     await randevuFormunuAc()
     await tarihiTasiVeGuncelle('2026-09-09')
 
-    await waitFor(() => expect(within(gecmis()).getAllByRole('listitem')).toHaveLength(1))
+    await waitFor(() => expect(aradakiVeIsaret()).toEqual(['ISARET', 'ARADAKI']))
     expect(seanslarIstekleri()).toHaveLength(1)
     // BARİYER: özel notu sıfırlayabilecek TEK çağrı — taşıma sonrası resmî
     // not yanıtının `setSeansVerisi`'si — işlendi. İstek gitti; bir makro
@@ -2483,7 +2522,7 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     sunucuNotlari[88] = { sablon: 'serbest', icerik: '<p>GECEN HAFTA NOTU</p>' }
     await seansAc()
     await userEvent.type(screen.getByLabelText('Seans notu'), 'YARIM KALAN')
-    const bolge = await screen.findByRole('region', { name: 'Önceki seans notları' })
+    const bolge = await screen.findByRole('region', { name: 'Diğer seanslar' })
     await userEvent.click(await within(bolge).findByRole('button', { name: /31 Ağustos 2026, 10:00/ }))
     // Geniş okuma: not 88 BİR kez okundu ve ekranda.
     expect(await within(bolge).findByText('GECEN HAFTA NOTU')).toBeDefined()
@@ -2533,7 +2572,7 @@ describe('AnaEkran — seans bölümü, Güncelle ve kaydırma (Plan A Görev 10
     await screen.findByLabelText('Seans notu')
     const haftaIstekleri = haftaGetleri().length
     await userEvent.type(screen.getByLabelText('Seans notu'), 'YARIM KALAN')
-    const bolge = await screen.findByRole('region', { name: 'Önceki seans notları' })
+    const bolge = await screen.findByRole('region', { name: 'Diğer seanslar' })
     await userEvent.click(await within(bolge).findByRole('button', { name: /7 Eylül 2026, 08:00/ }))
     expect(await within(bolge).findByText('SABAH SEANSI NOTU')).toBeDefined()
     await userEvent.click(within(bolge).getByRole('button', { name: 'Bu seansa git' }))
@@ -2802,6 +2841,9 @@ describe('AnaEkran — seans geçişi × uçuştaki istek (Görev 9)', () => {
 
       const notlar = notYaniti(yol, method, govde)
       if (notlar) return notlar
+      // Paneli sunucu biçiminde karşılar (bkz. `digerSeanslarYaniti`).
+      const diger = digerSeanslarYaniti(yol)
+      if (diger) return diger
       if (yol.startsWith('/api/danisanlar')) {
         return { ok: true, json: async () => danisanlar } as unknown as Response
       }

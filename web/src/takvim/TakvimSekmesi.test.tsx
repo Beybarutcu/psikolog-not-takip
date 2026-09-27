@@ -93,8 +93,8 @@ function varsayilanProplar(ozelleştirme?: { ozetIstegi?: (ay: string) => Promis
     // Bu testlerde seans paneli hiç açılmıyor; bağlam hiç çağrılmaz.
     etiketBaglami: vi.fn(),
     onEtiketAc: vi.fn(),
-    // Önceki notlar paneli (Görev 8, preflight F7): dosyanın önbelleği boş
-    // bir liste — panel bu testlerde istek atmaz ("önceki seans yok").
+    // Diğer seanslar paneli (Görev 8, preflight F7): dosyanın önbelleği boş
+    // bir liste — panel bu testlerde istek atmaz ("başka seans yok").
     seansListesiOnbellegi: vi.fn((_clientId: number): DanisanSeansi[] | null => []),
   }
 }
@@ -383,7 +383,7 @@ describe('TakvimSekmesi — not sayfası ve kaydırma (Görev 7, Plan A Görev 1
     expect(screen.getByRole('tab', { name: 'Özel Notlarım' }).getAttribute('aria-selected')).toBe('false')
   })
 
-  it('8.10 önceki notlar paneli SEÇİLİ randevunun danışanının önbelleğiyle ve takvim.randevuyaGit ile bağlanır', async () => {
+  it('8.10 diğer seanslar paneli SEÇİLİ randevunun danışanının önbelleğiyle ve takvim.randevuyaGit ile bağlanır', async () => {
     const props = seciliProplar()
     const onceki: DanisanSeansi = {
       appointment_id: 90, baslangic: '2026-08-31T10:00', durum: 'geldi', ucret_kurus: null, odendi: false,
@@ -394,11 +394,37 @@ describe('TakvimSekmesi — not sayfası ve kaydırma (Görev 7, Plan A Görev 1
     // Kimlik (101) değil DANIŞAN (1): önbellek danışan başına.
     expect(props.seansListesiOnbellegi).toHaveBeenCalledWith(secili.client_id)
     expect(props.seansListesiOnbellegi).not.toHaveBeenCalledWith(secili.id)
-    const bolge = screen.getByRole('region', { name: 'Önceki seans notları' })
+    const bolge = screen.getByRole('region', { name: 'Diğer seanslar' })
     await userEvent.click(within(bolge).getByRole('button', { name: /31 Ağustos 2026, 10:00/ }))
     await userEvent.click(within(bolge).getByRole('button', { name: 'Bu seansa git' }))
     expect(props.takvim.randevuyaGit).toHaveBeenCalledTimes(1)
     expect(props.takvim.randevuyaGit).toHaveBeenCalledWith(90, '2026-08-31T10:00')
+  })
+
+  // 2026-09-27: panel notsuz gelecek seansları eler; "gelecek" takvimin TEK
+  // `simdi`sine göre (`useDakikalikSimdi`, bkz. modül başlığı). Sayfaya
+  // `simdi` geçmeseydi ya da başka bir saat geçseydi bu sınır kayardı.
+  it('8.11 diğer seanslar paneli takvimin TEK simdi değeriyle süzer: notsuz gelecek seans YOK, notlu gelecek ve notsuz geçmiş VAR', () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 8, 9, 12, 0))
+    const props = seciliProplar()
+    const kayit = (appointment_id: number, baslangic: string, not_ilk_satiri: string | null): DanisanSeansi => ({
+      appointment_id, baslangic, durum: 'planlandi', ucret_kurus: null, odendi: false, not_ilk_satiri, etiketler: [],
+    })
+    // Şimdi 9 Eylül 12:00: 93 bir dakika sonra (notsuz gelecek, elenir),
+    // 91 tam şimdi (gelecek sayılmaz), 92 gelecekte ama notlu.
+    props.seansListesiOnbellegi = vi.fn(() => [
+      kayit(92, '2026-10-01T10:00', 'HAZIRLIK NOTU'),
+      kayit(93, '2026-09-09T12:01', null),
+      kayit(91, '2026-09-09T12:00', null),
+      kayit(90, '2026-08-31T10:00', null),
+    ])
+    render(<TakvimSekmesi {...props} />)
+    const bolge = screen.getByRole('region', { name: 'Diğer seanslar' })
+    expect(within(bolge).queryByRole('button', { name: /^9 Eylül 2026, 12:01/ })).toBeNull()
+    expect(within(bolge).getByRole('button', { name: /^1 Ekim 2026, 10:00/ })).toBeDefined()
+    expect(within(bolge).getByRole('button', { name: /^9 Eylül 2026, 12:00/ })).toBeDefined()
+    expect(within(bolge).getByRole('button', { name: /^31 Ağustos 2026, 10:00/ })).toBeDefined()
   })
 
   it('7.14 geçiş bekliyorken ızgaranın yerinde "Seans açılıyor…" durur', () => {

@@ -6,7 +6,7 @@ import type { useTakvimAkisi } from '../screens/anaEkranKancalari/useTakvimAkisi
 import type { Randevu } from '../takvim/HaftalikTakvim'
 import { RandevuPaneli } from '../takvim/RandevuPaneli'
 import { zamanMetni } from '../tarih'
-import { OncekiNotlar } from './OncekiNotlar'
+import { DigerSeanslar } from './DigerSeanslar'
 import { SeansAltSatiri } from './SeansAltSatiri'
 import { SeansPaneli } from './SeansPaneli'
 
@@ -21,7 +21,8 @@ import { SeansPaneli } from './SeansPaneli'
  *   not alırken yer kaplamamalı. "Güncelle" sonrası açık kalır.
  * - Editör alanı (N4): `SeansPaneli` (sekmeler, şablon, editör, etiketler).
  *   Not okunamazsa editör AÇILMAZ, ama durum/ödeme yine işaretlenebilir.
- * - Sağ sütun: `OncekiNotlar` (N5-N9). Geniş okumada (N7) sütun sayfanın
+ * - Sağ sütun: `DigerSeanslar` (N5-N9; 2026-09-27'den beri açık seans
+ *   dışındaki BÜTÜN seanslar, sonrakiler dahil). Geniş okumada (N7) sütun sayfanın
  *   yarısına büyür; editör AYNI düğümde kalır (yazılmamış metin kaybolmaz).
  *   Genişlik HANGİ danışan için açıldığıyla tutulur ve panel danışan
  *   kimliğiyle `key`lidir: randevu formdan başka danışana taşınınca (aynı
@@ -61,12 +62,17 @@ type Props = {
   onRandevuKaydet: (kayit: Parameters<ReturnType<typeof useTakvimAkisi>['kaydet']>[0]) => Promise<void>
   onRandevuSil: (id: number) => Promise<void>
   onSeriSil: (seriId: string, buTarihtenItibaren: string) => Promise<void>
-  /** Önceki notlardan seansa geçiş (tasarım N8, `takvim.randevuyaGit`). */
+  /** Diğer seanslardan seansa geçiş (tasarım N8, `takvim.randevuyaGit`). */
   onSeansaGit: (id: number, baslangic: string) => void
   /**
+   * Uygulamadaki TEK "şimdi" (`TakvimSekmesi`'nin `useDakikalikSimdi`'si):
+   * diğer seanslar paneli notsuz gelecek seansları bununla eler.
+   */
+  simdi: string
+  /**
    * Danışan dosyasının BU danışan için yüklü, taze seans listesi; yoksa
-   * `null` — önceki notlar paneli o zaman listeyi kendisi ister (preflight
-   * F7, bkz. `OncekiNotlar` "Liste kaynağı").
+   * `null` — diğer seanslar paneli o zaman listeyi kendisi ister (preflight
+   * F7, bkz. `DigerSeanslar` "Liste kaynağı").
    */
   seansListesiOnbellegi: DanisanSeansi[] | null
   etiket: EtiketBaglami
@@ -76,7 +82,7 @@ type Props = {
 
 export function SeansSayfasi({
   randevu, seansAkisi, danisanlar, onTakvimeDon, onDanisanAc, onDurumDegis, onOdemeDegis,
-  onRandevuKaydet, onRandevuSil, onSeriSil, onSeansaGit, seansListesiOnbellegi, etiket, ref,
+  onRandevuKaydet, onRandevuSil, onSeriSil, onSeansaGit, simdi, seansListesiOnbellegi, etiket, ref,
 }: Props) {
   const [formAcik, setFormAcik] = useState(false)
   // Geniş okuma HANGİ danışanın paneli için açıldı (bkz. modül başlığı).
@@ -186,11 +192,12 @@ export function SeansSayfasi({
           // katmansız `transition: none` kuralı `transition-*` sınıflarını
           // zaten öldürür.
           <div className={oncekiGenis ? 'w-1/2 shrink-0' : 'w-80 shrink-0'}>
-            <OncekiNotlar
+            <DigerSeanslar
               key={randevu.client_id}
               danisanId={randevu.client_id}
               seansId={randevu.id}
               seansBaslangici={randevu.baslangic}
+              simdi={simdi}
               onbellek={seansListesiOnbellegi}
               onSeansaGit={onSeansaGit}
               onGenislikDegisti={(genis) => setGenisDanisan(genis ? randevu.client_id : null)}

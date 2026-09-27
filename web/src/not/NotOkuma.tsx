@@ -4,7 +4,7 @@ import { notUzantilari } from './uzantilar'
 import './stiller'
 
 /**
- * Salt okunur not görünümü (tasarım S7, E12): önceki notlar paneli, okuma
+ * Salt okunur not görünümü (tasarım S7, E12): diğer seanslar paneli, okuma
  * penceresi ve geçmiş listesi. Saklanan HTML DOM'a doğrudan BASILMAZ —
  * editörle aynı uzantılarla kurulmuş `editable: false` bir TipTap örneği;
  * şemada olmayan her şey ayrıştırmada düşer. `vurgu` verilirse bütün

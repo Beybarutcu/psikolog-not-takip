@@ -8,7 +8,7 @@ import { sablonMetni } from './sablon'
 /**
  * Not sayfasının editör alanı (tasarım N4): iki sekmeli not alanı ve resmî
  * sekmede etiketler. Üst satır (danışan, tarih, durum/ödeme, Takvime dön) ve
- * önceki notlar `SeansSayfasi`'nde.
+ * diğer seanslar paneli `SeansSayfasi`'nde.
  *
  * # İki sekme = iki ayrı tablo, bir filtre değil
  *

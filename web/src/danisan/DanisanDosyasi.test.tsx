@@ -716,7 +716,7 @@ describe('DanisanDosyasi — uzun geçmiş (tasarım B3)', () => {
     )
     const sutun = screen.getByTestId('seans-notu-sutunu')
     try {
-      for (const sinif of ['sticky', 'top-0', 'self-start', 'flex', 'flex-col', 'min-h-[calc(100dvh-var(--not-sutunu-ust,13rem)-1rem)]']) {
+      for (const sinif of ['sticky', 'top-0', 'self-start', 'flex', 'flex-col', 'min-h-[calc(100dvh-var(--not-sutunu-ust,12rem)-1rem)]']) {
         expect(sutun.classList.contains(sinif), sinif).toBe(true)
       }
       // 179,4 + 40 = 219,4 → 219 px: sütunun sayfadaki üst kenarı.

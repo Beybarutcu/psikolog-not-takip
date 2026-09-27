@@ -362,16 +362,17 @@ export function DanisanDosyasi({
                   boyunu alır. `--not-sutunu-ust`: sütunun sayfa kaymamışken
                   ÖLÇÜLEN üst kenarı (yukarıdaki efekt; kısa adla 1024x680 ve
                   1200x760'da 191 px), altında 1rem pay; 1200x760'da uzun,
-                  kırılan adla da sütunun tamamı ekranda. Ölçülmeden önce
-                  eski sabit (13rem). Sütunun asgarisi (satırlar + 16rem
-                  yazı alanı) daha büyükse sütun uzar: dar pencerede
-                  (1024x680, üç satırlık araç çubuğu) sayfa ~54 px kayar
-                  (ölçüldü), hiçbir şey üst üste binmez. `sticky top-0` +
+                  kırılan adla da sütunun tamamı ekranda. Ölçülmeden önceki
+                  yedek 12rem (~191 px; + 1rem = eski sabit 13rem). Sütunun
+                  asgarisi (satırlar + 16rem yazı alanı) daha büyükse sütun
+                  uzar: dar pencerede (1024x680, üç satırlık araç çubuğu)
+                  sayfa ~54 px kayar (ölçüldü), hiçbir şey üst üste binmez.
+                  `sticky top-0` +
                   `self-start`: soldaki seans listesi sütunu (`max-h-[100dvh]`)
                   sayfayı kaydırdığında not tepede, görünür kalır (B3). */}
               <div
                 data-testid="seans-notu-sutunu"
-                className="sticky top-0 flex min-h-[calc(100dvh-var(--not-sutunu-ust,13rem)-1rem)] flex-col self-start"
+                className="sticky top-0 flex min-h-[calc(100dvh-var(--not-sutunu-ust,12rem)-1rem)] flex-col self-start"
               >
                 {seciliSeans === null ? (
                   <p className="text-sm text-slate-500">Bu danışanın kayıtlı bir seansı yok.</p>

@@ -1,0 +1,58 @@
+# Mac derlemesi Codemagic'te (kisisel hesapta ayda 500 ucretsiz M2 dakikasi,
+# odeme bilgisi girilmedikce ucret cikmaz).
+# `triggering` bolumu BILEREK yok: derleme yalnizca Codemagic arayuzunden
+# "Start new build" ile baslar; push hicbir derleme baslatmaz.
+# Cikti: hem Apple Silicon hem Intel'de calisan tek (universal) .dmg.
+workflows:
+  mac-dmg:
+    name: Mac dmg (universal, elle)
+    instance_type: mac_mini_m2
+    max_build_duration: 90
+    environment:
+      node: lts
+      xcode: latest
+      vars:
+        CI: "true"
+    scripts:
+      - name: Rust kur
+        script: |
+          set -e
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          . "$HOME/.cargo/env"
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          rustc --version
+          node --version
+      - name: Paketler
+        script: |
+          set -e
+          npm ci --no-audit --no-fund
+          npm --prefix web ci --no-audit --no-fund
+      - name: Uygulamayi derle (universal)
+        script: |
+          set -e
+          . "$HOME/.cargo/env"
+          # Yalnizca .app: imzayi ve dmg'yi bir sonraki adim kendisi yapar.
+          npx tauri build --target universal-apple-darwin --bundles app
+      - name: Imzala ve dmg olustur
+        script: |
+          set -e
+          APP="target/universal-apple-darwin/release/bundle/macos/Terapi Notlari.app"
+          lipo -archs "$APP"/Contents/MacOS/*
+          # Apple Silicon imzasiz uygulamayi hic calistirmaz ("hasarli" der).
+          # Yerel (ad-hoc) imza, indirilen uygulamanin Gizlilik ve Guvenlik >
+          # "Yine de Ac" ile acilabilmesi icin yeterli.
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          mkdir -p dmg-kok cikti
+          ditto "$APP" "dmg-kok/Terapi Notlari.app"
+          ln -s /Applications dmg-kok/Applications
+          DMG="cikti/TerapiNotlari-mac-$(echo "$CM_COMMIT" | cut -c1-7).dmg"
+          # hdiutil CI'da ara sira "Resource busy" ile duser: uc deneme.
+          for i in 1 2 3; do
+            hdiutil create -volname "Terapi Notlari" -srcfolder dmg-kok -ov -format UDZO "$DMG" && break
+            sleep 5
+          done
+          [ -f "$DMG" ] || { echo "dmg olusturulamadi"; exit 1; }
+          ls -la cikti
+    artifacts:
+      - cikti/*.dmg

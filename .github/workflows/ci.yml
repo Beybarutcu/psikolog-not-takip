@@ -1,5 +1,11 @@
 name: CI
-on: [push, pull_request]
+# Yalnizca elle: GitHub > Actions > CI > "Run workflow". Push ve PR hicbir
+# sey baslatmaz: her push'ta kosan Mac derlemeleri (ozel depoda macOS dakikasi
+# kotadan 10 kat duser) Eylul 2026'da ucretsiz kotayi asip fatura cikardi.
+# Mac derlemesi artik Codemagic'te (codemagic.yaml). Bu is Windows'ta
+# kostugu icin her calisma kotadan ~2 kat dakika duser.
+on:
+  workflow_dispatch:
 
 jobs:
   test:
@@ -29,26 +35,3 @@ jobs:
       - run: cargo test --workspace
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test
-
-  build-macos:
-    runs-on: macos-14
-    strategy:
-      # Iki mimari bagimsiz bilgi kaynagidir: biri duserse digeri yine de
-      # calissin. Varsayilan fail-fast, Apple Silicon sonucunu gizliyordu.
-      fail-fast: false
-      matrix:
-        target: [aarch64-apple-darwin, x86_64-apple-darwin]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with: { targets: '${{ matrix.target }}' }
-      - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
-        with: { node-version: '22', cache: 'npm', cache-dependency-path: web/package-lock.json }
-      - run: npm ci
-      - run: npm --prefix web ci
-      - run: npx tauri build --target ${{ matrix.target }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dmg-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/bundle/dmg/*.dmg

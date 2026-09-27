@@ -471,6 +471,29 @@ test.describe('arac cubugu notu ortmez; uzun not editorun icinde kayar', () => {
       await page.keyboard.press('Escape')
       await expect(panel).toHaveCount(0)
       expect(await sayfaKaymasi(page), 'bul panelinde gezinince sayfa kaydı').toBe(kaydirma)
+
+      // (e) İnceleme M5: notun BAŞINDA yukarı tekerlek sayfayı kaydırmaz
+      // (yazı alanı `overscroll-contain`). Eskiden kaydırma zinciri notun
+      // başından sonra sayfaya geçiyor, sayfa açılış konumundan (A6) yukarı
+      // kayıyordu. Bariyer: tekerlek olayı sayfaya ulaştı ve ardından iki
+      // kare çizildi (kaydırma o karelerde başlar). Dinleyici pencerede:
+      // olay kaydırmadan SONRA hedeflenir; sayfa kayarsa imlecin altındaki
+      // öğe artık yazı alanı olmayabilir (ölçüldü, 1024x680).
+      await notuKaydir(alan, 0)
+      const ya = (await alan.locator('xpath=..').boundingBox())!
+      await page.evaluate(() => {
+        ;(window as unknown as { tekerlekIslendi: Promise<void> }).tekerlekIslendi = new Promise<void>((coz) => {
+          window.addEventListener('wheel', () => requestAnimationFrame(() => requestAnimationFrame(() => coz())), {
+            once: true,
+            passive: true,
+            capture: true,
+          })
+        })
+      })
+      await page.mouse.move(ya.x + ya.width / 3, ya.y + ya.height / 2)
+      await page.mouse.wheel(0, -400)
+      await page.evaluate(() => (window as unknown as { tekerlekIslendi: Promise<void> }).tekerlekIslendi)
+      expect(await sayfaKaymasi(page), 'notun başında yukarı tekerlek sayfayı kaydırdı').toBe(kaydirma)
       const kaydedildi = page.getByRole('status').filter({ hasText: /^Kaydedildi \d{2}:\d{2}$/ })
       await expect(kaydedildi).toBeVisible()
 

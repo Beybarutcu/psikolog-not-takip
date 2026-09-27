@@ -176,7 +176,14 @@ export function BicimliYuzey({ html, onChange, etiket, editable = true, vurgu = 
           satırının üstüne taşıyordu. Kısa pencerede ya da randevu formu
           açıkken zincir asgarisinde durur, sayfa kayar; hiçbir şey
           üst üste binmez. Ölçen test: `e2e/yerlesim.spec.ts` > "arac
-          cubugu notu ortmez". */}
+          cubugu notu ortmez".
+
+          # Kaydırma zinciri yazı alanında durur (`overscroll-contain`)
+
+          Notun başında yukarı ya da sonunda aşağı tekerlek/dokunmatik
+          kaydırma sayfaya geçmez (inceleme M5): not okunurken sayfa
+          açılış konumundan (A6) kayıp durum ve etiket satırlarını
+          ekrandan çıkarıyordu. Ölçen test: aynı e2e, adım (e). */}
       <div className="not-editoru relative flex flex-1 flex-col rounded border border-slate-300 bg-white">
         {editable && <AracCubugu bulAcik={bulAcik} onBulDegistir={() => setBulAcik((a) => !a)} />}
         {editable && (
@@ -217,7 +224,7 @@ export function BicimliYuzey({ html, onChange, etiket, editable = true, vurgu = 
           role="presentation"
           data-testid="not-yazi-alani"
           className={
-            'not-yazi-alani flex min-h-64 flex-1 flex-col overflow-y-auto contain-size' +
+            'not-yazi-alani flex min-h-64 flex-1 flex-col overflow-y-auto overscroll-contain contain-size' +
             (bulAcik ? ' not-bul-acik' : '')
           }
         />

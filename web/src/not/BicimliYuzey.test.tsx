@@ -204,7 +204,9 @@ describe('BicimliYuzey (gerçek TipTap)', () => {
     expect(alan.contains(cubuk)).toBe(false)
     expect(cubuk.compareDocumentPosition(alan) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(alan.contains(yuzey)).toBe(true)
-    for (const sinif of ['flex-1', 'flex-col', 'min-h-64', 'overflow-y-auto', 'contain-size']) {
+    // `overscroll-contain` (inceleme M5): notun başında/sonunda tekerlek
+    // kaydırması sayfaya geçmez.
+    for (const sinif of ['flex-1', 'flex-col', 'min-h-64', 'overflow-y-auto', 'contain-size', 'overscroll-contain']) {
       expect(alan.classList.contains(sinif), sinif).toBe(true)
     }
     for (const sinif of ['flex', 'flex-1', 'flex-col']) expect(kok.classList.contains(sinif), sinif).toBe(true)
